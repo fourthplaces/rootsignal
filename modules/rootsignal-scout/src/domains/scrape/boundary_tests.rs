@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::core::extractor::{ExtractionResult, ResourceTag};
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
-use crate::domains::scrape::activities::scrape_phase::{RunContext, ScrapeOutput, ScrapePhase};
+use crate::core::aggregate::PipelineState;
+use crate::domains::scrape::activities::{ScrapeOutput, Scraper};
 use crate::infra::embedder::TextEmbedder;
 use crate::testing::*;
 
@@ -31,7 +32,7 @@ use seesaw_core::AnyEvent;
 /// Dispatch collected events through a test engine, updating state.
 async fn dispatch_events(
     events: seesaw_core::Events,
-    ctx: &mut RunContext,
+    ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
 ) {
     dispatch_events_with(events, ctx, store, None).await;
@@ -40,7 +41,7 @@ async fn dispatch_events(
 /// Dispatch collected events with an optional custom embedder for dedup.
 async fn dispatch_events_with(
     events: seesaw_core::Events,
-    ctx: &mut RunContext,
+    ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
     embedder: Option<Arc<dyn TextEmbedder>>,
 ) {
@@ -60,7 +61,7 @@ async fn dispatch_events_with(
 /// Take events from scrape output, apply state, and dispatch through engine.
 async fn scrape_and_dispatch(
     output: ScrapeOutput,
-    ctx: &mut RunContext,
+    ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
 ) {
     scrape_and_dispatch_with(output, ctx, store, None).await;
@@ -69,7 +70,7 @@ async fn scrape_and_dispatch(
 /// Take events from scrape output, apply state, and dispatch with custom embedder.
 async fn scrape_and_dispatch_with(
     output: ScrapeOutput,
-    ctx: &mut RunContext,
+    ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
     embedder: Option<Arc<dyn TextEmbedder>>,
 ) {
@@ -123,18 +124,15 @@ async fn page_with_content_produces_signal() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://localorg.org/events");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -164,18 +162,15 @@ async fn empty_page_produces_nothing() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://empty.org");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -193,18 +188,15 @@ async fn unreachable_page_does_not_crash() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://doesnt-exist.org");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     // Should not panic
@@ -250,18 +242,15 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://news.org/article");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -300,18 +289,15 @@ async fn same_title_extracted_twice_produces_one_signal() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://news.org/dupe");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -360,18 +346,15 @@ async fn all_signals_stored_regardless_of_region() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://news.org/far-away");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -406,18 +389,15 @@ async fn blocked_url_produces_nothing() {
     let store = Arc::new(MockSignalReader::new().block_url("blocked.org"));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://blocked.org/page");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -450,18 +430,15 @@ async fn unchanged_content_is_not_re_extracted() {
         Arc::new(MockSignalReader::new().with_processed_hash(&hash, "https://news.org/same"));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://news.org/same");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -506,18 +483,15 @@ async fn outbound_links_on_page_are_collected() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://linktree.org");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -602,7 +576,7 @@ async fn link_promotion_stops_at_configured_cap() {
 #[tokio::test]
 async fn scrape_then_promote_creates_new_sources() {
 
-    // Full flow: fetch page with links → run_web → collected_links → promote_links
+    // Full flow: fetch page with links → scrape_web_sources → collected_links → promote_links
 
     let mut page = archived_page("https://hub.org", "# Hub page");
     page.links = vec![
@@ -628,21 +602,18 @@ async fn scrape_then_promote_creates_new_sources() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://hub.org");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
-    // Step 1: run_web collects links
+    // Step 1: scrape_web_sources collects links
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
     assert!(!ctx.collected_links.is_empty(), "links should be collected");
@@ -676,18 +647,15 @@ async fn unreachable_page_produces_no_signals() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://unreachable.org/page");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -720,18 +688,15 @@ async fn page_with_no_extractable_content_produces_nothing() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/empty-extract");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -769,18 +734,15 @@ async fn database_write_failure_does_not_crash() {
     let store = Arc::new(MockSignalReader::new().failing_creates());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/store-fail");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     // Should not panic even when store.create_node fails
@@ -819,18 +781,15 @@ async fn blocked_url_produces_no_signals() {
     let store = Arc::new(MockSignalReader::new().block_url("spam-site.org"));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://spam-site.org/page");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -871,18 +830,15 @@ async fn all_signal_types_are_stored() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/mixed-types");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -923,18 +879,15 @@ async fn unicode_and_emoji_titles_are_preserved() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/unicode");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -967,18 +920,15 @@ async fn signal_at_zero_zero_is_still_stored() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/null-island");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1004,18 +954,15 @@ async fn broken_extraction_skips_page_gracefully() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/extract-fail");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1054,18 +1001,15 @@ async fn blank_author_name_does_not_create_actor() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/ws-author");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1115,18 +1059,15 @@ async fn signal_with_resource_needs_gets_resource_edge() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/resources");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1142,18 +1083,15 @@ async fn zero_sources_produces_nothing() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let sources: Vec<&SourceNode> = vec![];
     let dummy_source = page_source("https://dummy.org");
-    let mut ctx = RunContext::from_sources(&[dummy_source]);
+    let mut ctx = PipelineState::from_sources(&[dummy_source]);
     let mut log = run_log();
 
     // Should not panic with empty sources
@@ -1179,18 +1117,15 @@ async fn outbound_links_collected_despite_extraction_failure() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/links-but-error");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1224,18 +1159,15 @@ async fn empty_social_account_produces_nothing() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1259,18 +1191,15 @@ async fn image_only_posts_produce_no_signals() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1301,18 +1230,15 @@ async fn empty_markdown_page_still_collects_outbound_links() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/empty-md");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1362,13 +1288,10 @@ async fn mixed_outcome_pages_each_handled_independently() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let s1 = page_source("https://good.org/events");
@@ -1376,7 +1299,7 @@ async fn mixed_outcome_pages_each_handled_independently() {
     let s3 = page_source("https://fail.org/page");
     let all = vec![s1.clone(), s2.clone(), s3.clone()];
     let sources: Vec<&SourceNode> = vec![&s1, &s2, &s3];
-    let mut ctx = RunContext::from_sources(&all);
+    let mut ctx = PipelineState::from_sources(&all);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1400,18 +1323,15 @@ async fn social_scrape_failure_does_not_crash() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     // Should not panic
@@ -1453,18 +1373,15 @@ async fn batch_title_dedup_is_case_insensitive() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/case-dedup");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1505,18 +1422,15 @@ async fn web_source_without_actor_stores_content_location_only() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://localorg.org/events");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1548,18 +1462,15 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
     ctx.actor_contexts.insert(
         canonical_value(ig_url),
@@ -1602,18 +1513,15 @@ async fn explicit_content_location_not_overwritten_by_actor() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
     // Actor in Minneapolis — should NOT overwrite St Paul about_location
     ctx.actor_contexts.insert(
@@ -1666,18 +1574,15 @@ async fn new_actor_inherits_parent_depth_plus_one() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
     // Parent actor at depth 1
     ctx.actor_contexts.insert(
@@ -1727,18 +1632,15 @@ async fn bootstrap_actor_gets_depth_zero() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     // No actor context — this is a bootstrap source
 
     let mut log = run_log();
@@ -1800,18 +1702,15 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source(feed_url);
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1865,18 +1764,15 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source(feed_url);
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1913,18 +1809,15 @@ async fn social_published_at_becomes_published_at_fallback() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -1968,18 +1861,15 @@ async fn ocean_coordinates_store_ecological_signal() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://news.org/oil-spill");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2022,18 +1912,15 @@ async fn antarctic_coordinates_store_signal() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://science.org/antarctic");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2078,18 +1965,15 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/hallucinated-geo");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     // Pipeline must not panic on absurd coordinates
@@ -2143,18 +2027,15 @@ async fn environmental_disaster_produces_all_signal_types() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://news.org/hurricane-response");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2206,18 +2087,15 @@ async fn hallucinated_future_date_does_not_crash() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/future-date");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2258,18 +2136,15 @@ async fn epoch_zero_date_does_not_crash() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/epoch-date");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2313,18 +2188,15 @@ async fn extremely_long_title_survives_pipeline() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/long-title");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2385,19 +2257,16 @@ async fn same_signal_from_two_sources_corroborates() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     // Process source A first
     let source_a = page_source("https://source-a.org/article");
     let sources_a: Vec<&SourceNode> = vec![&source_a];
-    let mut ctx = RunContext::from_sources(&[source_a.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source_a.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources_a, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2408,7 +2277,7 @@ async fn same_signal_from_two_sources_corroborates() {
     // Process source B — should corroborate, not duplicate
     let source_b = page_source("https://source-b.org/story");
     let sources_b: Vec<&SourceNode> = vec![&source_b];
-    let mut ctx2 = RunContext::from_sources(&[source_b.clone()]);
+    let mut ctx2 = PipelineState::from_sources(&[source_b.clone()]);
     let mut log2 = run_log();
 
     let output = phase.scrape_web_sources(&sources_b, &ctx2.url_to_canonical_key, &ctx2.actor_contexts, &log2).await;
@@ -2476,18 +2345,15 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2530,18 +2396,15 @@ async fn minimum_viable_signal_with_no_optional_fields() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/bare-signal");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2586,18 +2449,15 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2634,18 +2494,15 @@ async fn aggregator_source_author_does_not_create_actor_node() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://aggregator.com/news");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2682,18 +2539,15 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/mentions");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2732,18 +2586,15 @@ async fn signal_has_produced_by_edge_to_its_source() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://localorg.org/events");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -2775,18 +2626,15 @@ async fn social_signal_has_produced_by_edge() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -3468,7 +3316,7 @@ async fn enrichment_exactly_two_signals_is_sufficient() {
 // ---------------------------------------------------------------------------
 // Resource edge wiring — boundary tests
 //
-// MOCK → run_web (the organ) → OUTPUT
+// MOCK → scrape_web_sources → OUTPUT
 // Validates confidence filtering, role wiring, and multiple resources.
 // ---------------------------------------------------------------------------
 
@@ -3506,18 +3354,15 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/low-conf");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -3577,18 +3422,15 @@ async fn resource_roles_wire_to_correct_edge_types() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/multi-role");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -3645,18 +3487,15 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://example.com/multi-res");
     let sources: Vec<&SourceNode> = vec![&source];
-    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -3668,7 +3507,7 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
 // ---------------------------------------------------------------------------
 // Semantic dedup via embedding cache — boundary tests
 //
-// MOCK → run_web (the organ) → OUTPUT
+// MOCK → scrape_web_sources → OUTPUT
 // Tests that the in-memory EmbeddingCache catches cross-source duplicates
 // using vector similarity when titles differ.
 // ---------------------------------------------------------------------------
@@ -3738,19 +3577,16 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
 
     let store = Arc::new(MockSignalReader::new());
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder.clone(),
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source_a = page_source("https://source-a.org/page");
     let source_b = page_source("https://source-b.org/page");
     let sources: Vec<&SourceNode> = vec![&source_a, &source_b];
-    let mut ctx = RunContext::from_sources(&[source_a.clone(), source_b.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source_a.clone(), source_b.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -3826,19 +3662,16 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
 
     let store = Arc::new(MockSignalReader::new());
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder.clone(),
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source_a = page_source("https://alpha.org/page");
     let source_b = page_source("https://beta.org/page");
     let sources: Vec<&SourceNode> = vec![&source_a, &source_b];
-    let mut ctx = RunContext::from_sources(&[source_a.clone(), source_b.clone()]);
+    let mut ctx = PipelineState::from_sources(&[source_a.clone(), source_b.clone()]);
     let mut log = run_log();
 
     let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &log).await;
@@ -3905,16 +3738,13 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
-    let mut ctx = RunContext::from_sources(&[]);
+    let mut ctx = PipelineState::from_sources(&[]);
     let mut log = run_log();
 
     let topics = vec!["legal clinic".to_string()];
@@ -3996,18 +3826,15 @@ async fn resolve_web_urls_collects_search_result_urls() {
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = web_query_source(query);
     let sources: Vec<&_> = vec![&source];
-    let ctx = RunContext::from_sources(&[source.clone()]);
+    let ctx = PipelineState::from_sources(&[source.clone()]);
     let log = run_log();
 
     let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, &log).await;
@@ -4028,18 +3855,15 @@ async fn resolve_web_urls_records_api_errors() {
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = web_query_source("failing query");
     let sources: Vec<&_> = vec![&source];
-    let ctx = RunContext::from_sources(&[source.clone()]);
+    let ctx = PipelineState::from_sources(&[source.clone()]);
     let log = run_log();
 
     let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, &log).await;
@@ -4058,18 +3882,15 @@ async fn resolve_web_urls_includes_page_source_urls() {
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source("https://localorg.org/events");
     let sources: Vec<&_> = vec![&source];
-    let ctx = RunContext::from_sources(&[source.clone()]);
+    let ctx = PipelineState::from_sources(&[source.clone()]);
     let log = run_log();
 
     let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, &log).await;
@@ -4106,19 +3927,16 @@ async fn fetch_and_extract_produces_signals_and_stats() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
     let source = page_source(url);
     let source_keys: std::collections::HashMap<String, Uuid> =
         vec![(source.canonical_key.clone(), source.id)].into_iter().collect();
-    let ctx = RunContext::from_sources(&[source.clone()]);
+    let ctx = PipelineState::from_sources(&[source.clone()]);
     let log = run_log();
     let urls = vec![url.to_string()];
 
@@ -4144,16 +3962,13 @@ async fn fetch_and_extract_with_empty_urls_returns_empty() {
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
-    let ctx = RunContext::default();
+    let ctx = PipelineState::default();
     let log = run_log();
     let urls: Vec<String> = vec![];
     let source_keys = std::collections::HashMap::new();
@@ -4180,16 +3995,13 @@ async fn fetch_and_extract_counts_failed_urls() {
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
-    let phase = ScrapePhase::new(
+    let phase = Scraper::new(
         store.clone(),
         Arc::new(extractor),
-        embedder,
         Arc::new(fetcher),
-        mpls_region(),
-        "test-run".to_string(),
     );
 
-    let ctx = RunContext::default();
+    let ctx = PipelineState::default();
     let log = run_log();
     let urls = vec!["https://unreachable.org".to_string()];
     let source_keys = std::collections::HashMap::new();

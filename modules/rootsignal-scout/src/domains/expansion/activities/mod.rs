@@ -13,7 +13,7 @@ use crate::domains::discovery::activities::source_finder::SourceFinder;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::run_log::RunLogger;
 use self::expansion::{Expansion, ExpansionOutput};
-use crate::domains::scrape::activities::scrape_phase::{ScrapeOutput, ScrapePhase};
+use crate::domains::scrape::activities::{register_sources_events, Scraper, ScrapeOutput};
 use crate::domains::scheduling::activities::budget::BudgetTracker;
 
 /// Output from the full expansion + end-of-run discovery activity.
@@ -31,7 +31,7 @@ pub struct ExpansionActivityOutput {
 /// Pure: reads from `state`, returns accumulated output.
 pub async fn expand_and_discover(
     expansion: &Expansion<'_>,
-    phase: Option<&ScrapePhase>,
+    phase: Option<&Scraper>,
     state: &PipelineState,
     graph: &GraphReader,
     region_name: &str,
@@ -48,7 +48,7 @@ pub async fn expand_and_discover(
     let mut collected_events = Events::new();
     collected_events.extend(expansion_events);
     if !expansion_output.sources.is_empty() {
-        collected_events.extend(ScrapePhase::register_sources_events(
+        collected_events.extend(register_sources_events(
             expansion_output.sources.clone(),
             "signal_expansion",
         ));
@@ -66,7 +66,7 @@ pub async fn expand_and_discover(
     let (end_stats, end_social_topics, end_sources, finder_events) = end_discoverer.run().await;
     collected_events.extend(finder_events);
     if !end_sources.is_empty() {
-        collected_events.extend(ScrapePhase::register_sources_events(
+        collected_events.extend(register_sources_events(
             end_sources,
             "source_finder",
         ));

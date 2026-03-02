@@ -1,4 +1,4 @@
-// Trait abstractions for ScrapePhase dependencies.
+// Trait abstractions for Scraper dependencies.
 //
 // ContentFetcher replaces Arc<Archive> — all content fetching behind one trait.
 // SignalReader — read-only graph queries (dedup, actors, sources) plus infra ops.

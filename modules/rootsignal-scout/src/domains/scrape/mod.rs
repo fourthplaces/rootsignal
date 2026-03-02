@@ -25,7 +25,8 @@ use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::build_run_logger;
-use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
+use crate::domains::scrape::activities::Scraper;
+use crate::domains::scrape::activities::StatsDelta;
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
 fn is_sources_scheduled(e: &LifecycleEvent) -> bool {
@@ -83,13 +84,10 @@ pub mod handlers {
         info!("=== Phase A: Find Problems ===");
         let deps = ctx.deps();
 
-        let phase = ScrapePhase::new(
+        let phase = Scraper::new(
             deps.store.clone(),
             deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.embedder.clone(),
             deps.fetcher.as_ref().expect("fetcher set").clone(),
-            deps.region.as_ref().expect("region set").clone(),
-            deps.run_id.clone(),
         );
 
         let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
@@ -163,13 +161,10 @@ pub mod handlers {
         info!(?role, url_count = urls.len(), "Fetch+extract for web scrape role");
 
         let deps = ctx.deps();
-        let phase = ScrapePhase::new(
+        let phase = Scraper::new(
             deps.store.clone(),
             deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.embedder.clone(),
             deps.fetcher.as_ref().expect("fetcher set").clone(),
-            deps.region.as_ref().expect("region set").clone(),
-            deps.run_id.clone(),
         );
 
         let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
@@ -191,7 +186,7 @@ pub mod handlers {
             source_signal_counts: fetch_result.source_signal_counts,
             collected_links: fetch_result.collected_links,
             expansion_queries: fetch_result.expansion_queries,
-            stats_delta: crate::domains::scrape::activities::scrape_phase::StatsDelta::default(),
+            stats_delta: StatsDelta::default(),
         });
         all_events.extend(fetch_result.events);
         all_events.push(ScrapeEvent::ScrapeRoleCompleted {
@@ -220,13 +215,10 @@ pub mod handlers {
         info!(?role, "Fetch social sources for scrape role");
 
         let deps = ctx.deps();
-        let phase = ScrapePhase::new(
+        let phase = Scraper::new(
             deps.store.clone(),
             deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.embedder.clone(),
             deps.fetcher.as_ref().expect("fetcher set").clone(),
-            deps.region.as_ref().expect("region set").clone(),
-            deps.run_id.clone(),
         );
 
         let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
@@ -314,13 +306,10 @@ pub mod handlers {
         info!("Fetch topics for topic discovery");
 
         let deps = ctx.deps();
-        let phase = ScrapePhase::new(
+        let phase = Scraper::new(
             deps.store.clone(),
             deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.embedder.clone(),
             deps.fetcher.as_ref().expect("fetcher set").clone(),
-            deps.region.as_ref().expect("region set").clone(),
-            deps.run_id.clone(),
         );
 
         let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
@@ -424,13 +413,10 @@ pub mod handlers {
         };
         let graph = GraphReader::new(graph_client.clone());
 
-        let phase = ScrapePhase::new(
+        let phase = Scraper::new(
             deps.store.clone(),
             deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.embedder.clone(),
             deps.fetcher.as_ref().expect("fetcher set").clone(),
-            region.clone(),
-            deps.run_id.clone(),
         );
 
         let run_log = build_run_logger(&deps.run_id, &region.name, deps.pg_pool.as_ref()).await;

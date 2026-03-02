@@ -8,7 +8,7 @@ use tracing::info;
 use seesaw_core::Events;
 use crate::domains::scheduling::activities::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
-use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
+use crate::domains::scrape::activities::register_sources_events;
 use rootsignal_graph::GraphReader;
 
 /// Output from source expansion.
@@ -44,7 +44,7 @@ pub async fn discover_expansion_sources(
     let mut scout_events = Events::new();
     scout_events.extend(finder_events);
     if !sources.is_empty() {
-        scout_events.extend(ScrapePhase::register_sources_events(
+        scout_events.extend(register_sources_events(
             sources,
             "source_finder",
         ));

@@ -13,7 +13,7 @@ use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
+use crate::domains::scrape::activities::Scraper;
 use crate::infra::run_log::RunLogger;
 
 fn is_metrics_completed(e: &LifecycleEvent) -> bool {
@@ -60,13 +60,10 @@ pub mod handlers {
         };
 
         let expansion = Expansion::new(&graph, &*deps.embedder, &region.name);
-        let phase = ScrapePhase::new(
+        let phase = Scraper::new(
             deps.store.clone(),
             deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.embedder.clone(),
             deps.fetcher.as_ref().expect("fetcher set").clone(),
-            region.clone(),
-            deps.run_id.clone(),
         );
 
         let (_, state) = ctx.singleton::<PipelineState>();

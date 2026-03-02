@@ -307,7 +307,7 @@ impl PipelineState {
     // -----------------------------------------------------------------
 
     /// Apply accumulated scrape output to pipeline state.
-    pub fn apply_scrape_output(&mut self, output: crate::domains::scrape::activities::scrape_phase::ScrapeOutput) {
+    pub fn apply_scrape_output(&mut self, output: crate::domains::scrape::activities::ScrapeOutput) {
         self.url_to_canonical_key.extend(output.url_mappings);
         for (k, v) in output.source_signal_counts {
             *self.source_signal_counts.entry(k).or_default() += v;

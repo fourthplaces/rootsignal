@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::aggregate::ScheduledData;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
-use crate::domains::scrape::activities::scrape_phase::StatsDelta;
+use crate::domains::scrape::activities::StatsDelta;
 use rootsignal_common::types::ActorContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

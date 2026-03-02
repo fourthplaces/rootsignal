@@ -202,7 +202,7 @@ fn extract_handle_from_path(url: &str, after: &str) -> Option<String> {
     Some(handle)
 }
 
-/// Extract social handles from a list of page links (used by `run_social`).
+/// Extract social handles from a list of page links.
 pub fn extract_social_handles_from_links(links: &[String]) -> Vec<(SocialPlatform, String)> {
     let mut results = Vec::new();
     for link in links {

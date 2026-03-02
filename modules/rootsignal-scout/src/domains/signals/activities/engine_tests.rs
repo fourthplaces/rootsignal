@@ -311,7 +311,7 @@ async fn link_promotion_promotes_links_on_phase_completed() {
 
     // Seed collected links via PipelineEvent (simulates links found during scraping)
     use crate::core::pipeline_events::PipelineEvent;
-    use crate::domains::scrape::activities::scrape_phase::StatsDelta;
+    use crate::domains::scrape::activities::StatsDelta;
 
     engine
         .emit(PipelineEvent::ScrapeResultAccumulated {

@@ -1,6 +1,6 @@
 //! Batch LLM domain filter — evaluates whether scraped domains are likely
 //! to contain community signals for a target region. One Haiku call per
-//! `run_web()` invocation, with Neo4j-backed caching of verdicts.
+//! scrape invocation, with Neo4j-backed caching of verdicts.
 //!
 //! Follows the signal_lint.rs pattern (batch items, per-item verdict) and
 //! the universe_check.rs pattern (structured output, fail-open on error).
