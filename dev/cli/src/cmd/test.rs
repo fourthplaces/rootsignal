@@ -3,7 +3,6 @@
 use anyhow::Result;
 use clap::Subcommand;
 use devkit_core::AppContext;
-use dialoguer::Select;
 use dialoguer::{Input, Select};
 
 #[derive(Subcommand)]
