@@ -39,7 +39,7 @@ impl GraphReader {
         )
         .param("url", url);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let exists: bool = row.get("exists").unwrap_or(false);
             Ok(exists)
@@ -65,10 +65,10 @@ impl GraphReader {
 
         for nt in &[
             NodeType::Gathering,
-            NodeType::Aid,
-            NodeType::Need,
-            NodeType::Notice,
-            NodeType::Tension,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
         ] {
             if let Some(m) = self
                 .vector_search(
@@ -97,12 +97,11 @@ impl GraphReader {
     ) -> Result<Option<DuplicateMatch>, neo4rs::Error> {
         let index_name = match node_type {
             NodeType::Gathering => "gathering_embedding",
-            NodeType::Aid => "aid_embedding",
-            NodeType::Need => "need_embedding",
-            NodeType::Notice => "notice_embedding",
-            NodeType::Tension => "tension_embedding",
+            NodeType::Resource => "aid_embedding",
+            NodeType::HelpRequest => "need_embedding",
+            NodeType::Announcement => "notice_embedding",
+            NodeType::Concern => "concern_embedding",
             NodeType::Condition => "condition_embedding",
-            NodeType::Incident => "incident_embedding",
             NodeType::Citation => return Ok(None),
         };
 
@@ -124,7 +123,7 @@ impl GraphReader {
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let similarity: f64 = row.get("similarity").unwrap_or(0.0);
@@ -158,7 +157,7 @@ impl GraphReader {
         .param("hash", content_hash)
         .param("url", source_url);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         Ok(stream.next().await?.is_some())
     }
 
@@ -170,14 +169,14 @@ impl GraphReader {
     ) -> Result<Vec<String>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+             WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
                AND n.source_url = $url
              RETURN n.title AS title",
         )
         .param("url", source_url);
 
         let mut titles = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Ok(title) = row.get::<String>("title") {
                 titles.push(title);
@@ -201,15 +200,15 @@ impl GraphReader {
         // Query each label once with all titles for that type
         for nt in &[
             NodeType::Gathering,
-            NodeType::Aid,
-            NodeType::Need,
-            NodeType::Notice,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
         ] {
             let label = match nt {
                 NodeType::Gathering => "Gathering",
-                NodeType::Aid => "Aid",
-                NodeType::Need => "Need",
-                NodeType::Notice => "Notice",
+                NodeType::Resource => "Resource",
+                NodeType::HelpRequest => "HelpRequest",
+                NodeType::Announcement => "Announcement",
                 _ => continue,
             };
 
@@ -230,7 +229,7 @@ impl GraphReader {
             ))
             .param("titles", titles_for_type);
 
-            let mut stream = self.client().graph.execute(q).await?;
+            let mut stream = self.client().execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let title: String = row.get("title").unwrap_or_default();
                 let id_str: String = row.get("id").unwrap_or_default();
@@ -253,12 +252,11 @@ impl GraphReader {
     ) -> Result<u32, neo4rs::Error> {
         let label = match node_type {
             NodeType::Gathering => "Gathering",
-            NodeType::Aid => "Aid",
-            NodeType::Need => "Need",
-            NodeType::Notice => "Notice",
-            NodeType::Tension => "Tension",
+            NodeType::Resource => "Resource",
+            NodeType::HelpRequest => "HelpRequest",
+            NodeType::Announcement => "Announcement",
+            NodeType::Concern => "Concern",
             NodeType::Condition => "Condition",
-            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(1),
         };
 
@@ -269,7 +267,7 @@ impl GraphReader {
         ))
         .param("id", node_id.to_string());
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let evidence_urls: Vec<String> = row.get("evidence_urls").unwrap_or_default();
 
@@ -296,12 +294,11 @@ impl GraphReader {
     ) -> Result<u32, neo4rs::Error> {
         let label = match node_type {
             NodeType::Gathering => "Gathering",
-            NodeType::Aid => "Aid",
-            NodeType::Need => "Need",
-            NodeType::Notice => "Notice",
-            NodeType::Tension => "Tension",
+            NodeType::Resource => "Resource",
+            NodeType::HelpRequest => "HelpRequest",
+            NodeType::Announcement => "Announcement",
+            NodeType::Concern => "Concern",
             NodeType::Condition => "Condition",
-            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(1),
         };
 
@@ -313,7 +310,7 @@ impl GraphReader {
         ))
         .param("id", node_id.to_string());
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let self_url: String = row.get("self_url").unwrap_or_default();
             let evidence: Vec<neo4rs::BoltMap> = row.get("evidence").unwrap_or_default();
@@ -352,7 +349,7 @@ impl GraphReader {
         )
         .param("context", context);
 
-        let mut result = self.client().graph.execute(q).await?;
+        let mut result = self.client().execute(q).await?;
         if let Some(row) = result.next().await? {
             let running: bool = row.get("running").unwrap_or(false);
             return Ok(running);
@@ -369,7 +366,7 @@ impl GraphReader {
              RETURN count(s) AS due"
         );
 
-        let mut result = self.client().graph.execute(q).await?;
+        let mut result = self.client().execute(q).await?;
         if let Some(row) = result.next().await? {
             let due: i64 = row.get("due").unwrap_or(0);
             return Ok(due as u32);
@@ -396,7 +393,7 @@ impl GraphReader {
         )
         .param("slugs", slugs.to_vec());
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let slug: String = row.get("slug").unwrap_or_default();
             let due: i64 = row.get("due").unwrap_or(0);
@@ -414,7 +411,7 @@ impl GraphReader {
              RETURN min(datetime(s.last_scraped) + duration('PT' + toString(coalesce(s.cadence_hours, 24)) + 'H')) AS next_due"
         );
 
-        let mut result = self.client().graph.execute(q).await?;
+        let mut result = self.client().execute(q).await?;
         if let Some(row) = result.next().await? {
             let next_due_str: String = row.get("next_due").unwrap_or_default();
             if !next_due_str.is_empty() {
@@ -443,7 +440,7 @@ impl GraphReader {
         )
         .param("id", id);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(Some(row_to_scout_task(&row)))
         } else {
@@ -485,7 +482,7 @@ impl GraphReader {
         }
 
         let mut tasks = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             tasks.push(row_to_scout_task(&row));
         }
@@ -513,7 +510,7 @@ impl GraphReader {
         );
 
         let mut sources = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Some(source) = row_to_source_node(&row) {
                 sources.push(source);
@@ -570,7 +567,7 @@ impl GraphReader {
         .param("max_lng", max_lng);
 
         let mut sources = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Some(source) = row_to_source_node(&row) {
                 sources.push(source);
@@ -586,13 +583,13 @@ impl GraphReader {
         let q = query(
             "MATCH (s:Source {canonical_key: $key})
              WITH s.url AS url, s.canonical_value AS cv
-             OPTIONAL MATCH (t:Tension)
+             OPTIONAL MATCH (t:Concern)
              WHERE t.source_url = url OR t.source_url CONTAINS cv
              RETURN count(t) AS cnt",
         )
         .param("key", canonical_key);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(row.get::<i64>("cnt").unwrap_or(0) as u32)
         } else {
@@ -615,7 +612,7 @@ impl GraphReader {
         .param("max", max_empty_runs as i64);
 
         let mut ids = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -642,7 +639,7 @@ impl GraphReader {
         );
 
         let mut ids = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -661,7 +658,7 @@ impl GraphReader {
         );
 
         let mut queries = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let query_str: String = row.get("query").unwrap_or_default();
             if !query_str.is_empty() {
@@ -693,7 +690,7 @@ impl GraphReader {
         .param("embedding", embedding.to_vec())
         .param("threshold", threshold);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let ck: String = row.get("canonical_key").unwrap_or_default();
             let score: f64 = row.get("score").unwrap_or(0.0);
@@ -708,20 +705,20 @@ impl GraphReader {
     pub async fn get_tension_response_shape(
         &self,
         limit: u32,
-    ) -> Result<Vec<TensionResponseShape>, neo4rs::Error> {
+    ) -> Result<Vec<ConcernResponseShape>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              WHERE t.confidence >= 0.5
                AND coalesce(t.cause_heat, 0.0) >= 0.1
              WITH t
              ORDER BY coalesce(t.cause_heat, 0.0) DESC
              LIMIT $limit
              OPTIONAL MATCH (r)-[:RESPONDS_TO]->(t)
-             WHERE r:Aid OR r:Gathering OR r:Need
+             WHERE r:Resource OR r:Gathering OR r:HelpRequest
              WITH t,
-                  count(CASE WHEN r:Aid THEN 1 END) AS aid_count,
+                  count(CASE WHEN r:Resource THEN 1 END) AS aid_count,
                   count(CASE WHEN r:Gathering THEN 1 END) AS gathering_count,
-                  count(CASE WHEN r:Need THEN 1 END) AS need_count,
+                  count(CASE WHEN r:HelpRequest THEN 1 END) AS need_count,
                   collect(DISTINCT r.title)[..5] AS sample_titles
              WHERE aid_count + gathering_count + need_count > 0
              RETURN t.title AS title,
@@ -733,7 +730,7 @@ impl GraphReader {
         .param("limit", limit as i64);
 
         let mut shapes = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
             let what_would_help: Option<String> = row.get("what_would_help").ok();
@@ -743,7 +740,7 @@ impl GraphReader {
             let need_count: i64 = row.get("need_count").unwrap_or(0);
             let sample_titles: Vec<String> = row.get("sample_titles").unwrap_or_default();
 
-            shapes.push(TensionResponseShape {
+            shapes.push(ConcernResponseShape {
                 title,
                 what_would_help,
                 cause_heat,
@@ -765,7 +762,7 @@ impl GraphReader {
         )
         .param("url", url);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         Ok(stream.next().await?.is_some())
     }
 
@@ -784,7 +781,7 @@ impl GraphReader {
         )
         .param("urls", urls.to_vec());
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         let mut blocked = HashSet::new();
         while let Some(row) = stream.next().await? {
             if let Ok(url) = row.get::<String>("url") {
@@ -804,7 +801,7 @@ impl GraphReader {
                     count(CASE WHEN s.discovery_method <> 'curated' THEN 1 END) AS discovered",
         );
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(SourceStats {
                 total: row.get::<i64>("total").unwrap_or(0) as u32,
@@ -839,7 +836,7 @@ impl GraphReader {
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         let mut results = Vec::new();
 
         while let Some(row) = stream.next().await? {
@@ -958,7 +955,7 @@ impl GraphReader {
         )
         .param("canonical_key", canonical_key);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -976,7 +973,7 @@ impl GraphReader {
         )
         .param("name", name);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -992,7 +989,7 @@ impl GraphReader {
         limit: u32,
     ) -> Result<Vec<(String, Option<String>)>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              RETURN t.title AS title, t.what_would_help AS help
              ORDER BY t.extracted_at DESC
              LIMIT $limit",
@@ -1000,7 +997,7 @@ impl GraphReader {
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
             let help: String = row.get("help").unwrap_or_default();
@@ -1028,8 +1025,8 @@ impl GraphReader {
              {depth_clause}
              OPTIONAL MATCH (a)-[:ACTED_IN]->(n)
              WITH a,
-                  count(CASE WHEN n:Aid OR n:Gathering THEN 1 END) AS response_signals,
-                  count(CASE WHEN n:Tension THEN 1 END) AS tension_signals
+                  count(CASE WHEN n:Resource OR n:Gathering THEN 1 END) AS response_signals,
+                  count(CASE WHEN n:Concern THEN 1 END) AS tension_signals
              RETURN a.name AS name, a.domains AS domains, a.social_urls AS social_urls,
                     CASE
                       WHEN response_signals > tension_signals THEN 'response'
@@ -1043,7 +1040,7 @@ impl GraphReader {
         }
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let name: String = row.get("name").unwrap_or_default();
             let domains: Vec<String> = row.get("domains").unwrap_or_default();
@@ -1079,7 +1076,7 @@ impl GraphReader {
         .param("max_lng", max_lng);
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let p: neo4rs::Node = match row.get("p") {
                 Ok(n) => n,
@@ -1162,7 +1159,7 @@ impl GraphReader {
     /// Get tensions ordered by: unmet first, then by severity. Includes response coverage.
     pub async fn get_unmet_tensions(&self, limit: u32) -> Result<Vec<UnmetTension>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              WHERE datetime(t.last_confirmed_active) >= datetime() - duration('P30D')
              OPTIONAL MATCH (resp)-[:RESPONDS_TO]->(t)
              WITH t, count(resp) AS response_count
@@ -1181,7 +1178,7 @@ impl GraphReader {
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
             if title.is_empty() {
@@ -1232,7 +1229,7 @@ impl GraphReader {
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             results.push(SituationBrief {
                 headline: row.get("headline").unwrap_or_default(),
@@ -1262,17 +1259,17 @@ impl GraphReader {
 
         for (label, field) in &[
             ("Gathering", "gatherings"),
-            ("Aid", "aids"),
-            ("Need", "needs"),
-            ("Notice", "notices"),
-            ("Tension", "tensions"),
+            ("Resource", "aids"),
+            ("HelpRequest", "needs"),
+            ("Announcement", "notices"),
+            ("Concern", "tensions"),
         ] {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE datetime(n.last_confirmed_active) >= datetime() - duration('P30D')
                  RETURN count(n) AS cnt"
             ));
-            let mut stream = self.client().graph.execute(q).await?;
+            let mut stream = self.client().execute(q).await?;
             if let Some(row) = stream.next().await? {
                 let cnt = row.get::<i64>("cnt").unwrap_or(0) as u32;
                 match *field {
@@ -1307,7 +1304,7 @@ impl GraphReader {
         );
 
         let mut successes = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             successes.push(SourceBrief {
                 canonical_value: row.get("cv").unwrap_or_default(),
@@ -1339,7 +1336,7 @@ impl GraphReader {
         );
 
         let mut failures = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             failures.push(SourceBrief {
                 canonical_value: row.get("cv").unwrap_or_default(),
@@ -1370,7 +1367,7 @@ impl GraphReader {
         max_lng: f64,
     ) -> Result<Vec<(Uuid, Vec<f64>)>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              WHERE datetime(t.last_confirmed_active) >= datetime() - duration('P30D')
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
@@ -1382,7 +1379,7 @@ impl GraphReader {
         .param("max_lng", max_lng);
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -1399,7 +1396,7 @@ impl GraphReader {
     /// Searches across aid, gathering, and need embedding indexes.
     pub async fn find_response_candidates(
         &self,
-        tension_embedding: &[f64],
+        concern_embedding: &[f64],
         min_lat: f64,
         max_lat: f64,
         min_lng: f64,
@@ -1419,13 +1416,13 @@ impl GraphReader {
                  LIMIT 5",
                 index
             ))
-            .param("embedding", tension_embedding.to_vec())
+            .param("embedding", concern_embedding.to_vec())
             .param("min_lat", min_lat)
             .param("max_lat", max_lat)
             .param("min_lng", min_lng)
             .param("max_lng", max_lng);
 
-            let mut stream = self.client().graph.execute(q).await?;
+            let mut stream = self.client().execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let id_str: String = row.get("id").unwrap_or_default();
                 let similarity: f64 = row.get("similarity").unwrap_or(0.0);
@@ -1445,14 +1442,14 @@ impl GraphReader {
         &self,
         id: Uuid,
     ) -> Result<Option<(String, String)>, neo4rs::Error> {
-        for label in &["Tension", "Need", "Aid", "Gathering"] {
+        for label in &["Concern", "HelpRequest", "Resource", "Gathering"] {
             let q = query(&format!(
                 "MATCH (n:{label} {{id: $id}})
                  RETURN n.title AS title, n.summary AS summary"
             ))
             .param("id", id.to_string());
 
-            let mut stream = self.client().graph.execute(q).await?;
+            let mut stream = self.client().execute(q).await?;
             if let Some(row) = stream.next().await? {
                 return Ok(Some((
                     row.get("title").unwrap_or_default(),
@@ -1479,7 +1476,7 @@ impl GraphReader {
 
         // Priority 1: New tensions (last 24h, < 2 evidence nodes, not investigated in 7d)
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              WHERE datetime(t.extracted_at) > datetime() - duration('P1D')
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
@@ -1500,7 +1497,7 @@ impl GraphReader {
 
         // Priority 2: High-urgency needs (urgency high/critical, < 2 evidence nodes)
         let q = query(
-            "MATCH (a:Need)
+            "MATCH (a:HelpRequest)
              WHERE a.urgency IN ['high', 'critical']
                AND a.lat >= $min_lat AND a.lat <= $max_lat
                AND a.lng >= $min_lng AND a.lng <= $max_lng
@@ -1522,17 +1519,17 @@ impl GraphReader {
         // Priority 3: Thin-story signals (from emerging situations, < 2 citation nodes)
         let q = query(
             "MATCH (n)-[:PART_OF]->(s:Situation {arc: 'emerging'})
-             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+             WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
                AND n.lat >= $min_lat AND n.lat <= $max_lat
                AND n.lng >= $min_lng AND n.lng <= $max_lng
                AND (n.investigated_at IS NULL OR datetime(n.investigated_at) < datetime() - duration('P7D'))
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              WITH n, count(ev) AS ev_count,
                   CASE WHEN n:Gathering THEN 'Gathering'
-                       WHEN n:Aid THEN 'Aid'
-                       WHEN n:Need THEN 'Need'
-                       WHEN n:Notice THEN 'Notice'
-                       WHEN n:Tension THEN 'Tension'
+                       WHEN n:Resource THEN 'Aid'
+                       WHEN n:HelpRequest THEN 'Need'
+                       WHEN n:Announcement THEN 'Notice'
+                       WHEN n:Concern THEN 'Concern'
                   END AS label
              WHERE ev_count < 2
              RETURN n.id AS id, label, n.title AS title, n.summary AS summary,
@@ -1556,7 +1553,7 @@ impl GraphReader {
         seen_domains: &mut std::collections::HashSet<String>,
         q: neo4rs::Query,
     ) -> Result<(), neo4rs::Error> {
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let id = match Uuid::parse_str(&id_str) {
@@ -1567,10 +1564,10 @@ impl GraphReader {
             let label: String = row.get("label").unwrap_or_default();
             let node_type = match label.as_str() {
                 "Gathering" => NodeType::Gathering,
-                "Aid" => NodeType::Aid,
-                "Need" => NodeType::Need,
-                "Notice" => NodeType::Notice,
-                "Tension" => NodeType::Tension,
+                "Resource" => NodeType::Resource,
+                "HelpRequest" => NodeType::HelpRequest,
+                "Announcement" => NodeType::Announcement,
+                "Concern" => NodeType::Concern,
                 _ => continue,
             };
 
@@ -1610,7 +1607,7 @@ impl GraphReader {
         max_lng: f64,
     ) -> Result<Vec<(String, String)>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              WHERE t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
              RETURN t.title AS title, t.summary AS summary
@@ -1623,7 +1620,7 @@ impl GraphReader {
         .param("max_lng", max_lng);
 
         let mut tensions = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let title: String = row.get("title").unwrap_or_default();
             let summary: String = row.get("summary").unwrap_or_default();
@@ -1643,9 +1640,9 @@ impl GraphReader {
         max_lat: f64,
         min_lng: f64,
         max_lng: f64,
-    ) -> Result<Vec<TensionHub>, neo4rs::Error> {
+    ) -> Result<Vec<ConcernHub>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
+            "MATCH (t:Concern)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
              WHERE NOT (t)-[:PART_OF]->(:Situation)
                AND sig.lat >= $min_lat AND sig.lat <= $max_lat
                AND sig.lng >= $min_lng AND sig.lng <= $max_lng
@@ -1672,7 +1669,7 @@ impl GraphReader {
         .param("max_lng", max_lng);
 
         let mut hubs = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("tension_id").unwrap_or_default();
             let tension_id = match Uuid::parse_str(&id_str) {
@@ -1695,7 +1692,7 @@ impl GraphReader {
                     Ok(id) => id,
                     Err(_) => continue,
                 };
-                respondents.push(TensionRespondent {
+                respondents.push(ConcernRespondent {
                     signal_id: sig_id,
                     source_url: map.get::<String>("source_url").unwrap_or_default(),
                     match_strength: map.get::<f64>("strength").unwrap_or(0.0),
@@ -1705,7 +1702,7 @@ impl GraphReader {
                 });
             }
 
-            hubs.push(TensionHub {
+            hubs.push(ConcernHub {
                 tension_id,
                 title,
                 summary,
@@ -1723,11 +1720,11 @@ impl GraphReader {
     pub async fn count_abandoned_signals(&self) -> Result<u32, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-             WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
+             WHERE (n:Resource OR n:Gathering OR n:HelpRequest OR n:Announcement)
                AND n.curiosity_investigated = 'abandoned'
              RETURN count(n) AS cnt",
         );
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let cnt: i64 = row.get("cnt").unwrap_or(0);
             return Ok(cnt as u32);
@@ -1743,12 +1740,11 @@ impl GraphReader {
     ) -> Result<f32, neo4rs::Error> {
         let label = match node_type {
             NodeType::Gathering => "Gathering",
-            NodeType::Aid => "Aid",
-            NodeType::Need => "Need",
-            NodeType::Notice => "Notice",
-            NodeType::Tension => "Tension",
+            NodeType::Resource => "Resource",
+            NodeType::HelpRequest => "HelpRequest",
+            NodeType::Announcement => "Announcement",
+            NodeType::Concern => "Concern",
             NodeType::Condition => "Condition",
-            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(0.5),
         };
 
@@ -1759,7 +1755,7 @@ impl GraphReader {
         ))
         .param("id", signal_id.to_string());
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let conf: f64 = row.get("confidence").unwrap_or(0.5);
             return Ok(conf as f32);
@@ -1775,12 +1771,11 @@ impl GraphReader {
     ) -> Result<Vec<EvidenceSummary>, neo4rs::Error> {
         let label = match node_type {
             NodeType::Gathering => "Gathering",
-            NodeType::Aid => "Aid",
-            NodeType::Need => "Need",
-            NodeType::Notice => "Notice",
-            NodeType::Tension => "Tension",
+            NodeType::Resource => "Resource",
+            NodeType::HelpRequest => "HelpRequest",
+            NodeType::Announcement => "Announcement",
+            NodeType::Concern => "Concern",
             NodeType::Condition => "Condition",
-            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(Vec::new()),
         };
 
@@ -1792,7 +1787,7 @@ impl GraphReader {
         .param("id", signal_id.to_string());
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let relevance: String = row.get("relevance").unwrap_or_default();
             let confidence: f64 = row.get("confidence").unwrap_or(0.0);
@@ -1818,7 +1813,7 @@ impl GraphReader {
 
         let mut map: std::collections::HashMap<String, (u32, u32, f64)> =
             std::collections::HashMap::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let gc: String = row.get("gc").unwrap_or_default();
             let sp: i64 = row.get::<i64>("sp").unwrap_or(0);
@@ -1886,7 +1881,7 @@ impl GraphReader {
 
         let mut type_map: std::collections::HashMap<String, (u32, u32, Vec<String>)> =
             std::collections::HashMap::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let st: String = row.get("st").unwrap_or_default();
             let sp: i64 = row.get::<i64>("sp").unwrap_or(0);
@@ -1909,13 +1904,13 @@ impl GraphReader {
                 for url in urls {
                     let q = query(
                         "MATCH (n)
-                         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                         WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
                            AND n.source_url = $url
                          RETURN count(n) AS cnt",
                     )
                     .param("url", url.as_str());
 
-                    let mut stream = self.client().graph.execute(q).await?;
+                    let mut stream = self.client().execute(q).await?;
                     if let Some(row) = stream.next().await? {
                         survived += row.get::<i64>("cnt").unwrap_or(0) as u32;
                     }
@@ -1928,13 +1923,13 @@ impl GraphReader {
                 for url in urls {
                     let q = query(
                         "MATCH (n)-[:SOURCED_FROM]->(ev:Citation {relevance: 'CONTRADICTING'})
-                         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                         WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
                            AND n.source_url = $url
                          RETURN count(DISTINCT n) AS cnt",
                     )
                     .param("url", url.as_str());
 
-                    let mut stream = self.client().graph.execute(q).await?;
+                    let mut stream = self.client().execute(q).await?;
                     if let Some(row) = stream.next().await? {
                         contradicted += row.get::<i64>("cnt").unwrap_or(0) as u32;
                     }
@@ -1970,7 +1965,7 @@ impl GraphReader {
         )
         .param("story_id", story_id.to_string());
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let cnt: i64 = row.get("cnt").unwrap_or(0);
             return Ok(Some(cnt as u32));
@@ -1994,7 +1989,7 @@ impl GraphReader {
         )
         .param("story_id", story_id.to_string());
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let gap: i64 = row.get("gap").unwrap_or(0);
             return Ok(Some(gap as i32));
@@ -2018,7 +2013,7 @@ impl GraphReader {
         max_lng: f64,
     ) -> Result<Vec<ResponseFinderTarget>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              WHERE t.confidence >= 0.5
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
@@ -2041,7 +2036,7 @@ impl GraphReader {
         .param("max_lng", max_lng);
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let Ok(tension_id) = Uuid::parse_str(&id_str) else {
@@ -2084,15 +2079,15 @@ impl GraphReader {
         tension_id: Uuid,
     ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
         let q = query(
-            "MATCH (r)-[:RESPONDS_TO]->(t:Tension {id: $id})
-             WHERE r:Aid OR r:Gathering OR r:Need
+            "MATCH (r)-[:RESPONDS_TO]->(t:Concern {id: $id})
+             WHERE r:Resource OR r:Gathering OR r:HelpRequest
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
              LIMIT 5",
         )
         .param("id", tension_id.to_string());
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             results.push(ResponseHeuristic {
                 title: row.get("title").unwrap_or_default(),
@@ -2115,7 +2110,7 @@ impl GraphReader {
         max_lng: f64,
     ) -> Result<Vec<GatheringFinderTarget>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              WHERE t.confidence >= 0.5
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
@@ -2143,7 +2138,7 @@ impl GraphReader {
         .param("max_lng", max_lng);
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let Ok(tension_id) = Uuid::parse_str(&id_str) else {
@@ -2188,8 +2183,8 @@ impl GraphReader {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
         let q = query(
-            "MATCH (r)-[rel:DRAWN_TO]->(t:Tension {id: $id})
-             WHERE (r:Aid OR r:Gathering OR r:Need)
+            "MATCH (r)-[rel:DRAWN_TO]->(t:Concern {id: $id})
+             WHERE (r:Resource OR r:Gathering OR r:HelpRequest)
                AND r.lat >= $lat_min AND r.lat <= $lat_max
                AND r.lng >= $lng_min AND r.lng <= $lng_max
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
@@ -2202,7 +2197,7 @@ impl GraphReader {
         .param("lng_max", center_lng + lng_delta);
 
         let mut results = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             results.push(ResponseHeuristic {
                 title: row.get("title").unwrap_or_default(),
@@ -2221,7 +2216,7 @@ impl GraphReader {
         )
         .param("slug", slug);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("resource_id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -2248,7 +2243,7 @@ impl GraphReader {
         let emb_f64 = embedding_to_f64(embedding);
         let mut best: Option<(Uuid, f64)> = None;
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("rid").unwrap_or_default();
             let stored: Vec<f64> = row.get("emb").unwrap_or_default();
@@ -2269,13 +2264,13 @@ impl GraphReader {
 
     /// Verify that all signal UUIDs actually exist in the graph. Returns the set of missing IDs.
     pub async fn verify_signal_ids(&self, signal_ids: &[Uuid]) -> Result<Vec<Uuid>, neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
         let mut missing = Vec::new();
 
         for id in signal_ids {
             let q = query(
                 "MATCH (n) WHERE n.id = $id
-                   AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                   AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
                  RETURN n.id AS id",
             )
             .param("id", id.to_string());
@@ -2294,9 +2289,9 @@ impl GraphReader {
         &self,
         scout_run_id: &str,
     ) -> Result<Vec<(Uuid, String)>, neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
-        let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
         let mut results = Vec::new();
 
         for label in &labels {
@@ -2333,7 +2328,7 @@ impl GraphReader {
         )
         .param("id", actor_id.to_string());
 
-        let g = self.client().graph.clone();
+        let g = self.client().clone();
         let mut stream = g.execute(q).await?;
         let mut results = Vec::new();
 
@@ -2372,12 +2367,12 @@ impl GraphReader {
         max_lng: f64,
     ) -> Result<Vec<NoticeInferenceRow>, neo4rs::Error> {
         let cypher = r#"
-            MATCH (n:Notice)
+            MATCH (n:Announcement)
             WHERE n.lat >= $min_lat AND n.lat <= $max_lat
               AND n.lng >= $min_lng AND n.lng <= $max_lng
               AND n.review_status IN ['staged', 'accepted']
             OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
-            WITH n, s, EXISTS((n)-[:EVIDENCE_OF]->(:Tension)) AS has_evidence
+            WITH n, s, EXISTS((n)-[:EVIDENCE_OF]->(:Concern)) AS has_evidence
             RETURN n.id AS id, n.severity AS severity,
                    n.corroboration_count AS corr, n.source_diversity AS div,
                    has_evidence,
@@ -2387,7 +2382,6 @@ impl GraphReader {
 
         let mut result = self
             .client
-            .graph
             .execute(
                 query(cypher)
                     .param("min_lat", min_lat)
@@ -2458,12 +2452,12 @@ impl GraphReader {
              UNWIND signals AS sig
              WITH s, sig
              WHERE (sig.curiosity_investigated IS NULL OR sig.curiosity_investigated = 'failed')
-               AND NOT sig:Tension
+               AND NOT sig:Concern
              WITH s, collect(sig.id) AS sig_ids
              WHERE size(sig_ids) > 0
              RETURN s.id AS situation_id, sig_ids",
         );
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         let mut results = Vec::new();
         while let Some(row) = stream.next().await? {
             let sit_id_str: String = row.get("situation_id").unwrap_or_default();
@@ -2491,8 +2485,8 @@ impl GraphReader {
         &self,
     ) -> Result<(Vec<String>, Vec<Uuid>), neo4rs::Error> {
         let q = query(
-            "MATCH (s)-[:RESPONDS_TO|DRAWN_TO]->(t:Tension)
-             WHERE (s:Aid OR s:Gathering)
+            "MATCH (s)-[:RESPONDS_TO|DRAWN_TO]->(t:Concern)
+             WHERE (s:Resource OR s:Gathering)
                AND s.implied_queries IS NOT NULL
                AND size(s.implied_queries) > 0
                AND coalesce(t.cause_heat, 0.0) >= 0.1
@@ -2502,7 +2496,7 @@ impl GraphReader {
 
         let mut all_queries = Vec::new();
         let mut signal_ids = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let queries: Vec<String> = row.get("queries").unwrap_or_default();
             all_queries.extend(queries);
@@ -2524,21 +2518,21 @@ impl GraphReader {
         max_lat: f64,
         min_lng: f64,
         max_lng: f64,
-    ) -> Result<Vec<TensionLinkerTarget>, neo4rs::Error> {
+    ) -> Result<Vec<ConcernLinkerTarget>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-             WHERE (n:Aid OR n:Gathering OR n:Need OR n:Notice)
+             WHERE (n:Resource OR n:Gathering OR n:HelpRequest OR n:Announcement)
                AND (n.curiosity_investigated IS NULL OR n.curiosity_investigated = 'failed')
-               AND NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Tension)
+               AND NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Concern)
                AND n.confidence >= 0.5
                AND n.lat >= $min_lat AND n.lat <= $max_lat
                AND n.lng >= $min_lng AND n.lng <= $max_lng
              RETURN n.id AS id, n.title AS title, n.summary AS summary,
                     n.source_url AS source_url,
                     CASE WHEN n:Gathering THEN 'Gathering'
-                         WHEN n:Aid THEN 'Aid'
-                         WHEN n:Need THEN 'Need'
-                         WHEN n:Notice THEN 'Notice'
+                         WHEN n:Resource THEN 'Aid'
+                         WHEN n:HelpRequest THEN 'Need'
+                         WHEN n:Announcement THEN 'Notice'
                     END AS label
              ORDER BY n.extracted_at DESC
              LIMIT $limit",
@@ -2550,14 +2544,14 @@ impl GraphReader {
         .param("max_lng", max_lng);
 
         let mut targets = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let id = match Uuid::parse_str(&id_str) {
                 Ok(id) => id,
                 Err(_) => continue,
             };
-            targets.push(TensionLinkerTarget {
+            targets.push(ConcernLinkerTarget {
                 signal_id: id,
                 title: row.get("title").unwrap_or_default(),
                 summary: row.get("summary").unwrap_or_default(),
@@ -2579,7 +2573,7 @@ impl GraphReader {
         max_lng: f64,
     ) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:Tension)
+            "MATCH (t:Concern)
              WHERE t.embedding IS NOT NULL
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
@@ -2597,7 +2591,7 @@ impl GraphReader {
         }
 
         let mut tensions: Vec<TensionEmbed> = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id: String = row.get("id").unwrap_or_default();
             let embedding: Vec<f64> = row.get("embedding").unwrap_or_default();
@@ -2646,10 +2640,10 @@ impl GraphReader {
         &self,
         scout_run_id: &str,
     ) -> Result<Vec<WeaveSignal>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
         let mut signals = Vec::new();
 
-        let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
         for label in &labels {
             let q = query(&format!(
                 "MATCH (n:{label} {{scout_run_id: $run_id}})
@@ -2696,7 +2690,7 @@ impl GraphReader {
 
     /// Load all situations as weaving candidates.
     pub async fn load_weave_candidates(&self) -> Result<Vec<WeaveCandidate>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
         let mut candidates = Vec::new();
 
         let q = query(
@@ -2734,7 +2728,7 @@ impl GraphReader {
         &self,
         scout_run_id: &str,
     ) -> Result<Vec<uuid::Uuid>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
         let mut situations = Vec::new();
 
         let q = query(
@@ -2760,7 +2754,7 @@ impl GraphReader {
         &self,
         limit: usize,
     ) -> Result<Vec<(uuid::Uuid, String)>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
         let mut dispatches = Vec::new();
 
         let q = query(
@@ -2792,13 +2786,13 @@ impl GraphReader {
         &self,
         signal_ids: &[uuid::Uuid],
     ) -> Result<Vec<uuid::Uuid>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
         let mut missing = Vec::new();
 
         for id in signal_ids {
             let q = query(
                 "MATCH (n) WHERE n.id = $id
-                   AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+                   AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
                  RETURN n.id AS found",
             )
             .param("id", id.to_string());
@@ -2810,6 +2804,75 @@ impl GraphReader {
         }
 
         Ok(missing)
+    }
+
+    /// Batch-load evidence per signal for diversity computation.
+    /// Returns (signal_id, self_url, evidence_pairs) per signal.
+    pub async fn signal_evidence_for_diversity(
+        &self,
+        label: &str,
+    ) -> Result<Vec<(Uuid, String, Vec<(String, String)>)>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(&format!(
+            "MATCH (n:{label})
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+             RETURN n.id AS id, n.source_url AS self_url,
+                    collect({{url: ev.source_url, channel: coalesce(ev.channel_type, 'press')}}) AS evidence"
+        ));
+
+        let mut rows = Vec::new();
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let self_url: String = row.get("self_url").unwrap_or_default();
+            let evidence: Vec<neo4rs::BoltMap> = row.get("evidence").unwrap_or_default();
+
+            let ev_pairs: Vec<(String, String)> = evidence
+                .iter()
+                .filter_map(|ev| {
+                    let url: String = ev.get("url").unwrap_or_default();
+                    if url.is_empty() {
+                        return None;
+                    }
+                    let channel: String = ev
+                        .get::<String>("channel")
+                        .unwrap_or_else(|_| "press".to_string());
+                    Some((url, channel))
+                })
+                .collect();
+
+            rows.push((id, self_url, ev_pairs));
+        }
+
+        Ok(rows)
+    }
+
+    /// Count ACTED_IN edges per actor.
+    pub async fn actor_signal_counts(&self) -> Result<Vec<(Uuid, u32)>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(
+            "MATCH (a:Actor)-[r:ACTED_IN]->()
+             WITH a, count(r) AS cnt
+             RETURN a.id AS id, cnt",
+        );
+
+        let mut results = Vec::new();
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            results.push((id, cnt as u32));
+        }
+
+        Ok(results)
     }
 }
 
@@ -2882,38 +2945,38 @@ impl GraphStore {
              RETURN count(DISTINCT n) AS deleted",
             GATHERING_PAST_GRACE_HOURS, GATHERING_PAST_GRACE_HOURS
         ));
-        if let Some(row) = self.client().graph.execute(q).await?.next().await? {
+        if let Some(row) = self.client().execute(q).await?.next().await? {
             stats.gatherings = row.get::<i64>("deleted").unwrap_or(0) as u64;
         }
 
         // 2. Expired needs
         let q = query(&format!(
-            "MATCH (n:Need)
+            "MATCH (n:HelpRequest)
              WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              DETACH DELETE n, ev
              RETURN count(DISTINCT n) AS deleted",
             NEED_EXPIRE_DAYS
         ));
-        if let Some(row) = self.client().graph.execute(q).await?.next().await? {
+        if let Some(row) = self.client().execute(q).await?.next().await? {
             stats.needs = row.get::<i64>("deleted").unwrap_or(0) as u64;
         }
 
         // 3. Expired notices
         let q = query(&format!(
-            "MATCH (n:Notice)
+            "MATCH (n:Announcement)
              WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              DETACH DELETE n, ev
              RETURN count(DISTINCT n) AS deleted",
             NOTICE_EXPIRE_DAYS
         ));
-        if let Some(row) = self.client().graph.execute(q).await?.next().await? {
+        if let Some(row) = self.client().execute(q).await?.next().await? {
             stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;
         }
 
         // 4. Stale unconfirmed signals (all signals must be re-confirmed within FRESHNESS_MAX_DAYS)
-        for label in &["Aid", "Tension"] {
+        for label in &["Resource", "Concern"] {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
@@ -2923,7 +2986,7 @@ impl GraphStore {
                 label = label,
                 days = FRESHNESS_MAX_DAYS,
             ));
-            if let Some(row) = self.client().graph.execute(q).await?.next().await? {
+            if let Some(row) = self.client().execute(q).await?.next().await? {
                 stats.stale += row.get::<i64>("deleted").unwrap_or(0) as u64;
             }
         }
@@ -2952,7 +3015,7 @@ impl GraphStore {
         )
         .param("url", url);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         let deleted = if let Some(row) = stream.next().await? {
             row.get::<i64>("deleted").unwrap_or(0) as u64
         } else {
@@ -2978,7 +3041,6 @@ impl GraphStore {
     ) -> Result<bool, neo4rs::Error> {
         // Clean up stale running status for this task (>5 min).
         self.client
-            .graph
             .run(
                 query(
                     "MATCH (t:ScoutTask {id: $id}) \
@@ -3001,7 +3063,7 @@ impl GraphStore {
         .param("allowed_from", allowed_from.to_vec())
         .param("new_status", new_status);
 
-        let mut result = self.client().graph.execute(q).await?;
+        let mut result = self.client().execute(q).await?;
         if let Some(row) = result.next().await? {
             let transitioned: bool = row.get("transitioned").unwrap_or(false);
             return Ok(transitioned);
@@ -3018,7 +3080,6 @@ impl GraphStore {
         status: &str,
     ) -> Result<(), neo4rs::Error> {
         self.client
-            .graph
             .run(
                 query(
                     "MATCH (t:ScoutTask {id: $id})
@@ -3034,7 +3095,6 @@ impl GraphStore {
     /// Reset a stuck task's phase status to "idle".
     pub async fn reset_task_phase_status(&self, task_id: &str) -> Result<(), neo4rs::Error> {
         self.client
-            .graph
             .run(query(
                 "MATCH (t:ScoutTask {id: $id}) SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()"
             ).param("id", task_id))
@@ -3052,7 +3112,7 @@ impl GraphStore {
              RETURN count(t) AS cleaned",
         );
 
-        let mut result = self.client().graph.execute(q).await?;
+        let mut result = self.client().execute(q).await?;
         if let Some(row) = result.next().await? {
             let cleaned: i64 = row.get("cleaned").unwrap_or(0);
             return Ok(cleaned as u32);
@@ -3087,7 +3147,7 @@ impl GraphStore {
         .param("phase_status", task.phase_status.as_str())
         .param("created_at", format_datetime(&task.created_at));
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         info!(id = %task.id, context = task.context.as_str(), "ScoutTask upserted");
         Ok(())
     }
@@ -3102,7 +3162,7 @@ impl GraphStore {
         )
         .param("id", id);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let updated: i64 = row.get("updated").unwrap_or(0);
             Ok(updated > 0)
@@ -3119,7 +3179,7 @@ impl GraphStore {
         )
         .param("id", id);
 
-        self.client().graph.run(q).await
+        self.client().run(q).await
     }
 
     /// Claim a scout task by setting its status from pending → running.
@@ -3131,7 +3191,7 @@ impl GraphStore {
         )
         .param("id", id);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let updated: i64 = row.get("updated").unwrap_or(0);
             Ok(updated > 0)
@@ -3159,7 +3219,7 @@ impl GraphStore {
         .param("radius_km", signal.radius_km)
         .param("created_at", format_datetime(&signal.created_at));
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         info!(id = %signal.id, query = signal.query.as_str(), "DemandSignal stored");
         Ok(())
     }
@@ -3178,7 +3238,7 @@ impl GraphStore {
         );
 
         let mut signals: Vec<(String, String, f64, f64, f64)> = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id: String = row.get("id").unwrap_or_default();
             let q_text: String = row.get("query").unwrap_or_default();
@@ -3251,7 +3311,7 @@ impl GraphStore {
                  DELETE d",
             )
             .param("ids", consumed_ids);
-            self.client().graph.run(q).await?;
+            self.client().run(q).await?;
         }
 
         info!(tasks = tasks.len(), "Demand aggregation complete");
@@ -3283,7 +3343,7 @@ impl GraphStore {
         .param("submitted_at", format_datetime(&submission.submitted_at))
         .param("canonical_key", source_canonical_key);
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3307,7 +3367,7 @@ impl GraphStore {
             .param("key", canonical_key)
             .param("now", format_datetime(&now))
             .param("count", signals_produced as i64);
-            self.client().graph.run(q).await?;
+            self.client().run(q).await?;
         } else {
             let q = query(
                 "MATCH (s:Source {canonical_key: $key})
@@ -3317,7 +3377,7 @@ impl GraphStore {
             )
             .param("key", canonical_key)
             .param("now", format_datetime(&now));
-            self.client().graph.run(q).await?;
+            self.client().run(q).await?;
         }
         Ok(())
     }
@@ -3336,7 +3396,7 @@ impl GraphStore {
         .param("key", canonical_key)
         .param("weight", weight)
         .param("cadence", cadence_hours as i64);
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3353,7 +3413,7 @@ impl GraphStore {
         )
         .param("max", max_empty_runs as i64);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
         } else {
@@ -3380,7 +3440,7 @@ impl GraphStore {
              RETURN count(s) AS deactivated",
         );
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
         } else {
@@ -3402,7 +3462,7 @@ impl GraphStore {
         )
         .param("key", canonical_key)
         .param("embedding", embedding.to_vec());
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3420,7 +3480,7 @@ impl GraphStore {
         .param("id", actor_id.to_string())
         .param("now", format_datetime(&now));
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3435,8 +3495,8 @@ impl GraphStore {
         explanation: &str,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
-             MATCH (t:Tension {id: $tension_id})
+            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Resource OR resp:Gathering OR resp:HelpRequest)
+             MATCH (t:Concern {id: $tension_id})
              MERGE (resp)-[:RESPONDS_TO {match_strength: $strength, explanation: $explanation}]->(t)"
         )
         .param("resp_id", responder_id.to_string())
@@ -3444,7 +3504,7 @@ impl GraphStore {
         .param("strength", match_strength)
         .param("explanation", explanation);
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3464,7 +3524,7 @@ impl GraphStore {
         .param("created_by", pin.created_by.as_str())
         .param("created_at", format_datetime(&pin.created_at));
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3481,7 +3541,7 @@ impl GraphStore {
         )
         .param("ids", ids);
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3502,7 +3562,7 @@ impl GraphStore {
         )
         .param("headline", headline)
         .param("factor", factor);
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3523,13 +3583,13 @@ impl GraphStore {
              UNWIND signals AS sig
              WITH s, sig
              WHERE (sig.curiosity_investigated IS NULL OR sig.curiosity_investigated = 'failed')
-               AND NOT sig:Tension
+               AND NOT sig:Concern
              SET sig.curiosity_investigated = NULL
              WITH DISTINCT s
              SET s.curiosity_triggered_at = datetime()
              RETURN count(s) AS triggered",
         );
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             Ok(row.get::<i64>("triggered").unwrap_or(0) as u32)
         } else {
@@ -3548,12 +3608,11 @@ impl GraphStore {
     ) -> Result<(), neo4rs::Error> {
         let label = match node_type {
             NodeType::Gathering => "Gathering",
-            NodeType::Aid => "Aid",
-            NodeType::Need => "Need",
-            NodeType::Notice => "Notice",
-            NodeType::Tension => "Tension",
+            NodeType::Resource => "Resource",
+            NodeType::HelpRequest => "HelpRequest",
+            NodeType::Announcement => "Announcement",
+            NodeType::Concern => "Concern",
             NodeType::Condition => "Condition",
-            NodeType::Incident => "Incident",
             NodeType::Citation => return Ok(()),
         };
 
@@ -3565,7 +3624,7 @@ impl GraphStore {
         .param("id", signal_id.to_string())
         .param("confidence", new_confidence as f64);
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3573,13 +3632,13 @@ impl GraphStore {
     pub async fn mark_response_found(&self, tension_id: Uuid) -> Result<(), neo4rs::Error> {
         let now = format_datetime(&Utc::now());
         let q = query(
-            "MATCH (t:Tension {id: $id})
+            "MATCH (t:Concern {id: $id})
              SET t.response_scouted_at = $now",
         )
         .param("id", tension_id.to_string())
         .param("now", now);
 
-        self.client().graph.run(q).await
+        self.client().run(q).await
     }
 
     // =============================================================================
@@ -3597,8 +3656,8 @@ impl GraphStore {
         gathering_type: &str,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Aid OR resp:Gathering OR resp:Need)
-             MATCH (t:Tension {id: $tension_id})
+            "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Resource OR resp:Gathering OR resp:HelpRequest)
+             MATCH (t:Concern {id: $tension_id})
              MERGE (resp)-[r:DRAWN_TO]->(t)
              ON CREATE SET
                  r.match_strength = $strength,
@@ -3615,7 +3674,7 @@ impl GraphStore {
         .param("explanation", explanation)
         .param("gathering_type", gathering_type);
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3656,7 +3715,7 @@ impl GraphStore {
         .param("embedding", emb)
         .param("now", now);
 
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("resource_id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -3677,7 +3736,7 @@ impl GraphStore {
         notes: Option<&str>,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Gathering)
+            "MATCH (s) WHERE s.id = $sid AND (s:HelpRequest OR s:Gathering)
              MATCH (r:Resource {id: $rid})
              MERGE (s)-[e:REQUIRES]->(r)
              ON CREATE SET
@@ -3695,7 +3754,7 @@ impl GraphStore {
         .param("qty", quantity.unwrap_or(""))
         .param("notes", notes.unwrap_or(""));
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3708,7 +3767,7 @@ impl GraphStore {
         confidence: f32,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (s) WHERE s.id = $sid AND (s:Need OR s:Gathering)
+            "MATCH (s) WHERE s.id = $sid AND (s:HelpRequest OR s:Gathering)
              MATCH (r:Resource {id: $rid})
              MERGE (s)-[e:PREFERS]->(r)
              ON CREATE SET e.confidence = $conf
@@ -3718,7 +3777,7 @@ impl GraphStore {
         .param("rid", resource_id.to_string())
         .param("conf", confidence as f64);
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3732,7 +3791,7 @@ impl GraphStore {
         capacity: Option<&str>,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
-            "MATCH (s:Aid {id: $sid})
+            "MATCH (s:Resource {id: $sid})
              MATCH (r:Resource {id: $rid})
              MERGE (s)-[e:OFFERS]->(r)
              ON CREATE SET
@@ -3747,7 +3806,7 @@ impl GraphStore {
         .param("conf", confidence as f64)
         .param("cap", capacity.unwrap_or(""));
 
-        self.client().graph.run(q).await?;
+        self.client().run(q).await?;
         Ok(())
     }
 
@@ -3774,7 +3833,7 @@ impl GraphStore {
         }
 
         let mut resources: Vec<ResourceEmbed> = Vec::new();
-        let mut stream = self.client().graph.execute(q).await?;
+        let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id: String = row.get("id").unwrap_or_default();
             let slug: String = row.get("slug").unwrap_or_default();
@@ -3839,7 +3898,7 @@ impl GraphStore {
             )
             .param("dup_id", dup_id.as_str())
             .param("canonical_id", canonical_id.as_str());
-            if let Ok(mut s) = self.client().graph.execute(q).await {
+            if let Ok(mut s) = self.client().execute(q).await {
                 if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
                     stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
                 }
@@ -3857,7 +3916,7 @@ impl GraphStore {
             )
             .param("dup_id", dup_id.as_str())
             .param("canonical_id", canonical_id.as_str());
-            if let Ok(mut s) = self.client().graph.execute(q).await {
+            if let Ok(mut s) = self.client().execute(q).await {
                 if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
                     stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
                 }
@@ -3875,7 +3934,7 @@ impl GraphStore {
             )
             .param("dup_id", dup_id.as_str())
             .param("canonical_id", canonical_id.as_str());
-            if let Ok(mut s) = self.client().graph.execute(q).await {
+            if let Ok(mut s) = self.client().execute(q).await {
                 if let Some(Ok(row)) = s.next().await.ok().flatten().map(Ok::<_, neo4rs::Error>) {
                     stats.edges_redirected += row.get::<i64>("moved").unwrap_or(0) as u32;
                 }
@@ -3888,12 +3947,12 @@ impl GraphStore {
             )
             .param("dup_id", dup_id.as_str())
             .param("canonical_id", canonical_id.as_str());
-            self.client().graph.run(q).await?;
+            self.client().run(q).await?;
 
             // Delete the duplicate
             let q =
                 query("MATCH (r:Resource {id: $id}) DETACH DELETE r").param("id", dup_id.as_str());
-            self.client().graph.run(q).await?;
+            self.client().run(q).await?;
 
             stats.nodes_merged += 1;
             info!(canonical_id, dup_id, "Merged duplicate resource");
@@ -3925,7 +3984,7 @@ impl GraphStore {
         .param("sid", situation_id.to_string())
         .param("now", now);
 
-        self.client().graph.run(q).await
+        self.client().run(q).await
     }
 
     /// Remove a tag from a situation: delete TAGGED edge + create SUPPRESSED_TAG.
@@ -3947,7 +4006,7 @@ impl GraphStore {
         .param("slug", tag_slug)
         .param("now", now);
 
-        self.client().graph.run(q).await
+        self.client().run(q).await
     }
 
     /// Merge source tag into target tag. Atomic: repoints all edges, deletes source.
@@ -3969,7 +4028,7 @@ impl GraphStore {
         .param("source", source_slug)
         .param("target", target_slug);
 
-        self.client().graph.run(q1).await?;
+        self.client().run(q1).await?;
 
         // Repoint SUPPRESSED_TAG edges
         let q2 = query(
@@ -3984,13 +4043,13 @@ impl GraphStore {
         .param("source", source_slug)
         .param("target", target_slug);
 
-        self.client().graph.run(q2).await?;
+        self.client().run(q2).await?;
 
         // Delete source tag
         let q3 =
             query("MATCH (t:Tag {slug: $source}) DETACH DELETE t").param("source", source_slug);
 
-        self.client().graph.run(q3).await
+        self.client().run(q3).await
     }
 
     // ========== Supervisor / Validation Issues ==========
@@ -4007,7 +4066,7 @@ impl GraphStore {
         )
         .param("id", id.to_string());
 
-        let mut stream = self.client.inner().execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         Ok(stream.next().await?.is_some())
     }
 
@@ -4015,7 +4074,7 @@ impl GraphStore {
 
     /// Create a Schedule node in the graph. Returns the schedule's UUID.
     pub async fn create_schedule(&self, schedule: &ScheduleNode) -> Result<Uuid, neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let rdates_str: Vec<String> = schedule.rdates.iter().map(|d| format_datetime(d)).collect();
         let exdates_str: Vec<String> = schedule
@@ -4073,14 +4132,14 @@ impl GraphStore {
         signal_id: Uuid,
         schedule_id: Uuid,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let q = query(
             "OPTIONAL MATCH (e:Gathering {id: $signal_id})
-             OPTIONAL MATCH (a:Aid {id: $signal_id})
-             OPTIONAL MATCH (n:Need {id: $signal_id})
-             OPTIONAL MATCH (nc:Notice {id: $signal_id})
-             OPTIONAL MATCH (t:Tension {id: $signal_id})
+             OPTIONAL MATCH (a:Resource {id: $signal_id})
+             OPTIONAL MATCH (n:HelpRequest {id: $signal_id})
+             OPTIONAL MATCH (nc:Announcement {id: $signal_id})
+             OPTIONAL MATCH (t:Concern {id: $signal_id})
              WITH coalesce(e, a, n, nc, t) AS sig
              WHERE sig IS NOT NULL
              MATCH (s:Schedule {id: $schedule_id})
@@ -4205,7 +4264,7 @@ pub struct ExtractionYield {
 
 /// Response shape analysis for a tension — what types of responses exist and what's absent.
 #[derive(Debug, Clone)]
-pub struct TensionResponseShape {
+pub struct ConcernResponseShape {
     pub title: String,
     pub what_would_help: Option<String>,
     pub cause_heat: f64,
@@ -4228,7 +4287,7 @@ pub struct InvestigationTarget {
 
 /// A signal without tension context that the tension linker should investigate.
 #[derive(Debug)]
-pub struct TensionLinkerTarget {
+pub struct ConcernLinkerTarget {
     pub signal_id: Uuid,
     pub title: String,
     pub summary: String,
@@ -4238,7 +4297,7 @@ pub struct TensionLinkerTarget {
 
 /// Outcome of a tension linker investigation for a signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TensionLinkerOutcome {
+pub enum ConcernLinkerOutcome {
     /// All tensions processed successfully.
     Done,
     /// LLM said "not curious" — permanent, won't retry.
@@ -4249,7 +4308,7 @@ pub enum TensionLinkerOutcome {
     Abandoned,
 }
 
-impl TensionLinkerOutcome {
+impl ConcernLinkerOutcome {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Done => "done",
@@ -4262,19 +4321,19 @@ impl TensionLinkerOutcome {
 
 /// A tension hub: a Tension node with 2+ responding signals, ready to materialize as a Story.
 #[derive(Debug)]
-pub struct TensionHub {
+pub struct ConcernHub {
     pub tension_id: Uuid,
     pub title: String,
     pub summary: String,
     pub category: Option<String>,
     pub what_would_help: Option<String>,
     pub cause_heat: f64,
-    pub respondents: Vec<TensionRespondent>,
+    pub respondents: Vec<ConcernRespondent>,
 }
 
 /// A signal that responds to a tension, with edge metadata.
 #[derive(Debug)]
-pub struct TensionRespondent {
+pub struct ConcernRespondent {
     pub signal_id: Uuid,
     pub source_url: String,
     pub match_strength: f64,
@@ -4422,7 +4481,7 @@ fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
         "signal_reference" => DiscoveryMethod::SignalReference,
         "hashtag_discovery" => DiscoveryMethod::HashtagDiscovery,
         "cold_start" => DiscoveryMethod::ColdStart,
-        "tension_seed" => DiscoveryMethod::TensionSeed,
+        "tension_seed" => DiscoveryMethod::ConcernSeed,
         "human_submission" => DiscoveryMethod::HumanSubmission,
         "signal_expansion" => DiscoveryMethod::SignalExpansion,
         "actor_account" => DiscoveryMethod::ActorAccount,
@@ -4542,7 +4601,7 @@ impl GraphStore {
         narrative_embedding: &[f32],
         causal_embedding: &[f32],
     ) -> Result<Uuid, neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let q = query(
             "CREATE (s:Situation {
@@ -4610,7 +4669,7 @@ impl GraphStore {
         &self,
         dispatch: &rootsignal_common::DispatchNode,
     ) -> Result<Uuid, neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let signal_ids_json: Vec<String> = dispatch
             .signal_ids
@@ -4666,7 +4725,7 @@ impl GraphStore {
         situation_id: &Uuid,
         match_confidence: f64,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let q = query(&format!(
             "MATCH (sig:{signal_label} {{id: $signal_id}})
@@ -4690,13 +4749,13 @@ impl GraphStore {
         dispatch_id: &Uuid,
         signal_ids: &[Uuid],
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         for signal_id in signal_ids {
             let q = query(
                 "MATCH (d:Dispatch {id: $dispatch_id})
                  MATCH (sig) WHERE sig.id = $signal_id
-                   AND (sig:Gathering OR sig:Aid OR sig:Need OR sig:Notice OR sig:Tension)
+                   AND (sig:Gathering OR sig:Resource OR sig:HelpRequest OR sig:Announcement OR sig:Concern OR sig:Condition)
                  MERGE (d)-[:CITES]->(sig)",
             )
             .param("dispatch_id", dispatch_id.to_string())
@@ -4713,7 +4772,7 @@ impl GraphStore {
         situation_id: &Uuid,
         structured_state: &str,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let q = query(
             "MATCH (s:Situation {id: $id})
@@ -4739,7 +4798,7 @@ impl GraphStore {
         arc: &rootsignal_common::SituationArc,
         clarity: &rootsignal_common::Clarity,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let q = query(
             "MATCH (s:Situation {id: $id})
@@ -4773,7 +4832,7 @@ impl GraphStore {
         narrative_embedding: &[f32],
         causal_embedding: &[f32],
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let q = query(
             "MATCH (s:Situation {id: $id})
@@ -4794,7 +4853,7 @@ impl GraphStore {
         flag_reason: &str,
         fidelity_score: Option<f64>,
     ) -> Result<(), neo4rs::Error> {
-        let g = &self.client().graph;
+        let g = &self.client();
 
         let q = query(
             "MATCH (d:Dispatch {id: $id})
@@ -4839,7 +4898,7 @@ impl GraphStore {
             return Ok(());
         }
 
-        let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
         for label in &labels {
             let cypher = format!(
                 "MATCH (n:{label}) WHERE n.id = $id SET {}",
@@ -4857,7 +4916,7 @@ impl GraphStore {
                 }
             }
 
-            self.client().graph.run(q).await?;
+            self.client().run(q).await?;
         }
 
         Ok(())
@@ -4908,38 +4967,38 @@ mod tests {
         assert!(sim < 0.85, "Expected < 0.85, got {sim}");
     }
 
-    // --- TensionLinkerOutcome tests ---
+    // --- ConcernLinkerOutcome tests ---
 
     #[test]
     fn curiosity_outcome_as_str_roundtrip() {
-        assert_eq!(TensionLinkerOutcome::Done.as_str(), "done");
-        assert_eq!(TensionLinkerOutcome::Skipped.as_str(), "skipped");
-        assert_eq!(TensionLinkerOutcome::Failed.as_str(), "failed");
-        assert_eq!(TensionLinkerOutcome::Abandoned.as_str(), "abandoned");
+        assert_eq!(ConcernLinkerOutcome::Done.as_str(), "done");
+        assert_eq!(ConcernLinkerOutcome::Skipped.as_str(), "skipped");
+        assert_eq!(ConcernLinkerOutcome::Failed.as_str(), "failed");
+        assert_eq!(ConcernLinkerOutcome::Abandoned.as_str(), "abandoned");
     }
 
     #[test]
     fn curiosity_outcome_equality() {
-        assert_eq!(TensionLinkerOutcome::Done, TensionLinkerOutcome::Done);
-        assert_ne!(TensionLinkerOutcome::Done, TensionLinkerOutcome::Failed);
+        assert_eq!(ConcernLinkerOutcome::Done, ConcernLinkerOutcome::Done);
+        assert_ne!(ConcernLinkerOutcome::Done, ConcernLinkerOutcome::Failed);
         assert_ne!(
-            TensionLinkerOutcome::Failed,
-            TensionLinkerOutcome::Abandoned
+            ConcernLinkerOutcome::Failed,
+            ConcernLinkerOutcome::Abandoned
         );
     }
 
     #[test]
     fn curiosity_outcome_is_copy() {
-        let outcome = TensionLinkerOutcome::Failed;
+        let outcome = ConcernLinkerOutcome::Failed;
         let copied = outcome; // Copy
         assert_eq!(outcome, copied); // Both still usable
     }
 
-    // --- TensionHub / TensionRespondent tests ---
+    // --- ConcernHub / ConcernRespondent tests ---
 
     #[test]
     fn tension_hub_respondent_count() {
-        let hub = TensionHub {
+        let hub = ConcernHub {
             tension_id: Uuid::new_v4(),
             title: "Housing affordability crisis".to_string(),
             summary: "Rents rising faster than wages".to_string(),
@@ -4947,7 +5006,7 @@ mod tests {
             what_would_help: Some("Rent stabilization policies".to_string()),
             cause_heat: 0.7,
             respondents: vec![
-                TensionRespondent {
+                ConcernRespondent {
                     signal_id: Uuid::new_v4(),
                     source_url: "https://example.com/a".to_string(),
                     match_strength: 0.9,
@@ -4955,7 +5014,7 @@ mod tests {
                     edge_type: "RESPONDS_TO".to_string(),
                     gathering_type: None,
                 },
-                TensionRespondent {
+                ConcernRespondent {
                     signal_id: Uuid::new_v4(),
                     source_url: "https://different.org/b".to_string(),
                     match_strength: 0.7,

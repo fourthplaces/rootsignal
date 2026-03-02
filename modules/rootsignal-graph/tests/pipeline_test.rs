@@ -35,6 +35,9 @@ fn stored(seq: i64, event: &Event) -> StoredEvent {
         schema_v: 1,
         id: None,
         parent_id: None,
+        correlation_id: None,
+        aggregate_type: None,
+        aggregate_id: None,
     }
 }
 
@@ -68,7 +71,7 @@ async fn read_prop<T: for<'a> serde::Deserialize<'a> + Default>(
 ) -> T {
     let cypher = format!("MATCH (n:{label} {{id: $id}}) RETURN n.{prop} AS val");
     let q = query(&cypher).param("id", id.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     if let Some(row) = stream.next().await.expect("stream failed") {
         row.get::<T>("val").unwrap_or_default()
     } else {
@@ -98,7 +101,7 @@ async fn pipeline_creates_signal_with_factual_and_derived_properties() {
 
     let events = vec![stored(1, &event)];
     let stats = pipeline
-        .process(&events, &bbox(), &[])
+        .process(&events, &bbox())
         .await
         .expect("pipeline failed");
 
@@ -173,7 +176,7 @@ async fn pipeline_creates_evidence_and_computes_diversity() {
     ];
 
     let stats = pipeline
-        .process(&events, &bbox(), &[])
+        .process(&events, &bbox())
         .await
         .expect("pipeline failed");
 
@@ -216,7 +219,8 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
                 mentioned_entities: vec![],
                 references: vec![],
                 schedule: None,
-                what_would_help: None,
+                subject: None,
+                opposing: None,
             }),
         ),
         stored(
@@ -234,6 +238,7 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
                 schedule: None,
                 action_url: None,
                 availability: None,
+                eligibility: None,
             }),
         ),
         stored(
@@ -263,7 +268,7 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
     ];
 
     pipeline
-        .process(&events, &bbox(), &[])
+        .process(&events, &bbox())
         .await
         .expect("pipeline failed");
 
@@ -338,21 +343,20 @@ async fn replay_produces_identical_graph() {
 
     // First pass
     pipeline
-        .process(&events, &bbox(), &[])
+        .process(&events, &bbox())
         .await
         .expect("first pass failed");
     let snap1 = snapshot_signal(&client, "Gathering", signal_id).await;
 
     // Wipe graph
     client
-        .inner()
         .run(query("MATCH (n) DETACH DELETE n"))
         .await
         .expect("wipe failed");
 
     // Replay same events
     pipeline
-        .process(&events, &bbox(), &[])
+        .process(&events, &bbox())
         .await
         .expect("replay failed");
     let snap2 = snapshot_signal(&client, "Gathering", signal_id).await;

@@ -7,15 +7,16 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AidNode, GatheringNode, GeoPoint, GeoPrecision, NeedNode, Node, NodeMeta, NoticeNode,
-    ReviewStatus, ScheduleNode, SensitivityLevel, Severity, TensionNode, Urgency,
+    ResourceOfferNode, ConditionNode, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode,
+    Node, NodeMeta, AnnouncementNode, ReviewStatus, ScheduleNode, SensitivityLevel, Severity,
+    ConcernNode, Urgency,
 };
 use serde::de;
 
 /// What the LLM returns for each extracted signal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExtractedSignal {
-    /// Signal type: "gathering", "aid", "need", or "notice"
+    /// Signal type: "gathering", "resource", "help_request", "announcement", "concern", or "condition"
     pub signal_type: String,
     pub title: String,
     pub summary: String,
@@ -39,23 +40,25 @@ pub struct ExtractedSignal {
     pub organizer: Option<String>,
     /// Whether this is recurring
     pub is_recurring: Option<bool>,
-    /// Availability schedule (for Aid signals)
+    /// Availability schedule (for Resource signals)
     pub availability: Option<String>,
+    /// Who is eligible as explicitly stated in the content (for Resource signals)
+    pub eligibility: Option<String>,
     /// Whether this is an ongoing opportunity
     pub is_ongoing: Option<bool>,
-    /// Urgency level for Need signals: "low", "medium", "high", "critical"
+    /// Urgency level for HelpRequest signals: "low", "medium", "high", "critical"
     pub urgency: Option<String>,
-    /// What is needed (for Need signals)
+    /// What is needed (for HelpRequest signals)
     pub what_needed: Option<String>,
-    /// Goal description (for Need signals)
+    /// Goal description (for HelpRequest signals)
     pub goal: Option<String>,
-    /// Severity for Tension signals: "low", "medium", "high", "critical"
+    /// Severity: "low", "medium", "high", "critical" (for Concern, Condition, Announcement)
     pub severity: Option<String>,
-    /// Category for Notice signals: "psa", "policy", "advisory", "enforcement", "health"
+    /// Category (for Announcement and Concern signals)
     pub category: Option<String>,
-    /// Effective date for Notice signals (ISO 8601)
+    /// Effective date for Announcement signals (ISO 8601)
     pub effective_date: Option<String>,
-    /// Source authority for Notice signals (e.g. "City of Minneapolis")
+    /// Source authority for Announcement signals (e.g. "City of Minneapolis")
     pub source_authority: Option<String>,
     /// Best-guess date when this content was published or last updated (ISO 8601).
     /// Used for staleness filtering — signals older than 1 year are dropped.
@@ -65,8 +68,15 @@ pub struct ExtractedSignal {
     /// The specific source URL this signal was extracted from (e.g. a specific post URL).
     /// When extracting from multiple posts, return the URL of the post this signal came from.
     pub source_url: Option<String>,
-    /// What response would address this tension (for Tension signals)
-    pub what_would_help: Option<String>,
+    /// What is being opposed (for Concern signals)
+    #[serde(alias = "what_would_help")]
+    pub opposing: Option<String>,
+    /// Who or what reported/observed this (for Condition signals)
+    pub observed_by: Option<String>,
+    /// Quantitative reading if the content includes one (for Condition signals)
+    pub measurement: Option<String>,
+    /// Scope of what's affected (for Condition signals)
+    pub affected_scope: Option<String>,
     /// Up to 3 search queries this signal implies — expand outward from this
     /// signal to discover related signals from different perspectives.
     #[serde(default)]
@@ -389,20 +399,21 @@ impl Extractor {
                         is_recurring: signal.is_recurring.unwrap_or(false),
                     })
                 }
-                "aid" => Node::Aid(AidNode {
+                "resource" => Node::Resource(ResourceOfferNode {
                     meta,
                     action_url: signal.action_url.unwrap_or(effective_source_url),
                     availability: signal.availability,
+                    eligibility: signal.eligibility,
                     is_ongoing: signal.is_ongoing.unwrap_or(true),
                 }),
-                "need" => {
+                "help_request" => {
                     let urgency = match signal.urgency.as_deref() {
                         Some("high") => Urgency::High,
                         Some("critical") => Urgency::Critical,
                         Some("low") => Urgency::Low,
                         _ => Urgency::Medium,
                     };
-                    Node::Need(NeedNode {
+                    Node::HelpRequest(HelpRequestNode {
                         meta,
                         urgency,
                         what_needed: signal.what_needed,
@@ -410,7 +421,7 @@ impl Extractor {
                         goal: signal.goal,
                     })
                 }
-                "notice" => {
+                "announcement" => {
                     let severity = match signal.severity.as_deref() {
                         Some("high") => Severity::High,
                         Some("critical") => Severity::Critical,
@@ -423,7 +434,7 @@ impl Extractor {
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                         .map(|dt| dt.with_timezone(&Utc));
 
-                    Node::Notice(NoticeNode {
+                    Node::Announcement(AnnouncementNode {
                         meta,
                         severity,
                         category: signal.category,
@@ -431,18 +442,36 @@ impl Extractor {
                         source_authority: signal.source_authority,
                     })
                 }
-                "tension" => {
+                "concern" => {
                     let severity = match signal.severity.as_deref() {
                         Some("high") => Severity::High,
                         Some("critical") => Severity::Critical,
                         Some("low") => Severity::Low,
                         _ => Severity::Medium,
                     };
-                    Node::Tension(TensionNode {
+                    Node::Concern(ConcernNode {
                         meta,
                         severity,
                         category: signal.category.clone(),
-                        what_would_help: signal.what_would_help.clone(),
+                        subject: None,
+                        opposing: signal.opposing.clone(),
+                    })
+                }
+                "condition" => {
+                    let severity = match signal.severity.as_deref() {
+                        Some("high") => Severity::High,
+                        Some("critical") => Severity::Critical,
+                        Some("low") => Severity::Low,
+                        _ => Severity::Medium,
+                    };
+                    Node::Condition(ConditionNode {
+                        meta,
+                        severity,
+                        category: signal.category.clone(),
+                        subject: None,
+                        observed_by: signal.observed_by.clone(),
+                        measurement: signal.measurement.clone(),
+                        affected_scope: signal.affected_scope.clone(),
                     })
                 }
                 other => {
@@ -478,7 +507,7 @@ impl Extractor {
                 || signal.schedule_text.is_some()
                 || !signal.explicit_dates.is_empty()
             {
-                let is_schedule_type = matches!(signal.signal_type.as_str(), "gathering" | "aid");
+                let is_schedule_type = matches!(signal.signal_type.as_str(), "gathering" | "resource");
                 if is_schedule_type {
                     // Validate RRULE at write time — discard if invalid, keep schedule_text
                     let validated_rrule = signal.rrule.as_ref().and_then(|rule| {
@@ -589,7 +618,7 @@ pub fn build_system_prompt(
     tag_vocabulary: &[String],
 ) -> String {
     let today = Utc::now().format("%Y-%m-%d").to_string();
-    let tension_cats = crate::infra::util::TENSION_CATEGORIES;
+    let concern_cats = crate::infra::util::TENSION_CATEGORIES;
     let tag_vocab_section = if tag_vocabulary.is_empty() {
         String::new()
     } else {
@@ -601,53 +630,56 @@ pub fn build_system_prompt(
     format!(
         r#"You are a signal extractor for {city_name}.
 
-Your job: find real problems and the people addressing them. The most valuable signal is a TENSION (something out of alignment in community or ecological life) paired with RESPONSES (the gives, needs, events, and notices that address it). A food shelf addressing a food desert, a cleanup responding to pollution, a legal aid hotline responding to enforcement activity — these tension-response pairs are what gets people engaged in real-world problems.
+Your job: find real problems and the people addressing them. The most valuable signal is a CONCERN (community friction — opposition, disputes, protests, objections) paired with RESPONSES (the gives, needs, events, and notices that address it). A food shelf addressing food insecurity, a cleanup responding to pollution, a legal aid hotline responding to enforcement activity — these concern-response pairs are what gets people engaged in real-world problems.
 
 ## Signal Types (ranked by value)
 
-**Highest — Tension + Response pairs:**
-- **Tension**: A community conflict, systemic problem, or ecological misalignment. Has severity and what would help. NOT the narrative itself — the underlying structural issue.
-- **Aid**: A free resource, service, or program that people in need can access — food shelves,
+**Highest — Concern + Response pairs:**
+- **Concern**: Someone expressed opposition, filed a grievance, or pushed back against something. The act of opposing is the fact being recorded. Has severity, subject, and what is being opposed. NOT a catch-all for complaints about conditions — if the content describes a state of the world (pothole, pollution, outage), that's a Condition. Concern is for social friction: opposition to proposals, disputes between groups, protests, objections filed, community pushback.
+- **Resource**: A free resource, service, or program that people in need can access — food shelves,
   legal clinics, shelter beds, mutual aid funds, habitat restoration programs. Must be free or
-  publicly available. A business offering paid services is NOT Aid. Has availability and contact info.
-- **Need**: Someone directly expressing what they need and how you can help — fundraisers, volunteer drives, donation requests, mutual aid calls, petitions. The content must come from or speak for the person/group who has the need. Must include: (1) a specific need, (2) a way to respond (donate link, signup, contact info). A journalist reporting that communities need help is a Tension, not a Need.
-- **Gathering**: People coming together in response to a community need or tension — town halls,
+  publicly available. A business offering paid services is NOT a Resource. Has availability and contact info.
+- **HelpRequest**: Someone directly expressing what they need and how you can help — fundraisers, volunteer drives, donation requests, mutual aid calls, petitions. The content must come from or speak for the person/group who has the need. Must include: (1) a specific need, (2) a way to respond (donate link, signup, contact info). A journalist reporting that communities need help is a Concern, not a HelpRequest.
+- **Gathering**: People coming together in response to a community need or concern — town halls,
   cleanups, vigils, mutual aid distributions, workshops, solidarity actions. Has time, location,
   and who's organizing. A press conference or product launch is NOT a Gathering.
 
-**Also valuable — standalone responses with an implicit tension:**
-- A "feed people on Sundays" program implies food insecurity. Extract it as an Aid even without an explicit tension on the page.
+**Also valuable — standalone responses with an implicit concern:**
+- A "feed people on Sundays" program implies food insecurity. Extract it as a Resource even without an explicit concern on the page.
 - A river cleanup implies pollution. Extract it as a Gathering.
 
 **Lower priority — routine community activity:**
 - Community calendar events, recurring worship services, social gatherings. Still extract these, but they matter less than signals that point to a real problem someone can help with.
 
 **Context signals:**
-- **Notice**: An official advisory, policy change, OR community warning about active threats.
+- **Announcement**: An official advisory, policy change, OR community warning about active threats.
   Community members publicly warning each other about enforcement activity (ICE sightings),
-  environmental hazards, or safety concerns are valid Notices with category "community_report".
+  environmental hazards, or safety concerns are valid Announcements with category "community_report".
   These are distinct from rumors — they come from people with first-hand or local knowledge
   broadcasting publicly to enable protective action.
+- **Condition**: A state of the world being described — infrastructure, environment, emergencies, public health, safety. The severity and urgency fields distinguish routine observations from acute events. If the content describes a physical state (pothole, pollution, outage, flood), that's a Condition. If it describes social friction (opposition, protest, dispute), that's a Concern.
 
 If content doesn't map to one of these types, return an empty signals array.
 
 ## Extracting from News and Crisis Content
-When a page describes a crisis, conflict, or problem, extract BOTH the underlying tension AND the community responses:
-- The structural problem → Tension (always include what_would_help)
-- Legal aid hotlines, know-your-rights resources → Aid
+When a page describes a crisis, conflict, or problem, extract BOTH the underlying concern AND the community responses:
+- Social friction, opposition, protests → Concern (always include subject and what is being opposed)
+- Physical conditions, infrastructure, environment → Condition (include subject and observed_by)
+- Legal aid hotlines, know-your-rights resources → Resource
 - Community meetings, workshops, public hearings → Gathering
-- Volunteer calls, donation drives, petitions → Need
-- Official advisories, policy changes → Notice
+- Volunteer calls, donation drives, petitions → HelpRequest
+- Official advisories, policy changes → Announcement
 
-If a page describes only a problem with no actionable response, still extract the Tension (with what_would_help) — the system will seek responses separately.
+If a page describes only a problem with no actionable response, still extract the Concern or Condition — the system will seek responses separately.
 
 ## News Articles vs. Needs
 A news article that reports on a crisis is NOT a Need, even if the situation is urgent.
-Need requires someone to be directly expressing their own need with a way to respond.
+HelpRequest requires someone to be directly expressing their own need with a way to respond.
 If a news article simply reports on a problem, extract it as:
-- Tension (if it describes a systemic problem or conflict)
-- Notice (if it describes a policy change or official action)
-Do NOT classify news reportage as a Need based on the urgency of the topic alone.
+- Concern (if it describes social friction, opposition, or disputes)
+- Condition (if it describes a physical state or environmental issue)
+- Announcement (if it describes a policy change or official action)
+Do NOT classify news reportage as a HelpRequest based on the urgency of the topic alone.
 
 ## Sensitivity
 - **sensitive**: Enforcement activity, vulnerable populations, sanctuary networks
@@ -670,8 +702,8 @@ Do NOT classify news reportage as a Need based on the urgency of the topic alone
 - is_ongoing: true for ongoing services
 - is_recurring: true for recurring events
 
-## Schedule / Recurrence (Gathering and Aid signals)
-For gathering and aid signals with recurring schedules, extract structured recurrence data:
+## Schedule / Recurrence (Gathering and Resource signals)
+For gathering and resource signals with recurring schedules, extract structured recurrence data:
 
 - **rrule**: An RFC 5545 RRULE string describing the recurrence pattern.
   - "Every Tuesday at 7pm" → "FREQ=WEEKLY;BYDAY=TU"
@@ -696,16 +728,23 @@ Look for: byline dates, "Published on...", article timestamps, post dates.
 - Do NOT use event start times as published_at — published_at is when the page was written, not when an event occurs
 Signals without a published_at may be dropped, so extracting this accurately is important.
 
-## Notice Fields
+## Announcement Fields
 - severity: "low", "medium", "high", "critical"
 - category: "psa", "policy", "advisory", "enforcement", "health", "community_report"
 - effective_date: ISO 8601 when the notice takes effect
 - source_authority: The official body issuing it
 
-## Tension Fields
+## Concern Fields
 - severity: "low", "medium", "high", "critical"
-- category: One of: {tension_cats}. These are guidance, not constraints — propose a new category if none fit.
-- what_would_help: What response would address this tension (e.g. "affordable housing policy", "community oversight board")
+- category: One of: {concern_cats}. These are guidance, not constraints — propose a new category if none fit.
+- opposing: What is being opposed (e.g. "proposed rezoning", "budget cuts to after-school programs")
+
+## Condition Fields
+- severity: "low", "medium", "high", "critical"
+- category: One of: {concern_cats}. These are guidance, not constraints — propose a new category if none fit.
+- observed_by: Who or what reported/observed this (e.g. "MPCA", "neighborhood resident"). Null if not stated.
+- measurement: Quantitative reading if the content includes one (e.g. "PM2.5 at 35 µg/m³", "4 inches of flooding"). Null if none.
+- affected_scope: Scope of what's affected as stated in the content (e.g. "North Minneapolis", "I-35W bridge"). Null if not stated.
 
 ## Source URL
 - When extracting from multiple posts (e.g. "--- Post 1 (https://...) ---"), set source_url to the specific post URL the signal came from
@@ -733,13 +772,13 @@ Preserve organization phone numbers, emails, and addresses — these are public 
 
 ## Resource Capabilities
 
-For Need, Gathering, and Aid signals, extract the resource capabilities they require, prefer, or offer.
+For HelpRequest, Gathering, and Resource signals, extract the resource capabilities they require, prefer, or offer.
 This enables matching: "I have a car" finds all orgs needing drivers; "I need food" finds all orgs giving food.
 
 **Edge types:**
-- **requires**: Must have this capability to help (Need/Gathering only)
-- **prefers**: Better if you have it, not required (Need/Gathering only)
-- **offers**: This is what the signal provides (Aid only)
+- **requires**: Must have this capability to help (HelpRequest/Gathering only)
+- **prefers**: Better if you have it, not required (HelpRequest/Gathering only)
+- **offers**: This is what the signal provides (Resource only)
 
 **Seed vocabulary** (use these slugs when they fit; otherwise propose a concise noun-phrase slug):
 `vehicle`, `bilingual-spanish`, `bilingual-somali`, `bilingual-hmong`, `legal-expertise`,
@@ -753,7 +792,7 @@ This enables matching: "I have a car" finds all orgs needing drivers; "I need fo
 - Food shelf → resources: [{{slug: "food", role: "offers", confidence: 0.95, context: "emergency groceries, Mon-Fri 9-5"}}]
 - Court date transport needing Spanish speakers → resources: [{{slug: "vehicle", role: "requires", confidence: 0.9}}, {{slug: "bilingual-spanish", role: "prefers", confidence: 0.7}}]
 
-Only include resources when the capability is clear from the content. Omit the resources array for signals with no resource semantics (e.g. Notices, Tensions).
+Only include resources when the capability is clear from the content. Omit the resources array for signals with no resource semantics (e.g. Announcements, Concerns).
 
 ## THEMATIC TAGS
 
@@ -773,26 +812,30 @@ For signals with a clear community tension connection, provide up to 3
 implied_queries — searches that would discover RELATED community signals
 by expanding outward from this one.
 
-- A Need (donations, volunteers, drivers, medical bills, rent help,
-  funeral costs, school supplies, legal aid, shelter, food, or any
-  other expressed need) → search for others expressing the same kind
-  of need nearby (GoFundMe campaigns, mutual aid threads, community
-  posts, neighborhood forums). If one person needs it, others do too.
-- An Aid (food banks, shelters, legal clinics, free clinics, job
+- A HelpRequest (donations, volunteers, drivers, medical bills, rent
+  help, funeral costs, school supplies, legal aid, shelter, food, or
+  any other expressed need) → search for others expressing the same
+  kind of need nearby (GoFundMe campaigns, mutual aid threads,
+  community posts, neighborhood forums). If one person needs it,
+  others do too.
+- A Resource (food banks, shelters, legal clinics, free clinics, job
   training, mutual aid networks, or any other service) → search for
-  more of the same kind of aid in the area, and for unmet needs in
-  the population it serves.
+  more of the same kind of resource in the area, and for unmet needs
+  in the population it serves.
 - A Gathering (town halls, protests, rallies, marches, cleanups,
   vigils, mutual aid distributions, political movements, or any
   community event) → search for other gatherings around the same
-  issue or cause, who is organizing them, and what tensions are
+  issue or cause, who is organizing them, and what concerns are
   driving people to show up.
-- A Tension → search for who's responding (aid, organizing, legal
-  action), where people are gathering, and what needs people are
-  expressing because of it.
-- A Notice about policy or institutional action → search for who is
-  affected, what they need as a result, and how they're organizing
-  in response.
+- A Concern → search for who's responding (resources, organizing,
+  legal action), where people are gathering, and what needs people
+  are expressing because of it.
+- A Condition → search for who's observing the same condition, what
+  resources exist to address it, and what community response is
+  emerging.
+- An Announcement about policy or institutional action → search for
+  who is affected, what they need as a result, and how they're
+  organizing in response.
 
 Always include the city name or neighborhood. Target specific organizations,
 services, and events — not news articles.
@@ -808,25 +851,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn system_prompt_includes_tension() {
+    fn system_prompt_includes_concern() {
         let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
         assert!(
-            prompt.contains("Tension"),
-            "system prompt should mention Tension as a signal type"
+            prompt.contains("Concern"),
+            "system prompt should mention Concern as a signal type"
         );
         assert!(
-            prompt.contains("what would help"),
-            "system prompt should mention 'what would help' for tensions"
+            prompt.contains("what is being opposed"),
+            "system prompt should mention 'what is being opposed' for concerns"
         );
     }
 
     #[test]
-    fn tension_type_constructs_node() {
-        // The tension match arm now constructs a TensionNode instead of skipping.
-        // This test verifies the ExtractedSignal has the what_would_help field
-        // and that TensionNode can be constructed with all fields.
+    fn concern_type_constructs_node() {
         let signal = ExtractedSignal {
-            signal_type: "tension".to_string(),
+            signal_type: "concern".to_string(),
             title: "Housing crisis".to_string(),
             summary: "Rent increases displacing families".to_string(),
             sensitivity: "elevated".to_string(),
@@ -840,6 +880,7 @@ mod tests {
             organizer: None,
             is_recurring: None,
             availability: None,
+            eligibility: None,
             is_ongoing: None,
             urgency: None,
             what_needed: None,
@@ -850,7 +891,10 @@ mod tests {
             source_authority: None,
             published_at: None,
             mentioned_actors: None,
-            what_would_help: Some("affordable housing policy".to_string()),
+            opposing: Some("proposed rent increases".to_string()),
+            observed_by: None,
+            measurement: None,
+            affected_scope: None,
             source_url: None,
             implied_queries: vec!["affordable housing programs Minneapolis".to_string()],
             resources: vec![],
@@ -864,10 +908,10 @@ mod tests {
             schedule_timezone: None,
         };
 
-        assert_eq!(signal.signal_type, "tension");
+        assert_eq!(signal.signal_type, "concern");
         assert_eq!(
-            signal.what_would_help.as_deref(),
-            Some("affordable housing policy")
+            signal.opposing.as_deref(),
+            Some("proposed rent increases")
         );
         assert_eq!(signal.category.as_deref(), Some("housing"));
     }
@@ -891,7 +935,7 @@ mod tests {
 
     #[test]
     fn missing_availability_is_none_not_placeholder() {
-        use rootsignal_common::{AidNode, NodeMeta, ReviewStatus, SensitivityLevel};
+        use rootsignal_common::{ResourceOfferNode, NodeMeta, ReviewStatus, SensitivityLevel};
         let meta = NodeMeta {
             id: uuid::Uuid::new_v4(),
             title: "Food pantry".to_string(),
@@ -916,10 +960,11 @@ mod tests {
             rejection_reason: None,
             mentioned_actors: Vec::new(),
         };
-        let aid = AidNode {
+        let aid = ResourceOfferNode {
             meta,
             action_url: "https://example.com".to_string(),
             availability: None,
+            eligibility: None,
             is_ongoing: true,
         };
         assert!(aid.availability.is_none());
@@ -927,7 +972,7 @@ mod tests {
 
     #[test]
     fn missing_what_needed_is_none_not_placeholder() {
-        use rootsignal_common::{NeedNode, NodeMeta, ReviewStatus, SensitivityLevel, Urgency};
+        use rootsignal_common::{HelpRequestNode, NodeMeta, ReviewStatus, SensitivityLevel, Urgency};
         let meta = NodeMeta {
             id: uuid::Uuid::new_v4(),
             title: "Volunteers needed".to_string(),
@@ -952,7 +997,7 @@ mod tests {
             rejection_reason: None,
             mentioned_actors: Vec::new(),
         };
-        let need = NeedNode {
+        let need = HelpRequestNode {
             meta,
             urgency: Urgency::Medium,
             what_needed: None,
@@ -966,7 +1011,7 @@ mod tests {
     fn extracted_signal_json_with_implied_queries() {
         let json = r#"{
             "signals": [{
-                "signal_type": "tension",
+                "signal_type": "concern",
                 "title": "Immigration enforcement fear",
                 "summary": "ICE raids causing fear",
                 "sensitivity": "sensitive",
@@ -1010,7 +1055,7 @@ mod tests {
     fn extracted_signal_json_empty_implied_queries() {
         let json = r#"{
             "signals": [{
-                "signal_type": "aid",
+                "signal_type": "resource",
                 "title": "Food shelf",
                 "summary": "Free groceries",
                 "sensitivity": "general",
@@ -1075,7 +1120,7 @@ mod tests {
     fn is_firsthand_false_deserialization() {
         let json = r#"{
             "signals": [{
-                "signal_type": "tension",
+                "signal_type": "concern",
                 "title": "Political commentary",
                 "summary": "Opinion about housing",
                 "sensitivity": "general",
@@ -1090,7 +1135,7 @@ mod tests {
     fn is_firsthand_true_deserialization() {
         let json = r#"{
             "signals": [{
-                "signal_type": "need",
+                "signal_type": "help_request",
                 "title": "My family needs help",
                 "summary": "Direct plea for assistance",
                 "sensitivity": "sensitive",
@@ -1105,7 +1150,7 @@ mod tests {
     fn is_firsthand_missing_is_none() {
         let json = r#"{
             "signals": [{
-                "signal_type": "aid",
+                "signal_type": "resource",
                 "title": "Food shelf",
                 "summary": "Free groceries",
                 "sensitivity": "general"

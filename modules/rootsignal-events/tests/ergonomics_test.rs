@@ -59,6 +59,9 @@ fn stored_event_is_serializable() {
         schema_v: 1,
         id: None,
         parent_id: None,
+        correlation_id: None,
+        aggregate_type: None,
+        aggregate_id: None,
     };
 
     let json = serde_json::to_string(&stored).unwrap();

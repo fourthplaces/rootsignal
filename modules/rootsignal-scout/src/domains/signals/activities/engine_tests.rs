@@ -73,7 +73,7 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
     engine
         .emit(SignalEvent::NewSignalAccepted {
             node_id,
-            node_type: NodeType::Tension,
+            node_type: NodeType::Concern,
             title: "Free Legal Clinic".to_string(),
             source_url: "https://www.instagram.com/locallegalaid".to_string(),
             pending_node: Box::new(pn),
@@ -122,7 +122,7 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
     engine
         .emit(SignalEvent::CrossSourceMatchDetected {
             existing_id,
-            node_type: NodeType::Tension,
+            node_type: NodeType::Concern,
             source_url: "https://org-b.org/events".to_string(),
             similarity: 0.95,
         })
@@ -247,7 +247,7 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
     // Pre-populate: "Community Dinner" exists at same URL
     store.insert_signal(
         "Community Dinner",
-        NodeType::Tension,
+        NodeType::Concern,
         "https://example.org/events",
     );
     let (engine, captured) = test_engine_with_capture_for_store(

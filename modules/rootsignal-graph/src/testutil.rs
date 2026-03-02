@@ -5,7 +5,7 @@ use testcontainers::{
     runners::AsyncRunner,
     ContainerAsync, GenericImage, ImageExt,
 };
-use crate::GraphClient;
+use crate::{connect_graph, GraphClient};
 pub use neo4j_container as memgraph_container;
 
 
@@ -21,7 +21,7 @@ pub async fn neo4j_container() -> (Box<dyn std::any::Any + Send>, GraphClient) {
         let user = std::env::var("NEO4J_TEST_USER").unwrap_or_else(|_| "neo4j".to_string());
         let password =
             std::env::var("NEO4J_TEST_PASSWORD").unwrap_or_else(|_| "rootsignal".to_string());
-        let client = GraphClient::connect(&uri, &user, &password)
+        let client = connect_graph(&uri, &user, &password)
             .await
             .expect("Failed to connect to external Neo4j");
         // Return a unit value as the "container handle" — nothing to keep alive.
@@ -53,7 +53,7 @@ pub async fn neo4j_container() -> (Box<dyn std::any::Any + Send>, GraphClient) {
         // Poll until Neo4j accepts Bolt connections (up to 180s).
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
         let client = loop {
-            match GraphClient::connect(&uri, "neo4j", TEST_PASSWORD).await {
+            match connect_graph(&uri, "neo4j", TEST_PASSWORD).await {
                 Ok(c) => break c,
                 Err(_) if std::time::Instant::now() < deadline => {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;

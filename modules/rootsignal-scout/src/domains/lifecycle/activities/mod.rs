@@ -38,7 +38,7 @@ pub async fn reap_expired(store: &dyn SignalReader) -> seesaw_core::Events {
         });
         match node_type {
             NodeType::Gathering => gatherings += 1,
-            NodeType::Need => needs += 1,
+            NodeType::HelpRequest => needs += 1,
             _ => stale += 1,
         }
     }

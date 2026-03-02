@@ -5,7 +5,7 @@ use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphReader, SignalTypeCounts, SituationBrief, SourceBrief,
-    TensionResponseShape, UnmetTension,
+    ConcernResponseShape, UnmetTension,
 };
 use schemars::JsonSchema;
 use serde::{de, Deserialize};
@@ -55,7 +55,7 @@ pub struct DiscoveryBriefing {
     pub region_name: String,
     pub gap_type_stats: Vec<GapTypeStats>,
     pub extraction_yield: Vec<ExtractionYield>,
-    pub response_shapes: Vec<TensionResponseShape>,
+    pub response_shapes: Vec<ConcernResponseShape>,
 }
 
 impl DiscoveryBriefing {
@@ -1859,7 +1859,7 @@ mod tests {
     #[test]
     fn briefing_format_includes_response_shape() {
         let mut briefing = make_briefing();
-        briefing.response_shapes = vec![TensionResponseShape {
+        briefing.response_shapes = vec![ConcernResponseShape {
             title: "Immigration Enforcement Fear".to_string(),
             what_would_help: Some(
                 "legal defense, emergency housing, mental health support".to_string(),

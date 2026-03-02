@@ -23,7 +23,7 @@ pub fn world() -> World {
                     "https://www.twincities.com/frogtown-rent-crisis".to_string(),
                     "https://www.reddit.com/r/SaintPaul/comments/frogtown_rent_hikes".to_string(),
                 ],
-                category: "tension".to_string(),
+                category: "concern".to_string(),
             },
             Fact {
                 text: "At least 15 families in the Dale Street apartments received eviction notices \
@@ -32,7 +32,7 @@ pub fn world() -> World {
                 referenced_by: vec![
                     "https://www.twincities.com/frogtown-rent-crisis".to_string(),
                 ],
-                category: "tension".to_string(),
+                category: "concern".to_string(),
             },
             Fact {
                 text: "HOME Line provides free tenant hotline (612-728-5767) and legal assistance \

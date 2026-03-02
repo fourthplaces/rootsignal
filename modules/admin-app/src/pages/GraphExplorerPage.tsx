@@ -72,10 +72,10 @@ function layoutNodes(gqlNodes: GqlNode[], gqlEdges: GqlEdge[]): RFNode[] {
 
   const typeOrder: Record<string, number> = {
     Gathering: 0,
-    Aid: 0,
-    Need: 0,
-    Notice: 0,
-    Tension: 0,
+    Resource: 0,
+    HelpRequest: 0,
+    Announcement: 0,
+    Concern: 0,
     Actor: 1,
     Citation: 2,
   };
@@ -148,10 +148,10 @@ function GraphExplorerInner() {
       new Set(
         searchParams.get("types")?.split(",").filter(Boolean) ?? [
           "Gathering",
-          "Aid",
-          "Need",
-          "Notice",
-          "Tension",
+          "Resource",
+          "HelpRequest",
+          "Announcement",
+          "Concern",
           "Actor",
         ],
       ),
@@ -171,7 +171,7 @@ function GraphExplorerInner() {
     if (timeFrom !== defaultTimeFrom()) params.from = timeFrom;
     if (timeTo !== defaultTimeTo()) params.to = timeTo;
     const typesStr = [...enabledTypes].sort().join(",");
-    const defaultTypesStr = "Actor,Aid,Gathering,Need,Notice,Tension";
+    const defaultTypesStr = "Actor,Resource,Gathering,HelpRequest,Announcement,Concern";
     if (typesStr !== defaultTypesStr) params.types = typesStr;
     if (selectedNodeId) params.node = selectedNodeId;
     setSearchParams(params, { replace: true });

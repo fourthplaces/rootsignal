@@ -25,7 +25,7 @@ impl SupervisorState {
         )
         .param("region", self.region.clone());
 
-        let mut stream = self.client.inner().execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let s: String = row.get("last_run").unwrap_or_default();
             if s.is_empty() {
@@ -77,7 +77,7 @@ impl SupervisorState {
         .param("id", Uuid::new_v4().to_string())
         .param("last_run", ts);
 
-        self.client.inner().run(q).await?;
+        self.client.run(q).await?;
         Ok(())
     }
 
@@ -86,7 +86,6 @@ impl SupervisorState {
     pub async fn acquire_lock(&self) -> Result<bool, neo4rs::Error> {
         // Delete stale locks older than 30 minutes
         self.client
-            .inner()
             .run(query(
                 "MATCH (lock:SupervisorLock) WHERE lock.started_at < datetime() - duration('PT30M') DELETE lock"
             ))
@@ -100,7 +99,7 @@ impl SupervisorState {
              RETURN lock IS NOT NULL AS acquired",
         );
 
-        let mut result = self.client.inner().execute(q).await?;
+        let mut result = self.client.execute(q).await?;
         if let Some(row) = result.next().await? {
             let acquired: bool = row.get("acquired").unwrap_or(false);
             return Ok(acquired);
@@ -112,7 +111,6 @@ impl SupervisorState {
     /// Release the supervisor lock.
     pub async fn release_lock(&self) -> Result<(), neo4rs::Error> {
         self.client
-            .inner()
             .run(query("MATCH (lock:SupervisorLock) DELETE lock"))
             .await?;
         Ok(())
@@ -126,7 +124,7 @@ impl SupervisorState {
                AND t.phase_status_updated_at >= datetime() - duration('PT30M') \
              RETURN count(t) > 0 AS running",
         );
-        let mut stream = self.client.inner().execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let running: bool = row.get("running").unwrap_or(false);
             return Ok(running);

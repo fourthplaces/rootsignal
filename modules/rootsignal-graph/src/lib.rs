@@ -3,14 +3,12 @@ pub mod cache;
 pub mod cached_reader;
 pub mod cause_heat;
 pub mod client;
-pub mod embedding_enrichment;
 pub mod embedding_store;
 pub mod enrich;
 pub mod migrate;
 pub mod pipeline;
 pub mod reader;
 pub mod reducer;
-pub mod response;
 pub mod severity_inference;
 pub mod similarity;
 pub mod situation_temperature;
@@ -21,22 +19,20 @@ pub mod writer;
 
 pub use cache::CacheStore;
 pub use cached_reader::CachedReader;
-pub use client::GraphClient;
-pub use embedding_enrichment::{enrich_embeddings, EmbeddingEnrichStats};
+pub use client::{connect_graph, GraphClient};
 pub use embedding_store::EmbeddingStore;
-pub use enrich::{enrich, EnrichStats};
+pub use enrich::{compute_diversity_metrics, DiversityMetrics};
 pub use pipeline::{BBox, Pipeline, PipelineStats};
 pub use reader::{
     PublicGraphReader, ResourceGap, ResourceMatch, ValidationIssueRow, ValidationIssueSummary,
 };
 pub use reducer::{ApplyResult, GraphProjector};
-pub use similarity::SimilarityBuilder;
 pub use writer::{
 ConsolidationStats, DiscoveryTreeNode, DuplicateMatch, EvidenceSummary, ExtractionYield,
 FieldCorrection, GapTypeStats, GatheringFinderTarget, GraphReader, GraphStore,
 InvestigationTarget, NoticeInferenceRow, ReapStats, ResponseFinderTarget, ResponseHeuristic,
 SignalBrief, SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StagedSignal,
-TensionHub, TensionLinkerOutcome, TensionLinkerTarget, TensionRespondent, TensionResponseShape,
+ConcernHub, ConcernLinkerOutcome, ConcernLinkerTarget, ConcernRespondent, ConcernResponseShape,
 UnmetTension, WeaveCandidate, WeaveSignal,
 };
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).

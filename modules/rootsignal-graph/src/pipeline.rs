@@ -1,19 +1,18 @@
-//! Pipeline — orchestrates projector + enrichment into a complete graph build.
+//! Pipeline — orchestrates projector + cause_heat into a complete graph build.
 //!
 //! The pipeline sequences two steps:
-//! 1. **Project**: apply factual events to the graph (via GraphProjector)
-//! 2. **Enrich**: compute derived properties from graph state (diversity, actor stats, cause_heat)
+//! 1. **Project**: apply factual events to the graph (via GraphProjector).
+//!    Embeddings are computed at projection time via EmbeddingStore.
+//!    Diversity and actor stats are event-sourced (projected from events).
+//! 2. **Cause heat**: compute cause_heat from graph state (depends on embeddings + diversity).
 //!
-//! Replay guarantee: the same events always produce the same graph. Enrichment is
-//! deterministically recomputed from the graph state that the projector produced.
+//! Replay guarantee: the same events always produce the same graph.
 
 use anyhow::Result;
 use tracing::info;
 
-use rootsignal_common::EntityMappingOwned;
 use rootsignal_events::{EventStore, StoredEvent};
 
-use crate::enrich::{enrich, EnrichStats};
 use crate::reducer::{ApplyResult, GraphProjector};
 use crate::GraphClient;
 
@@ -23,7 +22,7 @@ pub struct PipelineStats {
     pub events_applied: u32,
     pub events_noop: u32,
     pub events_error: u32,
-    pub enrich: EnrichStats,
+    pub cause_heat_updated: u32,
 }
 
 /// Bbox for cause_heat computation.
@@ -35,7 +34,7 @@ pub struct BBox {
     pub max_lng: f64,
 }
 
-/// Orchestrates projector + enrichment into a complete graph build.
+/// Orchestrates projector + cause_heat into a complete graph build.
 pub struct Pipeline {
     client: GraphClient,
     projector: GraphProjector,
@@ -52,12 +51,11 @@ impl Pipeline {
         }
     }
 
-    /// Process a batch of events through the full pipeline: reduce → enrich.
+    /// Process a batch of events through the full pipeline: project → cause_heat.
     pub async fn process(
         &self,
         events: &[StoredEvent],
         bbox: &BBox,
-        entity_mappings: &[EntityMappingOwned],
     ) -> Result<PipelineStats> {
         let (mut applied, mut noop, mut errors) = (0u32, 0u32, 0u32);
 
@@ -69,48 +67,48 @@ impl Pipeline {
             }
         }
 
-        let enrich_stats = enrich(
+        let cause_heat_updated = crate::cause_heat::compute_cause_heat(
             &self.client,
-            entity_mappings,
             self.cause_heat_threshold,
             bbox.min_lat,
             bbox.max_lat,
             bbox.min_lng,
             bbox.max_lng,
         )
-        .await?;
+        .await
+        .map(|_| 0u32)
+        .unwrap_or(0);
 
         Ok(PipelineStats {
             events_applied: applied,
             events_noop: noop,
             events_error: errors,
-            enrich: enrich_stats,
+            cause_heat_updated,
         })
     }
 
-    /// Full rebuild: wipe graph, replay all events, enrich.
+    /// Full rebuild: wipe graph, replay all events, compute cause_heat.
     pub async fn rebuild(
         &self,
         store: &EventStore,
         bbox: &BBox,
-        entity_mappings: &[EntityMappingOwned],
     ) -> Result<PipelineStats> {
         info!("Pipeline: full rebuild starting");
 
         let last_seq = self.projector.rebuild(store).await?;
 
-        let enrich_stats = enrich(
+        let cause_heat_updated = crate::cause_heat::compute_cause_heat(
             &self.client,
-            entity_mappings,
             self.cause_heat_threshold,
             bbox.min_lat,
             bbox.max_lat,
             bbox.min_lng,
             bbox.max_lng,
         )
-        .await?;
+        .await
+        .map(|_| 0u32)
+        .unwrap_or(0);
 
-        // Count events by reading from store (rebuild doesn't return per-event stats)
         let events = store.read_from(1, 1).await?;
         let total = if events.is_empty() {
             0
@@ -122,34 +120,34 @@ impl Pipeline {
 
         Ok(PipelineStats {
             events_applied: total,
-            events_noop: 0, // rebuild doesn't track noop vs applied
+            events_noop: 0,
             events_error: 0,
-            enrich: enrich_stats,
+            cause_heat_updated,
         })
     }
 
-    /// Replay from a specific sequence number, then enrich.
+    /// Replay from a specific sequence number, then compute cause_heat.
     pub async fn replay_from(
         &self,
         store: &EventStore,
         seq: i64,
         bbox: &BBox,
-        entity_mappings: &[EntityMappingOwned],
     ) -> Result<PipelineStats> {
         info!(seq, "Pipeline: incremental replay starting");
 
         let last_seq = self.projector.replay_from(store, seq).await?;
 
-        let enrich_stats = enrich(
+        let cause_heat_updated = crate::cause_heat::compute_cause_heat(
             &self.client,
-            entity_mappings,
             self.cause_heat_threshold,
             bbox.min_lat,
             bbox.max_lat,
             bbox.min_lng,
             bbox.max_lng,
         )
-        .await?;
+        .await
+        .map(|_| 0u32)
+        .unwrap_or(0);
 
         let applied = if last_seq >= seq {
             (last_seq - seq + 1) as u32
@@ -163,7 +161,7 @@ impl Pipeline {
             events_applied: applied,
             events_noop: 0,
             events_error: 0,
-            enrich: enrich_stats,
+            cause_heat_updated,
         })
     }
 

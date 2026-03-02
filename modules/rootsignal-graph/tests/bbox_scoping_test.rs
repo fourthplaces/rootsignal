@@ -1,7 +1,7 @@
 //! Integration test: verify bbox-scoped queries work correctly against live Neo4j.
 //! Run with: cargo test -p rootsignal-graph --test bbox_scoping_test -- --ignored --nocapture
 
-use rootsignal_graph::{query, GraphClient, GraphStore};
+use rootsignal_graph::{connect_graph, query, GraphClient, GraphStore};
 
 fn load_env() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -30,7 +30,7 @@ async fn connect() -> GraphClient {
     let uri = std::env::var("NEO4J_URI").expect("NEO4J_URI required");
     let user = std::env::var("NEO4J_USER").expect("NEO4J_USER required");
     let password = std::env::var("NEO4J_PASSWORD").expect("NEO4J_PASSWORD required");
-    GraphClient::connect(&uri, &user, &password)
+    connect_graph(&uri, &user, &password)
         .await
         .expect("Failed to connect to Neo4j")
 }
@@ -87,10 +87,10 @@ async fn test_get_active_tensions_respects_bbox() {
         // Verify all returned tensions are actually within bbox by checking their lat/lng
         for (tid, _emb) in &tensions {
             let q = query(
-                "MATCH (t:Tension {id: $id}) RETURN t.lat AS lat, t.lng AS lng, t.title AS title",
+                "MATCH (t:Concern {id: $id}) RETURN t.lat AS lat, t.lng AS lng, t.title AS title",
             )
             .param("id", tid.to_string());
-            let mut stream = client.inner().execute(q).await.unwrap();
+            let mut stream = client.execute(q).await.unwrap();
             if let Ok(Some(row)) = stream.next().await {
                 let t_lat: f64 = row.get("lat").unwrap_or(0.0);
                 let t_lng: f64 = row.get("lng").unwrap_or(0.0);
@@ -145,7 +145,7 @@ async fn test_find_tension_hubs_respects_bbox() {
                     "MATCH (n {id: $id}) RETURN n.lat AS lat, n.lng AS lng, n.title AS title",
                 )
                 .param("id", resp.signal_id.to_string());
-                let mut stream = client.inner().execute(q).await.unwrap();
+                let mut stream = client.execute(q).await.unwrap();
                 if let Ok(Some(row)) = stream.next().await {
                     let s_lat: f64 = row.get("lat").unwrap_or(0.0);
                     let s_lng: f64 = row.get("lng").unwrap_or(0.0);
@@ -178,11 +178,11 @@ async fn test_no_off_geo_contamination_remains() {
     // Check for signals outside Twin Cities metro bbox
     let q = query(
         "MATCH (n)
-         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Tension OR n:Notice)
+         WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Concern OR n:Announcement)
            AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
          RETURN count(n) AS count",
     );
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     let off_geo_count: i64 = if let Ok(Some(row)) = stream.next().await {
         row.get("count").unwrap_or(0)
     } else {
@@ -192,11 +192,11 @@ async fn test_no_off_geo_contamination_remains() {
 
     // Check for cross-geo edges
     let q2 = query(
-        "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
+        "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Concern)
          WHERE abs(sig.lat - t.lat) > 1.0 OR abs(sig.lng - t.lng) > 1.0
          RETURN count(r) AS count",
     );
-    let mut stream2 = client.inner().execute(q2).await.unwrap();
+    let mut stream2 = client.execute(q2).await.unwrap();
     let cross_geo_count: i64 = if let Ok(Some(row)) = stream2.next().await {
         row.get("count").unwrap_or(0)
     } else {
@@ -208,12 +208,12 @@ async fn test_no_off_geo_contamination_remains() {
     if off_geo_count > 0 {
         let examples = query(
             "MATCH (n)
-             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Tension OR n:Notice)
+             WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Concern OR n:Announcement)
                AND (n.lat < 43.0 OR n.lat > 46.5 OR n.lng < -95.5 OR n.lng > -91.0)
              RETURN labels(n)[0] AS label, n.title AS title, n.lat AS lat, n.lng AS lng
              LIMIT 5",
         );
-        let mut stream = client.inner().execute(examples).await.unwrap();
+        let mut stream = client.execute(examples).await.unwrap();
         println!("\n  Off-geo signal examples:");
         while let Ok(Some(row)) = stream.next().await {
             let label: String = row.get("label").unwrap_or_default();
@@ -227,13 +227,13 @@ async fn test_no_off_geo_contamination_remains() {
 
     if cross_geo_count > 0 {
         let examples = query(
-            "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
+            "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Concern)
              WHERE abs(sig.lat - t.lat) > 1.0 OR abs(sig.lng - t.lng) > 1.0
              RETURN sig.title AS sig_title, sig.lat AS sig_lat, sig.lng AS sig_lng,
                     t.title AS tension_title, t.lat AS t_lat, t.lng AS t_lng
              LIMIT 5",
         );
-        let mut stream = client.inner().execute(examples).await.unwrap();
+        let mut stream = client.execute(examples).await.unwrap();
         println!("\n  Cross-geo edge examples:");
         while let Ok(Some(row)) = stream.next().await {
             let sig_title: String = row.get("sig_title").unwrap_or_default();
@@ -265,7 +265,7 @@ async fn test_list_all_sources() {
          RETURN s.region AS region, count(s) AS cnt
          ORDER BY cnt DESC",
     );
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     while let Ok(Some(row)) = stream.next().await {
         let region: String = row.get("region").unwrap_or_else(|_| "(none)".to_string());
         let cnt: i64 = row.get("cnt").unwrap_or(0);
@@ -290,7 +290,7 @@ async fn test_region_signal_assessment() {
         );
 
         // Count signals by type
-        for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+        for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE n.lat >= $min_lat AND n.lat <= $max_lat
@@ -301,7 +301,7 @@ async fn test_region_signal_assessment() {
             .param("max_lat", max_lat)
             .param("min_lng", min_lng)
             .param("max_lng", max_lng);
-            let mut s = client.inner().execute(q).await.unwrap();
+            let mut s = client.execute(q).await.unwrap();
             let cnt: i64 = if let Ok(Some(r)) = s.next().await {
                 r.get("cnt").unwrap_or(0)
             } else {
@@ -326,7 +326,7 @@ async fn test_region_signal_assessment() {
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
-        let mut ss = client.inner().execute(sq).await.unwrap();
+        let mut ss = client.execute(sq).await.unwrap();
         let mut story_count = 0;
         while let Ok(Some(row)) = ss.next().await {
             let headline: String = row.get("headline").unwrap_or_default();
@@ -350,7 +350,7 @@ async fn test_region_signal_assessment() {
 
         // RESPONDS_TO / DRAWN_TO edges
         let eq = query(
-            "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
+            "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Concern)
              WHERE sig.lat >= $min_lat AND sig.lat <= $max_lat
                AND sig.lng >= $min_lng AND sig.lng <= $max_lng
              RETURN count(r) AS cnt",
@@ -359,7 +359,7 @@ async fn test_region_signal_assessment() {
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
-        let mut es = client.inner().execute(eq).await.unwrap();
+        let mut es = client.execute(eq).await.unwrap();
         let edge_cnt: i64 = if let Ok(Some(r)) = es.next().await {
             r.get("cnt").unwrap_or(0)
         } else {
@@ -369,7 +369,7 @@ async fn test_region_signal_assessment() {
 
         // Cross-geo edges (signals responding to tensions in other regions)
         let xq = query(
-            "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Tension)
+            "MATCH (sig)-[r:RESPONDS_TO|DRAWN_TO]->(t:Concern)
              WHERE sig.lat >= $min_lat AND sig.lat <= $max_lat
                AND sig.lng >= $min_lng AND sig.lng <= $max_lng
                AND (abs(sig.lat - t.lat) > 1.0 OR abs(sig.lng - t.lng) > 1.0)
@@ -379,7 +379,7 @@ async fn test_region_signal_assessment() {
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
         .param("max_lng", max_lng);
-        let mut xs = client.inner().execute(xq).await.unwrap();
+        let mut xs = client.execute(xq).await.unwrap();
         let xcnt: i64 = if let Ok(Some(r)) = xs.next().await {
             r.get("cnt").unwrap_or(0)
         } else {
@@ -403,7 +403,7 @@ async fn test_find_recent_signals_by_location() {
     println!("\n=== Recent signals (last 24h) by location ===\n");
 
     // Find all signals created recently, show their lat/lng
-    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.extracted_at IS NOT NULL
@@ -412,7 +412,7 @@ async fn test_find_recent_signals_by_location() {
              ORDER BY n.extracted_at DESC
              LIMIT 30"
         ));
-        let mut stream = client.inner().execute(q).await.unwrap();
+        let mut stream = client.execute(q).await.unwrap();
         while let Ok(Some(row)) = stream.next().await {
             let title: String = row.get("title").unwrap_or_default();
             let lat: f64 = row.get("lat").unwrap_or(0.0);
@@ -467,7 +467,7 @@ async fn test_find_duplicate_respects_bbox() {
     let tc_result = writer
         .find_duplicate(
             &embedding_f32,
-            rootsignal_common::NodeType::Tension,
+            rootsignal_common::NodeType::Concern,
             0.8,
             tc_bbox.0,
             tc_bbox.1,
@@ -490,7 +490,7 @@ async fn test_find_duplicate_respects_bbox() {
     let miami_result = writer
         .find_duplicate(
             &embedding_f32,
-            rootsignal_common::NodeType::Tension,
+            rootsignal_common::NodeType::Concern,
             0.8,
             miami_bbox.0,
             miami_bbox.1,
@@ -509,7 +509,7 @@ async fn test_find_duplicate_respects_bbox() {
     let global_result = writer
         .find_duplicate(
             &embedding_f32,
-            rootsignal_common::NodeType::Tension,
+            rootsignal_common::NodeType::Concern,
             0.8,
             -90.0,
             90.0,
@@ -606,7 +606,7 @@ async fn test_find_tension_linker_targets_respects_bbox() {
     for target in &tc_targets {
         let q = query("MATCH (n {id: $id}) RETURN n.lat AS lat, n.lng AS lng")
             .param("id", target.signal_id.to_string());
-        let mut stream = client.inner().execute(q).await.unwrap();
+        let mut stream = client.execute(q).await.unwrap();
         if let Ok(Some(row)) = stream.next().await {
             let lat: f64 = row.get("lat").unwrap_or(0.0);
             let lng: f64 = row.get("lng").unwrap_or(0.0);

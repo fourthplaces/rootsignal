@@ -3651,6 +3651,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rootsignal-replay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "dotenvy",
+ "rootsignal-common",
+ "rootsignal-events",
+ "rootsignal-graph",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "rootsignal-scout"
 version = "0.1.0"
 dependencies = [

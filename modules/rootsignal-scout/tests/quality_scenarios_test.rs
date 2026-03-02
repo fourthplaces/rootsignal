@@ -10,8 +10,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    AidNode, GatheringNode, GeoAccuracy, GeoPoint, GeoPrecision, NeedNode, Node, NodeMeta,
-    NoticeNode, ReviewStatus, SensitivityLevel, Severity, TensionNode, Urgency,
+    ResourceOfferNode, GatheringNode, GeoAccuracy, GeoPoint, GeoPrecision, HelpRequestNode, Node, NodeMeta,
+    AnnouncementNode, ReviewStatus, SensitivityLevel, Severity, ConcernNode, Urgency,
 };
 use rootsignal_scout::domains::enrichment::activities::quality;
 
@@ -111,7 +111,7 @@ fn community_garden_gathering_scores_high_confidence() {
 /// should score high confidence.
 #[test]
 fn food_shelf_aid_scores_high_confidence() {
-    let node = Node::Aid(AidNode {
+    let node = Node::Resource(ResourceOfferNode {
         meta: NodeMeta {
             title: "Briva Health Community Food Shelf".into(),
             summary: "Free food shelf — no ID, proof of income, or appointment needed".into(),
@@ -127,6 +127,7 @@ fn food_shelf_aid_scores_high_confidence() {
         },
         action_url: "https://brivahealth.org/volunteer".into(),
         availability: Some("Tue-Fri 10-4, 1st & 3rd Sat 10-1".into()),
+        eligibility: None,
         is_ongoing: true,
     });
 
@@ -147,7 +148,7 @@ fn food_shelf_aid_scores_high_confidence() {
 /// Aid without an action URL should not be actionable, even if ongoing.
 #[test]
 fn food_shelf_aid_without_url_not_actionable() {
-    let node = Node::Aid(AidNode {
+    let node = Node::Resource(ResourceOfferNode {
         meta: NodeMeta {
             title: "Briva Health Community Food Shelf".into(),
             summary: "Free food shelf".into(),
@@ -162,6 +163,7 @@ fn food_shelf_aid_without_url_not_actionable() {
         },
         action_url: String::new(),
         availability: Some("Tue-Fri 10-4".into()),
+        eligibility: None,
         is_ongoing: true,
     });
 
@@ -180,7 +182,7 @@ fn food_shelf_aid_without_url_not_actionable() {
 /// should still have moderate confidence (location helps, but no URL lowers it).
 #[test]
 fn ice_enforcement_tension_moderate_confidence() {
-    let node = Node::Tension(TensionNode {
+    let node = Node::Concern(ConcernNode {
         meta: NodeMeta {
             title: "ICE Enforcement Activity in Phillips Neighborhood".into(),
             summary: "Multiple reports of ICE vehicles and plainclothes agents near Lake St and Bloomington Ave".into(),
@@ -196,7 +198,8 @@ fn ice_enforcement_tension_moderate_confidence() {
         },
         severity: Severity::High,
         category: Some("immigration".into()),
-        what_would_help: Some("Legal support, community safe spaces, know-your-rights information".into()),
+        subject: None,
+        opposing: Some("Legal support, community safe spaces, know-your-rights information".into()),
     });
 
     let q = quality::score(&node);
@@ -255,7 +258,7 @@ fn emergency_meeting_gathering_is_actionable() {
 /// Legal aid from the tension fixture — an Aid signal with location.
 #[test]
 fn legal_aid_signal_scores_reasonably() {
-    let node = Node::Aid(AidNode {
+    let node = Node::Resource(ResourceOfferNode {
         meta: NodeMeta {
             title: "Legal Support for Immigrants".into(),
             summary: "MIRAC legal aid available at Centro de Trabajadores Unidos".into(),
@@ -271,6 +274,7 @@ fn legal_aid_signal_scores_reasonably() {
         },
         action_url: String::new(),
         availability: Some("9-5 weekdays".into()),
+        eligibility: None,
         is_ongoing: true,
     });
 
@@ -296,7 +300,7 @@ fn legal_aid_signal_scores_reasonably() {
 /// This is by design but has quality implications.
 #[test]
 fn notice_always_actionable_even_empty() {
-    let node = Node::Notice(NoticeNode {
+    let node = Node::Announcement(AnnouncementNode {
         meta: NodeMeta {
             title: "Policy Update".into(),
             summary: "Vague policy thing".into(),
@@ -357,7 +361,7 @@ fn gathering_action_url_same_as_source_url_not_actionable() {
 /// A Need with action_url is always actionable (no timing requirement).
 #[test]
 fn need_with_url_is_actionable_without_timing() {
-    let node = Node::Need(NeedNode {
+    let node = Node::HelpRequest(HelpRequestNode {
         meta: NodeMeta {
             title: "Winter Coat Drive".into(),
             summary: "Need 500 coats by Jan 31".into(),
@@ -389,7 +393,7 @@ fn need_with_url_is_actionable_without_timing() {
 /// A Need without an action_url should NOT be actionable.
 #[test]
 fn need_without_url_not_actionable() {
-    let node = Node::Need(NeedNode {
+    let node = Node::HelpRequest(HelpRequestNode {
         meta: test_meta(),
         urgency: Urgency::Critical,
         what_needed: Some("Emergency housing".into()),
@@ -417,17 +421,19 @@ fn one_time_aid_distribution_scores_lower_than_ongoing() {
         ..test_meta()
     };
 
-    let ongoing = Node::Aid(AidNode {
+    let ongoing = Node::Resource(ResourceOfferNode {
         meta: base_meta.clone(),
         action_url: "https://example.com/food".into(),
         availability: Some("Every weekday".into()),
+        eligibility: None,
         is_ongoing: true,
     });
 
-    let one_time = Node::Aid(AidNode {
+    let one_time = Node::Resource(ResourceOfferNode {
         meta: base_meta,
         action_url: "https://example.com/food".into(),
         availability: Some("Saturday March 15 only".into()),
+        eligibility: None,
         is_ongoing: false,
     });
 
@@ -456,7 +462,7 @@ fn one_time_aid_distribution_scores_lower_than_ongoing() {
 #[test]
 fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
     // Signal A: has precise address name, but coords were backfilled → Approximate
-    let node_a = Node::Tension(TensionNode {
+    let node_a = Node::Concern(ConcernNode {
         meta: NodeMeta {
             title: "Issue at 3524 15th Ave S".into(),
             summary: "Specific address issue".into(),
@@ -471,11 +477,12 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         },
         severity: Severity::Medium,
         category: None,
-        what_would_help: None,
+        subject: None,
+        opposing: None,
     });
 
     // Signal B: vague neighborhood name, but has Neighborhood-precision coords
-    let node_b = Node::Tension(TensionNode {
+    let node_b = Node::Concern(ConcernNode {
         meta: NodeMeta {
             title: "Issue in Powderhorn area".into(),
             summary: "Neighborhood-level issue".into(),
@@ -490,7 +497,8 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         },
         severity: Severity::Medium,
         category: None,
-        what_would_help: None,
+        subject: None,
+        opposing: None,
     });
 
     let q_a = quality::score(&node_a);

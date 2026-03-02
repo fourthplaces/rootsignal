@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{
-    canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode,
+    canonical_value, ResourceOfferNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode,
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole,
     Urgency,
 };
@@ -52,7 +52,7 @@ pub struct GravityFinding {
 pub struct DiscoveredGathering {
     pub title: String,
     pub summary: String,
-    /// "gathering", "aid", or "need"
+    /// "gathering", "resource", or "help_request"
     pub signal_type: String,
     /// Must be a URL the agent actually read via read_page
     pub url: String,
@@ -521,8 +521,8 @@ async fn process_gathering(
 
     let node_type = match gathering.signal_type.to_lowercase().as_str() {
         "gathering" => NodeType::Gathering,
-        "need" => NodeType::Need,
-        _ => NodeType::Aid, // Default to Aid for unknown types
+        "help_request" => NodeType::HelpRequest,
+        _ => NodeType::Resource, // Default to Resource for unknown types
     };
 
     // Check for duplicate (region-scoped)
@@ -570,7 +570,7 @@ async fn process_gathering(
     };
 
     // Wire DRAWN_TO edge to the target tension
-    events.push(SystemEvent::TensionLinked {
+    events.push(SystemEvent::ConcernLinked {
         signal_id,
         tension_id: target.tension_id,
         strength: gathering.match_strength.clamp(0.0, 1.0),
@@ -673,17 +673,18 @@ async fn create_gathering_node(
                 is_recurring: gathering.is_recurring,
             })
         }
-        "need" => Node::Need(NeedNode {
+        "help_request" => Node::HelpRequest(HelpRequestNode {
             meta,
             urgency: Urgency::Medium,
             what_needed: Some(gathering.summary.clone()),
             action_url: Some(gathering.url.clone()),
             goal: None,
         }),
-        _ => Node::Aid(AidNode {
+        _ => Node::Resource(ResourceOfferNode {
             meta,
             action_url: gathering.url.clone(),
             availability: None,
+            eligibility: None,
             is_ongoing: gathering.is_recurring,
         }),
     };
@@ -757,7 +758,7 @@ async fn wire_also_addresses(
                 also_addresses = tension_title.as_str(),
                 "Wiring gravity also_addresses edge"
             );
-            events.push(SystemEvent::TensionLinked {
+            events.push(SystemEvent::ConcernLinked {
                 signal_id,
                 tension_id,
                 strength: sim.clamp(0.0, 1.0),

@@ -134,7 +134,7 @@ Include a mix of:
                 None,
                 DiscoveryMethod::ColdStart,
                 0.5,
-                SourceRole::Tension,
+                SourceRole::Concern,
                 None,
             ));
         }

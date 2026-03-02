@@ -4,7 +4,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::{ActorNode, CitationNode, Node, NodeType, TagNode, TensionResponse};
+use rootsignal_common::{ActorNode, CitationNode, Node, NodeType, TagNode, ConcernResponse};
 
 use crate::cache::CacheStore;
 use crate::reader::passes_display_filter;
@@ -313,13 +313,13 @@ impl CachedReader {
             .map(|&idx| snap.actors[idx].clone()))
     }
 
-    pub async fn tension_responses(
+    pub async fn concern_responses(
         &self,
         tension_id: Uuid,
-    ) -> Result<Vec<TensionResponse>, neo4rs::Error> {
+    ) -> Result<Vec<ConcernResponse>, neo4rs::Error> {
         let snap = self.cache.load_full();
         let responses = snap
-            .tension_responses
+            .concern_responses
             .get(&tension_id)
             .map(|v| {
                 v.iter()
@@ -368,7 +368,7 @@ impl CachedReader {
         let mut total_count: u32 = 0;
 
         // --- Collect signals ---
-        let want_signals = ["Gathering", "Aid", "Need", "Notice", "Tension"]
+        let want_signals = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"]
             .iter()
             .any(|t| type_set.contains(t));
 
@@ -386,12 +386,11 @@ impl CachedReader {
 
                 let type_name = match signal.node_type() {
                     NodeType::Gathering => "Gathering",
-                    NodeType::Aid => "Aid",
-                    NodeType::Need => "Need",
-                    NodeType::Notice => "Notice",
-                    NodeType::Tension => "Tension",
+                    NodeType::Resource => "Resource",
+                    NodeType::HelpRequest => "HelpRequest",
+                    NodeType::Announcement => "Announcement",
+                    NodeType::Concern => "Concern",
                     NodeType::Condition => "Condition",
-                    NodeType::Incident => "Incident",
                     NodeType::Citation => continue,
                 };
 
@@ -502,7 +501,7 @@ impl CachedReader {
         }
 
         // Tension → Responses (RespondsTo)
-        for (&tension_id, responses) in &snap.tension_responses {
+        for (&tension_id, responses) in &snap.concern_responses {
             if !node_ids.contains(&tension_id) {
                 continue;
             }

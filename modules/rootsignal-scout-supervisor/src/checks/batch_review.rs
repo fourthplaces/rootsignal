@@ -93,7 +93,7 @@ pub async fn fetch_staged_signals(
     client: &GraphClient,
     region: &ScoutScope,
 ) -> Result<Vec<SignalForReview>> {
-    let g = client.inner();
+    let g = client;
 
     let lat_delta = region.radius_km / 111.0;
     let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
@@ -103,7 +103,7 @@ pub async fn fetch_staged_signals(
     let max_lng = region.center_lng + lng_delta;
 
     // UNION-per-label for index utilization
-    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
     let branches: Vec<String> = labels
         .iter()
         .map(|label| {
@@ -332,7 +332,7 @@ pub async fn review_batch(
     let mut passed = 0u64;
     let mut rejected = 0u64;
     let mut issues = Vec::new();
-    let g = client.inner();
+    let g = client;
 
     for verdict in &valid_verdicts {
         match verdict.decision.as_str() {
@@ -401,7 +401,7 @@ pub async fn review_batch(
 
 async fn promote_to_live(graph: &neo4rs::Graph, signal_id: &str) -> Result<(), neo4rs::Error> {
     // Use UNION-per-label pattern for index utilization
-    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' SET n.review_status = 'live'"
@@ -416,7 +416,7 @@ async fn mark_rejected(
     signal_id: &str,
     reason: &str,
 ) -> Result<(), neo4rs::Error> {
-    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' \

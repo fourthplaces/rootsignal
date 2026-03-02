@@ -20,7 +20,7 @@ fn junk_title_filtered() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "aid",
+            "signal_type": "resource",
             "title": "Unable to extract content from this page",
             "summary": "Error",
             "sensitivity": "general"
@@ -43,7 +43,7 @@ fn page_not_found_filtered() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "notice",
+            "signal_type": "announcement",
             "title": "Page not found - 404",
             "summary": "Missing page",
             "sensitivity": "general"
@@ -62,7 +62,7 @@ fn non_firsthand_signal_rejected() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "tension",
+            "signal_type": "concern",
             "title": "Political commentary on housing",
             "summary": "Opinion piece",
             "sensitivity": "general",
@@ -83,7 +83,7 @@ fn firsthand_null_signal_kept() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "aid",
+            "signal_type": "resource",
             "title": "Free food shelf",
             "summary": "Open Tuesdays",
             "sensitivity": "general"
@@ -105,7 +105,7 @@ fn firsthand_true_signal_kept() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "need",
+            "signal_type": "help_request",
             "title": "My family needs winter coats",
             "summary": "Direct plea",
             "sensitivity": "sensitive",
@@ -154,10 +154,10 @@ fn all_five_signal_types_convert() {
         r#"{
         "signals": [
             {"signal_type": "gathering", "title": "G", "summary": "s", "sensitivity": "general"},
-            {"signal_type": "aid", "title": "A", "summary": "s", "sensitivity": "general"},
-            {"signal_type": "need", "title": "N", "summary": "s", "sensitivity": "general"},
-            {"signal_type": "notice", "title": "O", "summary": "s", "sensitivity": "general"},
-            {"signal_type": "tension", "title": "T", "summary": "s", "sensitivity": "general"}
+            {"signal_type": "resource", "title": "A", "summary": "s", "sensitivity": "general"},
+            {"signal_type": "help_request", "title": "N", "summary": "s", "sensitivity": "general"},
+            {"signal_type": "announcement", "title": "O", "summary": "s", "sensitivity": "general"},
+            {"signal_type": "concern", "title": "T", "summary": "s", "sensitivity": "general"}
         ]
     }"#,
     );
@@ -166,10 +166,10 @@ fn all_five_signal_types_convert() {
 
     assert_eq!(result.nodes.len(), 5);
     assert!(matches!(result.nodes[0], Node::Gathering(_)));
-    assert!(matches!(result.nodes[1], Node::Aid(_)));
-    assert!(matches!(result.nodes[2], Node::Need(_)));
-    assert!(matches!(result.nodes[3], Node::Notice(_)));
-    assert!(matches!(result.nodes[4], Node::Tension(_)));
+    assert!(matches!(result.nodes[1], Node::Resource(_)));
+    assert!(matches!(result.nodes[2], Node::HelpRequest(_)));
+    assert!(matches!(result.nodes[3], Node::Announcement(_)));
+    assert!(matches!(result.nodes[4], Node::Concern(_)));
 }
 
 // ---------------------------------------------------------------------------
@@ -181,10 +181,10 @@ fn sensitivity_string_converts_to_typed_level() {
     let response = parse_response(
         r#"{
         "signals": [
-            {"signal_type": "aid", "title": "A", "summary": "s", "sensitivity": "sensitive"},
-            {"signal_type": "aid", "title": "B", "summary": "s", "sensitivity": "elevated"},
-            {"signal_type": "aid", "title": "C", "summary": "s", "sensitivity": "general"},
-            {"signal_type": "aid", "title": "D", "summary": "s", "sensitivity": "nonsense"}
+            {"signal_type": "resource", "title": "A", "summary": "s", "sensitivity": "sensitive"},
+            {"signal_type": "resource", "title": "B", "summary": "s", "sensitivity": "elevated"},
+            {"signal_type": "resource", "title": "C", "summary": "s", "sensitivity": "general"},
+            {"signal_type": "resource", "title": "D", "summary": "s", "sensitivity": "nonsense"}
         ]
     }"#,
     );
@@ -215,11 +215,11 @@ fn severity_string_converts_to_typed_level() {
     let response = parse_response(
         r#"{
         "signals": [
-            {"signal_type": "tension", "title": "A", "summary": "s", "sensitivity": "general", "severity": "critical"},
-            {"signal_type": "tension", "title": "B", "summary": "s", "sensitivity": "general", "severity": "high"},
-            {"signal_type": "tension", "title": "C", "summary": "s", "sensitivity": "general", "severity": "medium"},
-            {"signal_type": "tension", "title": "D", "summary": "s", "sensitivity": "general", "severity": "low"},
-            {"signal_type": "tension", "title": "E", "summary": "s", "sensitivity": "general", "severity": "nonsense"}
+            {"signal_type": "concern", "title": "A", "summary": "s", "sensitivity": "general", "severity": "critical"},
+            {"signal_type": "concern", "title": "B", "summary": "s", "sensitivity": "general", "severity": "high"},
+            {"signal_type": "concern", "title": "C", "summary": "s", "sensitivity": "general", "severity": "medium"},
+            {"signal_type": "concern", "title": "D", "summary": "s", "sensitivity": "general", "severity": "low"},
+            {"signal_type": "concern", "title": "E", "summary": "s", "sensitivity": "general", "severity": "nonsense"}
         ]
     }"#,
     );
@@ -230,7 +230,7 @@ fn severity_string_converts_to_typed_level() {
         .nodes
         .iter()
         .map(|n| match n {
-            Node::Tension(t) => t.severity.clone(),
+            Node::Concern(t) => t.severity.clone(),
             _ => panic!("expected tension"),
         })
         .collect();
@@ -252,11 +252,11 @@ fn urgency_string_converts_to_typed_level() {
     let response = parse_response(
         r#"{
         "signals": [
-            {"signal_type": "need", "title": "A", "summary": "s", "sensitivity": "general", "urgency": "critical"},
-            {"signal_type": "need", "title": "B", "summary": "s", "sensitivity": "general", "urgency": "high"},
-            {"signal_type": "need", "title": "C", "summary": "s", "sensitivity": "general", "urgency": "low"},
-            {"signal_type": "need", "title": "D", "summary": "s", "sensitivity": "general", "urgency": "nonsense"},
-            {"signal_type": "need", "title": "E", "summary": "s", "sensitivity": "general"}
+            {"signal_type": "help_request", "title": "A", "summary": "s", "sensitivity": "general", "urgency": "critical"},
+            {"signal_type": "help_request", "title": "B", "summary": "s", "sensitivity": "general", "urgency": "high"},
+            {"signal_type": "help_request", "title": "C", "summary": "s", "sensitivity": "general", "urgency": "low"},
+            {"signal_type": "help_request", "title": "D", "summary": "s", "sensitivity": "general", "urgency": "nonsense"},
+            {"signal_type": "help_request", "title": "E", "summary": "s", "sensitivity": "general"}
         ]
     }"#,
     );
@@ -267,7 +267,7 @@ fn urgency_string_converts_to_typed_level() {
         .nodes
         .iter()
         .map(|n| match n {
-            Node::Need(nd) => nd.urgency.clone(),
+            Node::HelpRequest(nd) => nd.urgency.clone(),
             _ => panic!("expected need"),
         })
         .collect();
@@ -368,13 +368,13 @@ fn geo_precision_string_converts_to_typed_precision() {
     let response = parse_response(
         r#"{
         "signals": [
-            {"signal_type": "aid", "title": "A", "summary": "s", "sensitivity": "general",
+            {"signal_type": "resource", "title": "A", "summary": "s", "sensitivity": "general",
              "latitude": 44.97, "longitude": -93.26, "geo_precision": "exact"},
-            {"signal_type": "aid", "title": "B", "summary": "s", "sensitivity": "general",
+            {"signal_type": "resource", "title": "B", "summary": "s", "sensitivity": "general",
              "latitude": 44.97, "longitude": -93.26, "geo_precision": "neighborhood"},
-            {"signal_type": "aid", "title": "C", "summary": "s", "sensitivity": "general",
+            {"signal_type": "resource", "title": "C", "summary": "s", "sensitivity": "general",
              "latitude": 44.97, "longitude": -93.26, "geo_precision": "other"},
-            {"signal_type": "aid", "title": "D", "summary": "s", "sensitivity": "general"}
+            {"signal_type": "resource", "title": "D", "summary": "s", "sensitivity": "general"}
         ]
     }"#,
     );
@@ -409,7 +409,7 @@ fn signal_source_url_overrides_page_url() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "aid",
+            "signal_type": "resource",
             "title": "Food shelf",
             "summary": "s",
             "sensitivity": "general",
@@ -431,7 +431,7 @@ fn missing_signal_source_url_falls_back_to_page() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "aid",
+            "signal_type": "resource",
             "title": "Food shelf",
             "summary": "s",
             "sensitivity": "general"
@@ -452,7 +452,7 @@ fn empty_signal_source_url_falls_back_to_page() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "aid",
+            "signal_type": "resource",
             "title": "Food shelf",
             "summary": "s",
             "sensitivity": "general",
@@ -478,7 +478,7 @@ fn aid_defaults_is_ongoing_true() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "aid",
+            "signal_type": "resource",
             "title": "Food shelf",
             "summary": "s",
             "sensitivity": "general"
@@ -488,7 +488,7 @@ fn aid_defaults_is_ongoing_true() {
 
     let result = Extractor::convert_signals(response, "https://example.com");
 
-    if let Node::Aid(a) = &result.nodes[0] {
+    if let Node::Resource(a) = &result.nodes[0] {
         assert!(a.is_ongoing, "aid should default to is_ongoing=true");
     } else {
         panic!("expected Aid");
@@ -551,7 +551,7 @@ fn tags_are_slugified_during_conversion() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "aid",
+            "signal_type": "resource",
             "title": "Food shelf",
             "summary": "s",
             "sensitivity": "general",
@@ -578,7 +578,7 @@ fn resource_tags_paired_with_signal() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "aid",
+            "signal_type": "resource",
             "title": "Food shelf",
             "summary": "s",
             "sensitivity": "general",
@@ -606,9 +606,9 @@ fn implied_queries_aggregated_across_signals() {
     let response = parse_response(
         r#"{
         "signals": [
-            {"signal_type": "tension", "title": "A", "summary": "s", "sensitivity": "general",
+            {"signal_type": "concern", "title": "A", "summary": "s", "sensitivity": "general",
              "implied_queries": ["legal aid Minneapolis"]},
-            {"signal_type": "need", "title": "B", "summary": "s", "sensitivity": "general",
+            {"signal_type": "help_request", "title": "B", "summary": "s", "sensitivity": "general",
              "implied_queries": ["emergency housing Minneapolis", "shelter beds available"]}
         ]
     }"#,
@@ -718,7 +718,7 @@ fn schedule_not_created_for_non_schedule_types() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "tension",
+            "signal_type": "concern",
             "title": "Ongoing issue",
             "summary": "s",
             "sensitivity": "general",
@@ -744,9 +744,9 @@ fn mixed_valid_and_invalid_signals_filters_junk_keeps_good() {
     let response = parse_response(
         r#"{
         "signals": [
-            {"signal_type": "aid", "title": "Real food shelf", "summary": "s", "sensitivity": "general"},
-            {"signal_type": "tension", "title": "Unable to extract this page", "summary": "s", "sensitivity": "general"},
-            {"signal_type": "need", "title": "Political take on housing", "summary": "s", "sensitivity": "general", "is_firsthand": false},
+            {"signal_type": "resource", "title": "Real food shelf", "summary": "s", "sensitivity": "general"},
+            {"signal_type": "concern", "title": "Unable to extract this page", "summary": "s", "sensitivity": "general"},
+            {"signal_type": "help_request", "title": "Political take on housing", "summary": "s", "sensitivity": "general", "is_firsthand": false},
             {"signal_type": "gathering", "title": "Real community meeting", "summary": "s", "sensitivity": "general"}
         ]
     }"#,
@@ -783,7 +783,7 @@ fn community_warning_extracted_as_notice_with_community_report_category() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "notice",
+            "signal_type": "announcement",
             "title": "ICE spotted near Rosemount transit center",
             "summary": "Community members reporting enforcement vehicles near the transit center, avoid the area if possible",
             "sensitivity": "sensitive",
@@ -797,7 +797,7 @@ fn community_warning_extracted_as_notice_with_community_report_category() {
     let result = Extractor::convert_signals(response, "https://example.com");
 
     assert_eq!(result.nodes.len(), 1);
-    if let Node::Notice(n) = &result.nodes[0] {
+    if let Node::Announcement(n) = &result.nodes[0] {
         assert_eq!(n.category.as_deref(), Some("community_report"));
         assert_eq!(n.severity, Severity::High);
         assert_eq!(n.meta.sensitivity, SensitivityLevel::Sensitive);
@@ -811,7 +811,7 @@ fn notice_category_passes_through_from_extraction() {
     let response = parse_response(
         r#"{
         "signals": [{
-            "signal_type": "notice",
+            "signal_type": "announcement",
             "title": "Great weather today in Minneapolis",
             "summary": "Sunny skies and warm temperatures",
             "sensitivity": "general",
@@ -824,7 +824,7 @@ fn notice_category_passes_through_from_extraction() {
     let result = Extractor::convert_signals(response, "https://example.com");
 
     assert_eq!(result.nodes.len(), 1);
-    if let Node::Notice(n) = &result.nodes[0] {
+    if let Node::Announcement(n) = &result.nodes[0] {
         assert_eq!(
             n.category.as_deref(),
             Some("community_report"),

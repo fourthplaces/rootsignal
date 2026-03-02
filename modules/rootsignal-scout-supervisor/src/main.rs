@@ -4,7 +4,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use rootsignal_common::{Config, ScoutScope};
-use rootsignal_graph::{migrate::migrate, GraphClient};
+use rootsignal_graph::{connect_graph, migrate::migrate, GraphClient};
 use rootsignal_scout_supervisor::{
     notify::{backend::NotifyBackend, noop::NoopBackend, router::NotifyRouter},
     supervisor::Supervisor,
@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     config.log_redacted();
 
     // Connect to Neo4j
-    let client = GraphClient::connect(
+    let client = connect_graph(
         &config.neo4j_uri,
         &config.neo4j_user,
         &config.neo4j_password,

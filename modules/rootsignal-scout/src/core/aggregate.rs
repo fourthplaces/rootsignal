@@ -438,12 +438,12 @@ pub mod pipeline_aggregators {
 fn signal_type_index(nt: &NodeType) -> Option<usize> {
     match nt {
         NodeType::Gathering => Some(0),
-        NodeType::Aid => Some(1),
-        NodeType::Need => Some(2),
-        NodeType::Notice => Some(3),
-        NodeType::Tension => Some(4),
+        NodeType::Resource => Some(1),
+        NodeType::HelpRequest => Some(2),
+        NodeType::Announcement => Some(3),
+        NodeType::Concern => Some(4),
         NodeType::Condition => Some(5),
-        NodeType::Incident => Some(6),
+        NodeType::Condition => Some(6),
         NodeType::Citation => None,
     }
 }

@@ -58,7 +58,6 @@ async fn create_source(
         .param("active", active)
         .param("signals", signals_produced as i64);
     client
-        .inner()
         .run(q)
         .await
         .expect("Failed to create source");
@@ -85,7 +84,6 @@ async fn create_signal_at(client: &GraphClient, source_url: &str, lat: f64, lng:
     .param("lat", lat)
     .param("lng", lng);
     client
-        .inner()
         .run(q)
         .await
         .expect("Failed to create signal");

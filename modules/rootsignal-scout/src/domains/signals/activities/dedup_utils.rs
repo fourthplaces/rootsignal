@@ -176,11 +176,11 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rootsignal_common::safety::SensitivityLevel;
-    use rootsignal_common::types::{GeoPoint, NeedNode, NodeMeta, Severity, TensionNode, Urgency};
+    use rootsignal_common::types::{GeoPoint, HelpRequestNode, NodeMeta, Severity, ConcernNode, Urgency};
     use rootsignal_common::{CitationNode, GeoPrecision, ReviewStatus, ScrapingStrategy, SocialPlatform};
 
     fn tension(title: &str) -> Node {
-        Node::Tension(TensionNode {
+        Node::Concern(ConcernNode {
             meta: NodeMeta {
                 id: Uuid::new_v4(),
                 title: title.to_string(),
@@ -207,12 +207,13 @@ mod tests {
             },
             severity: Severity::Medium,
             category: None,
-            what_would_help: None,
+            subject: None,
+            opposing: None,
         })
     }
 
     fn need(title: &str) -> Node {
-        Node::Need(NeedNode {
+        Node::HelpRequest(HelpRequestNode {
             meta: NodeMeta {
                 id: Uuid::new_v4(),
                 title: title.to_string(),
@@ -327,80 +328,80 @@ mod tests {
 
     #[test]
     fn global_match_cross_source_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, Some((id1(), URL_B)), None, None);
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id1(), existing_type: NodeType::Tension, similarity: 1.0 });
+        let v = dedup_verdict(URL_A, NodeType::Concern, Some((id1(), URL_B)), None, None);
+        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id1(), existing_type: NodeType::Concern, similarity: 1.0 });
     }
 
     #[test]
     fn global_match_same_source_refreshes() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, Some((id1(), URL_A)), None, None);
-        assert_eq!(v, DedupVerdict::Refresh { existing_id: id1(), existing_type: NodeType::Tension, similarity: 1.0 });
+        let v = dedup_verdict(URL_A, NodeType::Concern, Some((id1(), URL_A)), None, None);
+        assert_eq!(v, DedupVerdict::Refresh { existing_id: id1(), existing_type: NodeType::Concern, similarity: 1.0 });
     }
 
     #[test]
     fn global_match_uses_new_node_type() {
-        let v = dedup_verdict(URL_A, NodeType::Aid, Some((id1(), URL_B)), None, None);
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id1(), existing_type: NodeType::Aid, similarity: 1.0 });
+        let v = dedup_verdict(URL_A, NodeType::Resource, Some((id1(), URL_B)), None, None);
+        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id1(), existing_type: NodeType::Resource, similarity: 1.0 });
     }
 
     #[test]
     fn global_match_takes_priority_over_cache() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, Some((id1(), URL_B)), Some((id2(), NodeType::Tension, URL_A, 0.99)), None);
+        let v = dedup_verdict(URL_A, NodeType::Concern, Some((id1(), URL_B)), Some((id2(), NodeType::Concern, URL_A, 0.99)), None);
         assert_eq!(v.existing_id(), Some(id1()), "global match should win over cache");
     }
 
     #[test]
     fn global_match_takes_priority_over_graph() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, Some((id1(), URL_A)), None, Some((id3(), NodeType::Tension, URL_B, 0.95)));
+        let v = dedup_verdict(URL_A, NodeType::Concern, Some((id1(), URL_A)), None, Some((id3(), NodeType::Concern, URL_B, 0.95)));
         assert_eq!(v.existing_id(), Some(id1()), "global match should win over graph");
     }
 
     #[test]
     fn cache_same_source_refreshes() {
-        let v = dedup_verdict(URL_A, NodeType::Need, None, Some((id2(), NodeType::Need, URL_A, 0.88)), None);
-        assert_eq!(v, DedupVerdict::Refresh { existing_id: id2(), existing_type: NodeType::Need, similarity: 0.88 });
+        let v = dedup_verdict(URL_A, NodeType::HelpRequest, None, Some((id2(), NodeType::HelpRequest, URL_A, 0.88)), None);
+        assert_eq!(v, DedupVerdict::Refresh { existing_id: id2(), existing_type: NodeType::HelpRequest, similarity: 0.88 });
     }
 
     #[test]
     fn cache_cross_source_above_threshold_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, Some((id2(), NodeType::Tension, URL_B, 0.95)), None);
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id2(), existing_type: NodeType::Tension, similarity: 0.95 });
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.95)), None);
+        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id2(), existing_type: NodeType::Concern, similarity: 0.95 });
     }
 
     #[test]
     fn cache_cross_source_at_threshold_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Aid, None, Some((id2(), NodeType::Aid, URL_B, 0.92)), None);
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id2(), existing_type: NodeType::Aid, similarity: 0.92 });
+        let v = dedup_verdict(URL_A, NodeType::Resource, None, Some((id2(), NodeType::Resource, URL_B, 0.92)), None);
+        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id2(), existing_type: NodeType::Resource, similarity: 0.92 });
     }
 
     #[test]
     fn cache_cross_source_below_threshold_falls_through() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, Some((id2(), NodeType::Tension, URL_B, 0.91)), None);
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.91)), None);
         assert_eq!(v, DedupVerdict::Create, "0.91 cross-source should fall through to Create");
     }
 
     #[test]
     fn cache_cross_source_at_entry_threshold_falls_through() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, Some((id2(), NodeType::Tension, URL_B, 0.85)), None);
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.85)), None);
         assert_eq!(v, DedupVerdict::Create, "0.85 cross-source should fall through");
     }
 
     #[test]
     fn cache_takes_priority_over_graph() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, Some((id2(), NodeType::Tension, URL_A, 0.90)), Some((id3(), NodeType::Tension, URL_B, 0.95)));
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_A, 0.90)), Some((id3(), NodeType::Concern, URL_B, 0.95)));
         assert_eq!(v.existing_id(), Some(id2()), "cache should win over graph");
     }
 
     #[test]
     fn graph_same_source_refreshes() {
-        let v = dedup_verdict(URL_A, NodeType::Notice, None, None, Some((id3(), NodeType::Notice, URL_A, 0.87)));
-        assert_eq!(v, DedupVerdict::Refresh { existing_id: id3(), existing_type: NodeType::Notice, similarity: 0.87 });
+        let v = dedup_verdict(URL_A, NodeType::Announcement, None, None, Some((id3(), NodeType::Announcement, URL_A, 0.87)));
+        assert_eq!(v, DedupVerdict::Refresh { existing_id: id3(), existing_type: NodeType::Announcement, similarity: 0.87 });
     }
 
     #[test]
     fn graph_cross_source_above_threshold_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, None, Some((id3(), NodeType::Tension, URL_B, 0.95)));
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Tension, similarity: 0.95 });
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, None, Some((id3(), NodeType::Concern, URL_B, 0.95)));
+        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.95 });
     }
 
     #[test]
@@ -411,38 +412,38 @@ mod tests {
 
     #[test]
     fn graph_cross_source_below_threshold_creates() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, None, Some((id3(), NodeType::Tension, URL_B, 0.91)));
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, None, Some((id3(), NodeType::Concern, URL_B, 0.91)));
         assert_eq!(v, DedupVerdict::Create);
     }
 
     #[test]
     fn no_matches_creates() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, None, None);
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, None, None);
         assert_eq!(v, DedupVerdict::Create);
     }
 
     #[test]
     fn both_below_threshold_creates() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, Some((id2(), NodeType::Tension, URL_B, 0.87)), Some((id3(), NodeType::Tension, URL_B, 0.89)));
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.87)), Some((id3(), NodeType::Concern, URL_B, 0.89)));
         assert_eq!(v, DedupVerdict::Create);
     }
 
     #[test]
     fn cache_below_threshold_falls_to_graph_refresh() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, Some((id2(), NodeType::Tension, URL_B, 0.87)), Some((id3(), NodeType::Tension, URL_A, 0.90)));
-        assert_eq!(v, DedupVerdict::Refresh { existing_id: id3(), existing_type: NodeType::Tension, similarity: 0.90 });
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.87)), Some((id3(), NodeType::Concern, URL_A, 0.90)));
+        assert_eq!(v, DedupVerdict::Refresh { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.90 });
     }
 
     #[test]
     fn cache_below_threshold_falls_to_graph_corroborate() {
-        let v = dedup_verdict(URL_A, NodeType::Tension, None, Some((id2(), NodeType::Tension, URL_B, 0.88)), Some((id3(), NodeType::Tension, URL_B, 0.93)));
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Tension, similarity: 0.93 });
+        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.88)), Some((id3(), NodeType::Concern, URL_B, 0.93)));
+        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.93 });
     }
 
     // --- score_and_filter tests ---
 
     fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
-        Node::Tension(TensionNode {
+        Node::Concern(ConcernNode {
             meta: NodeMeta {
                 id: Uuid::new_v4(),
                 title: title.to_string(),
@@ -469,12 +470,13 @@ mod tests {
             },
             severity: Severity::Medium,
             category: None,
-            what_would_help: None,
+            subject: None,
+            opposing: None,
         })
     }
 
     fn tension_with_name(title: &str, location_name: &str) -> Node {
-        Node::Tension(TensionNode {
+        Node::Concern(ConcernNode {
             meta: NodeMeta {
                 id: Uuid::new_v4(),
                 title: title.to_string(),
@@ -501,7 +503,8 @@ mod tests {
             },
             severity: Severity::Medium,
             category: None,
-            what_would_help: None,
+            subject: None,
+            opposing: None,
         })
     }
 

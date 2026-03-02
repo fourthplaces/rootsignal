@@ -54,7 +54,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
             if !pairs.is_empty() {
                 let merged = pairs.len();
                 for (survivor_id, duplicate_id) in pairs {
-                    events.push(SystemEvent::DuplicateTensionMerged {
+                    events.push(SystemEvent::DuplicateConcernMerged {
                         survivor_id,
                         duplicate_id,
                     });

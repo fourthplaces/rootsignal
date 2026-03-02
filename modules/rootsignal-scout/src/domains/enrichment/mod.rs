@@ -95,7 +95,6 @@ pub mod handlers {
             graph_client,
             region,
             deps.anthropic_api_key.as_deref().unwrap_or(""),
-            &*deps.embedder,
             &consumed_pin_ids,
         )
         .await;

@@ -27,10 +27,10 @@ const typeName = (tn: string) => tn.replace("Gql", "").replace("Signal", "");
 
 const typeColor: Record<string, string> = {
   Gathering: "bg-blue-500/10 text-blue-400",
-  Aid: "bg-green-500/10 text-green-400",
-  Need: "bg-orange-500/10 text-orange-400",
-  Notice: "bg-purple-500/10 text-purple-400",
-  Tension: "bg-red-500/10 text-red-400",
+  Resource: "bg-green-500/10 text-green-400",
+  HelpRequest: "bg-orange-500/10 text-orange-400",
+  Announcement: "bg-purple-500/10 text-purple-400",
+  Concern: "bg-red-500/10 text-red-400",
 };
 
 export function DanglingSignalsPage() {

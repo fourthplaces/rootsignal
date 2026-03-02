@@ -18,7 +18,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use rootsignal_common::Config;
-use rootsignal_graph::{CacheStore, CachedReader, GraphClient, GraphStore, PublicGraphReader};
+use rootsignal_graph::{connect_graph, CacheStore, CachedReader, GraphClient, GraphStore, PublicGraphReader};
 use twilio::TwilioService;
 use graphql::context::AuthContext;
 use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
     let config = Config::web_from_env();
     config.log_redacted();
 
-    let client = GraphClient::connect(
+    let client = connect_graph(
         &config.neo4j_uri,
         &config.neo4j_user,
         &config.neo4j_password,

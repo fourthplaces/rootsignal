@@ -39,6 +39,9 @@ fn stored(seq: i64, event: &Event) -> StoredEvent {
         schema_v: 1,
         id: None,
         parent_id: None,
+        correlation_id: None,
+        aggregate_type: None,
+        aggregate_id: None,
     }
 }
 
@@ -122,7 +125,6 @@ async fn create_signal_at(
         .param("now", now);
 
     client
-        .inner()
         .run(q)
         .await
         .expect("Failed to create signal");
@@ -171,7 +173,6 @@ async fn create_gathering_with_date(
         .param("now", now);
 
     client
-        .inner()
         .run(q)
         .await
         .expect("Failed to create gathering");
@@ -208,7 +209,7 @@ async fn create_actor_and_link(
     .param("now", now)
     .param("role", role);
 
-    client.inner().run(q).await.expect("Failed to create actor");
+    client.run(q).await.expect("Failed to create actor");
 
     let cypher = format!(
         "MATCH (a:Actor {{id: $actor_id}}), (n:{signal_label} {{id: $signal_id}})
@@ -220,7 +221,6 @@ async fn create_actor_and_link(
         .param("role", role);
 
     client
-        .inner()
         .run(q)
         .await
         .expect("Failed to link actor to signal");
@@ -249,7 +249,7 @@ async fn event_date_stored_as_datetime() {
     )
     .param("id", id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
 
     let vtype: String = row.get("vtype").expect("no vtype");
@@ -279,7 +279,7 @@ async fn event_null_date_stored_as_null() {
     )
     .param("id", id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
 
     let is_null: bool = row.get("is_null").expect("no is_null");
@@ -310,7 +310,7 @@ async fn events_sortable_by_starts_at() {
          ORDER BY e.starts_at",
     );
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let mut titles = Vec::new();
     while let Some(row) = stream.next().await.expect("stream error") {
         let title: String = row.get("title").expect("no title");
@@ -340,7 +340,7 @@ async fn topic_keyword_search() {
     let id3 = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         id1,
         "Free food at community center",
         "https://food.org",
@@ -348,7 +348,7 @@ async fn topic_keyword_search() {
     .await;
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         id2,
         "Volunteers needed for food drive",
         "https://drive.org",
@@ -365,11 +365,11 @@ async fn topic_keyword_search() {
 
     let q = query(
         "MATCH (n)
-         WHERE (n:Aid OR n:Need OR n:Gathering) AND toLower(n.title) CONTAINS 'food'
+         WHERE (n:Resource OR n:HelpRequest OR n:Gathering) AND toLower(n.title) CONTAINS 'food'
          RETURN n.title AS title",
     );
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let mut found = Vec::new();
     while let Some(row) = stream.next().await.expect("stream error") {
         let title: String = row.get("title").expect("no title");
@@ -414,7 +414,7 @@ async fn geo_bounding_box_query() {
     let q = query(&cypher)
         .param("id", inside_id.to_string())
         .param("now", now.clone());
-    client.inner().run(q).await.expect("create inside event");
+    client.run(q).await.expect("create inside event");
 
     // Signal outside bounding box (Duluth)
     let outside_id = Uuid::new_v4();
@@ -434,7 +434,7 @@ async fn geo_bounding_box_query() {
     let q = query(&cypher)
         .param("id", outside_id.to_string())
         .param("now", now);
-    client.inner().run(q).await.expect("create outside event");
+    client.run(q).await.expect("create outside event");
 
     // Bounding box around downtown Minneapolis
     let q = query(
@@ -444,7 +444,7 @@ async fn geo_bounding_box_query() {
          RETURN n.title AS title",
     );
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let mut found = Vec::new();
     while let Some(row) = stream.next().await.expect("stream error") {
         let title: String = row.get("title").expect("no title");
@@ -496,7 +496,7 @@ async fn source_diversity_ranking() {
             .param("title", title)
             .param("diversity", diversity as i64)
             .param("now", now.clone());
-        client.inner().run(q).await.expect("create signal");
+        client.run(q).await.expect("create signal");
     }
 
     let q = query(
@@ -505,7 +505,7 @@ async fn source_diversity_ranking() {
          ORDER BY n.source_diversity DESC",
     );
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let mut diversities = Vec::new();
     while let Some(row) = stream.next().await.expect("stream error") {
         let d: i64 = row.get("diversity").expect("no diversity");
@@ -554,7 +554,7 @@ async fn actor_linked_via_acted_in() {
     )
     .param("signal_id", signal_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
 
     let name: String = row.get("name").expect("no name");
@@ -577,7 +577,7 @@ async fn cross_type_topic_search() {
     let unrelated_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need_id,
         "Winter coats needed for families",
         "https://need.org",
@@ -585,7 +585,7 @@ async fn cross_type_topic_search() {
     .await;
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid_id,
         "Free winter coats available",
         "https://give.org",
@@ -593,7 +593,7 @@ async fn cross_type_topic_search() {
     .await;
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         unrelated_id,
         "Free tutoring available",
         "https://tutor.org",
@@ -602,11 +602,11 @@ async fn cross_type_topic_search() {
 
     let q = query(
         "MATCH (n)
-         WHERE (n:Need OR n:Aid) AND toLower(n.title) CONTAINS 'coat'
+         WHERE (n:HelpRequest OR n:Resource) AND toLower(n.title) CONTAINS 'coat'
          RETURN labels(n)[0] AS type, n.title AS title",
     );
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let mut results: Vec<(String, String)> = Vec::new();
     while let Some(row) = stream.next().await.expect("stream error") {
         let label: String = row.get("type").expect("no type");
@@ -622,8 +622,8 @@ async fn cross_type_topic_search() {
     );
 
     let types: Vec<&str> = results.iter().map(|(t, _)| t.as_str()).collect();
-    assert!(types.contains(&"Need"), "should include Need");
-    assert!(types.contains(&"Aid"), "should include Aid");
+    assert!(types.contains(&"HelpRequest"), "should include Need");
+    assert!(types.contains(&"Resource"), "should include Aid");
 }
 
 // ---------------------------------------------------------------------------
@@ -700,7 +700,7 @@ async fn same_source_no_duplicate_evidence() {
     ];
 
     pipeline
-        .process(&events, &tc_bbox(), &[])
+        .process(&events, &tc_bbox())
         .await
         .expect("pipeline failed");
 
@@ -711,7 +711,7 @@ async fn same_source_no_duplicate_evidence() {
     )
     .param("id", signal_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
 
     let cnt: i64 = row.get("cnt").expect("no cnt");
@@ -797,7 +797,7 @@ async fn cross_source_creates_new_evidence() {
     ];
 
     pipeline
-        .process(&events, &tc_bbox(), &[])
+        .process(&events, &tc_bbox())
         .await
         .expect("pipeline failed");
 
@@ -808,7 +808,7 @@ async fn cross_source_creates_new_evidence() {
     )
     .param("id", signal_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
 
     let cnt: i64 = row.get("cnt").expect("no cnt");
@@ -889,7 +889,7 @@ async fn same_source_does_not_inflate_corroboration() {
     }
 
     pipeline
-        .process(&events, &tc_bbox(), &[])
+        .process(&events, &tc_bbox())
         .await
         .expect("pipeline failed");
 
@@ -900,7 +900,7 @@ async fn same_source_does_not_inflate_corroboration() {
     )
     .param("id", signal_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let corr: i64 = row.get("corr").expect("no corr");
     assert_eq!(
@@ -915,7 +915,7 @@ async fn same_source_does_not_inflate_corroboration() {
     )
     .param("id", signal_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let cnt: i64 = row.get("cnt").expect("no cnt");
     assert_eq!(
@@ -950,7 +950,7 @@ async fn same_source_does_not_inflate_corroboration() {
     ];
 
     pipeline
-        .process(&corr_events, &tc_bbox(), &[])
+        .process(&corr_events, &tc_bbox())
         .await
         .expect("corroboration pipeline failed");
 
@@ -962,7 +962,7 @@ async fn same_source_does_not_inflate_corroboration() {
     )
     .param("id", signal_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let corr: i64 = row.get("corr").expect("no corr");
     let ev_cnt: i64 = row.get("ev_cnt").expect("no ev_cnt");
@@ -1004,7 +1004,7 @@ async fn deduplicate_evidence_migration() {
     let q = query(&cypher)
         .param("id", signal_id.to_string())
         .param("now", now.clone());
-    client.inner().run(q).await.expect("create signal");
+    client.run(q).await.expect("create signal");
 
     // Simulate the bug: manually CREATE 14 evidence nodes from the same source URL
     // (bypassing the MERGE safety net to reproduce legacy data)
@@ -1028,7 +1028,6 @@ async fn deduplicate_evidence_migration() {
         .param("now", now.clone())
         .param("hash", format!("hash_{i}"));
         client
-            .inner()
             .run(q)
             .await
             .expect("create duplicate evidence");
@@ -1053,7 +1052,6 @@ async fn deduplicate_evidence_migration() {
     .param("ev_id", cross_ev_id.to_string())
     .param("now", now);
     client
-        .inner()
         .run(q)
         .await
         .expect("create cross-source evidence");
@@ -1064,7 +1062,7 @@ async fn deduplicate_evidence_migration() {
          RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt",
     )
     .param("id", signal_id.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let ev_cnt: i64 = row.get("ev_cnt").expect("no ev_cnt");
     assert_eq!(
@@ -1085,7 +1083,7 @@ async fn deduplicate_evidence_migration() {
          RETURN n.corroboration_count AS corr, count(ev) AS ev_cnt",
     )
     .param("id", signal_id.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
 
     let corr: i64 = row.get("corr").expect("no corr");
@@ -1105,7 +1103,7 @@ async fn deduplicate_evidence_migration() {
          RETURN ev.source_url AS url ORDER BY url",
     )
     .param("id", signal_id.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let mut urls = Vec::new();
     while let Some(row) = stream.next().await.expect("stream error") {
         let url: String = row.get("url").expect("no url");
@@ -1132,7 +1130,7 @@ async fn bbox_proximity_signal_lookup() {
     // Create signal in downtown Minneapolis (inside ~50km radius)
     let mpls_id = Uuid::new_v4();
     let cypher = format!(
-        "CREATE (n:Aid {{
+        "CREATE (n:Resource {{
             id: $id, title: 'Minneapolis food shelf', summary: 'Free meals',
             sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
             corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
@@ -1145,7 +1143,6 @@ async fn bbox_proximity_signal_lookup() {
         }})"
     );
     client
-        .inner()
         .run(
             query(&cypher)
                 .param("id", mpls_id.to_string())
@@ -1170,7 +1167,6 @@ async fn bbox_proximity_signal_lookup() {
         }})"
     );
     client
-        .inner()
         .run(
             query(&cypher)
                 .param("id", stp_id.to_string())
@@ -1195,7 +1191,6 @@ async fn bbox_proximity_signal_lookup() {
         }})"
     );
     client
-        .inner()
         .run(
             query(&cypher)
                 .param("id", duluth_id.to_string())
@@ -1207,7 +1202,7 @@ async fn bbox_proximity_signal_lookup() {
     // Create signal at (0,0) — should be excluded
     let zero_id = Uuid::new_v4();
     let cypher = format!(
-        "CREATE (n:Need {{
+        "CREATE (n:HelpRequest {{
             id: $id, title: 'Zero-coordinate signal', summary: 'Bad data',
             sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
             corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
@@ -1219,7 +1214,6 @@ async fn bbox_proximity_signal_lookup() {
         }})"
     );
     client
-        .inner()
         .run(
             query(&cypher)
                 .param("id", zero_id.to_string())
@@ -1291,7 +1285,7 @@ async fn source_last_scraped_round_trip() {
     )];
 
     pipeline
-        .process(&events, &tc_bbox(), &[])
+        .process(&events, &tc_bbox())
         .await
         .expect("pipeline failed");
 
@@ -1331,8 +1325,8 @@ async fn source_last_scraped_round_trip() {
     );
 }
 
-/// Helper: create a Tension with a specific embedding vector at given coordinates.
-async fn create_tension_with_embedding_at(
+/// Helper: create a Concern with a specific embedding vector at given coordinates.
+async fn create_concern_with_embedding_at(
     client: &GraphClient,
     id: Uuid,
     title: &str,
@@ -1350,7 +1344,7 @@ async fn create_tension_with_embedding_at(
             .join(",")
     );
     let cypher = format!(
-        "CREATE (t:Tension {{
+        "CREATE (t:Concern {{
             id: $id,
             title: $title,
             summary: $summary,
@@ -1367,7 +1361,8 @@ async fn create_tension_with_embedding_at(
             location_name: '',
             severity: 'high',
             category: 'safety',
-            what_would_help: 'more resources',
+            subject: null,
+            opposing: 'more resources',
             lat: {lat},
             lng: {lng},
             embedding: {emb_str}
@@ -1377,24 +1372,23 @@ async fn create_tension_with_embedding_at(
     let q = query(&cypher)
         .param("id", id.to_string())
         .param("title", title)
-        .param("summary", format!("Test tension: {title}"))
+        .param("summary", format!("Test concern: {title}"))
         .param("now", now);
 
     client
-        .inner()
         .run(q)
         .await
-        .expect("Failed to create tension");
+        .expect("Failed to create concern");
 }
 
-/// Helper: create a Tension with a specific embedding vector at Twin Cities coordinates.
-async fn create_tension_with_embedding(
+/// Helper: create a Concern with a specific embedding vector at Twin Cities coordinates.
+async fn create_concern_with_embedding(
     client: &GraphClient,
     id: Uuid,
     title: &str,
     embedding: &[f64],
 ) {
-    create_tension_with_embedding_at(client, id, title, embedding, 44.9778, -93.2650).await;
+    create_concern_with_embedding_at(client, id, title, embedding, 44.9778, -93.2650).await;
 }
 
 #[tokio::test]
@@ -1416,21 +1410,21 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     let mut emb3 = base_emb.clone();
     emb3[3] = 0.05; // tiny perturbation
 
-    create_tension_with_embedding(
+    create_concern_with_embedding(
         &client,
         id1,
         "Youth Violence in North Minneapolis",
         &base_emb,
     )
     .await;
-    create_tension_with_embedding(
+    create_concern_with_embedding(
         &client,
         id2,
         "Youth Violence Spike in North Minneapolis",
         &emb2,
     )
     .await;
-    create_tension_with_embedding(
+    create_concern_with_embedding(
         &client,
         id3,
         "Youth Violence and Lack of Safe Spaces",
@@ -1442,7 +1436,7 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     let id_unrelated = Uuid::new_v4();
     let mut unrelated_emb = vec![0.0f64; 1024];
     unrelated_emb[500] = 1.0; // completely different
-    create_tension_with_embedding(
+    create_concern_with_embedding(
         &client,
         id_unrelated,
         "Housing Affordability Crisis",
@@ -1454,23 +1448,23 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     let signal_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         signal_id,
         "NAZ Tutoring",
         "https://example.com/naz",
     )
     .await;
     let q = query(
-        "MATCH (g:Aid {id: $gid}), (t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid}), (t:Concern {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.9, explanation: 'test'}]->(t)",
     )
     .param("gid", signal_id.to_string())
     .param("tid", id2.to_string());
-    client.inner().run(q).await.expect("Failed to create edge");
+    client.run(q).await.expect("Failed to create edge");
 
     // Verify: 4 tensions before merge
-    let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let q = query("MATCH (t:Concern) RETURN count(t) AS cnt");
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().unwrap();
     let count: i64 = row.get("cnt").unwrap();
     assert_eq!(count, 4, "Should have 4 tensions before merge");
@@ -1483,7 +1477,7 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     assert_eq!(pairs.len(), 2, "Should find 2 duplicate pairs (keep 1 of 3)");
     let projector = GraphProjector::new(client.clone());
     for (i, (survivor_id, duplicate_id)) in pairs.iter().enumerate() {
-        let event = Event::System(SystemEvent::DuplicateTensionMerged {
+        let event = Event::System(SystemEvent::DuplicateConcernMerged {
             survivor_id: *survivor_id,
             duplicate_id: *duplicate_id,
         });
@@ -1492,19 +1486,19 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     }
 
     // Verify: 2 tensions after merge (1 youth violence survivor + 1 housing)
-    let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let q = query("MATCH (t:Concern) RETURN count(t) AS cnt");
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().unwrap();
     let count: i64 = row.get("cnt").unwrap();
     assert_eq!(count, 2, "Should have 2 tensions after merge");
 
     // Verify: the RESPONDS_TO edge was re-pointed to the survivor (id1, the oldest)
     let q = query(
-        "MATCH (g:Aid {id: $gid})-[:RESPONDS_TO]->(t:Tension)
+        "MATCH (g:Resource {id: $gid})-[:RESPONDS_TO]->(t:Concern)
          RETURN t.id AS tid",
     )
     .param("gid", signal_id.to_string());
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream
         .next()
         .await
@@ -1518,9 +1512,9 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     );
 
     // Verify: survivor got corroboration bumped
-    let q = query("MATCH (t:Tension {id: $id}) RETURN t.corroboration_count AS cnt")
+    let q = query("MATCH (t:Concern {id: $id}) RETURN t.corroboration_count AS cnt")
         .param("id", id1.to_string());
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().unwrap();
     let corr: i64 = row.get("cnt").unwrap();
     assert_eq!(
@@ -1529,9 +1523,9 @@ async fn merge_duplicate_tensions_collapses_near_dupes() {
     );
 
     // Verify: unrelated tension untouched
-    let q = query("MATCH (t:Tension {id: $id}) RETURN t.title AS title")
+    let q = query("MATCH (t:Concern {id: $id}) RETURN t.title AS title")
         .param("id", id_unrelated.to_string());
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream
         .next()
         .await
@@ -1552,8 +1546,8 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
     let mut emb2 = vec![0.0f64; 1024];
     emb2[500] = 1.0;
 
-    create_tension_with_embedding(&client, Uuid::new_v4(), "Youth Violence", &emb1).await;
-    create_tension_with_embedding(&client, Uuid::new_v4(), "Housing Crisis", &emb2).await;
+    create_concern_with_embedding(&client, Uuid::new_v4(), "Youth Violence", &emb1).await;
+    create_concern_with_embedding(&client, Uuid::new_v4(), "Housing Crisis", &emb2).await;
 
     let pairs = writer
         .find_duplicate_tension_pairs(0.85, 44.0, 46.0, -94.0, -92.0)
@@ -1561,8 +1555,8 @@ async fn merge_duplicate_tensions_noop_when_no_dupes() {
         .expect("find pairs failed");
     assert_eq!(pairs.len(), 0, "No duplicates should be found");
 
-    let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let q = query("MATCH (t:Concern) RETURN count(t) AS cnt");
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().unwrap();
     let count: i64 = row.get("cnt").unwrap();
     assert_eq!(count, 2, "Both tensions should survive");
@@ -1585,7 +1579,7 @@ async fn merge_duplicate_tensions_preserves_cross_region_signals() {
     let chi_id = Uuid::new_v4();
 
     // Twin Cities
-    create_tension_with_embedding_at(
+    create_concern_with_embedding_at(
         &client,
         tc_id,
         "ICE Enforcement Actions",
@@ -1596,7 +1590,7 @@ async fn merge_duplicate_tensions_preserves_cross_region_signals() {
     .await;
 
     // Chicago
-    create_tension_with_embedding_at(
+    create_concern_with_embedding_at(
         &client,
         chi_id,
         "ICE Enforcement Actions",
@@ -1614,8 +1608,8 @@ async fn merge_duplicate_tensions_preserves_cross_region_signals() {
     assert_eq!(pairs.len(), 0, "Cross-region tensions must not be merged");
 
     // Both tensions survive
-    let q = query("MATCH (t:Tension) RETURN count(t) AS cnt");
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let q = query("MATCH (t:Concern) RETURN count(t) AS cnt");
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().unwrap();
     let count: i64 = row.get("cnt").unwrap();
     assert_eq!(count, 2, "Both region tensions should survive");
@@ -1637,14 +1631,14 @@ async fn merge_duplicate_tensions_repoints_situation_edges() {
     let survivor_id = Uuid::new_v4();
     let dup_id = Uuid::new_v4();
 
-    create_tension_with_embedding(
+    create_concern_with_embedding(
         &client,
         survivor_id,
         "Youth Violence in North Minneapolis",
         &base_emb,
     )
     .await;
-    create_tension_with_embedding(
+    create_concern_with_embedding(
         &client,
         dup_id,
         "Youth Violence Spike in North Minneapolis",
@@ -1683,15 +1677,15 @@ async fn merge_duplicate_tensions_repoints_situation_edges() {
     )
     .param("id", situation_id.to_string())
     .param("now", now);
-    client.inner().run(q).await.expect("Create situation");
+    client.run(q).await.expect("Create situation");
 
     let q = query(
-        "MATCH (t:Tension {id: $tid}), (s:Situation {id: $sid})
+        "MATCH (t:Concern {id: $tid}), (s:Situation {id: $sid})
          CREATE (t)-[:PART_OF]->(s)",
     )
     .param("tid", dup_id.to_string())
     .param("sid", situation_id.to_string());
-    client.inner().run(q).await.expect("Create PART_OF edge");
+    client.run(q).await.expect("Create PART_OF edge");
 
     // Run merge
     let pairs = writer
@@ -1701,7 +1695,7 @@ async fn merge_duplicate_tensions_repoints_situation_edges() {
     assert_eq!(pairs.len(), 1, "Should find 1 duplicate pair");
     let projector = GraphProjector::new(client.clone());
     for (i, (surv, dup)) in pairs.iter().enumerate() {
-        let event = Event::System(SystemEvent::DuplicateTensionMerged {
+        let event = Event::System(SystemEvent::DuplicateConcernMerged {
             survivor_id: *surv,
             duplicate_id: *dup,
         });
@@ -1711,12 +1705,12 @@ async fn merge_duplicate_tensions_repoints_situation_edges() {
 
     // Survivor now has PART_OF edge to Situation
     let q = query(
-        "MATCH (t:Tension {id: $tid})-[:PART_OF]->(s:Situation {id: $sid})
+        "MATCH (t:Concern {id: $tid})-[:PART_OF]->(s:Situation {id: $sid})
          RETURN t.id AS tid",
     )
     .param("tid", survivor_id.to_string())
     .param("sid", situation_id.to_string());
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream
         .next()
         .await
@@ -1726,8 +1720,8 @@ async fn merge_duplicate_tensions_repoints_situation_edges() {
     assert_eq!(tid, survivor_id.to_string());
 
     // Duplicate is deleted
-    let q = query("MATCH (t:Tension {id: $id}) RETURN t.id AS id").param("id", dup_id.to_string());
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let q = query("MATCH (t:Concern {id: $id}) RETURN t.id AS id").param("id", dup_id.to_string());
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap();
     assert!(row.is_none(), "Duplicate tension should be deleted");
 }
@@ -1751,7 +1745,7 @@ async fn create_tension_for_response_finder(
         None => String::new(),
     };
     let cypher = format!(
-        "CREATE (t:Tension {{
+        "CREATE (t:Concern {{
             id: $id,
             title: $title,
             summary: $summary,
@@ -1768,7 +1762,8 @@ async fn create_tension_for_response_finder(
             location_name: 'Minneapolis',
             severity: 'high',
             category: 'safety',
-            what_would_help: 'more resources',
+            subject: null,
+            opposing: 'more resources',
             lat: 44.9778,
             lng: -93.2650,
             embedding: {emb}
@@ -1779,16 +1774,15 @@ async fn create_tension_for_response_finder(
     let q = query(&cypher)
         .param("id", id.to_string())
         .param("title", title)
-        .param("summary", format!("Test tension: {title}"))
+        .param("summary", format!("Test concern: {title}"))
         .param("now", now)
         .param("confidence", confidence)
         .param("cause_heat", 0.5);
 
     client
-        .inner()
         .run(q)
         .await
-        .expect("Failed to create tension");
+        .expect("Failed to create concern");
 }
 
 #[tokio::test]
@@ -1869,20 +1863,19 @@ async fn response_finder_targets_sorted_by_response_count_then_heat() {
     let aid_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid_id,
         "Food Shelf",
         "https://example.com/food",
     )
     .await;
     let edge_q = query(
-        "MATCH (g:Aid {id: $gid}), (t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid}), (t:Concern {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", aid_id.to_string())
     .param("tid", t1.to_string());
     client
-        .inner()
         .run(edge_q)
         .await
         .expect("edge creation failed");
@@ -1913,7 +1906,7 @@ async fn get_existing_responses_returns_heuristics() {
     let aid_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid_id,
         "Rent Assistance Program",
         "https://example.com/rent",
@@ -1921,13 +1914,12 @@ async fn get_existing_responses_returns_heuristics() {
     .await;
 
     let edge_q = query(
-        "MATCH (g:Aid {id: $gid}), (t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid}), (t:Concern {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.9, explanation: 'provides rent help'}]->(t)",
     )
     .param("gid", aid_id.to_string())
     .param("tid", tension_id.to_string());
     client
-        .inner()
         .run(edge_q)
         .await
         .expect("edge creation failed");
@@ -1938,7 +1930,7 @@ async fn get_existing_responses_returns_heuristics() {
         .expect("query failed");
     assert_eq!(heuristics.len(), 1);
     assert_eq!(heuristics[0].title, "Rent Assistance Program");
-    assert_eq!(heuristics[0].signal_type, "Aid");
+    assert_eq!(heuristics[0].signal_type, "Resource");
 }
 
 #[tokio::test]
@@ -1985,7 +1977,7 @@ async fn create_response_edge_wires_give_to_tension() {
     let aid_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid_id,
         "Mutual Aid Network",
         "https://example.com/aid",
@@ -1999,13 +1991,13 @@ async fn create_response_edge_wires_give_to_tension() {
 
     // Verify edge exists
     let q = query(
-        "MATCH (g:Aid {id: $gid})-[rel:RESPONDS_TO]->(t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid})-[rel:RESPONDS_TO]->(t:Concern {id: $tid})
          RETURN rel.match_strength AS strength, rel.explanation AS explanation",
     )
     .param("gid", aid_id.to_string())
     .param("tid", tension_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().expect("Edge should exist");
     let strength: f64 = row.get("strength").unwrap();
     let explanation: String = row.get("explanation").unwrap();
@@ -2041,7 +2033,7 @@ async fn create_tension_for_gathering_finder(
         extra_props.push_str(&format!(", gravity_scout_miss_count: {mc}"));
     }
     let cypher = format!(
-        "CREATE (t:Tension {{
+        "CREATE (t:Concern {{
             id: $id,
             title: $title,
             summary: $summary,
@@ -2058,7 +2050,8 @@ async fn create_tension_for_gathering_finder(
             location_name: 'Minneapolis',
             severity: 'high',
             category: 'safety',
-            what_would_help: 'community solidarity',
+            subject: null,
+            opposing: 'community solidarity',
             lat: 44.9778,
             lng: -93.2650,
             embedding: {emb}
@@ -2069,16 +2062,15 @@ async fn create_tension_for_gathering_finder(
     let q = query(&cypher)
         .param("id", id.to_string())
         .param("title", title)
-        .param("summary", format!("Test tension: {title}"))
+        .param("summary", format!("Test concern: {title}"))
         .param("now", now)
         .param("confidence", confidence)
         .param("cause_heat", cause_heat);
 
     client
-        .inner()
         .run(q)
         .await
-        .expect("Failed to create tension for gravity scout");
+        .expect("Failed to create concern for gravity scout");
 }
 
 #[tokio::test]
@@ -2240,11 +2232,11 @@ async fn gathering_finder_backoff_resets_on_success() {
 
     // Verify miss_count is 0
     let q = query(
-        "MATCH (t:Tension {id: $id})
+        "MATCH (t:Concern {id: $id})
          RETURN t.gravity_scout_miss_count AS mc",
     )
     .param("id", t1.to_string());
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().expect("should have row");
     let mc: i64 = row.get("mc").unwrap();
     assert_eq!(mc, 0, "Success should reset miss_count to 0");
@@ -2282,13 +2274,13 @@ async fn create_drawn_to_edge_includes_gathering_type() {
 
     // Verify DRAWN_TO edge exists with gathering_type
     let q = query(
-        "MATCH (e:Gathering {id: $eid})-[rel:DRAWN_TO]->(t:Tension {id: $tid})
+        "MATCH (e:Gathering {id: $eid})-[rel:DRAWN_TO]->(t:Concern {id: $tid})
          RETURN rel.match_strength AS strength, rel.gathering_type AS gt",
     )
     .param("eid", gathering_id.to_string())
     .param("tid", tension_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.unwrap();
+    let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().expect("Edge should exist");
     let strength: f64 = row.get("strength").unwrap();
     let gt: String = row.get("gt").unwrap();
@@ -2317,7 +2309,7 @@ async fn drawn_to_edge_coexists_with_response_edge() {
     let aid_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid_id,
         "Tenant Solidarity Fund",
         "https://example.com/fund",
@@ -2345,26 +2337,26 @@ async fn drawn_to_edge_coexists_with_response_edge() {
 
     // Verify RESPONDS_TO edge exists
     let q1 = query(
-        "MATCH (g:Aid {id: $gid})-[rel:RESPONDS_TO]->(t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid})-[rel:RESPONDS_TO]->(t:Concern {id: $tid})
          RETURN count(rel) AS edge_count",
     )
     .param("gid", aid_id.to_string())
     .param("tid", tension_id.to_string());
 
-    let mut stream = client.inner().execute(q1).await.unwrap();
+    let mut stream = client.execute(q1).await.unwrap();
     let row = stream.next().await.unwrap().expect("Should have results");
     let resp_count: i64 = row.get("edge_count").unwrap();
     assert_eq!(resp_count, 1, "Should have exactly one RESPONDS_TO edge");
 
     // Verify DRAWN_TO edge exists separately
     let q2 = query(
-        "MATCH (g:Aid {id: $gid})-[rel:DRAWN_TO]->(t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid})-[rel:DRAWN_TO]->(t:Concern {id: $tid})
          RETURN count(rel) AS edge_count, rel.gathering_type AS gt",
     )
     .param("gid", aid_id.to_string())
     .param("tid", tension_id.to_string());
 
-    let mut stream = client.inner().execute(q2).await.unwrap();
+    let mut stream = client.execute(q2).await.unwrap();
     let row = stream.next().await.unwrap().expect("Should have results");
     let drawn_count: i64 = row.get("edge_count").unwrap();
     let gt: String = row.get("gt").unwrap();
@@ -2471,7 +2463,7 @@ async fn create_aid_with_implied_queries(
     let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
     let cypher = format!(
-        "CREATE (g:Aid {{
+        "CREATE (g:Resource {{
             id: $id,
             title: $title,
             summary: $summary,
@@ -2505,7 +2497,6 @@ async fn create_aid_with_implied_queries(
         .param("queries", queries);
 
     client
-        .inner()
         .run(q)
         .await
         .expect("Failed to create aid with implied_queries");
@@ -2545,7 +2536,6 @@ async fn create_web_query_source(
     .param("active", active);
 
     client
-        .inner()
         .run(q)
         .await
         .expect("Failed to create web query source");
@@ -2578,7 +2568,7 @@ async fn tension_response_shape_correct_breakdown() {
     let need_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid1_id,
         "ILCM Legal Clinic",
         "https://example.com/ilcm",
@@ -2586,7 +2576,7 @@ async fn tension_response_shape_correct_breakdown() {
     .await;
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid2_id,
         "Emergency Bail Fund",
         "https://example.com/bail",
@@ -2594,22 +2584,22 @@ async fn tension_response_shape_correct_breakdown() {
     .await;
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need_id,
         "Volunteer interpreters needed",
         "https://example.com/interpreters",
     )
     .await;
 
-    for (sig_id, label) in [(aid1_id, "Aid"), (aid2_id, "Aid"), (need_id, "Need")] {
+    for (sig_id, label) in [(aid1_id, "Resource"), (aid2_id, "Resource"), (need_id, "HelpRequest")] {
         let cypher = format!(
-            "MATCH (s:{label} {{id: $sid}}), (t:Tension {{id: $tid}})
+            "MATCH (s:{label} {{id: $sid}}), (t:Concern {{id: $tid}})
              CREATE (s)-[:RESPONDS_TO {{match_strength: 0.8, explanation: 'test'}}]->(t)"
         );
         let q = query(&cypher)
             .param("sid", sig_id.to_string())
             .param("tid", tension_id.to_string());
-        client.inner().run(q).await.expect("edge creation failed");
+        client.run(q).await.expect("edge creation failed");
     }
 
     let shapes = writer
@@ -2657,19 +2647,19 @@ async fn tension_response_shape_filters_low_heat_and_confidence() {
     let aid_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid_id,
         "Some Service",
         "https://example.com/svc",
     )
     .await;
     let q = query(
-        "MATCH (g:Aid {id: $gid}), (t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid}), (t:Concern {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", aid_id.to_string())
     .param("tid", hot_id.to_string());
-    client.inner().run(q).await.expect("edge failed");
+    client.run(q).await.expect("edge failed");
 
     // Cold tension (cause_heat = 0.0) with responses — should NOT appear
     let cold_id = Uuid::new_v4();
@@ -2678,56 +2668,56 @@ async fn tension_response_shape_filters_low_heat_and_confidence() {
     let aid2_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid2_id,
         "Cold Service",
         "https://example.com/cold",
     )
     .await;
     let q = query(
-        "MATCH (g:Aid {id: $gid}), (t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid}), (t:Concern {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", aid2_id.to_string())
     .param("tid", cold_id.to_string());
-    client.inner().run(q).await.expect("edge failed");
+    client.run(q).await.expect("edge failed");
 
     // Low confidence tension (0.3, below 0.5 threshold) — should NOT appear
     let low_conf_id = Uuid::new_v4();
     let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
     let cypher = format!(
-        "CREATE (t:Tension {{
+        "CREATE (t:Concern {{
             id: $id, title: 'Low Confidence', summary: 'test',
             sensitivity: 'general', confidence: 0.3, freshness_score: 1.0,
             corroboration_count: 0, source_diversity: 1, external_ratio: 1.0,
             cause_heat: 0.5, source_url: 'https://example.com',
             extracted_at: datetime($now), last_confirmed_active: datetime($now),
             location_name: 'Minneapolis', severity: 'high', category: 'safety',
-            what_would_help: 'resources', lat: 44.9778, lng: -93.2650,
+            subject: null, opposing: 'resources', lat: 44.9778, lng: -93.2650,
             embedding: {emb}
         }})"
     );
     let q = query(&cypher)
         .param("id", low_conf_id.to_string())
         .param("now", now);
-    client.inner().run(q).await.expect("create tension");
+    client.run(q).await.expect("create tension");
     let give3_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         give3_id,
         "Low Conf Service",
         "https://example.com/lowconf",
     )
     .await;
     let q = query(
-        "MATCH (g:Aid {id: $gid}), (t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid}), (t:Concern {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", give3_id.to_string())
     .param("tid", low_conf_id.to_string());
-    client.inner().run(q).await.expect("edge failed");
+    client.run(q).await.expect("edge failed");
 
     let shapes = writer
         .get_tension_response_shape(10)
@@ -2802,12 +2792,12 @@ async fn recently_linked_signals_collects_and_clears_queries() {
 
     // Link Aid → Tension via RESPONDS_TO
     let q = query(
-        "MATCH (g:Aid {id: $gid}), (t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid}), (t:Concern {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'provides rent help'}]->(t)",
     )
     .param("gid", aid_id.to_string())
     .param("tid", tension_id.to_string());
-    client.inner().run(q).await.expect("edge creation failed");
+    client.run(q).await.expect("edge creation failed");
 
     // First call: should collect the queries
     let (queries, _signal_ids) = writer
@@ -2831,11 +2821,11 @@ async fn recently_linked_signals_collects_and_clears_queries() {
 
     // Verify the property is null on the node
     let q = query(
-        "MATCH (g:Aid {id: $id})
+        "MATCH (g:Resource {id: $id})
          RETURN g.implied_queries IS NULL AS is_null",
     )
     .param("id", aid_id.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let is_null: bool = row.get("is_null").expect("no is_null");
     assert!(is_null, "implied_queries should be null after collection");
@@ -2866,12 +2856,12 @@ async fn recently_linked_signals_ignores_cold_tensions() {
     .await;
 
     let q = query(
-        "MATCH (g:Aid {id: $gid}), (t:Tension {id: $tid})
+        "MATCH (g:Resource {id: $gid}), (t:Concern {id: $tid})
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", aid_id.to_string())
     .param("tid", tension_id.to_string());
-    client.inner().run(q).await.expect("edge failed");
+    client.run(q).await.expect("edge failed");
 
     let (queries, _) = writer
         .get_recently_linked_signals_with_queries()
@@ -2924,7 +2914,7 @@ async fn recently_linked_signals_works_with_drawn_to() {
         .param("id", gathering_id.to_string())
         .param("now", now)
         .param("queries", queries);
-    client.inner().run(q).await.expect("create gathering");
+    client.run(q).await.expect("create gathering");
 
     // Link via DRAWN_TO (gravity scout edge)
     writer
@@ -3009,12 +2999,12 @@ async fn implied_queries_round_trip_neo4j() {
 
     // Read back as native list
     let q = query(
-        "MATCH (g:Aid {id: $id})
+        "MATCH (g:Resource {id: $id})
          RETURN g.implied_queries AS queries, size(g.implied_queries) AS len",
     )
     .param("id", aid_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let queries: Vec<String> = row.get("queries").expect("no queries");
     let len: i64 = row.get("len").expect("no len");
@@ -3036,7 +3026,7 @@ async fn empty_implied_queries_stored_as_null() {
     let now = neo4j_dt(&Utc::now());
     let emb = dummy_embedding();
     let cypher = format!(
-        "CREATE (g:Aid {{
+        "CREATE (g:Resource {{
             id: $id, title: 'No Queries Aid', summary: 'test',
             sensitivity: 'general', confidence: 0.8, freshness_score: 0.8,
             corroboration_count: 0, source_diversity: 1, external_ratio: 0.0,
@@ -3053,14 +3043,14 @@ async fn empty_implied_queries_stored_as_null() {
         .param("id", aid_id.to_string())
         .param("now", now)
         .param("queries", empty_queries);
-    client.inner().run(q).await.expect("create aid");
+    client.run(q).await.expect("create aid");
 
     let q = query(
-        "MATCH (g:Aid {id: $id})
+        "MATCH (g:Resource {id: $id})
          RETURN g.implied_queries IS NULL AS is_null",
     )
     .param("id", aid_id.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let is_null: bool = row.get("is_null").expect("no is_null");
     assert!(
@@ -3096,7 +3086,7 @@ async fn signal_expansion_source_created_with_correct_method() {
     )];
 
     pipeline
-        .process(&events, &tc_bbox(), &[])
+        .process(&events, &tc_bbox())
         .await
         .expect("pipeline failed");
 
@@ -3107,7 +3097,7 @@ async fn signal_expansion_source_created_with_correct_method() {
     )
     .param("key", canonical_key);
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream error").expect("no row");
     let dm: String = row.get("dm").expect("no dm");
     let gc: String = row.get("gc").expect("no gc");
@@ -3170,7 +3160,7 @@ async fn resource_find_or_create_is_idempotent() {
 
     // signal_count should be 2 after two calls
     let q = query("MATCH (r:Resource {slug: 'vehicle'}) RETURN r.signal_count AS sc");
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream err").expect("no row");
     let sc: i64 = row.get("sc").expect("no sc");
     assert_eq!(sc, 2, "signal_count should increment on each MERGE");
@@ -3243,7 +3233,7 @@ async fn resource_requires_edge_creation() {
     let need_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need_id,
         "Need drivers for food delivery",
         "https://test.com/ask1",
@@ -3271,13 +3261,13 @@ async fn resource_requires_edge_creation() {
 
     // Verify edge exists with properties
     let q = query(
-        "MATCH (s:Need {id: $sid})-[e:REQUIRES]->(r:Resource {id: $rid})
+        "MATCH (s:HelpRequest {id: $sid})-[e:REQUIRES]->(r:Resource {id: $rid})
          RETURN e.confidence AS conf, e.quantity AS qty, e.notes AS notes",
     )
     .param("sid", need_id.to_string())
     .param("rid", resource_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream
         .next()
         .await
@@ -3300,7 +3290,7 @@ async fn resource_prefers_edge_creation() {
     let need_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need_id,
         "Court date transport",
         "https://test.com/ask2",
@@ -3324,13 +3314,13 @@ async fn resource_prefers_edge_creation() {
         .expect("edge creation failed");
 
     let q = query(
-        "MATCH (s:Need {id: $sid})-[e:PREFERS]->(r:Resource {id: $rid})
+        "MATCH (s:HelpRequest {id: $sid})-[e:PREFERS]->(r:Resource {id: $rid})
          RETURN e.confidence AS conf",
     )
     .param("sid", need_id.to_string())
     .param("rid", resource_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream
         .next()
         .await
@@ -3348,7 +3338,7 @@ async fn resource_offers_edge_creation() {
     let aid_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid_id,
         "Emergency food pantry",
         "https://test.com/aid1",
@@ -3367,13 +3357,13 @@ async fn resource_offers_edge_creation() {
         .expect("edge creation failed");
 
     let q = query(
-        "MATCH (s:Aid {id: $sid})-[e:OFFERS]->(r:Resource {id: $rid})
+        "MATCH (s:Resource {id: $sid})-[e:OFFERS]->(r:Resource {id: $rid})
          RETURN e.confidence AS conf, e.capacity AS cap",
     )
     .param("sid", aid_id.to_string())
     .param("rid", resource_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream
         .next()
         .await
@@ -3394,7 +3384,7 @@ async fn resource_edges_are_idempotent() {
     let need_id = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need_id,
         "Need volunteers",
         "https://test.com/ask3",
@@ -3419,13 +3409,13 @@ async fn resource_edges_are_idempotent() {
 
     // Should have exactly ONE edge (MERGE), with updated confidence
     let q = query(
-        "MATCH (s:Need {id: $sid})-[e:REQUIRES]->(r:Resource {id: $rid})
+        "MATCH (s:HelpRequest {id: $sid})-[e:REQUIRES]->(r:Resource {id: $rid})
          RETURN count(e) AS edge_count, e.confidence AS conf",
     )
     .param("sid", need_id.to_string())
     .param("rid", resource_id.to_string());
 
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("stream err").expect("no row");
     let count: i64 = row.get("edge_count").expect("no count");
     let conf: f64 = row.get("conf").expect("no conf");
@@ -3449,7 +3439,7 @@ async fn find_needs_by_single_resource() {
     let aid1 = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need1,
         "Deliver meals to elderly",
         "https://test.com/a1",
@@ -3457,7 +3447,7 @@ async fn find_needs_by_single_resource() {
     .await;
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need2,
         "Drive kids to camp",
         "https://test.com/a2",
@@ -3465,7 +3455,7 @@ async fn find_needs_by_single_resource() {
     .await;
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid1,
         "Free car service",
         "https://test.com/g1",
@@ -3517,7 +3507,7 @@ async fn find_aids_by_resource() {
     let aid2 = Uuid::new_v4();
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid1,
         "Food shelf downtown",
         "https://test.com/g1",
@@ -3525,7 +3515,7 @@ async fn find_aids_by_resource() {
     .await;
     create_signal(
         &client,
-        "Aid",
+        "Resource",
         aid2,
         "Free grocery delivery",
         "https://test.com/g2",
@@ -3581,7 +3571,7 @@ async fn multi_resource_fuzzy_and_scoring() {
     let need1 = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need1,
         "Court date transport (bilingual)",
         "https://test.com/a1",
@@ -3600,7 +3590,7 @@ async fn multi_resource_fuzzy_and_scoring() {
     let need2 = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need2,
         "Meal delivery drivers",
         "https://test.com/a2",
@@ -3615,7 +3605,7 @@ async fn multi_resource_fuzzy_and_scoring() {
     let need3 = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need3,
         "Transport to ICE check-in",
         "https://test.com/a3",
@@ -3752,7 +3742,7 @@ async fn resource_gap_analysis_shows_unmet_needs() {
         let need = Uuid::new_v4();
         create_signal(
             &client,
-            "Need",
+            "HelpRequest",
             need,
             &format!("Driver needed {i}"),
             &format!("https://test.com/a{i}"),
@@ -3769,7 +3759,7 @@ async fn resource_gap_analysis_shows_unmet_needs() {
         let need = Uuid::new_v4();
         create_signal(
             &client,
-            "Need",
+            "HelpRequest",
             need,
             &format!("Food needed {i}"),
             &format!("https://test.com/fa{i}"),
@@ -3784,7 +3774,7 @@ async fn resource_gap_analysis_shows_unmet_needs() {
         let aid = Uuid::new_v4();
         create_signal(
             &client,
-            "Aid",
+            "Resource",
             aid,
             &format!("Food shelf {i}"),
             &format!("https://test.com/fg{i}"),
@@ -3860,7 +3850,7 @@ async fn consolidate_resources_merges_similar() {
     let need1 = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need1,
         "Need a driver",
         "https://test.com/a1",
@@ -3874,7 +3864,7 @@ async fn consolidate_resources_merges_similar() {
     let need2 = Uuid::new_v4();
     create_signal(
         &client,
-        "Need",
+        "HelpRequest",
         need2,
         "Need transport",
         "https://test.com/a2",
@@ -3902,14 +3892,14 @@ async fn consolidate_resources_merges_similar() {
 
     // Verify: "car" resource should be deleted
     let q = query("MATCH (r:Resource {slug: 'car'}) RETURN count(r) AS c");
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("err").expect("no row");
     let count: i64 = row.get("c").expect("no c");
     assert_eq!(count, 0, "Duplicate 'car' resource should be deleted");
 
     // Verify: "vehicle" resource should still exist
     let q = query("MATCH (r:Resource {slug: 'vehicle'}) RETURN r.signal_count AS sc");
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("err").expect("no row");
     let sc: i64 = row.get("sc").expect("no sc");
     assert!(
@@ -3926,11 +3916,11 @@ async fn consolidate_resources_merges_similar() {
 
     // Verify: need1's REQUIRES edge now points to vehicle (canonical), not car (deleted)
     let q = query(
-        "MATCH (s:Need {id: $sid})-[:REQUIRES]->(r:Resource)
+        "MATCH (s:HelpRequest {id: $sid})-[:REQUIRES]->(r:Resource)
          RETURN r.slug AS slug",
     )
     .param("sid", need1.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("err").expect("no row");
     let slug: String = row.get("slug").expect("no slug");
     assert_eq!(
@@ -3968,7 +3958,7 @@ async fn consolidate_resources_below_threshold_not_merged() {
 
     // Both should still exist
     let q = query("MATCH (r:Resource) RETURN count(r) AS c");
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream.next().await.expect("err").expect("no row");
     let count: i64 = row.get("c").expect("no c");
     assert_eq!(count, 2, "Both resources should survive");
@@ -3993,14 +3983,14 @@ async fn consolidate_resources_preserves_edge_properties() {
 
     // Create edges with properties to the duplicate
     let need = Uuid::new_v4();
-    create_signal(&client, "Need", need, "Need ride", "https://test.com/r1").await;
+    create_signal(&client, "HelpRequest", need, "Need ride", "https://test.com/r1").await;
     writer
         .create_requires_edge(need, dup_id, 0.88, Some("10 volunteers"), Some("urgent"))
         .await
         .unwrap();
 
     let aid = Uuid::new_v4();
-    create_signal(&client, "Aid", aid, "Free rides", "https://test.com/r2").await;
+    create_signal(&client, "Resource", aid, "Free rides", "https://test.com/r2").await;
     writer
         .create_offers_edge(aid, dup_id, 0.92, Some("evenings only"))
         .await
@@ -4028,11 +4018,11 @@ async fn consolidate_resources_preserves_edge_properties() {
 
     // Verify REQUIRES edge properties preserved on canonical
     let q = query(
-        "MATCH (s:Need {id: $sid})-[e:REQUIRES]->(r:Resource {slug: 'vehicle'})
+        "MATCH (s:HelpRequest {id: $sid})-[e:REQUIRES]->(r:Resource {slug: 'vehicle'})
          RETURN e.confidence AS conf, e.quantity AS qty, e.notes AS notes",
     )
     .param("sid", need.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream
         .next()
         .await
@@ -4051,11 +4041,11 @@ async fn consolidate_resources_preserves_edge_properties() {
 
     // Verify OFFERS edge properties preserved
     let q = query(
-        "MATCH (s:Aid {id: $sid})-[e:OFFERS]->(r:Resource {slug: 'vehicle'})
+        "MATCH (s:Resource {id: $sid})-[e:OFFERS]->(r:Resource {slug: 'vehicle'})
          RETURN e.confidence AS conf, e.capacity AS cap",
     )
     .param("sid", aid.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream
         .next()
         .await
@@ -4070,7 +4060,7 @@ async fn consolidate_resources_preserves_edge_properties() {
          RETURN e.confidence AS conf",
     )
     .param("sid", gathering.to_string());
-    let mut stream = client.inner().execute(q).await.expect("query failed");
+    let mut stream = client.execute(q).await.expect("query failed");
     let row = stream
         .next()
         .await

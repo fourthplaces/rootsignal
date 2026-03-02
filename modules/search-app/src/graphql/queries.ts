@@ -28,7 +28,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         startsAt
         organizer
       }
-      ... on GqlAidSignal {
+      ... on GqlResourceSignal {
         id
         title
         summary
@@ -40,7 +40,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         locationName
         availability
       }
-      ... on GqlNeedSignal {
+      ... on GqlHelpRequestSignal {
         id
         title
         summary
@@ -53,7 +53,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         urgency
         whatNeeded
       }
-      ... on GqlNoticeSignal {
+      ... on GqlAnnouncementSignal {
         id
         title
         summary
@@ -65,7 +65,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         locationName
         severity
       }
-      ... on GqlTensionSignal {
+      ... on GqlConcernSignal {
         id
         title
         summary
@@ -114,7 +114,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           startsAt
           organizer
         }
-        ... on GqlAidSignal {
+        ... on GqlResourceSignal {
           id
           title
           summary
@@ -126,7 +126,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           locationName
           availability
         }
-        ... on GqlNeedSignal {
+        ... on GqlHelpRequestSignal {
           id
           title
           summary
@@ -139,7 +139,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           urgency
           whatNeeded
         }
-        ... on GqlNoticeSignal {
+        ... on GqlAnnouncementSignal {
           id
           title
           summary
@@ -151,7 +151,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           locationName
           severity
         }
-        ... on GqlTensionSignal {
+        ... on GqlConcernSignal {
           id
           title
           summary
@@ -198,7 +198,7 @@ export const SIGNAL_DETAIL = gql`
         isRecurring
         citations { sourceUrl snippet relevance }
       }
-      ... on GqlAidSignal {
+      ... on GqlResourceSignal {
         id
         title
         summary
@@ -213,7 +213,7 @@ export const SIGNAL_DETAIL = gql`
         isOngoing
         citations { sourceUrl snippet relevance }
       }
-      ... on GqlNeedSignal {
+      ... on GqlHelpRequestSignal {
         id
         title
         summary
@@ -229,7 +229,7 @@ export const SIGNAL_DETAIL = gql`
         goal
         citations { sourceUrl snippet relevance }
       }
-      ... on GqlNoticeSignal {
+      ... on GqlAnnouncementSignal {
         id
         title
         summary
@@ -244,7 +244,7 @@ export const SIGNAL_DETAIL = gql`
         category
         citations { sourceUrl snippet relevance }
       }
-      ... on GqlTensionSignal {
+      ... on GqlConcernSignal {
         id
         title
         summary

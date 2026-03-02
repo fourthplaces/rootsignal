@@ -150,7 +150,7 @@ pub async fn weave_batch(
             .iter()
             .find(|s| s.id == signal_id)
             .map(|s| s.node_type.as_str())
-            .unwrap_or("Tension");
+            .unwrap_or("Concern");
 
         events.push(SystemEvent::SignalAssignedToSituation {
             signal_id,

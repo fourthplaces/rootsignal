@@ -22,10 +22,10 @@ import { RECORD_DEMAND } from "@/graphql/mutations";
 // Maps type filter keys to GraphQL __typename values
 const TYPE_TO_TYPENAME: Record<string, string> = {
   gathering: "GqlGatheringSignal",
-  aid: "GqlAidSignal",
-  need: "GqlNeedSignal",
-  notice: "GqlNoticeSignal",
-  tension: "GqlTensionSignal",
+  aid: "GqlResourceSignal",
+  need: "GqlHelpRequestSignal",
+  notice: "GqlAnnouncementSignal",
+  tension: "GqlConcernSignal",
 };
 
 export function SearchPage() {

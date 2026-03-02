@@ -80,12 +80,11 @@ impl std::fmt::Display for Severity {
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
     Gathering,
-    Aid,
-    Need,
-    Notice,
-    Tension,
+    Resource,
+    HelpRequest,
+    Announcement,
+    Concern,
     Condition,
-    Incident,
     Citation,
 }
 
@@ -93,12 +92,11 @@ impl std::fmt::Display for NodeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NodeType::Gathering => write!(f, "Gathering"),
-            NodeType::Aid => write!(f, "Aid"),
-            NodeType::Need => write!(f, "Need"),
-            NodeType::Notice => write!(f, "Notice"),
-            NodeType::Tension => write!(f, "Tension"),
+            NodeType::Resource => write!(f, "Resource"),
+            NodeType::HelpRequest => write!(f, "HelpRequest"),
+            NodeType::Announcement => write!(f, "Announcement"),
+            NodeType::Concern => write!(f, "Concern"),
             NodeType::Condition => write!(f, "Condition"),
-            NodeType::Incident => write!(f, "Incident"),
             NodeType::Citation => write!(f, "Citation"),
         }
     }
@@ -185,8 +183,8 @@ pub enum DiscoveryMethod {
     HashtagDiscovery,
     /// Generated during cold start bootstrap
     ColdStart,
-    /// Discovered from tension-seeded follow-up queries
-    TensionSeed,
+    /// Discovered from concern-seeded follow-up queries
+    ConcernSeed,
     /// Submitted by a human via the submission endpoint
     HumanSubmission,
     /// Expanded from implied queries on extracted signals
@@ -207,7 +205,7 @@ impl std::fmt::Display for DiscoveryMethod {
             DiscoveryMethod::SignalReference => write!(f, "signal_reference"),
             DiscoveryMethod::HashtagDiscovery => write!(f, "hashtag_discovery"),
             DiscoveryMethod::ColdStart => write!(f, "cold_start"),
-            DiscoveryMethod::TensionSeed => write!(f, "tension_seed"),
+            DiscoveryMethod::ConcernSeed => write!(f, "concern_seed"),
             DiscoveryMethod::HumanSubmission => write!(f, "human_submission"),
             DiscoveryMethod::SignalExpansion => write!(f, "signal_expansion"),
             DiscoveryMethod::ActorAccount => write!(f, "actor_account"),
@@ -222,10 +220,10 @@ impl std::fmt::Display for DiscoveryMethod {
 #[serde(rename_all = "snake_case")]
 pub enum SourceRole {
     /// Surfaces problems (forums, complaint boards, news).
-    Tension,
+    Concern,
     /// Surfaces responses (nonprofits, service directories, event calendars).
     Response,
-    /// Produces both tensions and responses (general community pages, social media).
+    /// Produces both concerns and responses (general community pages, social media).
     #[default]
     Mixed,
 }
@@ -233,7 +231,7 @@ pub enum SourceRole {
 impl std::fmt::Display for SourceRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SourceRole::Tension => write!(f, "tension"),
+            SourceRole::Concern => write!(f, "concern"),
             SourceRole::Response => write!(f, "response"),
             SourceRole::Mixed => write!(f, "mixed"),
         }
@@ -243,7 +241,7 @@ impl std::fmt::Display for SourceRole {
 impl SourceRole {
     pub fn from_str_loose(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "tension" => SourceRole::Tension,
+            "concern" => SourceRole::Concern,
             "response" => SourceRole::Response,
             _ => SourceRole::Mixed,
         }
@@ -389,13 +387,13 @@ impl std::fmt::Display for Tone {
 pub enum EdgeType {
     /// Signal -> Citation (provenance)
     SourcedFrom,
-    /// Aid/Gathering/Need -> Tension (feedback loop). Properties: match_strength, explanation
+    /// Aid/Gathering/Need -> Concern (feedback loop). Properties: match_strength, explanation
     RespondsTo,
     /// Actor -> Signal (participation). Properties: role
     ActedIn,
     /// Submission -> Source (human submission)
     SubmittedFor,
-    /// Aid/Gathering/Need -> Tension (drawn toward a tension). Properties: match_strength, explanation
+    /// Aid/Gathering/Need -> Concern (drawn toward a concern). Properties: match_strength, explanation
     DrawnTo,
     /// Signal -> Place (gathering venue)
     GathersAt,

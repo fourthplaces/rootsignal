@@ -18,11 +18,10 @@ use crate::values::{Location, Schedule};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorldEvent {
     // -----------------------------------------------------------------------
-    // 7 signal types — the shared base + type-specific fields
+    // 6 signal types — the shared base + type-specific fields
     // -----------------------------------------------------------------------
 
     /// People are coming together at a time and place.
-    #[serde(alias = "gathering_discovered")]
     GatheringAnnounced {
         id: Uuid,
         title: String,
@@ -46,7 +45,6 @@ pub enum WorldEvent {
     },
 
     /// Something is being made available to the community.
-    #[serde(alias = "aid_discovered")]
     ResourceOffered {
         id: Uuid,
         title: String,
@@ -69,10 +67,13 @@ pub enum WorldEvent {
         action_url: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         availability: Option<String>,
+        /// Who is eligible as explicitly stated in the content.
+        /// Null if not stated — do not infer eligibility from context.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        eligibility: Option<String>,
     },
 
     /// Someone needs something.
-    #[serde(alias = "need_discovered")]
     HelpRequested {
         id: Uuid,
         title: String,
@@ -93,12 +94,16 @@ pub enum WorldEvent {
         // -- type-specific --
         #[serde(default, skip_serializing_if = "Option::is_none")]
         what_needed: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        goal: Option<String>,
+        /// The goal as explicitly stated in the content.
+        /// Extract what the content says, not what you infer the goal to be.
+        #[serde(default, skip_serializing_if = "Option::is_none", alias = "goal")]
+        stated_goal: Option<String>,
     },
 
-    /// Information was shared with the community.
-    #[serde(alias = "notice_discovered")]
+    /// Pure information broadcast — the category of last resort.
+    /// If the content contains a gathering, resource, need, condition,
+    /// or concern, classify as that type instead. AnnouncementShared is
+    /// for content that doesn't embed any of the other five.
     AnnouncementShared {
         id: Uuid,
         title: String,
@@ -117,14 +122,22 @@ pub enum WorldEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schedule: Option<Schedule>,
         // -- type-specific --
+        /// The core subject in plain terms, for search/retrieval.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        category: Option<String>,
+        subject: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effective_date: Option<DateTime<Utc>>,
     },
 
-    /// Someone voiced a concern. Always a human act.
-    #[serde(alias = "tension_discovered")]
+    /// Someone expressed opposition, filed a grievance, or pushed back
+    /// against something. The act of opposing is the fact being recorded —
+    /// not the systemic tension it may point to (that's intelligence layer).
+    ///
+    /// This is NOT a catch-all for complaints about conditions. If the
+    /// content describes a state of the world (pothole, pollution, outage),
+    /// that's ConditionObserved. ConcernRaised is for social friction:
+    /// opposition to proposals, disputes between groups, protests,
+    /// objections filed, community pushback.
     ConcernRaised {
         id: Uuid,
         title: String,
@@ -142,13 +155,23 @@ pub enum WorldEvent {
         references: Vec<Reference>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schedule: Option<Schedule>,
-        // -- type-specific --
+        // -- type-specific (strict extraction only) --
+        /// The core subject of the friction in plain terms.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        what_would_help: Option<String>,
+        subject: Option<String>,
+        /// What is being opposed, as explicitly stated in the content.
+        /// Null if the content doesn't clearly state what's being opposed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opposing: Option<String>,
     },
 
-    /// A state of the world was measured or recorded.
-    /// Reducer and graph wiring complete — awaiting extractor support to produce these.
+    /// A state of the world being described — infrastructure, environment,
+    /// emergencies, public health, safety. Severity and urgency fields on the
+    /// resulting signal node distinguish routine observations from acute events
+    /// (which are functionally "incidents" — use filters, not types).
+    ///
+    /// All type-specific fields are strict extraction only: they capture what
+    /// the source content explicitly states, not what the LLM infers.
     ConditionObserved {
         id: Uuid,
         title: String,
@@ -166,33 +189,24 @@ pub enum WorldEvent {
         references: Vec<Reference>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schedule: Option<Schedule>,
-    },
-
-    /// A discrete event occurred in the world. States persist, incidents happen.
-    /// Reducer and graph wiring complete — awaiting extractor support to produce these.
-    IncidentReported {
-        id: Uuid,
-        title: String,
-        summary: String,
-        source_url: String,
+        // -- type-specific (strict extraction only) --
+        /// The core subject in plain terms, for search/retrieval.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        published_at: Option<DateTime<Utc>>,
+        subject: Option<String>,
+        /// Who or what reported/observed this? Null if not stated.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        extraction_id: Option<Uuid>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        locations: Vec<Location>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        mentioned_entities: Vec<Entity>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        references: Vec<Reference>,
+        observed_by: Option<String>,
+        /// Quantitative reading if the content includes one. Null if none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        schedule: Option<Schedule>,
+        measurement: Option<String>,
+        /// Scope of what's affected as stated in the content. Null if not stated.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        affected_scope: Option<String>,
     },
 
     // -----------------------------------------------------------------------
     // Citations
     // -----------------------------------------------------------------------
-    #[serde(alias = "citation_recorded")]
     CitationPublished {
         citation_id: Uuid,
         signal_id: Uuid,
@@ -207,7 +221,6 @@ pub enum WorldEvent {
     // -----------------------------------------------------------------------
     // Resource edges — real-world resource relationships
     // -----------------------------------------------------------------------
-    #[serde(alias = "resource_edge_created")]
     ResourceLinked {
         signal_id: Uuid,
         resource_slug: String,
@@ -293,7 +306,6 @@ impl Eventlike for WorldEvent {
             WorldEvent::AnnouncementShared { .. } => "announcement_shared",
             WorldEvent::ConcernRaised { .. } => "concern_raised",
             WorldEvent::ConditionObserved { .. } => "condition_observed",
-            WorldEvent::IncidentReported { .. } => "incident_reported",
             WorldEvent::CitationPublished { .. } => "citation_published",
             WorldEvent::ResourceLinked { .. } => "resource_linked",
             WorldEvent::GatheringCancelled { .. } => "gathering_cancelled",

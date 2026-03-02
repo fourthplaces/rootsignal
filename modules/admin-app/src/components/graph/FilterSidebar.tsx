@@ -2,10 +2,10 @@ import { useMemo } from "react";
 
 const NODE_TYPE_OPTIONS = [
   { key: "Gathering", label: "Gathering" },
-  { key: "Aid", label: "Aid" },
-  { key: "Need", label: "Need" },
-  { key: "Notice", label: "Notice" },
-  { key: "Tension", label: "Tension" },
+  { key: "Resource", label: "Resource" },
+  { key: "HelpRequest", label: "HelpRequest" },
+  { key: "Announcement", label: "Announcement" },
+  { key: "Concern", label: "Concern" },
   { key: "Actor", label: "Actor" },
   { key: "Citation", label: "Citation" },
 ] as const;

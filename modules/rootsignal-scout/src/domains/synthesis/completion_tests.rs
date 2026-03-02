@@ -38,7 +38,7 @@ async fn five_of_six_synthesis_roles_does_not_emit_phase_completed() {
     let five_roles = [
         SynthesisRole::Similarity,
         SynthesisRole::ResponseMapping,
-        SynthesisRole::TensionLinker,
+        SynthesisRole::ConcernLinker,
         SynthesisRole::ResponseFinder,
         SynthesisRole::GatheringFinder,
     ];
@@ -71,7 +71,7 @@ async fn sixth_synthesis_role_emits_phase_completed() {
     let all_roles = [
         SynthesisRole::Similarity,
         SynthesisRole::ResponseMapping,
-        SynthesisRole::TensionLinker,
+        SynthesisRole::ConcernLinker,
         SynthesisRole::ResponseFinder,
         SynthesisRole::GatheringFinder,
         SynthesisRole::Investigation,

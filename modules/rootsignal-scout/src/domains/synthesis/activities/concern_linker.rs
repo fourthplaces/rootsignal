@@ -13,9 +13,9 @@ use uuid::Uuid;
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{
     GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel,
-    Severity, TensionNode,
+    Severity, ConcernNode,
 };
-use rootsignal_graph::{GraphReader, SituationBrief, TensionLinkerOutcome, TensionLinkerTarget};
+use rootsignal_graph::{GraphReader, SituationBrief, ConcernLinkerOutcome, ConcernLinkerTarget};
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
@@ -171,10 +171,10 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 }
 
 // =============================================================================
-// TensionLinker
+// ConcernLinker
 // =============================================================================
 
-pub struct TensionLinker<'a> {
+pub struct ConcernLinker<'a> {
     graph: &'a GraphReader,
     claude: Claude,
     embedder: &'a dyn TextEmbedder,
@@ -187,7 +187,7 @@ pub struct TensionLinker<'a> {
     run_id: String,
 }
 
-impl<'a> TensionLinker<'a> {
+impl<'a> ConcernLinker<'a> {
     pub fn new(
         graph: &'a GraphReader,
         archive: Arc<Archive>,
@@ -315,7 +315,7 @@ impl<'a> TensionLinker<'a> {
                             reason = finding.skip_reason.as_deref().unwrap_or("self-explanatory"),
                             "Signal not curious, skipping"
                         );
-                        TensionLinkerOutcome::Skipped
+                        ConcernLinkerOutcome::Skipped
                     } else {
                         stats.targets_investigated += 1;
                         let tensions_count = finding.tensions.len().min(MAX_TENSIONS_PER_SIGNAL);
@@ -339,9 +339,9 @@ impl<'a> TensionLinker<'a> {
                             "Signal investigated"
                         );
                         if any_tension_failed {
-                            TensionLinkerOutcome::Failed
+                            ConcernLinkerOutcome::Failed
                         } else {
-                            TensionLinkerOutcome::Done
+                            ConcernLinkerOutcome::Done
                         }
                     }
                 }
@@ -352,15 +352,15 @@ impl<'a> TensionLinker<'a> {
                         error = %e,
                         "Curiosity investigation failed"
                     );
-                    TensionLinkerOutcome::Failed
+                    ConcernLinkerOutcome::Failed
                 }
             };
 
-            events.push(SystemEvent::TensionLinkerOutcomeRecorded {
+            events.push(SystemEvent::ConcernLinkerOutcomeRecorded {
                 signal_id: target.signal_id,
                 label: target.label.clone(),
                 outcome: outcome.as_str().to_string(),
-                increment_retry: outcome == TensionLinkerOutcome::Failed,
+                increment_retry: outcome == ConcernLinkerOutcome::Failed,
             });
         }
 
@@ -369,7 +369,7 @@ impl<'a> TensionLinker<'a> {
 
     async fn investigate_signal(
         &self,
-        target: &TensionLinkerTarget,
+        target: &ConcernLinkerTarget,
         tension_landscape: &str,
         situation_landscape: &str,
     ) -> Result<SignalFinding> {
@@ -408,7 +408,7 @@ impl<'a> TensionLinker<'a> {
 
     async fn process_tension(
         &self,
-        target: &TensionLinkerTarget,
+        target: &ConcernLinkerTarget,
         tension: &DiscoveredTension,
         stats: &mut TensionLinkerStats,
         events: &mut seesaw_core::Events,
@@ -421,7 +421,7 @@ impl<'a> TensionLinker<'a> {
             .graph
             .find_duplicate(
                 &embedding,
-                NodeType::Tension,
+                NodeType::Concern,
                 0.85,
                 self.min_lat,
                 self.max_lat,
@@ -475,7 +475,7 @@ impl<'a> TensionLinker<'a> {
         };
 
         let now = Utc::now();
-        let tension_node = TensionNode {
+        let tension_node = ConcernNode {
             meta: NodeMeta {
                 id: Uuid::new_v4(),
                 title: tension.title.clone(),
@@ -508,11 +508,12 @@ impl<'a> TensionLinker<'a> {
             },
             severity,
             category: Some(tension.category.clone()),
-            what_would_help: Some(tension.what_would_help.clone()),
+            subject: None,
+            opposing: Some(tension.what_would_help.clone()),
         };
 
         let tension_id = tension_node.meta.id;
-        let node = Node::Tension(tension_node);
+        let node = Node::Concern(tension_node);
 
         // Collect world event + system events for causal chain dispatch
         let world_event = node_to_world_event(&node);
@@ -586,7 +587,7 @@ mod tests {
 
     #[test]
     fn tension_node_gets_region_center_coordinates() {
-        // Verify that a DiscoveredTension produces a TensionNode with region-center lat/lng.
+        // Verify that a DiscoveredTension produces a ConcernNode with region-center lat/lng.
         let region = ScoutScope {
             name: "Minneapolis".to_string(),
             center_lat: 44.9778,
@@ -605,7 +606,7 @@ mod tests {
             explanation: "Workshop responds to enforcement fear".to_string(),
         };
 
-        // Build the TensionNode the same way create_tension_node does
+        // Build the ConcernNode the same way create_tension_node does
         let severity = match tension.severity.to_lowercase().as_str() {
             "low" => Severity::Low,
             "medium" => Severity::Medium,
@@ -615,7 +616,7 @@ mod tests {
         };
 
         let now = Utc::now();
-        let tension_node = TensionNode {
+        let tension_node = ConcernNode {
             meta: NodeMeta {
                 id: Uuid::new_v4(),
                 title: tension.title.clone(),
@@ -648,14 +649,15 @@ mod tests {
             },
             severity,
             category: Some(tension.category.clone()),
-            what_would_help: Some(tension.what_would_help.clone()),
+            subject: None,
+            opposing: Some(tension.what_would_help.clone()),
         };
 
         // Key assertions: location is set to region center
         let loc = tension_node
             .meta
             .about_location
-            .expect("Tension should have location");
+            .expect("Concern should have location");
         assert!(
             (loc.lat - 44.9778).abs() < 0.001,
             "lat should be region center"

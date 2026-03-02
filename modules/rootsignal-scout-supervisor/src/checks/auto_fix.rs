@@ -69,7 +69,7 @@ async fn fix_orphaned_citations(
     );
 
     let mut ids = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
         if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -96,7 +96,7 @@ async fn fix_orphaned_actors(client: &GraphClient) -> Result<Option<SystemEvent>
     );
 
     let mut ids = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
         if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -130,7 +130,7 @@ async fn fix_duplicate_actors(client: &GraphClient) -> Result<Vec<SystemEvent>, 
                 a1.name AS keep_name, a2.name AS drop_name",
     );
 
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     let mut events = Vec::new();
 
     while let Some(row) = stream.next().await? {
@@ -162,14 +162,14 @@ async fn fix_duplicate_actors(client: &GraphClient) -> Result<Vec<SystemEvent>, 
 async fn fix_empty_signals(client: &GraphClient) -> Result<Option<SystemEvent>, neo4rs::Error> {
     let mut ids = Vec::new();
 
-    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.title IS NULL OR n.title = ''
              RETURN n.id AS id"
         ));
 
-        let mut stream = client.inner().execute(q).await?;
+        let mut stream = client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
@@ -196,7 +196,7 @@ async fn fix_fake_center_coords(
     let mut signal_ids = Vec::new();
     let mut old_coords = Vec::new();
 
-    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.lat IS NOT NULL AND n.lng IS NOT NULL
@@ -208,7 +208,7 @@ async fn fix_fake_center_coords(
         .param("center_lng", center_lng)
         .param("epsilon", epsilon);
 
-        let mut stream = client.inner().execute(q).await?;
+        let mut stream = client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let lat: f64 = row.get("lat").unwrap_or(0.0);

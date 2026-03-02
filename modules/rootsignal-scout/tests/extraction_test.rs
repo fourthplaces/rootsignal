@@ -237,13 +237,13 @@ async fn food_shelf_post_yields_aid_signal() {
     let aid = result
         .nodes
         .iter()
-        .find(|n| matches!(n, rootsignal_common::Node::Aid(_)))
+        .find(|n| matches!(n, rootsignal_common::Node::Resource(_)))
         .expect("Should extract an Aid signal");
 
     let meta = aid.meta().unwrap();
 
     // availability should mention days/hours
-    if let rootsignal_common::Node::Aid(a) = aid {
+    if let rootsignal_common::Node::Resource(a) = aid {
         assert!(
             a.availability.is_some(),
             "Aid should have availability schedule"
@@ -317,7 +317,7 @@ async fn urgent_community_issue_yields_tension_signal() {
     let tensions: Vec<_> = result
         .nodes
         .iter()
-        .filter(|n| matches!(n, rootsignal_common::Node::Tension(_)))
+        .filter(|n| matches!(n, rootsignal_common::Node::Concern(_)))
         .collect();
     assert!(
         !tensions.is_empty(),
@@ -325,7 +325,7 @@ async fn urgent_community_issue_yields_tension_signal() {
     );
 
     let has_ice_tension = tensions.iter().any(|n| {
-        if let rootsignal_common::Node::Tension(t) = n {
+        if let rootsignal_common::Node::Concern(t) = n {
             let severity_ok = matches!(
                 t.severity,
                 rootsignal_common::Severity::High | rootsignal_common::Severity::Critical
@@ -372,7 +372,7 @@ async fn urgent_community_issue_yields_tension_signal() {
     let aids: Vec<_> = result
         .nodes
         .iter()
-        .filter(|n| matches!(n, rootsignal_common::Node::Aid(_)))
+        .filter(|n| matches!(n, rootsignal_common::Node::Resource(_)))
         .collect();
     let has_aid_signal = !aids.is_empty()
         || response.signals.iter().any(|s| {
@@ -451,7 +451,7 @@ async fn satirical_content_produces_no_real_signals() {
         .nodes
         .iter()
         .filter(|n| {
-            if let rootsignal_common::Node::Need(need) = n {
+            if let rootsignal_common::Node::HelpRequest(need) = n {
                 // If action_url is present, it's being treated as real
                 need.action_url.is_some()
             } else {
@@ -589,7 +589,7 @@ async fn multi_location_service_extracts_multiple_signals() {
     let aid_signals: Vec<_> = result
         .nodes
         .iter()
-        .filter(|n| matches!(n, rootsignal_common::Node::Aid(_)))
+        .filter(|n| matches!(n, rootsignal_common::Node::Resource(_)))
         .collect();
 
     // At minimum, should extract more than one Aid signal
@@ -633,7 +633,7 @@ async fn multi_location_service_extracts_multiple_signals() {
 
     // All should be ongoing (24/7 operation)
     for aid in &aid_signals {
-        if let rootsignal_common::Node::Aid(a) = aid {
+        if let rootsignal_common::Node::Resource(a) = aid {
             assert!(
                 a.is_ongoing,
                 "Community fridges are 24/7, should be marked ongoing: {}",
@@ -828,7 +828,7 @@ async fn closed_program_excluded_or_marked_inactive() {
         .nodes
         .iter()
         .filter(|n| {
-            if let rootsignal_common::Node::Aid(a) = n {
+            if let rootsignal_common::Node::Resource(a) = n {
                 a.is_ongoing
             } else {
                 false

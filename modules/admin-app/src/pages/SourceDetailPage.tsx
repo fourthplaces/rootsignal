@@ -15,10 +15,10 @@ const formatDate = (d: string | null | undefined) => {
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
   Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  Aid: "bg-green-500/10 text-green-400 border-green-500/20",
-  Need: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-  Notice: "bg-purple-500/10 text-purple-400 border-purple-500/20",
-  Tension: "bg-red-500/10 text-red-400 border-red-500/20",
+  Resource: "bg-green-500/10 text-green-400 border-green-500/20",
+  HelpRequest: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  Announcement: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  Concern: "bg-red-500/10 text-red-400 border-red-500/20",
 };
 
 type SignalBrief = {

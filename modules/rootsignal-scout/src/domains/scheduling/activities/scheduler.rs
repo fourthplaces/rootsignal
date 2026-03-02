@@ -124,7 +124,7 @@ pub fn schedule(sources: &[SourceNode], now: DateTime<Utc>) -> ScheduleResult {
         match role_map.get(key).copied().unwrap_or(SourceRole::Mixed) {
             SourceRole::Response => response_phase.push(key.to_string()),
             // Tension and Mixed both go in Phase A
-            SourceRole::Tension | SourceRole::Mixed => tension_phase.push(key.to_string()),
+            SourceRole::Concern | SourceRole::Mixed => tension_phase.push(key.to_string()),
         }
     }
 

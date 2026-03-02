@@ -393,7 +393,7 @@ impl Scraper {
 
             // Collect implied queries from Tension/Need social signals
             for node in &nodes {
-                if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
+                if matches!(node.node_type(), NodeType::Concern | NodeType::HelpRequest) {
                     if let Some(meta) = node.meta() {
                         output.expansion_queries
                             .extend(meta.implied_queries.iter().cloned());

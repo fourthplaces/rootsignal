@@ -9,7 +9,7 @@ use uuid::Uuid;
 pub enum SynthesisRole {
     Similarity,
     ResponseMapping,
-    TensionLinker,
+    ConcernLinker,
     ResponseFinder,
     GatheringFinder,
     Investigation,
@@ -20,7 +20,7 @@ pub fn all_synthesis_roles() -> std::collections::HashSet<SynthesisRole> {
     std::collections::HashSet::from([
         SynthesisRole::Similarity,
         SynthesisRole::ResponseMapping,
-        SynthesisRole::TensionLinker,
+        SynthesisRole::ConcernLinker,
         SynthesisRole::ResponseFinder,
         SynthesisRole::GatheringFinder,
         SynthesisRole::Investigation,

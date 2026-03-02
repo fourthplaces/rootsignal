@@ -23,7 +23,7 @@ pub fn world() -> World {
                     "https://www.startribune.com/north-mpls-youth-violence-spike".to_string(),
                     "https://www.reddit.com/r/Minneapolis/comments/youth_violence_north".to_string(),
                 ],
-                category: "tension".to_string(),
+                category: "concern".to_string(),
             },
             Fact {
                 text: "Parents and community members report there are no safe spaces for teens \
@@ -33,7 +33,7 @@ pub fn world() -> World {
                     "https://www.reddit.com/r/Minneapolis/comments/youth_violence_north".to_string(),
                     "https://www.minnpost.com/community/northside-youth-safety".to_string(),
                 ],
-                category: "tension".to_string(),
+                category: "concern".to_string(),
             },
             Fact {
                 text: "Northside Achievement Zone runs free after-school tutoring and mentorship \

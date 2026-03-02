@@ -39,7 +39,7 @@ export function DashboardPage() {
           { label: "Signals", value: d.totalSignals },
           { label: "Actors", value: d.totalActors },
           { label: "Sources", value: d.activeSources },
-          { label: "Tensions", value: d.totalTensions },
+          { label: "Tensions", value: d.totalConcerns },
           {
             label: "Scout",
             value: d.scoutStatuses.find((s: { regionSlug: string }) => s.regionSlug === region)?.running
@@ -99,7 +99,7 @@ export function DashboardPage() {
 
       {/* Unmet tensions table */}
       <div className="rounded-lg border border-border p-4">
-        <h2 className="text-sm font-medium mb-4">Unmet Tensions</h2>
+        <h2 className="text-sm font-medium mb-4">Unmet Concerns</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -111,7 +111,7 @@ export function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {d.unmetTensions.map(
+              {d.unmetConcerns.map(
                 (t: { title: string; severity: string; category: string; whatWouldHelp: string }, i: number) => (
                   <tr key={i} className="border-b border-border/50">
                     <td className="py-2">{t.title}</td>

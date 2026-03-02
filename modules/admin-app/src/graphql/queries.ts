@@ -8,25 +8,25 @@ const SIGNAL_FIELDS = `
     reviewStatus wasCorrected corrections rejectionReason
     startsAt endsAt actionUrl organizer isRecurring
   }
-  ... on GqlAidSignal {
+  ... on GqlResourceSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
     actionUrl availability isOngoing
   }
-  ... on GqlNeedSignal {
+  ... on GqlHelpRequestSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
     urgency whatNeeded actionUrl goal
   }
-  ... on GqlNoticeSignal {
+  ... on GqlAnnouncementSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
     severity category effectiveDate sourceAuthority
   }
-  ... on GqlTensionSignal {
+  ... on GqlConcernSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
@@ -50,7 +50,7 @@ export const ADMIN_DASHBOARD = gql`
       totalActors
       totalSources
       activeSources
-      totalTensions
+      totalConcerns
       scoutStatuses {
         regionName
         regionSlug
@@ -78,7 +78,7 @@ export const ADMIN_DASHBOARD = gql`
         label
         count
       }
-      unmetTensions {
+      unmetConcerns {
         title
         severity
         category
@@ -166,25 +166,25 @@ export const SIGNALS_NEAR = gql`
         startsAt endsAt actionUrl organizer isRecurring
         actors { id name actorType }
       }
-      ... on GqlAidSignal {
+      ... on GqlResourceSignal {
         id title summary sensitivity confidence location { lat lng precision }
         locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         actionUrl availability isOngoing
         actors { id name actorType }
       }
-      ... on GqlNeedSignal {
+      ... on GqlHelpRequestSignal {
         id title summary sensitivity confidence location { lat lng precision }
         locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         urgency whatNeeded actionUrl goal
         actors { id name actorType }
       }
-      ... on GqlNoticeSignal {
+      ... on GqlAnnouncementSignal {
         id title summary sensitivity confidence location { lat lng precision }
         locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         severity category effectiveDate sourceAuthority
         actors { id name actorType }
       }
-      ... on GqlTensionSignal {
+      ... on GqlConcernSignal {
         id title summary sensitivity confidence location { lat lng precision }
         locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
         severity category whatWouldHelp
@@ -231,7 +231,7 @@ export const SIGNAL_DETAIL = gql`
           occurrences(from: $scheduleFrom, to: $scheduleTo)
         }
       }
-      ... on GqlAidSignal {
+      ... on GqlResourceSignal {
         citations { id sourceUrl snippet relevance }
         actors { id name actorType }
         schedule {
@@ -239,15 +239,15 @@ export const SIGNAL_DETAIL = gql`
           occurrences(from: $scheduleFrom, to: $scheduleTo)
         }
       }
-      ... on GqlNeedSignal {
+      ... on GqlHelpRequestSignal {
         citations { id sourceUrl snippet relevance }
         actors { id name actorType }
       }
-      ... on GqlNoticeSignal {
+      ... on GqlAnnouncementSignal {
         citations { id sourceUrl snippet relevance }
         actors { id name actorType }
       }
-      ... on GqlTensionSignal {
+      ... on GqlConcernSignal {
         citations { id sourceUrl snippet relevance }
         actors { id name actorType }
       }
@@ -384,10 +384,10 @@ export const SIGNAL_BRIEF = gql`
   query SignalBrief($id: UUID!) {
     signal(id: $id) {
       ... on GqlGatheringSignal { id title summary sourceUrl confidence contentDate locationName }
-      ... on GqlAidSignal { id title summary sourceUrl confidence contentDate locationName }
-      ... on GqlNeedSignal { id title summary sourceUrl confidence contentDate locationName }
-      ... on GqlNoticeSignal { id title summary sourceUrl confidence contentDate locationName }
-      ... on GqlTensionSignal { id title summary sourceUrl confidence contentDate locationName }
+      ... on GqlResourceSignal { id title summary sourceUrl confidence contentDate locationName }
+      ... on GqlHelpRequestSignal { id title summary sourceUrl confidence contentDate locationName }
+      ... on GqlAnnouncementSignal { id title summary sourceUrl confidence contentDate locationName }
+      ... on GqlConcernSignal { id title summary sourceUrl confidence contentDate locationName }
     }
   }
 `;

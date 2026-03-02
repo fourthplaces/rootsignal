@@ -80,6 +80,23 @@ pub enum SourceChange {
     },
 }
 
+/// Diversity metrics for a single signal node, computed from Citation evidence edges.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignalDiversityScore {
+    pub signal_id: Uuid,
+    pub label: String,
+    pub source_diversity: i64,
+    pub channel_diversity: i64,
+    pub external_ratio: f64,
+}
+
+/// Actor signal count, computed from ACTED_IN edges.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActorStatScore {
+    pub actor_id: Uuid,
+    pub signal_count: u32,
+}
+
 /// A similarity edge between two signals, computed from cosine similarity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimilarityEdge {

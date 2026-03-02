@@ -167,7 +167,7 @@ impl NewsScanner {
             // Only these signal types indicate problems worth investigating.
             // Aid/Gathering are responses, not discovery triggers.
             for node in &extraction.nodes {
-                if matches!(node, Node::Tension(_) | Node::Need(_)) {
+                if matches!(node, Node::Concern(_) | Node::HelpRequest(_)) {
                     if let Some(meta) = node.meta() {
                         if let Some(loc) = &meta.about_location {
                             beacon_candidates.push(BeaconCandidate {

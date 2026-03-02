@@ -27,14 +27,13 @@ use rootsignal_common::events::{Location, Schedule};
 
 /// Events that the reducer should act on (produce graph mutations).
 const GRAPH_MUTATING_TYPES: &[&str] = &[
-    // World: Signal types (7)
+    // World: Signal types (6)
     "gathering_announced",
     "resource_offered",
     "help_requested",
     "announcement_shared",
     "concern_raised",
     "condition_observed",
-    "incident_reported",
     // World: Corroboration fact
     "observation_corroborated",
     // World: Citations
@@ -46,7 +45,7 @@ const GRAPH_MUTATING_TYPES: &[&str] = &[
     // World: Relationship edges
     "resource_linked",
     "response_linked",
-    "tension_linked",
+    "concern_linked",
     // World: Lifecycle
     "gathering_cancelled",
     "resource_depleted",
@@ -600,9 +599,9 @@ fn build_all_events() -> Vec<Event> {
             consumed_demand_ids: vec![id],
         }),
         // =====================================================================
-        // World (22 variants)
+        // World (21 variants)
         // =====================================================================
-        // Signal types (7 variants)
+        // Signal types (6 variants)
         Event::World(WorldEvent::GatheringAnnounced {
             id,
             title: "x".into(),
@@ -629,6 +628,7 @@ fn build_all_events() -> Vec<Event> {
             schedule: None,
             action_url: None,
             availability: None,
+            eligibility: None,
         }),
         Event::World(WorldEvent::HelpRequested {
             id,
@@ -642,7 +642,7 @@ fn build_all_events() -> Vec<Event> {
             references: vec![],
             schedule: None,
             what_needed: None,
-            goal: None,
+            stated_goal: None,
         }),
         Event::World(WorldEvent::AnnouncementShared {
             id,
@@ -655,7 +655,7 @@ fn build_all_events() -> Vec<Event> {
             mentioned_entities: vec![],
             references: vec![],
             schedule: None,
-            category: None,
+            subject: None,
             effective_date: None,
         }),
         Event::World(WorldEvent::ConcernRaised {
@@ -669,7 +669,8 @@ fn build_all_events() -> Vec<Event> {
             mentioned_entities: vec![],
             references: vec![],
             schedule: None,
-            what_would_help: None,
+            subject: None,
+            opposing: None,
         }),
         Event::World(WorldEvent::ConditionObserved {
             id,
@@ -682,23 +683,15 @@ fn build_all_events() -> Vec<Event> {
             mentioned_entities: vec![],
             references: vec![],
             schedule: None,
-        }),
-        Event::World(WorldEvent::IncidentReported {
-            id,
-            title: "x".into(),
-            summary: "y".into(),
-            source_url: "z".into(),
-            published_at: None,
-            extraction_id: None,
-            locations: vec![],
-            mentioned_entities: vec![],
-            references: vec![],
-            schedule: None,
+            subject: None,
+            observed_by: None,
+            measurement: None,
+            affected_scope: None,
         }),
         // Corroboration (world fact only)
         Event::System(SystemEvent::ObservationCorroborated {
             signal_id: id,
-            node_type: NodeType::Aid,
+            node_type: NodeType::Resource,
             new_source_url: "x".into(),
             summary: None,
         }),
@@ -755,7 +748,7 @@ fn build_all_events() -> Vec<Event> {
             explanation: "x".into(),
             source_url: None,
         }),
-        Event::System(SystemEvent::TensionLinked {
+        Event::System(SystemEvent::ConcernLinked {
             signal_id: id,
             tension_id: id,
             strength: 0.6,
@@ -801,7 +794,7 @@ fn build_all_events() -> Vec<Event> {
         // Observation lifecycle
         Event::System(SystemEvent::FreshnessConfirmed {
             signal_ids: vec![id],
-            node_type: NodeType::Need,
+            node_type: NodeType::HelpRequest,
             confirmed_at: now,
         }),
         Event::System(SystemEvent::ConfidenceScored {
@@ -827,7 +820,7 @@ fn build_all_events() -> Vec<Event> {
         }),
         Event::System(SystemEvent::EntityPurged {
             signal_id: id,
-            node_type: NodeType::Tension,
+            node_type: NodeType::Concern,
             reason: "admin".into(),
             context: None,
         }),
@@ -936,6 +929,11 @@ fn build_all_events() -> Vec<Event> {
             sensitivity: SensitivityLevel::General,
             category: None,
             structured_state: "{}".into(),
+            tension_heat: None,
+            clarity: None,
+            signal_count: None,
+            narrative_embedding: None,
+            causal_embedding: None,
         }),
         Event::System(SystemEvent::SituationChanged {
             situation_id: id,
@@ -955,6 +953,8 @@ fn build_all_events() -> Vec<Event> {
             dispatch_type: DispatchType::Emergence,
             supersedes: None,
             fidelity_score: Some(0.9),
+            flagged_for_review: None,
+            flag_reason: None,
         }),
         // Tags
         Event::System(SystemEvent::TagSuppressed {

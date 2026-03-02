@@ -360,11 +360,11 @@ impl QueryRoot {
                     count: *c,
                 })
                 .collect(),
-            unmet_tensions: tensions
+            unmet_concerns: tensions
                 .unwrap_or_default()
                 .iter()
                 .filter(|t| t.unmet)
-                .map(|t| AdminTensionRow {
+                .map(|t| AdminConcernRow {
                     title: t.title.clone(),
                     severity: t.severity.clone(),
                     category: t.category.clone(),
@@ -924,7 +924,7 @@ pub struct AdminDashboardData {
     pub situation_count_by_category: Vec<LabelCount>,
     pub freshness_distribution: Vec<LabelCount>,
     pub confidence_distribution: Vec<LabelCount>,
-    pub unmet_tensions: Vec<AdminTensionRow>,
+    pub unmet_concerns: Vec<AdminConcernRow>,
     pub top_sources: Vec<AdminSourceRow>,
     pub bottom_sources: Vec<AdminSourceRow>,
     pub extraction_yield: Vec<AdminYieldRow>,
@@ -963,7 +963,7 @@ pub struct LabelCount {
 }
 
 #[derive(SimpleObject)]
-pub struct AdminTensionRow {
+pub struct AdminConcernRow {
     pub title: String,
     pub severity: String,
     pub category: Option<String>,

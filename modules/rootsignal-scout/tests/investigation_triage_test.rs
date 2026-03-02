@@ -130,7 +130,7 @@ async fn generate_queries(
 async fn disputed_claim_warrants_investigation() {
     let queries = generate_queries(
         "disputed_claim",
-        "Tension",
+        "Concern",
         "Local nonprofit accused of misusing federal housing funds — HUD audit pending",
     )
     .await;
@@ -145,7 +145,7 @@ async fn disputed_claim_warrants_investigation() {
 async fn safety_hazard_warrants_investigation() {
     let queries = generate_queries(
         "safety_hazard",
-        "Tension",
+        "Concern",
         "Lead contamination found in drinking water at Riverside elementary school",
     )
     .await;
@@ -160,7 +160,7 @@ async fn safety_hazard_warrants_investigation() {
 async fn unverified_closure_warrants_investigation() {
     let queries = generate_queries(
         "unverified_closure",
-        "Tension",
+        "Concern",
         "Hennepin County to close 3 homeless shelters by March, displacing 200 residents",
     )
     .await;
@@ -195,7 +195,7 @@ async fn fundraiser_skipped() {
 async fn food_shelf_hours_skipped() {
     let queries = generate_queries(
         "food_shelf_hours",
-        "Aid",
+        "Resource",
         "Open Door Pantry distributing groceries every Tuesday and Thursday 10am-2pm at Faith Lutheran Church",
     )
     .await;

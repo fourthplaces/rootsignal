@@ -4,20 +4,20 @@ import type { NodeProps } from "@xyflow/react";
 
 const NODE_COLORS: Record<string, string> = {
   Gathering: "border-blue-500/50 bg-blue-500/10 text-blue-400",
-  Aid: "border-green-500/50 bg-green-500/10 text-green-400",
-  Need: "border-amber-500/50 bg-amber-500/10 text-amber-400",
-  Notice: "border-purple-500/50 bg-purple-500/10 text-purple-400",
-  Tension: "border-red-500/50 bg-red-500/10 text-red-400",
+  Resource: "border-green-500/50 bg-green-500/10 text-green-400",
+  HelpRequest: "border-amber-500/50 bg-amber-500/10 text-amber-400",
+  Announcement: "border-purple-500/50 bg-purple-500/10 text-purple-400",
+  Concern: "border-red-500/50 bg-red-500/10 text-red-400",
   Actor: "border-pink-500/50 bg-pink-500/10 text-pink-400",
   Citation: "border-gray-500/50 bg-gray-500/10 text-gray-400",
 };
 
 const TYPE_EMOJI: Record<string, string> = {
   Gathering: "G",
-  Aid: "A",
-  Need: "N",
-  Notice: "O",
-  Tension: "T",
+  Resource: "A",
+  HelpRequest: "N",
+  Announcement: "O",
+  Concern: "T",
   Actor: "P",
   Citation: "C",
 };

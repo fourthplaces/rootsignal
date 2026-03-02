@@ -110,7 +110,7 @@ async fn try_extract_actors(
     // Find signals with no ACTED_IN edges pointing at them, within bounding box
     let q = query(
         "MATCH (n)
-         WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+         WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern)
            AND NOT ()-[:ACTED_IN]->(n)
            AND n.lat >= $min_lat AND n.lat <= $max_lat
            AND n.lng >= $min_lng AND n.lng <= $max_lng
@@ -123,7 +123,7 @@ async fn try_extract_actors(
     .param("min_lng", min_lng)
     .param("max_lng", max_lng);
 
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     let mut signals: Vec<SignalInfo> = Vec::new();
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();

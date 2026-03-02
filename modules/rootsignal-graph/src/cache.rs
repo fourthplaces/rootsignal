@@ -9,7 +9,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, CitationNode, Node, NodeType, TagNode, TensionResponse, CONFIDENCE_DISPLAY_LIMITED,
+    ActorNode, CitationNode, ConcernResponse, Node, NodeType, TagNode, CONFIDENCE_DISPLAY_LIMITED,
 };
 use crate::reader::{
 extract_citation, fuzz_node, node_type_label, row_to_actor, row_to_node_by_label,
@@ -29,7 +29,7 @@ pub struct SignalCache {
 
     pub citation_by_signal: HashMap<Uuid, Vec<CitationNode>>,
     pub actors_by_signal: HashMap<Uuid, Vec<usize>>,
-    pub tension_responses: HashMap<Uuid, Vec<TensionResponse>>,
+    pub concern_responses: HashMap<Uuid, Vec<ConcernResponse>>,
 
     pub tags: Vec<TagNode>,
     pub tag_by_id: HashMap<Uuid, usize>,
@@ -70,10 +70,10 @@ impl SignalCache {
             tags.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
 
         // Load relationships concurrently
-        let (citation_result, actor_signal_result, tension_resp_result, situation_tag_result) = tokio::join!(
+        let (citation_result, actor_signal_result, concern_resp_result, situation_tag_result) = tokio::join!(
             load_citations(client),
             load_actor_signal_edges(client),
-            load_tension_responses(client),
+            load_concern_responses(client),
             load_situation_tag_edges(client),
         );
 
@@ -91,7 +91,7 @@ impl SignalCache {
             }
         }
 
-        let tension_responses = tension_resp_result?;
+        let concern_responses = concern_resp_result?;
 
         // Build tags_by_situation map (situation_id -> vec of tag indices)
         let situation_tag_edges = situation_tag_result?;
@@ -111,7 +111,7 @@ impl SignalCache {
             actors = actors.len(),
             tags = tags.len(),
             evidence_signals = citation_by_signal.len(),
-            tension_responses = tension_responses.len(),
+            concern_responses = concern_responses.len(),
             elapsed_ms = elapsed.as_millis(),
             "Signal cache loaded"
         );
@@ -123,7 +123,7 @@ impl SignalCache {
             actor_by_id,
             citation_by_signal,
             actors_by_signal,
-            tension_responses,
+            concern_responses,
             tags,
             tag_by_id,
             tags_by_situation,
@@ -203,10 +203,10 @@ impl CacheStore {
 async fn load_all_signals(client: &GraphClient) -> Result<Vec<Node>, neo4rs::Error> {
     let all_types = [
         NodeType::Gathering,
-        NodeType::Aid,
-        NodeType::Need,
-        NodeType::Notice,
-        NodeType::Tension,
+        NodeType::Resource,
+        NodeType::HelpRequest,
+        NodeType::Announcement,
+        NodeType::Concern,
     ];
 
     let branches: Vec<String> = all_types
@@ -225,7 +225,7 @@ async fn load_all_signals(client: &GraphClient) -> Result<Vec<Node>, neo4rs::Err
     let q = query(&cypher).param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
 
     let mut signals = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         if let Some(node) = row_to_node_by_label(&row) {
             signals.push(node);
@@ -237,7 +237,7 @@ async fn load_all_signals(client: &GraphClient) -> Result<Vec<Node>, neo4rs::Err
 async fn load_all_actors(client: &GraphClient) -> Result<Vec<ActorNode>, neo4rs::Error> {
     let q = query("MATCH (a:Actor) RETURN a");
     let mut actors = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         if let Some(actor) = row_to_actor(&row) {
             actors.push(actor);
@@ -250,12 +250,12 @@ async fn load_citations(
     client: &GraphClient,
 ) -> Result<HashMap<Uuid, Vec<CitationNode>>, neo4rs::Error> {
     let cypher = "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-         WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
          RETURN n.id AS signal_id, collect(ev) AS evidence";
 
     let q = query(cypher);
     let mut map: HashMap<Uuid, Vec<CitationNode>> = HashMap::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("signal_id").unwrap_or_default();
@@ -272,12 +272,12 @@ async fn load_citations(
 /// Returns (signal_id, actor_id) pairs.
 async fn load_actor_signal_edges(client: &GraphClient) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
     let cypher = "MATCH (a:Actor)-[:ACTED_IN]->(n)
-         WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
          RETURN n.id AS signal_id, a.id AS actor_id";
 
     let q = query(cypher);
     let mut edges = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let sid_str: String = row.get("signal_id").unwrap_or_default();
@@ -289,27 +289,27 @@ async fn load_actor_signal_edges(client: &GraphClient) -> Result<Vec<(Uuid, Uuid
     Ok(edges)
 }
 
-async fn load_tension_responses(
+async fn load_concern_responses(
     client: &GraphClient,
-) -> Result<HashMap<Uuid, Vec<TensionResponse>>, neo4rs::Error> {
-    let cypher = "MATCH (t:Tension)<-[rel:RESPONDS_TO|DRAWN_TO]-(n)
-         WHERE n:Aid OR n:Gathering OR n:Need
-         RETURN t.id AS tension_id, n, labels(n)[0] AS node_label,
+) -> Result<HashMap<Uuid, Vec<ConcernResponse>>, neo4rs::Error> {
+    let cypher = "MATCH (t:Concern)<-[rel:RESPONDS_TO|DRAWN_TO]-(n)
+         WHERE n:Resource OR n:Gathering OR n:HelpRequest
+         RETURN t.id AS concern_id, n, labels(n)[0] AS node_label,
                 rel.match_strength AS match_strength, rel.explanation AS explanation";
 
     let q = query(cypher);
-    let mut map: HashMap<Uuid, Vec<TensionResponse>> = HashMap::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut map: HashMap<Uuid, Vec<ConcernResponse>> = HashMap::new();
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
-        let tid_str: String = row.get("tension_id").unwrap_or_default();
-        let Ok(tid) = Uuid::parse_str(&tid_str) else {
+        let cid_str: String = row.get("concern_id").unwrap_or_default();
+        let Ok(cid) = Uuid::parse_str(&cid_str) else {
             continue;
         };
         if let Some(node) = row_to_node_by_label(&row) {
             let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
             let explanation: String = row.get("explanation").unwrap_or_default();
-            map.entry(tid).or_default().push(TensionResponse {
+            map.entry(cid).or_default().push(ConcernResponse {
                 node: fuzz_node(node),
                 match_strength,
                 explanation,
@@ -323,7 +323,7 @@ async fn load_all_tags(client: &GraphClient) -> Result<Vec<TagNode>, neo4rs::Err
     let cypher = "MATCH (t:Tag) RETURN t.id AS id, t.slug AS slug, t.name AS name, t.created_at AS created_at";
     let q = query(cypher);
     let mut tags = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
@@ -352,7 +352,7 @@ async fn load_situation_tag_edges(
          RETURN s.id AS situation_id, t.id AS tag_id";
     let q = query(cypher);
     let mut edges = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let sid_str: String = row.get("situation_id").unwrap_or_default();

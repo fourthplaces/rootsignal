@@ -905,8 +905,8 @@ impl SignalExtractor for MockExtractor {
 
 /// Create a Tension node with just a title (no location).
 pub fn tension(title: &str) -> Node {
-    use rootsignal_common::types::{NodeMeta, Severity, TensionNode};
-    Node::Tension(TensionNode {
+    use rootsignal_common::types::{NodeMeta, Severity, ConcernNode};
+    Node::Concern(ConcernNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
             title: title.to_string(),
@@ -935,15 +935,16 @@ pub fn tension(title: &str) -> Node {
         },
         severity: Severity::Medium,
         category: None,
-        what_would_help: None,
+        subject: None,
+        opposing: None,
     })
 }
 
 /// Create a Tension node with a title and geographic coordinates.
 pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{GeoPoint, NodeMeta, Severity, TensionNode};
+    use rootsignal_common::types::{GeoPoint, NodeMeta, Severity, ConcernNode};
     use rootsignal_common::GeoPrecision;
-    Node::Tension(TensionNode {
+    Node::Concern(ConcernNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
             title: title.to_string(),
@@ -976,14 +977,15 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
         },
         severity: Severity::Medium,
         category: None,
-        what_would_help: None,
+        subject: None,
+        opposing: None,
     })
 }
 
 /// Create a Need node with just a title (no location).
 pub fn need(title: &str) -> Node {
-    use rootsignal_common::types::{NeedNode, NodeMeta, Urgency};
-    Node::Need(NeedNode {
+    use rootsignal_common::types::{HelpRequestNode, NodeMeta, Urgency};
+    Node::HelpRequest(HelpRequestNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
             title: title.to_string(),
@@ -1019,9 +1021,9 @@ pub fn need(title: &str) -> Node {
 
 /// Create a Need node with a title and geographic coordinates.
 pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{GeoPoint, NeedNode, NodeMeta, Urgency};
+    use rootsignal_common::types::{GeoPoint, HelpRequestNode, NodeMeta, Urgency};
     use rootsignal_common::GeoPrecision;
-    Node::Need(NeedNode {
+    Node::HelpRequest(HelpRequestNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
             title: title.to_string(),
@@ -1142,8 +1144,8 @@ pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
 
 /// Create an Aid node with just a title (no location).
 pub fn aid(title: &str) -> Node {
-    use rootsignal_common::types::{AidNode, NodeMeta};
-    Node::Aid(AidNode {
+    use rootsignal_common::types::{ResourceOfferNode, NodeMeta};
+    Node::Resource(ResourceOfferNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
             title: title.to_string(),
@@ -1172,15 +1174,16 @@ pub fn aid(title: &str) -> Node {
         },
         action_url: String::new(),
         availability: None,
+        eligibility: None,
         is_ongoing: false,
     })
 }
 
 /// Create an Aid node with a title and geographic coordinates.
 pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{AidNode, GeoPoint, NodeMeta};
+    use rootsignal_common::types::{ResourceOfferNode, GeoPoint, NodeMeta};
     use rootsignal_common::GeoPrecision;
-    Node::Aid(AidNode {
+    Node::Resource(ResourceOfferNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
             title: title.to_string(),
@@ -1213,14 +1216,15 @@ pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
         },
         action_url: String::new(),
         availability: None,
+        eligibility: None,
         is_ongoing: false,
     })
 }
 
 /// Create a Notice node with just a title (no location).
 pub fn notice(title: &str) -> Node {
-    use rootsignal_common::types::{NodeMeta, NoticeNode, Severity};
-    Node::Notice(NoticeNode {
+    use rootsignal_common::types::{NodeMeta, AnnouncementNode, Severity};
+    Node::Announcement(AnnouncementNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
             title: title.to_string(),
@@ -1256,9 +1260,9 @@ pub fn notice(title: &str) -> Node {
 
 /// Create a Notice node with a title and geographic coordinates.
 pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
-    use rootsignal_common::types::{GeoPoint, NodeMeta, NoticeNode, Severity};
+    use rootsignal_common::types::{GeoPoint, NodeMeta, AnnouncementNode, Severity};
     use rootsignal_common::GeoPrecision;
-    Node::Notice(NoticeNode {
+    Node::Announcement(AnnouncementNode {
         meta: NodeMeta {
             id: Uuid::new_v4(),
             title: title.to_string(),
@@ -1536,12 +1540,12 @@ mod tests {
         assert!(store.has_signal_titled("housing crisis downtown")); // case-insensitive
 
         let results = store
-            .find_by_titles_and_types(&[("housing crisis downtown".to_string(), NodeType::Tension)])
+            .find_by_titles_and_types(&[("housing crisis downtown".to_string(), NodeType::Concern)])
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
         let (found_id, found_url) = results
-            .get(&("housing crisis downtown".to_string(), NodeType::Tension))
+            .get(&("housing crisis downtown".to_string(), NodeType::Concern))
             .unwrap();
         assert_eq!(*found_id, id);
         assert_eq!(found_url, "https://example.com");
@@ -1551,7 +1555,7 @@ mod tests {
     async fn find_by_titles_returns_empty_for_unknown() {
         let store = MockSignalReader::new();
         let results = store
-            .find_by_titles_and_types(&[("nonexistent signal".to_string(), NodeType::Tension)])
+            .find_by_titles_and_types(&[("nonexistent signal".to_string(), NodeType::Concern)])
             .await
             .unwrap();
         assert!(results.is_empty());

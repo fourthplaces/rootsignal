@@ -104,7 +104,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
                 Some(n.action_url.clone())
             },
         },
-        Node::Aid(n) => WorldEvent::ResourceOffered {
+        Node::Resource(n) => WorldEvent::ResourceOffered {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
@@ -121,8 +121,9 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
                 Some(n.action_url.clone())
             },
             availability: n.availability.clone(),
+            eligibility: n.eligibility.clone(),
         },
-        Node::Need(n) => WorldEvent::HelpRequested {
+        Node::HelpRequest(n) => WorldEvent::HelpRequested {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
@@ -134,9 +135,9 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             references: vec![],
             schedule: None,
             what_needed: n.what_needed.clone(),
-            goal: n.goal.clone(),
+            stated_goal: n.goal.clone(),
         },
-        Node::Notice(n) => WorldEvent::AnnouncementShared {
+        Node::Announcement(n) => WorldEvent::AnnouncementShared {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
@@ -147,10 +148,10 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             mentioned_entities: meta_to_mentioned_entities(&n.meta),
             references: vec![],
             schedule: None,
-            category: n.category.clone(),
+            subject: n.category.clone(),
             effective_date: n.effective_date,
         },
-        Node::Tension(n) => WorldEvent::ConcernRaised {
+        Node::Concern(n) => WorldEvent::ConcernRaised {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
@@ -161,7 +162,8 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             mentioned_entities: meta_to_mentioned_entities(&n.meta),
             references: vec![],
             schedule: None,
-            what_would_help: n.what_would_help.clone(),
+            subject: n.subject.clone(),
+            opposing: n.opposing.clone(),
         },
         Node::Citation(_) => unreachable!("Evidence nodes use create_evidence, not create_node"),
     }
@@ -208,12 +210,11 @@ impl SignalReader for EventSourcedReader {
     async fn read_corroboration_count(&self, id: Uuid, node_type: NodeType) -> Result<u32> {
         let label = match node_type {
             NodeType::Gathering => "Gathering",
-            NodeType::Aid => "Aid",
-            NodeType::Need => "Need",
-            NodeType::Notice => "Notice",
-            NodeType::Tension => "Tension",
+            NodeType::Resource => "Resource",
+            NodeType::HelpRequest => "HelpRequest",
+            NodeType::Announcement => "Announcement",
+            NodeType::Concern => "Concern",
             NodeType::Condition => "Condition",
-            NodeType::Incident => "Incident",
             NodeType::Citation => "Evidence",
         };
         let q = rootsignal_graph::query(&format!(
@@ -221,7 +222,7 @@ impl SignalReader for EventSourcedReader {
         ))
         .param("id", id.to_string());
 
-        let neo4j = self.graph.client().inner();
+        let neo4j = self.graph.client();
         let mut stream = match neo4j.execute(q).await {
             Ok(s) => s,
             Err(_) => return Ok(0),
@@ -248,17 +249,17 @@ impl SignalReader for EventSourcedReader {
         let mut results = Vec::new();
         for (label, node_type) in &[
             ("Gathering", NodeType::Gathering),
-            ("Aid", NodeType::Aid),
-            ("Need", NodeType::Need),
-            ("Notice", NodeType::Notice),
-            ("Tension", NodeType::Tension),
+            ("Resource", NodeType::Resource),
+            ("HelpRequest", NodeType::HelpRequest),
+            ("Announcement", NodeType::Announcement),
+            ("Concern", NodeType::Concern),
         ] {
             let q = rootsignal_graph::query(&format!(
                 "MATCH (n:{label}) WHERE n.source_url = $url RETURN n.id AS id"
             ))
             .param("url", url);
 
-            let neo4j = self.graph.client().inner();
+            let neo4j = self.graph.client();
             let mut stream = neo4j.execute(q).await?;
             while let Some(row) = stream.next().await? {
                 let id_str: String = row.get("id").unwrap_or_default();
@@ -327,7 +328,7 @@ impl SignalReader for EventSourcedReader {
     }
 
     async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> {
-        let neo4j = self.graph.client().inner();
+        let neo4j = self.graph.client();
         let mut expired = Vec::new();
 
         // 1. Past non-recurring gatherings
@@ -353,7 +354,7 @@ impl SignalReader for EventSourcedReader {
 
         // 2. Expired needs
         let q = rootsignal_graph::query(&format!(
-            "MATCH (n:Need)
+            "MATCH (n:HelpRequest)
              WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
              RETURN n.id AS id",
             NEED_EXPIRE_DAYS
@@ -362,13 +363,13 @@ impl SignalReader for EventSourcedReader {
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                expired.push((id, NodeType::Need, "need_expired".to_string()));
+                expired.push((id, NodeType::HelpRequest, "need_expired".to_string()));
             }
         }
 
         // 3. Expired notices
         let q = rootsignal_graph::query(&format!(
-            "MATCH (n:Notice)
+            "MATCH (n:Announcement)
              WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
              RETURN n.id AS id",
             NOTICE_EXPIRE_DAYS
@@ -377,12 +378,12 @@ impl SignalReader for EventSourcedReader {
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                expired.push((id, NodeType::Notice, "notice_expired".to_string()));
+                expired.push((id, NodeType::Announcement, "notice_expired".to_string()));
             }
         }
 
         // 4. Stale unconfirmed signals (Aid, Tension)
-        for (label, node_type) in &[("Aid", NodeType::Aid), ("Tension", NodeType::Tension)] {
+        for (label, node_type) in &[("Resource", NodeType::Resource), ("Concern", NodeType::Concern)] {
             let q = rootsignal_graph::query(&format!(
                 "MATCH (n:{label})
                  WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
@@ -555,10 +556,11 @@ mod tests {
     fn aid_node_maps_to_aid_discovered_event() {
         let meta = test_meta("Food Shelf");
         let id = meta.id;
-        let node = Node::Aid(AidNode {
+        let node = Node::Resource(ResourceOfferNode {
             meta,
             action_url: "https://example.com/food".to_string(),
             availability: Some("Mon-Fri".to_string()),
+            eligibility: None,
             is_ongoing: true,
         });
 
@@ -582,7 +584,7 @@ mod tests {
     fn need_node_maps_to_need_discovered_event() {
         let meta = test_meta("Volunteers Needed");
         let id = meta.id;
-        let node = Node::Need(NeedNode {
+        let node = Node::HelpRequest(HelpRequestNode {
             meta,
             urgency: Urgency::High,
             what_needed: Some("20 volunteers".to_string()),
@@ -596,13 +598,13 @@ mod tests {
                 id: eid,
                 title,
                 what_needed,
-                goal,
+                stated_goal,
                 ..
             } => {
                 assert_eq!(eid, id);
                 assert_eq!(title, "Volunteers Needed");
                 assert_eq!(what_needed, Some("20 volunteers".to_string()));
-                assert_eq!(goal, Some("clean up after storm".to_string()));
+                assert_eq!(stated_goal, Some("clean up after storm".to_string()));
             }
             _ => panic!("Expected HelpRequested"),
         }
@@ -733,7 +735,7 @@ mod tests {
             references: vec![],
             schedule: None,
             what_needed: Some("Warming center".to_string()),
-            goal: None,
+            stated_goal: None,
         });
 
         let system_event = Event::System(SystemEvent::SignalTagged {
@@ -795,7 +797,7 @@ mod tests {
         let mut meta = test_meta("Community Workshop");
         meta.mentioned_actors = vec!["YMCA".to_string(), "Habitat for Humanity".to_string()];
 
-        let node = Node::Need(NeedNode {
+        let node = Node::HelpRequest(HelpRequestNode {
             meta,
             urgency: rootsignal_common::Urgency::Medium,
             what_needed: Some("Volunteers".to_string()),

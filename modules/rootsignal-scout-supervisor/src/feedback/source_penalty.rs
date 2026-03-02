@@ -53,7 +53,7 @@ pub async fn apply_source_penalties(
         )
         .param("target_id", target_id.to_string());
 
-        let mut stream = client.inner().execute(q).await?;
+        let mut stream = client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let key: String = row.get("key").unwrap_or_default();
@@ -113,7 +113,7 @@ pub async fn reset_resolved_penalties(
                 collect(sig.id) AS signal_ids",
     );
 
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let source_id_str: String = row.get("source_id").unwrap_or_default();

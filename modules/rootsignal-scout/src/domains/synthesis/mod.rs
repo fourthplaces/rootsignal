@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::events::SystemEvent;
-use rootsignal_graph::{GraphReader, SimilarityBuilder};
+use rootsignal_graph::GraphReader;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -96,8 +96,7 @@ pub mod handlers {
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
 
         info!("Building similarity edges...");
-        let similarity = SimilarityBuilder::new(graph_client.clone());
-        match similarity.compute_edges().await {
+        match rootsignal_graph::similarity::compute_edges(graph_client).await {
             Ok(edges) => {
                 info!(edges = edges.len(), "Similarity edges computed");
                 let mut out = Events::new();
@@ -134,14 +133,14 @@ pub mod handlers {
         let mut out = Events::new();
         if budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
             info!("Starting response mapping...");
-            let response_mapper = activities::response_mapper::ResponseMapper::new(
+            match activities::response_mapper::map_responses(
                 &graph,
                 api_key,
                 region.center_lat,
                 region.center_lng,
                 region.radius_km,
-            );
-            match response_mapper.map_responses(&mut out).await {
+                &mut out,
+            ).await {
                 Ok(rm_stats) => info!("{rm_stats}"),
                 Err(e) => warn!(error = %e, "Response mapping failed (non-fatal)"),
             }
@@ -176,7 +175,7 @@ pub mod handlers {
             None => {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
-                    role: SynthesisRole::TensionLinker,
+                    role: SynthesisRole::ConcernLinker,
                 }]);
             }
         };
@@ -186,7 +185,7 @@ pub mod handlers {
             OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER,
         ) {
             info!("Starting tension linker...");
-            let tl = activities::tension_linker::TensionLinker::new(
+            let tl = activities::concern_linker::ConcernLinker::new(
                 &graph,
                 archive,
                 &*deps.embedder,
@@ -202,7 +201,7 @@ pub mod handlers {
         }
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
-            role: SynthesisRole::TensionLinker,
+            role: SynthesisRole::ConcernLinker,
         });
         Ok(out)
     }

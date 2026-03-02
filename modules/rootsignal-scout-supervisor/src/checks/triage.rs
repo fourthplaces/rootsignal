@@ -57,7 +57,7 @@ async fn triage_misclassification(
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let mut suspects = Vec::new();
 
-    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.extracted_at >= datetime($from) AND n.extracted_at <= datetime($to)
@@ -71,7 +71,7 @@ async fn triage_misclassification(
         .param("from", from_ts.to_string())
         .param("to", to_ts.to_string());
 
-        let mut stream = client.inner().execute(q).await?;
+        let mut stream = client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let id = match Uuid::parse_str(&id_str) {
@@ -127,7 +127,7 @@ async fn triage_incoherent_stories(
     .param("to", to_ts.to_string());
 
     let mut suspects = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {
@@ -146,7 +146,7 @@ async fn triage_incoherent_stories(
         )
         .param("id", id_str.clone());
 
-        let mut sig_stream = client.inner().execute(signals_q).await?;
+        let mut sig_stream = client.execute(signals_q).await?;
         let mut signal_lines = Vec::new();
         while let Some(sig_row) = sig_stream.next().await? {
             let sig_label: String = sig_row.get("label").unwrap_or_default();
@@ -204,7 +204,7 @@ async fn triage_bad_responds_to(
     .param("to", to_ts.to_string());
 
     let mut suspects = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("responder_id").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {
@@ -263,7 +263,7 @@ async fn triage_near_duplicates(
     .param("to", to_ts.to_string());
 
     let mut suspects = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id_a").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {
@@ -318,7 +318,7 @@ async fn triage_low_confidence_high_visibility(
     .param("to", to_ts.to_string());
 
     let mut suspects = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {

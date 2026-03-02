@@ -249,15 +249,16 @@ pub struct GatheringNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AidNode {
+pub struct ResourceOfferNode {
     pub meta: NodeMeta,
     pub action_url: String,
     pub availability: Option<String>,
+    pub eligibility: Option<String>,
     pub is_ongoing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NeedNode {
+pub struct HelpRequestNode {
     pub meta: NodeMeta,
     pub urgency: Urgency,
     pub what_needed: Option<String>,
@@ -266,7 +267,7 @@ pub struct NeedNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoticeNode {
+pub struct AnnouncementNode {
     pub meta: NodeMeta,
     pub severity: Severity,
     pub category: Option<String>,
@@ -275,11 +276,29 @@ pub struct NoticeNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TensionNode {
+pub struct ConcernNode {
     pub meta: NodeMeta,
     pub severity: Severity,
     pub category: Option<String>,
-    pub what_would_help: Option<String>,
+    /// The core subject of the friction in plain terms.
+    pub subject: Option<String>,
+    /// What is being opposed, as explicitly stated in the content.
+    pub opposing: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConditionNode {
+    pub meta: NodeMeta,
+    pub severity: Severity,
+    pub category: Option<String>,
+    /// The core subject in plain terms, for search/retrieval.
+    pub subject: Option<String>,
+    /// Who or what reported/observed this condition.
+    pub observed_by: Option<String>,
+    /// Quantitative reading if the content includes one.
+    pub measurement: Option<String>,
+    /// Scope of what's affected as stated in the content.
+    pub affected_scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,10 +336,11 @@ pub struct ScheduleNode {
 #[serde(tag = "node_type")]
 pub enum Node {
     Gathering(GatheringNode),
-    Aid(AidNode),
-    Need(NeedNode),
-    Notice(NoticeNode),
-    Tension(TensionNode),
+    Resource(ResourceOfferNode),
+    HelpRequest(HelpRequestNode),
+    Announcement(AnnouncementNode),
+    Concern(ConcernNode),
+    Condition(ConditionNode),
     Citation(CitationNode),
 }
 
@@ -328,10 +348,11 @@ impl Node {
     pub fn node_type(&self) -> NodeType {
         match self {
             Node::Gathering(_) => NodeType::Gathering,
-            Node::Aid(_) => NodeType::Aid,
-            Node::Need(_) => NodeType::Need,
-            Node::Notice(_) => NodeType::Notice,
-            Node::Tension(_) => NodeType::Tension,
+            Node::Resource(_) => NodeType::Resource,
+            Node::HelpRequest(_) => NodeType::HelpRequest,
+            Node::Announcement(_) => NodeType::Announcement,
+            Node::Concern(_) => NodeType::Concern,
+            Node::Condition(_) => NodeType::Condition,
             Node::Citation(_) => NodeType::Citation,
         }
     }
@@ -339,10 +360,11 @@ impl Node {
     pub fn id(&self) -> Uuid {
         match self {
             Node::Gathering(n) => n.meta.id,
-            Node::Aid(n) => n.meta.id,
-            Node::Need(n) => n.meta.id,
-            Node::Notice(n) => n.meta.id,
-            Node::Tension(n) => n.meta.id,
+            Node::Resource(n) => n.meta.id,
+            Node::HelpRequest(n) => n.meta.id,
+            Node::Announcement(n) => n.meta.id,
+            Node::Concern(n) => n.meta.id,
+            Node::Condition(n) => n.meta.id,
             Node::Citation(n) => n.id,
         }
     }
@@ -350,10 +372,11 @@ impl Node {
     pub fn meta(&self) -> Option<&NodeMeta> {
         match self {
             Node::Gathering(n) => Some(&n.meta),
-            Node::Aid(n) => Some(&n.meta),
-            Node::Need(n) => Some(&n.meta),
-            Node::Notice(n) => Some(&n.meta),
-            Node::Tension(n) => Some(&n.meta),
+            Node::Resource(n) => Some(&n.meta),
+            Node::HelpRequest(n) => Some(&n.meta),
+            Node::Announcement(n) => Some(&n.meta),
+            Node::Concern(n) => Some(&n.meta),
+            Node::Condition(n) => Some(&n.meta),
             Node::Citation(_) => None,
         }
     }
@@ -361,10 +384,11 @@ impl Node {
     pub fn meta_mut(&mut self) -> Option<&mut NodeMeta> {
         match self {
             Node::Gathering(n) => Some(&mut n.meta),
-            Node::Aid(n) => Some(&mut n.meta),
-            Node::Need(n) => Some(&mut n.meta),
-            Node::Notice(n) => Some(&mut n.meta),
-            Node::Tension(n) => Some(&mut n.meta),
+            Node::Resource(n) => Some(&mut n.meta),
+            Node::HelpRequest(n) => Some(&mut n.meta),
+            Node::Announcement(n) => Some(&mut n.meta),
+            Node::Concern(n) => Some(&mut n.meta),
+            Node::Condition(n) => Some(&mut n.meta),
             Node::Citation(_) => None,
         }
     }
@@ -372,10 +396,11 @@ impl Node {
     pub fn title(&self) -> &str {
         match self {
             Node::Gathering(n) => &n.meta.title,
-            Node::Aid(n) => &n.meta.title,
-            Node::Need(n) => &n.meta.title,
-            Node::Notice(n) => &n.meta.title,
-            Node::Tension(n) => &n.meta.title,
+            Node::Resource(n) => &n.meta.title,
+            Node::HelpRequest(n) => &n.meta.title,
+            Node::Announcement(n) => &n.meta.title,
+            Node::Concern(n) => &n.meta.title,
+            Node::Condition(n) => &n.meta.title,
             Node::Citation(n) => &n.source_url,
         }
     }
@@ -1333,9 +1358,9 @@ pub fn extract_domain(url: &str) -> String {
 
 // --- Response Mapping Result ---
 
-/// A signal that responds to a Tension, with edge metadata.
+/// A signal that responds to a Concern, with edge metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TensionResponse {
+pub struct ConcernResponse {
     pub node: Node,
     pub match_strength: f64,
     pub explanation: String,
@@ -1443,32 +1468,38 @@ mod tests {
     }
 
     #[test]
-    fn tension_node_has_all_fields() {
-        let t = TensionNode {
+    fn concern_node_has_all_fields() {
+        let c = ConcernNode {
             meta: test_meta(),
             severity: Severity::High,
             category: Some("housing".to_string()),
-            what_would_help: Some("affordable housing policy".to_string()),
+            subject: Some("opposition highway expansion Midway".to_string()),
+            opposing: Some("proposed rezoning of 2100 Hennepin".to_string()),
         };
-        assert_eq!(t.severity, Severity::High);
-        assert_eq!(t.category.as_deref(), Some("housing"));
+        assert_eq!(c.severity, Severity::High);
+        assert_eq!(c.category.as_deref(), Some("housing"));
         assert_eq!(
-            t.what_would_help.as_deref(),
-            Some("affordable housing policy")
+            c.subject.as_deref(),
+            Some("opposition highway expansion Midway")
+        );
+        assert_eq!(
+            c.opposing.as_deref(),
+            Some("proposed rezoning of 2100 Hennepin")
         );
     }
 
     #[test]
-    fn tension_node_optional_fields_default_none() {
-        let t = TensionNode {
+    fn concern_node_optional_fields_default_none() {
+        let c = ConcernNode {
             meta: test_meta(),
             severity: Severity::Medium,
             category: None,
-            what_would_help: None,
+            subject: None,
+            opposing: None,
         };
-        assert_eq!(t.severity, Severity::Medium);
-        assert!(t.category.is_none());
-        assert!(t.what_would_help.is_none());
+        assert_eq!(c.severity, Severity::Medium);
+        assert!(c.category.is_none());
+        assert!(c.subject.is_none());
     }
 
     #[test]

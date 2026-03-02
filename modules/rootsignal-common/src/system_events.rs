@@ -11,9 +11,9 @@ use uuid::Uuid;
 use rootsignal_world::Eventlike;
 
 use crate::events::{
-    AnnouncementCorrection, CauseHeatScore, ConcernCorrection, GatheringCorrection,
-    HelpRequestCorrection, ResourceCorrection, SimilarityEdge, SituationChange, SourceChange,
-    SystemSourceChange,
+    ActorStatScore, AnnouncementCorrection, CauseHeatScore, ConcernCorrection,
+    GatheringCorrection, HelpRequestCorrection, ResourceCorrection, SignalDiversityScore,
+    SimilarityEdge, SituationChange, SourceChange, SystemSourceChange,
 };
 use crate::safety::SensitivityLevel;
 use crate::types::{
@@ -184,7 +184,7 @@ pub enum SystemEvent {
         source_url: Option<String>,
     },
 
-    TensionLinked {
+    ConcernLinked {
         signal_id: Uuid,
         tension_id: Uuid,
         strength: f64,
@@ -202,28 +202,24 @@ pub enum SystemEvent {
         reason: String,
     },
 
-    #[serde(alias = "aid_corrected")]
     ResourceCorrected {
         signal_id: Uuid,
         correction: ResourceCorrection,
         reason: String,
     },
 
-    #[serde(alias = "need_corrected")]
     HelpRequestCorrected {
         signal_id: Uuid,
         correction: HelpRequestCorrection,
         reason: String,
     },
 
-    #[serde(alias = "notice_corrected")]
     AnnouncementCorrected {
         signal_id: Uuid,
         correction: AnnouncementCorrection,
         reason: String,
     },
 
-    #[serde(alias = "tension_corrected")]
     ConcernCorrected {
         signal_id: Uuid,
         correction: ConcernCorrection,
@@ -468,7 +464,7 @@ pub enum SystemEvent {
         promoted_at: DateTime<Utc>,
     },
 
-    TensionLinkerOutcomeRecorded {
+    ConcernLinkerOutcomeRecorded {
         signal_id: Uuid,
         label: String,
         outcome: String,
@@ -501,7 +497,7 @@ pub enum SystemEvent {
     // -----------------------------------------------------------------------
     // Tension deduplication
     // -----------------------------------------------------------------------
-    DuplicateTensionMerged {
+    DuplicateConcernMerged {
         survivor_id: Uuid,
         duplicate_id: Uuid,
     },
@@ -524,6 +520,14 @@ pub enum SystemEvent {
 
     CauseHeatComputed {
         scores: Vec<CauseHeatScore>,
+    },
+
+    SignalDiversityComputed {
+        metrics: Vec<SignalDiversityScore>,
+    },
+
+    ActorStatsComputed {
+        stats: Vec<ActorStatScore>,
     },
 
     SimilarityEdgesRebuilt {
@@ -558,7 +562,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::ActorLinkedToSignal { .. } => "actor_linked_to_signal",
             SystemEvent::ActorLocationIdentified { .. } => "actor_location_identified",
             SystemEvent::ResponseLinked { .. } => "response_linked",
-            SystemEvent::TensionLinked { .. } => "tension_linked",
+            SystemEvent::ConcernLinked { .. } => "concern_linked",
             SystemEvent::GatheringCorrected { .. } => "gathering_corrected",
             SystemEvent::ResourceCorrected { .. } => "resource_corrected",
             SystemEvent::HelpRequestCorrected { .. } => "help_request_corrected",
@@ -595,14 +599,16 @@ impl Eventlike for SystemEvent {
             SystemEvent::SourceScraped { .. } => "source_scraped",
             SystemEvent::SignalInvestigated { .. } => "signal_investigated",
             SystemEvent::ExhaustedRetriesPromoted { .. } => "exhausted_retries_promoted",
-            SystemEvent::TensionLinkerOutcomeRecorded { .. } => "tension_linker_outcome_recorded",
+            SystemEvent::ConcernLinkerOutcomeRecorded { .. } => "concern_linker_outcome_recorded",
             SystemEvent::GatheringScouted { .. } => "gathering_scouted",
             SystemEvent::PlaceDiscovered { .. } => "place_discovered",
             SystemEvent::GathersAtPlaceLinked { .. } => "gathers_at_place_linked",
-            SystemEvent::DuplicateTensionMerged { .. } => "duplicate_tension_merged",
+            SystemEvent::DuplicateConcernMerged { .. } => "duplicate_concern_merged",
             SystemEvent::SourcesBoostedForSituation { .. } => "sources_boosted_for_situation",
             SystemEvent::EchoScored { .. } => "echo_scored",
             SystemEvent::CauseHeatComputed { .. } => "cause_heat_computed",
+            SystemEvent::SignalDiversityComputed { .. } => "signal_diversity_computed",
+            SystemEvent::ActorStatsComputed { .. } => "actor_stats_computed",
             SystemEvent::SimilarityEdgesRebuilt { .. } => "similarity_edges_rebuilt",
             SystemEvent::BeaconDetected { .. } => "beacon_detected",
         }

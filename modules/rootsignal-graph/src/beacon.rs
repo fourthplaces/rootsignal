@@ -78,7 +78,7 @@ pub async fn detect_beacons(
 ) -> Result<Vec<ScoutTask>, neo4rs::Error> {
     let q = query(
         "MATCH (s)
-         WHERE (s:Gathering OR s:Aid OR s:Need OR s:Notice OR s:Tension)
+         WHERE (s:Gathering OR s:Resource OR s:HelpRequest OR s:Announcement OR s:Concern)
            AND s.lat IS NOT NULL AND s.lng IS NOT NULL
            AND s.extracted_at > datetime() - duration('P7D')
            AND s.review_status = 'live'
@@ -86,7 +86,7 @@ pub async fn detect_beacons(
     );
 
     let mut signals: Vec<(f64, f64, String, Option<String>)> = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let lat: f64 = row.get("lat").unwrap_or(0.0);
         let lng: f64 = row.get("lng").unwrap_or(0.0);

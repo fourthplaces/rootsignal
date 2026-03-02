@@ -37,7 +37,7 @@ pub async fn detect_echoes(
                 signal_count, type_count, entity_count",
     );
 
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {

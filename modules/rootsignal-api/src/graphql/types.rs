@@ -9,8 +9,8 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use chrono::TimeZone;
 use uuid::Uuid;
 use rootsignal_common::{
-ActorNode, AidNode, CitationNode, GatheringNode, NeedNode, Node, NodeMeta, NoticeNode,
-ScheduleNode, TagNode, TensionNode,
+ActorNode, ResourceOfferNode, CitationNode, GatheringNode, HelpRequestNode, Node, NodeMeta, AnnouncementNode,
+ScheduleNode, TagNode, ConcernNode,
 };
 use rootsignal_graph::CachedReader;
 use super::loaders::{
@@ -44,25 +44,23 @@ impl From<ScoutPhase> for crate::restate_client::ScoutPhase {
 #[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SignalType {
     Gathering,
-    Aid,
-    Need,
-    Notice,
-    Tension,
+    Resource,
+    HelpRequest,
+    Announcement,
+    Concern,
     Condition,
-    Incident,
 }
 
 impl From<rootsignal_common::NodeType> for SignalType {
     fn from(nt: rootsignal_common::NodeType) -> Self {
         match nt {
             rootsignal_common::NodeType::Gathering => SignalType::Gathering,
-            rootsignal_common::NodeType::Aid => SignalType::Aid,
-            rootsignal_common::NodeType::Need => SignalType::Need,
-            rootsignal_common::NodeType::Notice => SignalType::Notice,
-            rootsignal_common::NodeType::Tension => SignalType::Tension,
+            rootsignal_common::NodeType::Resource => SignalType::Resource,
+            rootsignal_common::NodeType::HelpRequest => SignalType::HelpRequest,
+            rootsignal_common::NodeType::Announcement => SignalType::Announcement,
+            rootsignal_common::NodeType::Concern => SignalType::Concern,
             rootsignal_common::NodeType::Condition => SignalType::Condition,
-            rootsignal_common::NodeType::Incident => SignalType::Incident,
-            rootsignal_common::NodeType::Citation => SignalType::Notice, // shouldn't happen
+            rootsignal_common::NodeType::Citation => SignalType::Announcement, // shouldn't happen
         }
     }
 }
@@ -71,12 +69,11 @@ impl SignalType {
     pub fn to_node_type(self) -> rootsignal_common::NodeType {
         match self {
             SignalType::Gathering => rootsignal_common::NodeType::Gathering,
-            SignalType::Aid => rootsignal_common::NodeType::Aid,
-            SignalType::Need => rootsignal_common::NodeType::Need,
-            SignalType::Notice => rootsignal_common::NodeType::Notice,
-            SignalType::Tension => rootsignal_common::NodeType::Tension,
+            SignalType::Resource => rootsignal_common::NodeType::Resource,
+            SignalType::HelpRequest => rootsignal_common::NodeType::HelpRequest,
+            SignalType::Announcement => rootsignal_common::NodeType::Announcement,
+            SignalType::Concern => rootsignal_common::NodeType::Concern,
             SignalType::Condition => rootsignal_common::NodeType::Condition,
-            SignalType::Incident => rootsignal_common::NodeType::Incident,
         }
     }
 }
@@ -336,20 +333,20 @@ impl GqlSchedule {
 #[derive(Union)]
 pub enum GqlSignal {
     Gathering(GqlGatheringSignal),
-    Aid(GqlAidSignal),
-    Need(GqlNeedSignal),
-    Notice(GqlNoticeSignal),
-    Tension(GqlTensionSignal),
+    Resource(GqlResourceSignal),
+    HelpRequest(GqlHelpRequestSignal),
+    Announcement(GqlAnnouncementSignal),
+    Concern(GqlConcernSignal),
 }
 
 impl From<Node> for GqlSignal {
     fn from(node: Node) -> Self {
         match node {
             Node::Gathering(n) => GqlSignal::Gathering(GqlGatheringSignal(n)),
-            Node::Aid(n) => GqlSignal::Aid(GqlAidSignal(n)),
-            Node::Need(n) => GqlSignal::Need(GqlNeedSignal(n)),
-            Node::Notice(n) => GqlSignal::Notice(GqlNoticeSignal(n)),
-            Node::Tension(n) => GqlSignal::Tension(GqlTensionSignal(n)),
+            Node::Resource(n) => GqlSignal::Resource(GqlResourceSignal(n)),
+            Node::HelpRequest(n) => GqlSignal::HelpRequest(GqlHelpRequestSignal(n)),
+            Node::Announcement(n) => GqlSignal::Announcement(GqlAnnouncementSignal(n)),
+            Node::Concern(n) => GqlSignal::Concern(GqlConcernSignal(n)),
             Node::Citation(_) => unreachable!("Citation nodes are not signals"),
         }
     }
@@ -467,16 +464,16 @@ impl GqlGatheringSignal {
 
 // --- AidSignal ---
 
-pub struct GqlAidSignal(pub AidNode);
+pub struct GqlResourceSignal(pub ResourceOfferNode);
 
-impl GqlAidSignal {
+impl GqlResourceSignal {
     fn meta(&self) -> &NodeMeta {
         &self.0.meta
     }
 }
 
 #[Object]
-impl GqlAidSignal {
+impl GqlResourceSignal {
     async fn id(&self) -> Uuid {
         self.meta().id
     }
@@ -571,16 +568,16 @@ impl GqlAidSignal {
 
 // --- NeedSignal ---
 
-pub struct GqlNeedSignal(pub NeedNode);
+pub struct GqlHelpRequestSignal(pub HelpRequestNode);
 
-impl GqlNeedSignal {
+impl GqlHelpRequestSignal {
     fn meta(&self) -> &NodeMeta {
         &self.0.meta
     }
 }
 
 #[Object]
-impl GqlNeedSignal {
+impl GqlHelpRequestSignal {
     async fn id(&self) -> Uuid {
         self.meta().id
     }
@@ -674,16 +671,16 @@ impl GqlNeedSignal {
 
 // --- NoticeSignal ---
 
-pub struct GqlNoticeSignal(pub NoticeNode);
+pub struct GqlAnnouncementSignal(pub AnnouncementNode);
 
-impl GqlNoticeSignal {
+impl GqlAnnouncementSignal {
     fn meta(&self) -> &NodeMeta {
         &self.0.meta
     }
 }
 
 #[Object]
-impl GqlNoticeSignal {
+impl GqlAnnouncementSignal {
     async fn id(&self) -> Uuid {
         self.meta().id
     }
@@ -775,18 +772,18 @@ impl GqlNoticeSignal {
     }
 }
 
-// --- TensionSignal ---
+// --- ConcernSignal ---
 
-pub struct GqlTensionSignal(pub TensionNode);
+pub struct GqlConcernSignal(pub ConcernNode);
 
-impl GqlTensionSignal {
+impl GqlConcernSignal {
     fn meta(&self) -> &NodeMeta {
         &self.0.meta
     }
 }
 
 #[Object]
-impl GqlTensionSignal {
+impl GqlConcernSignal {
     async fn id(&self) -> Uuid {
         self.meta().id
     }
@@ -870,12 +867,15 @@ impl GqlTensionSignal {
     async fn category(&self) -> Option<&str> {
         self.0.category.as_deref()
     }
-    async fn what_would_help(&self) -> Option<&str> {
-        self.0.what_would_help.as_deref()
+    async fn subject(&self) -> Option<&str> {
+        self.0.subject.as_deref()
+    }
+    async fn opposing(&self) -> Option<&str> {
+        self.0.opposing.as_deref()
     }
     async fn responses(&self, ctx: &Context<'_>) -> Result<Vec<GqlSignal>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let nodes = reader.tension_responses(self.0.meta.id).await?;
+        let nodes = reader.concern_responses(self.0.meta.id).await?;
         Ok(nodes
             .into_iter()
             .map(|tr| GqlSignal::from(tr.node))

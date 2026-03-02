@@ -78,7 +78,7 @@ export function SituationDetail({ situationId, onBack }: SituationDetailProps) {
               <p className="text-lg font-semibold">{situation.signalCount}</p>
             </div>
             <div className="rounded border border-border p-2">
-              <p className="text-muted-foreground">Tension Heat</p>
+              <p className="text-muted-foreground">Concern Heat</p>
               <p className="text-lg font-semibold">{situation.tensionHeat?.toFixed(2)}</p>
             </div>
             <div className="rounded border border-border p-2">

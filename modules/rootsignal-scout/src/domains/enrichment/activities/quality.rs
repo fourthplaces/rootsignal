@@ -34,18 +34,18 @@ pub fn score(node: &Node) -> ExtractionQuality {
             let has_real_timing = e.starts_at.is_some();
             (has_real_url, has_real_timing)
         }
-        Node::Aid(g) => (!g.action_url.is_empty(), g.is_ongoing),
-        Node::Need(a) => (a.action_url.is_some(), false),
-        Node::Notice(_) => (false, false),
-        Node::Tension(_) => (false, false),
+        Node::Resource(g) => (!g.action_url.is_empty(), g.is_ongoing),
+        Node::HelpRequest(a) => (a.action_url.is_some(), false),
+        Node::Announcement(_) => (false, false),
+        Node::Concern(_) => (false, false),
         Node::Citation(_) => (false, false),
     };
 
-    let actionable = matches!(node, Node::Notice(_))
+    let actionable = matches!(node, Node::Announcement(_))
         || (has_action_url
             && (has_timing
-                || matches!(node, Node::Aid(g) if g.is_ongoing)
-                || matches!(node, Node::Need(_))));
+                || matches!(node, Node::Resource(g) if g.is_ongoing)
+                || matches!(node, Node::HelpRequest(_))));
 
     // Completeness: fraction of *applicable* optional fields populated.
     // Always-present fields (title, summary, signal_type) are prerequisites, not differentiators.
@@ -56,17 +56,17 @@ pub fn score(node: &Node) -> ExtractionQuality {
             let filled = has_location as u8 + has_action_url as u8 + has_timing as u8;
             (filled, 3u8)
         }
-        Node::Aid(_) => {
+        Node::Resource(_) => {
             // location, action_url, is_ongoing
             let filled = has_location as u8 + has_action_url as u8 + has_timing as u8;
             (filled, 3)
         }
-        Node::Need(_) => {
+        Node::HelpRequest(_) => {
             // location, action_url
             let filled = has_location as u8 + has_action_url as u8;
             (filled, 2)
         }
-        Node::Notice(_) | Node::Tension(_) => {
+        Node::Announcement(_) | Node::Concern(_) => {
             // location only
             (has_location as u8, 1)
         }
@@ -233,14 +233,14 @@ mod tests {
     fn notice_with_location_scores_high() {
         // Notice: only applicable optional field is location. With location filled (1/1)
         // and medium geo: confidence = 1.0 * 0.5 + 0.7 * 0.5 = 0.85
-        use rootsignal_common::{NoticeNode, Severity};
+        use rootsignal_common::{AnnouncementNode, Severity};
         let mut meta = test_meta();
         meta.about_location = Some(GeoPoint {
             lat: 44.97,
             lng: -93.26,
             precision: GeoPrecision::Neighborhood,
         });
-        let node = Node::Notice(NoticeNode {
+        let node = Node::Announcement(AnnouncementNode {
             meta,
             severity: Severity::Medium,
             category: None,
@@ -259,14 +259,15 @@ mod tests {
     fn tension_without_location_scores_low() {
         // Tension: location is the only applicable field. Without it (0/1), geo = Low (0.3)
         // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
-        use rootsignal_common::{Severity, TensionNode};
+        use rootsignal_common::{Severity, ConcernNode};
         let mut meta = test_meta();
         meta.about_location = None;
-        let node = Node::Tension(TensionNode {
+        let node = Node::Concern(ConcernNode {
             meta,
             severity: Severity::High,
             category: None,
-            what_would_help: None,
+            subject: None,
+            opposing: None,
         });
         let q = score(&node);
         assert!(

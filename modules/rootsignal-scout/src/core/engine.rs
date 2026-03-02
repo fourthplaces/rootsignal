@@ -15,8 +15,8 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use rootsignal_common::ScoutScope;
-use rootsignal_graph::{GraphClient, GraphProjector};
+use rootsignal_common::{EmbeddingLookup, ScoutScope};
+use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector};
 use sqlx::PgPool;
 
 use crate::core::aggregate::pipeline_aggregators;
@@ -109,8 +109,20 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
             rootsignal_events::EventStore::new(pool.clone()),
         )) as Arc<dyn seesaw_core::event_store::EventStore>
     });
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                "voyage-3-large".to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
     let graph_projector = deps.graph_client.as_ref().map(|gc| {
-        GraphProjector::new(gc.clone())
+        let mut projector = GraphProjector::new(gc.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
     });
     let run_id = deps.run_id.clone();
 
@@ -172,8 +184,20 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
             rootsignal_events::EventStore::new(pool.clone()),
         )) as Arc<dyn seesaw_core::event_store::EventStore>
     });
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                "voyage-3-large".to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
     let graph_projector = deps.graph_client.as_ref().map(|gc| {
-        GraphProjector::new(gc.clone())
+        let mut projector = GraphProjector::new(gc.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
     });
     let run_id = deps.run_id.clone();
 
@@ -235,8 +259,20 @@ pub fn build_news_engine(deps: ScoutEngineDeps) -> SeesawEngine {
             rootsignal_events::EventStore::new(pool.clone()),
         )) as Arc<dyn seesaw_core::event_store::EventStore>
     });
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                "voyage-3-large".to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
     let graph_projector = deps.graph_client.as_ref().map(|gc| {
-        GraphProjector::new(gc.clone())
+        let mut projector = GraphProjector::new(gc.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
     });
     let run_id = deps.run_id.clone();
 

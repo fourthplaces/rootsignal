@@ -4,4 +4,4 @@ pub mod gathering_finder;
 pub mod investigator;
 pub mod response_finder;
 pub mod response_mapper;
-pub mod tension_linker;
+pub mod concern_linker;

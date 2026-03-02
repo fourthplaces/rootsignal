@@ -12,7 +12,7 @@ struct SignalEmbed {
     embedding: Vec<f64>,
     source_diversity: u32,
     channel_diversity: u32,
-    /// Multiplier from EVIDENCE_OF edges (Tensions only). 1.0 = no evidence, up to 3.0.
+    /// Multiplier from EVIDENCE_OF edges (Concerns only). 1.0 = no evidence, up to 3.0.
     evidence_boost: f64,
 }
 
@@ -26,9 +26,9 @@ struct SignalEmbed {
 /// Algorithm:
 /// 1. Load signals with embeddings and source_diversity within the bbox
 /// 2. Compute all-pairs cosine similarity in memory
-/// 3. For each signal, sum (similarity × neighbor.source_diversity) for Tension
-///    neighbors above threshold. Only Tensions radiate heat — Gatherings, Gives, Needs,
-///    and Notices absorb heat from nearby Tensions but do not generate it.
+/// 3. For each signal, sum (similarity × neighbor.source_diversity) for Concern
+///    neighbors above threshold. Only Concerns radiate heat — Gatherings, Gives, Needs,
+///    and Notices absorb heat from nearby Concerns but do not generate it.
 /// 4. Normalize to 0.0–1.0
 /// 5. Return computed scores — the caller persists events and the GraphProjector writes them
 pub async fn compute_cause_heat(
@@ -39,14 +39,14 @@ pub async fn compute_cause_heat(
     min_lng: f64,
     max_lng: f64,
 ) -> Result<Vec<CauseHeatScore>, neo4rs::Error> {
-    let g = &client.graph;
+    let g = client;
 
     info!(threshold, "Computing cause heat...");
 
     // 1. Load signals with embeddings within the bounding box
     let mut signals: Vec<SignalEmbed> = Vec::new();
 
-    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.embedding IS NOT NULL
@@ -95,14 +95,14 @@ pub async fn compute_cause_heat(
     // Boost = 1.0 + ln(1 + score) * 0.5, capped at 3.0.
     let tension_ids: Vec<&str> = signals
         .iter()
-        .filter(|s| s.label == "Tension")
+        .filter(|s| s.label == "Concern")
         .map(|s| s.id.as_str())
         .collect();
 
     if !tension_ids.is_empty() {
         let q = query(
             "UNWIND $ids AS tid
-             MATCH (sig)-[r:EVIDENCE_OF]->(t:Tension {id: tid})
+             MATCH (sig)-[r:EVIDENCE_OF]->(t:Concern {id: tid})
              WHERE sig.severity IS NOT NULL
              RETURN t.id AS tension_id,
                     collect(sig.severity) AS severities",
@@ -118,7 +118,7 @@ pub async fn compute_cause_heat(
 
             if let Some(sig) = signals
                 .iter_mut()
-                .find(|s| s.id == tid && s.label == "Tension")
+                .find(|s| s.id == tid && s.label == "Concern")
             {
                 sig.evidence_boost = boost;
             }
@@ -166,10 +166,10 @@ fn compute_heats(signals: &[SignalEmbed], threshold: f64) -> Vec<f64> {
             if i == j {
                 continue;
             }
-            // Only Tensions radiate heat. A signal's cause_heat reflects how
+            // Only Concerns radiate heat. A signal's cause_heat reflects how
             // well the system understands its causal tension — not how many
             // similar signals exist nearby.
-            if signals[j].label != "Tension" {
+            if signals[j].label != "Concern" {
                 continue;
             }
             let sim = cosine_similarity(
@@ -241,7 +241,7 @@ mod tests {
     fn tension(id: &str, embedding: Vec<f64>, diversity: u32) -> SignalEmbed {
         SignalEmbed {
             id: id.to_string(),
-            label: "Tension".to_string(),
+            label: "Concern".to_string(),
             embedding,
             source_diversity: diversity,
             channel_diversity: 1,
@@ -257,7 +257,7 @@ mod tests {
     ) -> SignalEmbed {
         SignalEmbed {
             id: id.to_string(),
-            label: "Tension".to_string(),
+            label: "Concern".to_string(),
             embedding,
             source_diversity: diversity,
             channel_diversity: 1,
@@ -268,7 +268,7 @@ mod tests {
     fn aid(id: &str, embedding: Vec<f64>, diversity: u32) -> SignalEmbed {
         SignalEmbed {
             id: id.to_string(),
-            label: "Aid".to_string(),
+            label: "Resource".to_string(),
             embedding,
             source_diversity: diversity,
             channel_diversity: 1,
@@ -319,8 +319,8 @@ mod tests {
     }
 
     // --- compute_heats tests ---
-    // Only Tensions radiate heat. Gatherings/Aids/Needs/Notices absorb heat
-    // from nearby Tensions but never generate it.
+    // Only Concerns radiate heat. Gatherings/Aids/Needs/Notices absorb heat
+    // from nearby Concerns but never generate it.
 
     #[test]
     fn empty_signals_returns_empty() {
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn single_tension_gets_zero_heat() {
-        // A lone tension with no other tensions nearby gets zero heat
+        // A lone tension with no other concerns nearby gets zero heat
         let signals = vec![tension("a", vec![1.0, 0.0, 0.0], 5)];
         let heats = compute_heats(&signals, 0.7);
         assert_eq!(heats[0], 0.0);
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn gathering_near_tension_gets_heat() {
-        // An Gathering semantically near a Tension absorbs heat from it.
+        // An Gathering semantically near a Concern absorbs heat from it.
         let signals = vec![
             gathering("protest", vec![1.0, 0.0, 0.0], 1),
             tension("ice_raids", vec![0.99, 0.1, 0.0], 5),
@@ -357,7 +357,7 @@ mod tests {
             "Gathering near tension should get heat, got {}",
             heats[0]
         );
-        // Tension also gets heat from... no other tensions → zero
+        // Tension also gets heat from... no other concerns → zero
         // (only one tension in the graph)
         assert_eq!(heats[1], 0.0, "Lone tension has no tension neighbors");
     }
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn aid_near_tension_gets_heat_gatherings_dont() {
-        // An Aid ("know your rights workshop") near a Tension gets heat.
+        // An Aid ("know your rights workshop") near a Concern gets heat.
         // A Gathering ("networking happy hour") far from any Tension gets nothing.
         let signals = vec![
             aid("workshop", vec![1.0, 0.0, 0.0], 1),
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn threshold_filters_weak_similarity_to_tension() {
-        // A Gathering and a Tension are somewhat similar but below a strict threshold
+        // A Gathering and a Concern are somewhat similar but below a strict threshold
         let signals = vec![
             gathering("a", vec![1.0, 0.5], 5),
             tension("t", vec![0.5, 1.0], 5),
@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn gathering_blob_near_tension_all_get_heat() {
         // 64 Eventbrite events near a single Tension all absorb its heat.
-        // But they don't boost each other — only the Tension radiates.
+        // But they don't boost each other — only the Concern radiates.
         let mut signals = Vec::new();
         for i in 0..64 {
             signals.push(gathering(&format!("meetup{i}"), vec![1.0, 0.0, 0.0], 1));
@@ -484,13 +484,13 @@ mod tests {
             "Gatherings equidistant from tension should get similar heat"
         );
 
-        // The tension itself gets zero (no other tensions nearby)
+        // The tension itself gets zero (no other concerns nearby)
         assert_eq!(heats[64], 0.0);
     }
 
     #[test]
     fn food_shelf_boosted_by_housing_tensions() {
-        // A food shelf Aid near housing Tensions gets heat.
+        // A food shelf Aid near housing Concerns gets heat.
         // An unrelated park Gathering gets nothing.
         let signals = vec![
             aid("food_shelf", vec![0.85, 0.55, 0.0], 1),
@@ -612,7 +612,7 @@ mod tests {
             gathering("a", vec![1.0, 0.0, 0.0], 1),
             SignalEmbed {
                 id: "multi_channel".to_string(),
-                label: "Tension".to_string(),
+                label: "Concern".to_string(),
                 embedding: vec![0.99, 0.1, 0.0],
                 source_diversity: 3,
                 channel_diversity: 3,
@@ -621,7 +621,7 @@ mod tests {
             gathering("b", vec![0.0, 1.0, 0.0], 1),
             SignalEmbed {
                 id: "single_channel".to_string(),
-                label: "Tension".to_string(),
+                label: "Concern".to_string(),
                 embedding: vec![0.1, 0.99, 0.0],
                 source_diversity: 3,
                 channel_diversity: 1,
@@ -643,7 +643,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn cause_heat_live() {
-        let client = crate::GraphClient::connect("bolt://localhost:7687", "neo4j", "rootsignal")
+        let client = crate::connect_graph("bolt://localhost:7687", "neo4j", "rootsignal")
             .await
             .expect("Failed to connect to Neo4j");
 

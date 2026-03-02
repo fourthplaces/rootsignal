@@ -195,7 +195,7 @@ impl Scraper {
                     let mut implied_q_count = 0u32;
                     // Collect implied queries from Tension + Need nodes for immediate expansion
                     for node in &nodes {
-                        if matches!(node.node_type(), NodeType::Tension | NodeType::Need) {
+                        if matches!(node.node_type(), NodeType::Concern | NodeType::HelpRequest) {
                             if let Some(meta) = node.meta() {
                                 implied_q_count += meta.implied_queries.len() as u32;
                                 result.expansion_queries

@@ -1,7 +1,9 @@
-// Enrichment activities: actor extraction, location, quality, etc.
+// Enrichment activities: actor extraction, location, quality, diversity, etc.
 
 pub mod actor_extractor;
 pub mod actor_location;
+pub mod actor_stats;
+pub mod diversity;
 pub mod domain_filter;
 pub mod link_promoter;
 pub mod quality;
@@ -18,17 +20,15 @@ use rootsignal_common::SourceNode;
 use rootsignal_graph::{GraphClient, GraphReader};
 
 use crate::domains::scheduling::activities::metrics::Metrics;
-use crate::infra::embedder::TextEmbedder;
 use crate::traits::SignalReader;
 
-/// Compute post-scrape enrichment: emit PinsConsumed, actor extraction, embeddings, metrics.
+/// Compute post-scrape enrichment: emit PinsConsumed, actor extraction, diversity metrics, actor stats.
 /// Returns enrichment events.
 pub async fn compute_post_scrape_enrichment(
     store: &dyn SignalReader,
     graph_client: &GraphClient,
     region: &rootsignal_common::ScoutScope,
     api_key: &str,
-    embedder: &dyn TextEmbedder,
     consumed_pin_ids: &[Uuid],
 ) -> seesaw_core::Events {
     let mut pin_events = seesaw_core::Events::new();
@@ -57,31 +57,18 @@ pub async fn compute_post_scrape_enrichment(
         .await;
     info!("{actor_stats}");
 
-    // Embedding enrichment
-    info!("=== Embedding Enrichment ===");
-    match rootsignal_graph::enrich_embeddings(graph_client, embedder, 50).await {
-        Ok(stats) => info!("{stats}"),
-        Err(e) => warn!(error = %e, "Embedding enrichment failed, continuing"),
-    }
+    // Diversity metrics (event-sourced — projector handles the graph write)
+    info!("=== Diversity Metrics ===");
+    let reader = GraphReader::new(graph_client.clone());
+    let diversity_events = diversity::compute_diversity_events(&reader, &[]).await;
 
-    // Metric enrichment
-    info!("=== Metric Enrichment ===");
-    match rootsignal_graph::enrich(
-        graph_client,
-        &[],
-        0.3,
-        min_lat,
-        max_lat,
-        min_lng,
-        max_lng,
-    )
-    .await
-    {
-        Ok(stats) => info!(?stats, "Metric enrichment complete"),
-        Err(e) => warn!(error = %e, "Metric enrichment failed, continuing"),
-    }
+    // Actor stats (event-sourced — projector handles the graph write)
+    info!("=== Actor Stats ===");
+    let actor_stats_events = actor_stats::compute_actor_stats_events(&reader).await;
 
     pin_events.extend(actor_events);
+    pin_events.extend(diversity_events);
+    pin_events.extend(actor_stats_events);
     pin_events
 }
 

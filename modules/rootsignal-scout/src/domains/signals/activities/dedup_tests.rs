@@ -112,7 +112,7 @@ async fn global_title_match_same_source_emits_reencountered() {
     let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Community Dinner",
-        NodeType::Tension,
+        NodeType::Concern,
         "https://example.org/events",
     );
     let deps = test_deps(store);
@@ -153,7 +153,7 @@ async fn global_title_match_different_source_emits_cross_source_match() {
     let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Community Dinner",
-        NodeType::Tension,
+        NodeType::Concern,
         "https://other-source.org/events",
     );
     let deps = test_deps(store);
@@ -299,7 +299,7 @@ async fn mixed_batch_emits_correct_verdicts() {
     let store = Arc::new(MockSignalReader::new());
     let existing_id = store.insert_signal(
         "Existing Event",
-        NodeType::Tension,
+        NodeType::Concern,
         "https://other-source.org",
     );
     let deps = test_deps(store);

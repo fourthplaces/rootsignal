@@ -13,9 +13,9 @@ use uuid::Uuid;
 
 use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::{
-    canonical_value, AidNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, NeedNode,
+    canonical_value, ResourceOfferNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode,
     Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, Severity, SourceNode,
-    SourceRole, TensionNode, Urgency,
+    SourceRole, ConcernNode, Urgency,
 };
 use rootsignal_graph::{GraphReader, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 use rootsignal_archive::Archive;
@@ -50,7 +50,7 @@ pub struct ResponseFinding {
 pub struct DiscoveredResponse {
     pub title: String,
     pub summary: String,
-    /// "aid", "gathering", or "need"
+    /// "resource", "gathering", or "help_request"
     pub signal_type: String,
     /// Must be a URL the agent actually read via read_page
     pub url: String,
@@ -540,9 +540,9 @@ impl<'a> ResponseFinder<'a> {
         let embedding = self.embedder.embed(&embed_text).await?;
 
         let node_type = match response.signal_type.to_lowercase().as_str() {
-            "aid" => NodeType::Aid,
+            "resource" => NodeType::Resource,
             "gathering" => NodeType::Gathering,
-            "need" => NodeType::Need,
+            "help_request" => NodeType::HelpRequest,
             other => {
                 warn!(
                     signal_type = other,
@@ -734,17 +734,18 @@ impl<'a> ResponseFinder<'a> {
                     is_recurring: response.is_recurring,
                 })
             }
-            "need" => Node::Need(NeedNode {
+            "help_request" => Node::HelpRequest(HelpRequestNode {
                 meta,
                 urgency: Urgency::Medium,
                 what_needed: Some(response.summary.clone()),
                 action_url: Some(response.url.clone()),
                 goal: None,
             }),
-            _ => Node::Aid(AidNode {
+            _ => Node::Resource(ResourceOfferNode {
                 meta,
                 action_url: response.url.clone(),
                 availability: None,
+                eligibility: None,
                 is_ongoing: response.is_recurring,
             }),
         };
@@ -845,7 +846,7 @@ impl<'a> ResponseFinder<'a> {
             .graph
             .find_duplicate(
                 &embedding,
-                NodeType::Tension,
+                NodeType::Concern,
                 0.85,
                 self.min_lat,
                 self.max_lat,
@@ -880,7 +881,7 @@ impl<'a> ResponseFinder<'a> {
         };
 
         let now = Utc::now();
-        let tension_node = TensionNode {
+        let tension_node = ConcernNode {
             meta: NodeMeta {
                 id: Uuid::new_v4(),
                 title: tension.title.clone(),
@@ -913,10 +914,11 @@ impl<'a> ResponseFinder<'a> {
             },
             severity,
             category: Some(tension.category.clone()),
-            what_would_help: Some(tension.what_would_help.clone()),
+            subject: None,
+            opposing: Some(tension.what_would_help.clone()),
         };
 
-        let node = Node::Tension(tension_node);
+        let node = Node::Concern(tension_node);
         let tension_id = node.meta().unwrap().id;
 
         // Push world event + system events into caller's event collection
@@ -1000,7 +1002,7 @@ mod tests {
             "responses": [{
                 "title": "Know Your Rights Workshop",
                 "summary": "Free legal workshops for immigrants",
-                "signal_type": "aid",
+                "signal_type": "resource",
                 "url": "https://example.com/kyr",
                 "diffusion_mechanism": "legal education",
                 "explanation": "Dissolves fear through knowledge of rights",
@@ -1022,7 +1024,7 @@ mod tests {
         let finding: ResponseFinding = serde_json::from_str(json).unwrap();
         assert_eq!(finding.responses.len(), 1);
         assert_eq!(finding.responses[0].title, "Know Your Rights Workshop");
-        assert_eq!(finding.responses[0].signal_type, "aid");
+        assert_eq!(finding.responses[0].signal_type, "resource");
         assert!((finding.responses[0].match_strength - 0.9).abs() < 0.001);
         assert_eq!(
             finding.responses[0].also_addresses,
@@ -1132,10 +1134,11 @@ mod tests {
             mentioned_actors: Vec::new(),
         };
 
-        let node = Node::Aid(AidNode {
+        let node = Node::Resource(ResourceOfferNode {
             meta,
             action_url: "https://example.com/kyr".to_string(),
             availability: None,
+            eligibility: None,
             is_ongoing: true,
         });
 
