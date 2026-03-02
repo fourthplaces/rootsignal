@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 pub enum PipelinePhase {
     ReapExpired,
     TensionScrape,
-    MidRunDiscovery,
+    SourceExpansion,
     ResponseScrape,
-    Expansion,
+    SignalExpansion,
     SocialScrape,
     SocialDiscovery,
     ActorEnrichment,

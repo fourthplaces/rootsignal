@@ -5,7 +5,7 @@ The complete causal chain from `EngineStarted` to `RunCompleted`. Each indentati
 ## Full Engine Chain
 
 ```
-EngineStarted { run_id }
+ EngineStarted { run_id }
 │
 ├─[lifecycle:reap]
 │   └─ SystemEvent::EntityExpired (per expired signal)
@@ -39,15 +39,15 @@ PhaseCompleted(ReapExpired)
         │   └─ DiscoveryEvent::SourceDiscovered (promoted links)
         │   └─ DiscoveryEvent::LinksPromoted
         │
-        └─[discovery:mid_run]
-            └─ DiscoveryEvent::SourceDiscovered (mid-run sources)
+        └─[discovery:source_expansion]
+            └─ DiscoveryEvent::SourceDiscovered (expansion sources)
             └─ DiscoveryEvent::ExpansionQueryCollected
             └─ DiscoveryEvent::SocialTopicCollected
             └─ PipelineEvent::SocialTopicsCollected
-            └─ PhaseCompleted(MidRunDiscovery)
+            └─ PhaseCompleted(SourceExpansion)
             │
             ▼
-            PhaseCompleted(MidRunDiscovery)
+            PhaseCompleted(SourceExpansion)
             │
             └─[scrape:response]
                 └─ (same pattern as scrape:tension)
@@ -81,13 +81,13 @@ PhaseCompleted(ReapExpired)
                         ▼
                         MetricsCompleted
                         │
-                        └─[expansion:expand]
+                        └─[expansion:signal_expansion]
                             └─ DiscoveryEvent::SourceDiscovered
                             └─ PipelineEvent::ExpansionAccumulated
-                            └─ PhaseCompleted(Expansion)
+                            └─ PhaseCompleted(SignalExpansion)
                             │
                             ▼
-                            PhaseCompleted(Expansion)
+                            PhaseCompleted(SignalExpansion)
                             │
                             ├─[discovery:link_promotion]
                             │
@@ -176,14 +176,14 @@ Phases are sequenced by `PhaseCompleted` events, not by explicit orchestration. 
 | ReapExpired | `EngineStarted` | `lifecycle:reap` |
 | Schedule | `PhaseCompleted(ReapExpired)` | `lifecycle:schedule` |
 | TensionScrape | `SourcesScheduled` | `scrape:tension` |
-| MidRunDiscovery | `PhaseCompleted(TensionScrape)` | `discovery:mid_run` |
-| ResponseScrape | `PhaseCompleted(MidRunDiscovery)` | `scrape:response` |
+| SourceExpansion | `PhaseCompleted(TensionScrape)` | `discovery:source_expansion` |
+| ResponseScrape | `PhaseCompleted(SourceExpansion)` | `scrape:response` |
 | ActorEnrichment | `PhaseCompleted(ResponseScrape)` | `enrichment:actor_location`, `enrichment:post_scrape` |
 | Metrics | `PhaseCompleted(ActorEnrichment)` | `enrichment:metrics` |
-| Expansion | `MetricsCompleted` | `expansion:expand` |
-| Synthesis | `PhaseCompleted(Expansion)` | `synthesis:run` |
+| SignalExpansion | `MetricsCompleted` | `expansion:signal_expansion` |
+| Synthesis | `PhaseCompleted(SignalExpansion)` | `synthesis:run` |
 | SituationWeaving | `PhaseCompleted(Synthesis)` | `situation_weaving:run` |
 | Supervisor | `PhaseCompleted(SituationWeaving)` | `supervisor:run` |
 | Finalize | `PhaseCompleted(Synthesis)` or `PhaseCompleted(Supervisor)` | `lifecycle:finalize` |
 
-Link promotion (`discovery:link_promotion`) fires after `PhaseCompleted(TensionScrape)`, `PhaseCompleted(ResponseScrape)`, and `PhaseCompleted(Expansion)`.
+Link promotion (`discovery:link_promotion`) fires after `PhaseCompleted(TensionScrape)`, `PhaseCompleted(ResponseScrape)`, and `PhaseCompleted(SignalExpansion)`.

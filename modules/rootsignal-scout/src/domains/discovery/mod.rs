@@ -15,7 +15,7 @@ use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
-use crate::domains::discovery::activities::{bootstrap, discover_sources_mid_run};
+use crate::domains::discovery::activities::{bootstrap, discover_expansion_sources};
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_engine_started(e: &LifecycleEvent) -> bool {
@@ -26,7 +26,7 @@ fn is_scrape_or_expansion_completed(e: &LifecycleEvent) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::TensionScrape | PipelinePhase::ResponseScrape | PipelinePhase::Expansion)
+            if matches!(phase, PipelinePhase::TensionScrape | PipelinePhase::ResponseScrape | PipelinePhase::SignalExpansion)
     )
 }
 
@@ -54,7 +54,7 @@ pub mod handlers {
         Ok(events)
     }
 
-    /// PhaseCompleted(TensionScrape|ResponseScrape|Expansion) → promote collected links to sources.
+    /// PhaseCompleted(TensionScrape|ResponseScrape|SignalExpansion) → promote collected links to sources.
     #[handle(on = LifecycleEvent, id = "discovery:link_promotion", filter = is_scrape_or_expansion_completed)]
     async fn link_promotion(
         _event: LifecycleEvent,
@@ -82,13 +82,13 @@ pub mod handlers {
         Ok(events)
     }
 
-    /// PhaseCompleted(TensionScrape) → discover mid-run sources, emit PhaseCompleted(MidRunDiscovery).
-    #[handle(on = LifecycleEvent, id = "discovery:mid_run", filter = is_tension_scrape_completed)]
-    async fn mid_run_discovery(
+    /// PhaseCompleted(TensionScrape) → expand source pool, emit PhaseCompleted(SourceExpansion).
+    #[handle(on = LifecycleEvent, id = "discovery:source_expansion", filter = is_tension_scrape_completed)]
+    async fn source_expansion(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        info!("=== Mid-Run Discovery ===");
+        info!("=== Source Expansion ===");
         let deps = ctx.deps();
 
         // Requires graph_client + budget — skip in tests
@@ -100,13 +100,13 @@ pub mod handlers {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
                 return Ok(events![LifecycleEvent::PhaseCompleted {
-                    phase: PipelinePhase::MidRunDiscovery,
+                    phase: PipelinePhase::SourceExpansion,
                 }]);
             }
         };
         let graph = GraphReader::new(graph_client.clone());
 
-        let output = discover_sources_mid_run(
+        let output = discover_expansion_sources(
             &graph,
             &region.name,
             &*deps.embedder,
@@ -123,7 +123,7 @@ pub mod handlers {
             });
         }
         all_events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::MidRunDiscovery,
+            phase: PipelinePhase::SourceExpansion,
         });
         Ok(all_events)
     }

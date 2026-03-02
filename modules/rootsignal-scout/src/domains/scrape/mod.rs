@@ -28,11 +28,11 @@ fn is_sources_scheduled(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::SourcesScheduled { .. })
 }
 
-fn is_mid_run_discovery_completed(e: &LifecycleEvent) -> bool {
+fn is_source_expansion_completed(e: &LifecycleEvent) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::MidRunDiscovery)
+            if matches!(phase, PipelinePhase::SourceExpansion)
     )
 }
 
@@ -72,9 +72,9 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// PhaseCompleted(MidRunDiscovery) → scrape response sources + social + topics,
+    /// PhaseCompleted(SourceExpansion) → scrape response sources + social + topics,
     /// emit PhaseCompleted(ResponseScrape).
-    #[handle(on = LifecycleEvent, id = "scrape:response", filter = is_mid_run_discovery_completed)]
+    #[handle(on = LifecycleEvent, id = "scrape:response", filter = is_source_expansion_completed)]
     async fn response_scrape(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,

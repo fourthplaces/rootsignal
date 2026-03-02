@@ -15,11 +15,11 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_expansion_completed(e: &LifecycleEvent) -> bool {
+fn is_signal_expansion_completed(e: &LifecycleEvent) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::Expansion)
+            if matches!(phase, PipelinePhase::SignalExpansion)
     )
 }
 
@@ -35,9 +35,9 @@ fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
 pub mod handlers {
     use super::*;
 
-    /// PhaseCompleted(Expansion) → similarity edges, parallel finders,
+    /// PhaseCompleted(SignalExpansion) → similarity edges, parallel finders,
     /// emit PhaseCompleted(Synthesis).
-    #[handle(on = LifecycleEvent, id = "synthesis:run", filter = is_expansion_completed)]
+    #[handle(on = LifecycleEvent, id = "synthesis:run", filter = is_signal_expansion_completed)]
     async fn synthesis(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,

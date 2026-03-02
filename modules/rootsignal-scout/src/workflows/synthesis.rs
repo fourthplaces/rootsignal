@@ -79,10 +79,10 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
                 let run_id = uuid::Uuid::new_v4().to_string();
                 let engine = deps.build_full_engine(&scope, &run_id, spent_cents);
 
-                // Emit PhaseCompleted(Expansion) — triggers synthesis + all downstream
+                // Emit PhaseCompleted(SignalExpansion) — triggers synthesis + all downstream
                 engine
                     .emit(LifecycleEvent::PhaseCompleted {
-                        phase: PipelinePhase::Expansion,
+                        phase: PipelinePhase::SignalExpansion,
                     })
                     .settled()
                     .await

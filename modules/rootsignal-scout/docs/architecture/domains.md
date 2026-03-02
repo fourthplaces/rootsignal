@@ -30,7 +30,7 @@ Each domain is a self-contained module with its own events, handlers, and activi
 | ID | Trigger | Emits |
 |----|---------|-------|
 | `scrape:tension` | `SourcesScheduled` | `ScrapeEvent::*`, `SignalEvent::SignalsExtracted`, `PipelineEvent::ScrapeAccumulated`, `PhaseCompleted(TensionScrape)` |
-| `scrape:response` | `PhaseCompleted(MidRunDiscovery)` | Same pattern + `PipelineEvent::SocialTopicsConsumed`, `PhaseCompleted(ResponseScrape)` |
+| `scrape:response` | `PhaseCompleted(SourceExpansion)` | Same pattern + `PipelineEvent::SocialTopicsConsumed`, `PhaseCompleted(ResponseScrape)` |
 
 **Activities**: `ScrapePhase` drives the web scraping pipeline:
 1. Deduplicate URLs across sources
@@ -74,8 +74,8 @@ Social scraping runs in parallel via Apify (Instagram, Facebook, Reddit).
 | ID | Trigger | Emits |
 |----|---------|-------|
 | `discovery:bootstrap` | `EngineStarted` | `DiscoveryEvent::SourceDiscovered` (seed sources) |
-| `discovery:link_promotion` | `PhaseCompleted(TensionScrape\|ResponseScrape\|Expansion)` | `SourceDiscovered`, `LinksPromoted` |
-| `discovery:mid_run` | `PhaseCompleted(TensionScrape)` | `SourceDiscovered`, `ExpansionQueryCollected`, `SocialTopicCollected`, `SocialTopicsCollected`, `PhaseCompleted(MidRunDiscovery)` |
+| `discovery:link_promotion` | `PhaseCompleted(TensionScrape\|ResponseScrape\|SignalExpansion)` | `SourceDiscovered`, `LinksPromoted` |
+| `discovery:source_expansion` | `PhaseCompleted(TensionScrape)` | `SourceDiscovered`, `ExpansionQueryCollected`, `SocialTopicCollected`, `SocialTopicsCollected`, `PhaseCompleted(SourceExpansion)` |
 
 **Activities**: `seed_sources_if_empty()` populates initial sources for a new region. `SourceFinder` uses Claude to analyze graph gaps and propose new sources. Link promotion converts discovered links (collected during scraping) into first-class Source nodes.
 
@@ -99,15 +99,15 @@ Social scraping runs in parallel via Apify (Instagram, Facebook, Reddit).
 
 ---
 
-## Expansion
+## Signal Expansion
 
-**Purpose**: Signal expansion from implied queries discovered during extraction.
+**Purpose**: Follow implied queries discovered during extraction to find additional signals.
 
 **Handlers**:
 
 | ID | Trigger | Emits |
 |----|---------|-------|
-| `expansion:expand` | `MetricsCompleted` | `DiscoveryEvent::SourceDiscovered`, `PipelineEvent::ExpansionAccumulated`, `PhaseCompleted(Expansion)` |
+| `expansion:signal_expansion` | `MetricsCompleted` | `DiscoveryEvent::SourceDiscovered`, `PipelineEvent::ExpansionAccumulated`, `PhaseCompleted(SignalExpansion)` |
 
 **Activities**: `expand_and_discover()` collects implied queries from high-value signals, deduplicates them, creates new expansion sources, and runs end-of-run discovery via `SourceFinder`.
 
@@ -121,7 +121,7 @@ Social scraping runs in parallel via Apify (Instagram, Facebook, Reddit).
 
 | ID | Trigger | Emits |
 |----|---------|-------|
-| `synthesis:run` | `PhaseCompleted(Expansion)` | `SystemEvent::ResponseLinked/TensionLinked`, `WorldEvent::ResourceLinked`, `PhaseCompleted(Synthesis)` |
+| `synthesis:run` | `PhaseCompleted(SignalExpansion)` | `SystemEvent::ResponseLinked/TensionLinked`, `WorldEvent::ResourceLinked`, `PhaseCompleted(Synthesis)` |
 | `synthesis:severity_inference` | `PhaseCompleted(Synthesis)` | `SystemEvent::SeverityClassified` |
 
 **Activities** (run concurrently via `tokio::join!`):

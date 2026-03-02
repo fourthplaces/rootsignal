@@ -11,22 +11,22 @@ use crate::infra::embedder::TextEmbedder;
 use crate::domains::scrape::activities::scrape_phase::ScrapePhase;
 use rootsignal_graph::GraphReader;
 
-/// Output from mid-run discovery.
-pub struct MidRunOutput {
+/// Output from source expansion.
+pub struct SourceExpansionOutput {
     pub events: Events,
     pub social_topics: Vec<String>,
 }
 
-/// Run mid-run source discovery. Returns discovered source events and social topics.
+/// Run source expansion: discover new sources based on tension scrape findings.
 ///
 /// Pure: no state mutation. Social topics returned for caller to stash.
-pub async fn discover_sources_mid_run(
+pub async fn discover_expansion_sources(
     graph: &GraphReader,
     region_name: &str,
     embedder: &dyn TextEmbedder,
     api_key: Option<&str>,
     budget: &BudgetTracker,
-) -> MidRunOutput {
+) -> SourceExpansionOutput {
     let discoverer = source_finder::SourceFinder::new(
         graph,
         region_name,
@@ -50,7 +50,7 @@ pub async fn discover_sources_mid_run(
         ));
     }
 
-    MidRunOutput {
+    SourceExpansionOutput {
         events: scout_events,
         social_topics,
     }

@@ -1,4 +1,4 @@
-// Expansion domain: signal expansion and end-of-run discovery.
+// Signal Expansion domain: follow implied queries to discover additional signals.
 
 pub mod activities;
 
@@ -24,9 +24,9 @@ fn is_metrics_completed(e: &LifecycleEvent) -> bool {
 pub mod handlers {
     use super::*;
 
-    /// MetricsCompleted → signal expansion + end-of-run discovery, emit PhaseCompleted(Expansion).
-    #[handle(on = LifecycleEvent, id = "expansion:expand", filter = is_metrics_completed)]
-    async fn expansion(
+    /// MetricsCompleted → signal expansion + end-of-run discovery, emit PhaseCompleted(SignalExpansion).
+    #[handle(on = LifecycleEvent, id = "expansion:signal_expansion", filter = is_metrics_completed)]
+    async fn signal_expansion(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -41,7 +41,7 @@ pub mod handlers {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
                 return Ok(events![LifecycleEvent::PhaseCompleted {
-                    phase: PipelinePhase::Expansion,
+                    phase: PipelinePhase::SignalExpansion,
                 }]);
             }
         };
@@ -98,7 +98,7 @@ pub mod handlers {
             all_events.push(pipeline_event);
         }
         all_events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::Expansion,
+            phase: PipelinePhase::SignalExpansion,
         });
         Ok(all_events)
     }
