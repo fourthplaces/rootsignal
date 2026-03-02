@@ -5,6 +5,7 @@
 //! with distinct type tags, so exactly one will match.
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // Re-exports — value types from rootsignal-world
@@ -42,6 +43,15 @@ pub enum SystemSourceChange {
         old: Option<String>,
         new: Option<String>,
     },
+}
+
+/// A signal's computed cause heat score — how much independent community attention
+/// exists in its semantic neighborhood.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CauseHeatScore {
+    pub signal_id: Uuid,
+    pub label: String,
+    pub cause_heat: f64,
 }
 
 /// Source changes — observable facts about a source (moved from rootsignal-world).

@@ -86,17 +86,12 @@ impl ScoutDeps {
             ),
         );
 
-        let event_store = rootsignal_events::EventStore::new(self.pg_pool.clone());
-        let projector = rootsignal_graph::GraphProjector::new(self.graph_client.clone());
-
         let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
         deps.region = Some(scope.clone());
         deps.fetcher = Some(archive.clone() as Arc<dyn crate::traits::ContentFetcher>);
         deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
         deps.graph_client = Some(self.graph_client.clone());
         deps.extractor = Some(extractor);
-        deps.graph_projector = Some(projector);
-        deps.event_store = Some(event_store);
         deps.archive = Some(archive);
         deps.budget = Some(budget);
         deps.cancelled = Some(Arc::new(std::sync::atomic::AtomicBool::new(false)));

@@ -2,8 +2,7 @@ pub mod event_sourced;
 
 use std::sync::Arc;
 
-use rootsignal_events::EventStore;
-use rootsignal_graph::{GraphClient, GraphProjector, GraphStore};
+use rootsignal_graph::{GraphClient, GraphStore};
 use sqlx::PgPool;
 
 use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
@@ -62,15 +61,12 @@ impl EngineFactory {
         Self {
             create_fn: Box::new(move || {
                 let run_id = format!("api-{}", uuid::Uuid::new_v4());
-                let event_store = EventStore::new(pg_pool.clone());
-                let projector = GraphProjector::new(graph_client.clone());
                 let store =
                     Arc::new(build_signal_reader(graph_client.clone())) as Arc<dyn SignalReader>;
                 let embedder = Arc::new(NoOpEmbedder) as Arc<dyn TextEmbedder>;
                 let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
                 deps.graph_client = Some(graph_client.clone());
-                deps.graph_projector = Some(projector);
-                deps.event_store = Some(event_store);
+                deps.pg_pool = Some(pg_pool.clone());
                 build_engine(deps)
             }),
         }

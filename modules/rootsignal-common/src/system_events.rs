@@ -11,14 +11,15 @@ use uuid::Uuid;
 use rootsignal_world::Eventlike;
 
 use crate::events::{
-    AnnouncementCorrection, ConcernCorrection, GatheringCorrection, HelpRequestCorrection,
-    ResourceCorrection, SituationChange, SourceChange, SystemSourceChange,
+    AnnouncementCorrection, CauseHeatScore, ConcernCorrection, GatheringCorrection,
+    HelpRequestCorrection, ResourceCorrection, SituationChange, SourceChange, SystemSourceChange,
 };
 use crate::safety::SensitivityLevel;
 use crate::types::{
-ActorType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc, SourceRole, Tone,
-Urgency,
+    ActorType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc, SourceRole, Tone,
+    Urgency,
 };
+use crate::ScoutTask;
 
 /// A system event — an editorial judgment Root Signal made about world facts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -474,6 +475,22 @@ pub enum SystemEvent {
         headline: String,
         factor: f64,
     },
+
+    // -----------------------------------------------------------------------
+    // Supervisor analytics — computed scores and detected patterns
+    // -----------------------------------------------------------------------
+    EchoScored {
+        situation_id: Uuid,
+        echo_score: f64,
+    },
+
+    CauseHeatComputed {
+        scores: Vec<CauseHeatScore>,
+    },
+
+    BeaconDetected {
+        task: ScoutTask,
+    },
 }
 
 impl Eventlike for SystemEvent {
@@ -538,6 +555,9 @@ impl Eventlike for SystemEvent {
             SystemEvent::GathersAtPlaceLinked { .. } => "gathers_at_place_linked",
             SystemEvent::DuplicateTensionMerged { .. } => "duplicate_tension_merged",
             SystemEvent::SourcesBoostedForSituation { .. } => "sources_boosted_for_situation",
+            SystemEvent::EchoScored { .. } => "echo_scored",
+            SystemEvent::CauseHeatComputed { .. } => "cause_heat_computed",
+            SystemEvent::BeaconDetected { .. } => "beacon_detected",
         }
     }
 

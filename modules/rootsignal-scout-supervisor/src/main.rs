@@ -76,8 +76,8 @@ async fn main() -> Result<()> {
         config.anthropic_api_key.clone(),
         notifier,
     );
-    let stats = supervisor.run().await?;
+    let (stats, events) = supervisor.run().await?;
 
-    info!("Supervisor complete. {stats}");
+    info!(events = events.len(), "Supervisor complete. {stats}");
     Ok(())
 }

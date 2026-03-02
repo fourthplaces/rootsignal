@@ -1,6 +1,8 @@
 use neo4rs::query;
 use tracing::info;
 
+use rootsignal_common::events::CauseHeatScore;
+
 use crate::GraphClient;
 
 /// A signal with its embedding and source diversity, loaded for batch computation.
@@ -28,7 +30,7 @@ struct SignalEmbed {
 ///    neighbors above threshold. Only Tensions radiate heat — Gatherings, Gives, Needs,
 ///    and Notices absorb heat from nearby Tensions but do not generate it.
 /// 4. Normalize to 0.0–1.0
-/// 5. Write back to graph
+/// 5. Return computed scores — the caller persists events and the GraphProjector writes them
 pub async fn compute_cause_heat(
     client: &GraphClient,
     threshold: f64,
@@ -36,7 +38,7 @@ pub async fn compute_cause_heat(
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> Result<(), neo4rs::Error> {
+) -> Result<Vec<CauseHeatScore>, neo4rs::Error> {
     let g = &client.graph;
 
     info!(threshold, "Computing cause heat...");
@@ -85,7 +87,7 @@ pub async fn compute_cause_heat(
     info!(signals = n, "Loaded signal embeddings");
 
     if n == 0 {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // Compute evidence_boost for Tensions from EVIDENCE_OF edges.
@@ -125,23 +127,20 @@ pub async fn compute_cause_heat(
 
     let heats = compute_heats(&signals, threshold);
 
-    // 5. Write back
-    let mut updated = 0u32;
-    for (i, signal) in signals.iter().enumerate() {
-        let q = query(&format!(
-            "MATCH (n:{} {{id: $id}}) SET n.cause_heat = $heat",
-            signal.label
-        ))
-        .param("id", signal.id.as_str())
-        .param("heat", heats[i]);
-
-        g.run(q).await?;
-        updated += 1;
-    }
+    // 5. Build CauseHeatScore results
+    let scores: Vec<CauseHeatScore> = signals
+        .iter()
+        .enumerate()
+        .map(|(i, signal)| CauseHeatScore {
+            signal_id: signal.id.parse().unwrap_or_default(),
+            label: signal.label.clone(),
+            cause_heat: heats[i],
+        })
+        .collect();
 
     let max_heat = heats.iter().cloned().fold(0.0_f64, f64::max);
-    info!(updated, max_heat, "Cause heat computation complete");
-    Ok(())
+    info!(updated = scores.len(), max_heat, "Cause heat computation complete");
+    Ok(scores)
 }
 
 /// Pure computation of cause heat scores from signal embeddings.
@@ -649,51 +648,25 @@ mod tests {
             .expect("Failed to connect to Neo4j");
 
         // Use Twin Cities bbox for live test
-        compute_cause_heat(&client, 0.7, 44.0, 46.0, -94.0, -92.0)
+        let scores = compute_cause_heat(&client, 0.7, 44.0, 46.0, -94.0, -92.0)
             .await
             .expect("compute_cause_heat failed");
 
-        // Verify: query top cause_heat signals
-        let q = neo4rs::query(
-            "MATCH (n)
-             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
-               AND n.cause_heat > 0
-             RETURN n.title AS title, n.cause_heat AS heat,
-                    n.source_diversity AS div, labels(n) AS labels
-             ORDER BY n.cause_heat DESC
-             LIMIT 15",
-        );
-
-        let mut stream = client.graph.execute(q).await.unwrap();
         println!("\n--- Top 15 signals by cause_heat ---");
-        let mut count = 0;
-        while let Some(row) = stream.next().await.unwrap() {
-            let title: String = row.get("title").unwrap_or_default();
-            let heat: f64 = row.get("heat").unwrap_or(0.0);
-            let div: i64 = row.get("div").unwrap_or(0);
-            let labels: Vec<String> = row.get("labels").unwrap_or_default();
-            let label = labels
-                .iter()
-                .find(|l| *l != "Node")
-                .cloned()
-                .unwrap_or_default();
-            println!("  heat={heat:.3}  div={div}  [{label}] {title}");
-            count += 1;
+        let mut sorted = scores.clone();
+        sorted.sort_by(|a, b| b.cause_heat.partial_cmp(&a.cause_heat).unwrap());
+        for score in sorted.iter().take(15) {
+            println!(
+                "  heat={:.3}  [{}] {}",
+                score.cause_heat, score.label, score.signal_id
+            );
         }
-        assert!(count > 0, "Expected some signals with cause_heat > 0");
 
-        // Also check that zero-heat signals exist (not everything should be hot)
-        let q = neo4rs::query(
-            "MATCH (n)
-             WHERE (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
-               AND (n.cause_heat IS NULL OR n.cause_heat = 0)
-             RETURN count(n) AS cnt",
-        );
-        let mut stream = client.graph.execute(q).await.unwrap();
-        if let Some(row) = stream.next().await.unwrap() {
-            let zero_count: i64 = row.get("cnt").unwrap_or(0);
-            println!("\nSignals with zero/null cause_heat: {zero_count}");
-        }
+        let hot_count = scores.iter().filter(|s| s.cause_heat > 0.0).count();
+        assert!(hot_count > 0, "Expected some signals with cause_heat > 0");
+
+        let cold_count = scores.iter().filter(|s| s.cause_heat == 0.0).count();
+        println!("\nSignals with zero cause_heat: {cold_count}");
     }
 
     // --- evidence_boost tests ---

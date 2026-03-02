@@ -143,6 +143,10 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "submission_received",
     // System: Source scrape telemetry
     "source_scraped",
+    // System: Supervisor analytics
+    "echo_scored",
+    "cause_heat_computed",
+    "beacon_detected",
 ];
 
 #[test]
@@ -254,15 +258,7 @@ fn reducer_source_has_no_diversity_writes() {
     );
 }
 
-#[test]
-fn reducer_source_has_no_cause_heat_writes() {
-    let source = include_str!("../src/reducer.rs");
-
-    assert!(
-        !source.contains("n.cause_heat =") && !source.contains("cause_heat: $"),
-        "Reducer must not write cause_heat — that's an enrichment pass value"
-    );
-}
+// cause_heat is now event-sourced via CauseHeatComputed — the reducer legitimately writes it.
 
 #[test]
 fn reducer_source_has_no_freshness_score_writes() {
@@ -872,6 +868,30 @@ fn build_all_events() -> Vec<Event> {
         Event::System(SystemEvent::ExpansionQueryCollected {
             query: "".into(),
             source_url: "".into(),
+        }),
+        // Supervisor analytics
+        Event::System(SystemEvent::EchoScored {
+            situation_id: id,
+            echo_score: 0.5,
+        }),
+        Event::System(SystemEvent::CauseHeatComputed {
+            scores: vec![],
+        }),
+        Event::System(SystemEvent::BeaconDetected {
+            task: ScoutTask {
+                id,
+                center_lat: 0.0,
+                center_lng: 0.0,
+                radius_km: 10.0,
+                context: "".into(),
+                geo_terms: vec![],
+                priority: 0.5,
+                source: ScoutTaskSource::Beacon,
+                status: ScoutTaskStatus::Pending,
+                phase_status: "idle".into(),
+                created_at: now,
+                completed_at: None,
+            },
         }),
     ]
 }

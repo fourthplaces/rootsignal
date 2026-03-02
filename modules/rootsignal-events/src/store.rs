@@ -13,7 +13,7 @@ use crate::types::{AppendEvent, StoredEvent};
 use sqlx::Row;
 
 /// Column list used by all SELECT queries.
-const COLUMNS: &str = "seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id";
+const COLUMNS: &str = "seq, ts, event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id, correlation_id, aggregate_type, aggregate_id";
 
 // ---------------------------------------------------------------------------
 // EventStore
@@ -34,8 +34,8 @@ impl EventStore {
     pub async fn append(&self, event: AppendEvent) -> Result<EventHandle> {
         let row = sqlx::query_as::<_, (i64,)>(
             r#"
-            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
-            VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7)
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id, correlation_id, aggregate_type, aggregate_id)
+            VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING seq
             "#,
         )
@@ -46,6 +46,9 @@ impl EventStore {
         .bind(event.schema_v)
         .bind(event.id)
         .bind(event.parent_id)
+        .bind(event.correlation_id)
+        .bind(&event.aggregate_type)
+        .bind(event.aggregate_id)
         .fetch_one(&self.pool)
         .await?;
 
@@ -68,8 +71,8 @@ impl EventStore {
     pub async fn append_and_read(&self, event: AppendEvent) -> Result<StoredEvent> {
         let query = format!(
             r#"
-            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
-            VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7)
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id, correlation_id, aggregate_type, aggregate_id)
+            VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING {COLUMNS}
             "#
         );
@@ -81,6 +84,9 @@ impl EventStore {
             .bind(event.schema_v)
             .bind(event.id)
             .bind(event.parent_id)
+            .bind(event.correlation_id)
+            .bind(&event.aggregate_type)
+            .bind(event.aggregate_id)
             .fetch_one(&self.pool)
             .await?;
 
@@ -237,11 +243,11 @@ impl EventStore {
     ) -> Result<StoredEvent> {
         let query = format!(
             r#"
-            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id, correlation_id, aggregate_type, aggregate_id)
             VALUES (
                 $1, $2,
                 COALESCE((SELECT caused_by_seq FROM events WHERE seq = $2), $2),
-                $3, $4, $5, $6, $7, $8
+                $3, $4, $5, $6, $7, $8, $9, $10, $11
             )
             RETURNING {COLUMNS}
             "#
@@ -255,12 +261,63 @@ impl EventStore {
             .bind(event.schema_v)
             .bind(event.id)
             .bind(event.parent_id)
+            .bind(event.correlation_id)
+            .bind(&event.aggregate_type)
+            .bind(event.aggregate_id)
             .fetch_one(&self.pool)
             .await?;
 
         notify_new_event(&self.pool, stored.seq).await;
 
         Ok(stored)
+    }
+
+    /// Load all events for an aggregate stream, ordered by seq.
+    /// Used by seesaw for aggregate hydration on cold start.
+    pub async fn load_aggregate_stream(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: uuid::Uuid,
+    ) -> Result<Vec<StoredEvent>> {
+        let query = format!(
+            r#"
+            SELECT {COLUMNS}
+            FROM events
+            WHERE aggregate_type = $1 AND aggregate_id = $2
+            ORDER BY seq ASC
+            "#
+        );
+        let rows = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(aggregate_type)
+            .bind(aggregate_id)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Load aggregate stream events after a given position.
+    /// Used by seesaw for snapshot + partial replay hydration.
+    pub async fn load_aggregate_stream_from(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: uuid::Uuid,
+        after_seq: i64,
+    ) -> Result<Vec<StoredEvent>> {
+        let query = format!(
+            r#"
+            SELECT {COLUMNS}
+            FROM events
+            WHERE aggregate_type = $1 AND aggregate_id = $2 AND seq > $3
+            ORDER BY seq ASC
+            "#
+        );
+        let rows = sqlx::query_as::<_, StoredEvent>(&query)
+            .bind(aggregate_type)
+            .bind(aggregate_id)
+            .bind(after_seq)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows)
     }
 
     /// The latest committed sequence number, or 0 if the table is empty.
@@ -323,8 +380,8 @@ impl EventHandle {
 
         let row = sqlx::query_as::<_, (i64,)>(
             r#"
-            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id, correlation_id, aggregate_type, aggregate_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING seq
             "#,
         )
@@ -337,6 +394,9 @@ impl EventHandle {
         .bind(event_with_context.schema_v)
         .bind(event_with_context.id)
         .bind(event_with_context.parent_id)
+        .bind(event_with_context.correlation_id)
+        .bind(&event_with_context.aggregate_type)
+        .bind(event_with_context.aggregate_id)
         .fetch_one(&self.store.pool)
         .await?;
 
@@ -369,8 +429,8 @@ impl EventHandle {
         tokio::spawn(async move {
             let result = sqlx::query(
                 r#"
-                INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id, correlation_id, aggregate_type, aggregate_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 "#,
             )
             .bind(&event_with_context.event_type)
@@ -382,6 +442,9 @@ impl EventHandle {
             .bind(event_with_context.schema_v)
             .bind(event_with_context.id)
             .bind(event_with_context.parent_id)
+            .bind(event_with_context.correlation_id)
+            .bind(&event_with_context.aggregate_type)
+            .bind(event_with_context.aggregate_id)
             .execute(&pool)
             .await;
 
@@ -457,6 +520,9 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredEvent {
             schema_v: row.try_get("schema_v")?,
             id: row.try_get("id")?,
             parent_id: row.try_get("parent_id")?,
+            correlation_id: row.try_get("correlation_id")?,
+            aggregate_type: row.try_get("aggregate_type")?,
+            aggregate_id: row.try_get("aggregate_id")?,
         })
     }
 }

@@ -18,3 +18,4 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
+seesaw_core = { workspace = true }

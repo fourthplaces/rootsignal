@@ -5,8 +5,10 @@
 //!
 //! Consumers provide their own event types that serialize to `serde_json::Value`.
 
+pub mod snapshot_store;
 pub mod store;
 pub mod types;
 
+pub use snapshot_store::PostgresSnapshotStore;
 pub use store::{EventHandle, EventStore};
 pub use types::{AppendEvent, StoredEvent};

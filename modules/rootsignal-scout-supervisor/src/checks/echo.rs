@@ -3,6 +3,7 @@ use neo4rs::query;
 use tracing::info;
 use uuid::Uuid;
 
+use rootsignal_common::events::SystemEvent;
 use rootsignal_graph::GraphClient;
 
 /// Detect echo signatures — high signal volume with low type/entity diversity.
@@ -12,9 +13,13 @@ use rootsignal_graph::GraphClient;
 /// where both are normalized to [0, 1]. A score near 1.0 means the situation
 /// looks like a single-source echo chamber; near 0.0 means diverse corroboration.
 ///
-/// Returns the number of situations flagged (echo_score > threshold).
-pub async fn detect_echoes(client: &GraphClient, threshold: f64) -> Result<EchoStats> {
+/// Returns stats and events — the caller persists the events and the GraphProjector writes scores.
+pub async fn detect_echoes(
+    client: &GraphClient,
+    threshold: f64,
+) -> Result<(EchoStats, Vec<SystemEvent>)> {
     let mut stats = EchoStats::default();
+    let mut events = Vec::new();
 
     // Find situations with enough signals to evaluate
     let q = query(
@@ -46,15 +51,10 @@ pub async fn detect_echoes(client: &GraphClient, threshold: f64) -> Result<EchoS
 
         let echo_score = compute_echo_score(signal_count, type_count, entity_count);
 
-        // Write echo_score to the situation node
-        let update = query("MATCH (s:Situation {id: $id}) SET s.echo_score = $score")
-            .param("id", id.to_string())
-            .param("score", echo_score);
-
-        if let Err(e) = client.inner().run(update).await {
-            tracing::warn!(id = %id, error = %e, "Failed to write echo_score");
-            continue;
-        }
+        events.push(SystemEvent::EchoScored {
+            situation_id: id,
+            echo_score,
+        });
 
         stats.stories_scored += 1;
 
@@ -80,7 +80,7 @@ pub async fn detect_echoes(client: &GraphClient, threshold: f64) -> Result<EchoS
         );
     }
 
-    Ok(stats)
+    Ok((stats, events))
 }
 
 /// Compute echo score from signal count, type diversity, and entity diversity.

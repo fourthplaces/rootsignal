@@ -13,13 +13,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use rootsignal_common::ScoutScope;
-use rootsignal_events::EventStore as RsEventStore;
 use rootsignal_graph::{GraphClient, GraphProjector};
 use sqlx::PgPool;
 
 use crate::core::aggregate::pipeline_aggregators;
 use crate::core::embedding_cache::EmbeddingCache;
 use crate::core::projection;
+use crate::core::seesaw_event_store::SeesawEventStoreAdapter;
 use crate::domains::{
     discovery, enrichment, expansion, lifecycle, scrape, signals, situation_weaving, supervisor,
     synthesis,
@@ -41,10 +41,6 @@ pub struct ScoutEngineDeps {
     /// In-memory embedding cache for cross-batch dedup (layer 1 of 4).
     pub embed_cache: EmbeddingCache,
     // --- Engine infrastructure ---
-    /// Neo4j graph projector (None in tests).
-    pub graph_projector: Option<GraphProjector>,
-    /// Event persistence to rootsignal's Postgres event store (None in tests).
-    pub event_store: Option<RsEventStore>,
     /// Current run ID for event tagging.
     pub run_id: String,
     /// Test-only: capture all dispatched events for inspection.
@@ -76,8 +72,6 @@ impl ScoutEngineDeps {
             graph_client: None,
             extractor: None,
             embed_cache: EmbeddingCache::new(),
-            graph_projector: None,
-            event_store: None,
             run_id: run_id.into(),
             captured_events: None,
             budget: None,
@@ -101,12 +95,25 @@ pub type ScoutEngine = SeesawEngine;
 /// situation_weaving or supervisor handlers.
 pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
+    let snapshot_store = deps.pg_pool.as_ref().map(|pool| {
+        Arc::new(rootsignal_events::PostgresSnapshotStore::new(pool.clone()))
+            as Arc<dyn seesaw_core::SnapshotStore>
+    });
+
+    // Construct infrastructure from deps — not stored on ScoutEngineDeps
+    let event_store_adapter = deps.pg_pool.as_ref().map(|pool| {
+        Arc::new(SeesawEventStoreAdapter::new(
+            rootsignal_events::EventStore::new(pool.clone()),
+        )) as Arc<dyn seesaw_core::event_store::EventStore>
+    });
+    let graph_projector = deps.graph_client.as_ref().map(|gc| {
+        GraphProjector::new(gc.clone())
+    });
+    let run_id = deps.run_id.clone();
 
     let mut engine = seesaw_core::Engine::new(deps)
         // Aggregators — PipelineState maintained by seesaw
         .with_aggregators(pipeline_aggregators::aggregators())
-        // Infrastructure handlers (priority 0–2)
-        .with_handlers(projection::handlers::handlers())
         // Domain handlers
         .with_handlers(signals::handlers::handlers())
         .with_handlers(lifecycle::handlers::handlers())
@@ -117,6 +124,25 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
         .with_handlers(synthesis::handlers::handlers())
         // Scrape chain finalize — triggers on PhaseCompleted(Synthesis)
         .with_handler(lifecycle::__seesaw_effect_scrape_finalize());
+
+    // Wire seesaw's built-in event persistence
+    if let Some(store) = event_store_adapter {
+        engine = engine
+            .with_event_store(store)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }));
+    }
+
+    // Neo4j projection — captured via closure, not on deps
+    if let Some(projector) = graph_projector {
+        engine = engine.with_handler(projection::neo4j_projection_handler(projector));
+    }
+
+    if let Some(store) = snapshot_store {
+        engine = engine.with_snapshot_store(store).snapshot_every(100);
+    }
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -132,12 +158,25 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
 /// Finalize triggers on PhaseCompleted(Supervisor).
 pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
+    let snapshot_store = deps.pg_pool.as_ref().map(|pool| {
+        Arc::new(rootsignal_events::PostgresSnapshotStore::new(pool.clone()))
+            as Arc<dyn seesaw_core::SnapshotStore>
+    });
+
+    // Construct infrastructure from deps — not stored on ScoutEngineDeps
+    let event_store_adapter = deps.pg_pool.as_ref().map(|pool| {
+        Arc::new(SeesawEventStoreAdapter::new(
+            rootsignal_events::EventStore::new(pool.clone()),
+        )) as Arc<dyn seesaw_core::event_store::EventStore>
+    });
+    let graph_projector = deps.graph_client.as_ref().map(|gc| {
+        GraphProjector::new(gc.clone())
+    });
+    let run_id = deps.run_id.clone();
 
     let mut engine = seesaw_core::Engine::new(deps)
         // Aggregators — PipelineState maintained by seesaw
         .with_aggregators(pipeline_aggregators::aggregators())
-        // Infrastructure handlers (priority 0–2)
-        .with_handlers(projection::handlers::handlers())
         // Domain handlers — scrape chain
         .with_handlers(signals::handlers::handlers())
         .with_handlers(lifecycle::handlers::handlers())
@@ -151,6 +190,25 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
         .with_handlers(supervisor::handlers::handlers())
         // Full chain finalize — triggers on PhaseCompleted(Supervisor)
         .with_handler(lifecycle::__seesaw_effect_full_finalize());
+
+    // Wire seesaw's built-in event persistence
+    if let Some(store) = event_store_adapter {
+        engine = engine
+            .with_event_store(store)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }));
+    }
+
+    // Neo4j projection — captured via closure, not on deps
+    if let Some(projector) = graph_projector {
+        engine = engine.with_handler(projection::neo4j_projection_handler(projector));
+    }
+
+    if let Some(store) = snapshot_store {
+        engine = engine.with_snapshot_store(store).snapshot_every(100);
+    }
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {

@@ -20,6 +20,12 @@ pub struct StoredEvent {
     pub id: Option<Uuid>,
     /// Seesaw parent event UUID — which event caused this one.
     pub parent_id: Option<Uuid>,
+    /// Seesaw correlation ID — links the full causal tree.
+    pub correlation_id: Option<Uuid>,
+    /// Aggregate type (e.g. "PipelineState") for aggregate-scoped events.
+    pub aggregate_type: Option<String>,
+    /// Aggregate instance ID for aggregate-scoped events.
+    pub aggregate_id: Option<Uuid>,
 }
 
 /// An event to be appended. The caller builds this; the store assigns seq/ts.
@@ -34,6 +40,12 @@ pub struct AppendEvent {
     pub id: Option<Uuid>,
     /// Seesaw parent event UUID.
     pub parent_id: Option<Uuid>,
+    /// Seesaw correlation ID — links the full causal tree.
+    pub correlation_id: Option<Uuid>,
+    /// Aggregate type for aggregate-scoped events.
+    pub aggregate_type: Option<String>,
+    /// Aggregate instance ID for aggregate-scoped events.
+    pub aggregate_id: Option<Uuid>,
 }
 
 impl AppendEvent {
@@ -48,6 +60,9 @@ impl AppendEvent {
             schema_v: 1,
             id: None,
             parent_id: None,
+            correlation_id: None,
+            aggregate_type: None,
+            aggregate_id: None,
         }
     }
 

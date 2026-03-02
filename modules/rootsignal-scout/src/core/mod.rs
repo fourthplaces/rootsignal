@@ -7,6 +7,7 @@ pub mod events;
 pub mod extractor;
 pub mod pipeline_events;
 pub mod projection;
+pub mod seesaw_event_store;
 pub mod stats;
 
 #[cfg(test)]

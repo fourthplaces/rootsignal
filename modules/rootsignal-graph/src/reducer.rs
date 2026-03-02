@@ -2129,6 +2129,64 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
+            // ---------------------------------------------------------
+            // Supervisor analytics
+            // ---------------------------------------------------------
+            SystemEvent::EchoScored {
+                situation_id,
+                echo_score,
+            } => {
+                let q = query(
+                    "MATCH (s:Situation {id: $id}) SET s.echo_score = $score",
+                )
+                .param("id", situation_id.to_string())
+                .param("score", echo_score);
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::CauseHeatComputed { scores } => {
+                for score in &scores {
+                    let q = query(&format!(
+                        "MATCH (n:{} {{id: $id}}) SET n.cause_heat = $heat",
+                        score.label
+                    ))
+                    .param("id", score.signal_id.to_string())
+                    .param("heat", score.cause_heat);
+                    self.client.graph.run(q).await?;
+                }
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::BeaconDetected { task } => {
+                let q = query(
+                    "MERGE (t:ScoutTask {id: $id})
+                     SET t.center_lat = $center_lat,
+                         t.center_lng = $center_lng,
+                         t.radius_km = $radius_km,
+                         t.context = $context,
+                         t.geo_terms = $geo_terms,
+                         t.priority = $priority,
+                         t.source = $source,
+                         t.status = $status,
+                         t.phase_status = coalesce(t.phase_status, $phase_status),
+                         t.created_at = datetime($created_at)",
+                )
+                .param("id", task.id.to_string())
+                .param("center_lat", task.center_lat)
+                .param("center_lng", task.center_lng)
+                .param("radius_km", task.radius_km)
+                .param("context", task.context.as_str())
+                .param("geo_terms", task.geo_terms.clone())
+                .param("priority", task.priority)
+                .param("source", task.source.to_string())
+                .param("status", task.status.to_string())
+                .param("phase_status", task.phase_status.as_str())
+                .param("created_at", task.created_at.format("%Y-%m-%dT%H:%M:%S%.6f").to_string());
+                self.client.graph.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
         }
     }
 
