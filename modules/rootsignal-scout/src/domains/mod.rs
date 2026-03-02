@@ -2,6 +2,7 @@ pub mod discovery;
 pub mod enrichment;
 pub mod expansion;
 pub mod lifecycle;
+pub mod news_scanning;
 pub mod scheduling;
 pub mod scrape;
 pub mod signals;

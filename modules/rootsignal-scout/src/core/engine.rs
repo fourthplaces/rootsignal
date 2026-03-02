@@ -1,6 +1,6 @@
 //! Seesaw engine setup for scout.
 //!
-//! Two engine variants share the same deps and infrastructure handlers:
+//! Three engine variants share the same deps and infrastructure handlers:
 //!
 //! - **Scrape engine** (`build_engine`): reap → schedule → scrape → enrichment →
 //!   expansion → synthesis → finalize. Used by standalone scrape/bootstrap workflows.
@@ -8,6 +8,9 @@
 //! - **Full engine** (`build_full_engine`): extends the scrape chain with
 //!   situation_weaving → supervisor before finalize. Used by full_run and
 //!   standalone synthesis/situation_weaver/supervisor workflows.
+//!
+//! - **News engine** (`build_news_engine`): NewsScanRequested → scan RSS → BeaconDetected.
+//!   Used by the news scanner workflow.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -21,8 +24,8 @@ use crate::core::embedding_cache::EmbeddingCache;
 use crate::core::projection;
 use crate::core::seesaw_event_store::SeesawEventStoreAdapter;
 use crate::domains::{
-    discovery, enrichment, expansion, lifecycle, scrape, signals, situation_weaving, supervisor,
-    synthesis,
+    discovery, enrichment, expansion, lifecycle, news_scanning, scrape, signals,
+    situation_weaving, supervisor, synthesis,
 };
 use crate::infra::embedder::TextEmbedder;
 use crate::core::extractor::SignalExtractor;
@@ -211,6 +214,53 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     }
 
     // Test-only: register capture handler when sink is provided
+    if let Some(sink) = capture_sink {
+        engine = engine.with_handler(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
+/// Build a news-scan engine: NewsScanRequested → scan RSS → BeaconDetected.
+///
+/// Minimal handler set — only news scanning domain + infrastructure.
+pub fn build_news_engine(deps: ScoutEngineDeps) -> SeesawEngine {
+    let capture_sink = deps.captured_events.clone();
+    let snapshot_store = deps.pg_pool.as_ref().map(|pool| {
+        Arc::new(rootsignal_events::PostgresSnapshotStore::new(pool.clone()))
+            as Arc<dyn seesaw_core::SnapshotStore>
+    });
+    let event_store_adapter = deps.pg_pool.as_ref().map(|pool| {
+        Arc::new(SeesawEventStoreAdapter::new(
+            rootsignal_events::EventStore::new(pool.clone()),
+        )) as Arc<dyn seesaw_core::event_store::EventStore>
+    });
+    let graph_projector = deps.graph_client.as_ref().map(|gc| {
+        GraphProjector::new(gc.clone())
+    });
+    let run_id = deps.run_id.clone();
+
+    let mut engine = seesaw_core::Engine::new(deps)
+        .with_aggregators(news_scanning::aggregate::news_aggregators::aggregators())
+        .with_handlers(news_scanning::handlers::handlers());
+
+    if let Some(store) = event_store_adapter {
+        engine = engine
+            .with_event_store(store)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }));
+    }
+
+    if let Some(projector) = graph_projector {
+        engine = engine.with_handler(projection::neo4j_projection_handler(projector));
+    }
+
+    if let Some(store) = snapshot_store {
+        engine = engine.with_snapshot_store(store).snapshot_every(100);
+    }
+
     if let Some(sink) = capture_sink {
         engine = engine.with_handler(projection::capture_handler(sink));
     }

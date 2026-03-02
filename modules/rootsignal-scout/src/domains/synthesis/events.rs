@@ -1,0 +1,45 @@
+//! Synthesis domain events: trigger + per-role completion tracking.
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// A role within the synthesis phase — each runs as an independent handler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SynthesisRole {
+    Similarity,
+    ResponseMapping,
+    TensionLinker,
+    ResponseFinder,
+    GatheringFinder,
+    Investigation,
+}
+
+/// All synthesis roles — used for superset completion check.
+pub fn all_synthesis_roles() -> std::collections::HashSet<SynthesisRole> {
+    std::collections::HashSet::from([
+        SynthesisRole::Similarity,
+        SynthesisRole::ResponseMapping,
+        SynthesisRole::TensionLinker,
+        SynthesisRole::ResponseFinder,
+        SynthesisRole::GatheringFinder,
+        SynthesisRole::Investigation,
+    ])
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SynthesisEvent {
+    SynthesisTriggered { run_id: Uuid },
+    SynthesisRoleCompleted { run_id: Uuid, role: SynthesisRole },
+}
+
+impl SynthesisEvent {
+    pub fn run_id(&self) -> Uuid {
+        match self {
+            Self::SynthesisTriggered { run_id } | Self::SynthesisRoleCompleted { run_id, .. } => {
+                *run_id
+            }
+        }
+    }
+}

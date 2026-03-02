@@ -1059,3 +1059,97 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
     // assert_eq!(sched.schedule_text.as_deref(), Some("First Saturday of every month, 10am-2pm"));
 }
 
+// ---------------------------------------------------------------------------
+// Chain Test: resolve → fetch_extract causal chain
+//
+// Verifies the decomposed pipeline: resolve_web_urls produces URLs,
+// fetch_and_extract consumes them and produces signals.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
+    let query = "site:linktr.ee mutual aid Minneapolis";
+
+    let fetcher = MockFetcher::new()
+        .on_search(
+            query,
+            search_results(query, &["https://localorg.org/resources"]),
+        )
+        .on_page("https://localorg.org/resources", {
+            let mut page = archived_page(
+                "https://localorg.org/resources",
+                "Free legal clinic every Tuesday...",
+            );
+            page.links = vec!["https://partner.org".to_string()];
+            page
+        });
+
+    let node = tension_at("Free Legal Clinic", 44.9341, -93.2619);
+    let extractor = MockExtractor::new().on_url(
+        "https://localorg.org/resources",
+        ExtractionResult {
+            nodes: vec![node],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = web_query_source(query);
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = RunContext::from_sources(&[source.clone()]);
+    let log = run_log();
+
+    // Step 1: resolve URLs
+    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, &log).await;
+    assert_eq!(resolution.urls.len(), 1, "search resolved one URL");
+    assert!(resolution.query_api_errors.is_empty());
+
+    // Apply URL mappings to context (simulates UrlsResolvedAccumulated)
+    ctx.url_to_canonical_key.extend(resolution.url_mappings.clone());
+    ctx.url_to_pub_date.extend(resolution.pub_dates.clone());
+
+    // Step 2: fetch + extract from resolved URLs
+    let source_keys: std::collections::HashMap<String, Uuid> = sources
+        .iter()
+        .map(|s| (s.canonical_key.clone(), s.id))
+        .collect();
+    let result = phase.fetch_and_extract(
+        &resolution.urls,
+        &source_keys,
+        &ctx.url_to_canonical_key,
+        &ctx.actor_contexts,
+        &resolution.pub_dates,
+        &log,
+    ).await;
+
+    assert_eq!(result.stats.urls_scraped, 1, "one URL fetched+extracted");
+    assert_eq!(result.stats.signals_extracted, 1, "one signal extracted");
+    assert!(!result.events.is_empty(), "should produce SignalsExtracted events");
+
+    // Dispatch events through engine to verify full chain
+    dispatch_events(result.events, &mut ctx, &store).await;
+    assert_eq!(ctx.stats.signals_stored, 1, "signal stored through engine");
+
+    // Links collected
+    assert!(
+        result.collected_links.iter().any(|l| l.url.contains("partner.org")),
+        "partner.org link should be collected"
+    );
+}
+

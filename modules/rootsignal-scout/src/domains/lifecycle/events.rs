@@ -25,6 +25,7 @@ pub enum LifecycleEvent {
         stats: ScoutStats,
     },
     MetricsCompleted,
+    NewsScanRequested,
 }
 
 impl LifecycleEvent {
@@ -36,6 +37,7 @@ impl LifecycleEvent {
             Self::SourcesScheduled { .. } => "sources_scheduled",
             Self::RunCompleted { .. } => "run_completed",
             Self::MetricsCompleted => "metrics_completed",
+            Self::NewsScanRequested => "news_scan_requested",
         };
         format!("lifecycle:{variant}")
     }

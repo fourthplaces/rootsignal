@@ -1,5 +1,8 @@
 use neo4rs::query;
 use tracing::info;
+use uuid::Uuid;
+
+use rootsignal_common::events::SimilarityEdge;
 
 use crate::GraphClient;
 
@@ -79,6 +82,47 @@ impl SimilarityBuilder {
 
         info!(total_created, "SIMILAR_TO edges written");
         Ok(total_created)
+    }
+
+    /// Compute similarity edges without writing to Neo4j.
+    /// Returns edges as `SimilarityEdge` values for event-sourcing through the projector.
+    pub async fn compute_edges(&self) -> Result<Vec<SimilarityEdge>, neo4rs::Error> {
+        let signals = self.fetch_all_embeddings().await?;
+        let count = signals.len();
+        info!(
+            signals = count,
+            "Fetched signal embeddings for similarity computation"
+        );
+
+        if count < 2 {
+            info!("Too few signals for similarity edges");
+            return Ok(Vec::new());
+        }
+
+        let mut edges = Vec::new();
+        for i in 0..count {
+            for j in (i + 1)..count {
+                let sim = cosine_similarity(&signals[i].embedding, &signals[j].embedding);
+                if sim >= SIMILARITY_THRESHOLD {
+                    let conf_weight = (signals[i].confidence * signals[j].confidence).sqrt();
+                    let weight = sim * conf_weight;
+                    let from_id = signals[i].id.parse::<Uuid>().unwrap_or_default();
+                    let to_id = signals[j].id.parse::<Uuid>().unwrap_or_default();
+                    edges.push(SimilarityEdge {
+                        from_id,
+                        to_id,
+                        weight,
+                    });
+                }
+            }
+        }
+
+        info!(
+            edges = edges.len(),
+            "Computed similarity edges above threshold {}", SIMILARITY_THRESHOLD
+        );
+
+        Ok(edges)
     }
 
     /// Fetch all active signal embeddings from the graph.

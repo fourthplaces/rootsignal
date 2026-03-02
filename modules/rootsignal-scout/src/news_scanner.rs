@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
-use rootsignal_common::Node;
+use rootsignal_common::{Node, ScoutTask};
 use tracing::{info, warn};
 
 use rootsignal_graph::beacon::BeaconCandidate;
@@ -70,8 +70,8 @@ impl NewsScanner {
     }
 
     /// Scan all news feeds, extract signals, and create beacon tasks for hot areas.
-    /// Returns (articles_scanned, beacons_created).
-    pub async fn scan(&self) -> Result<(u32, u32)> {
+    /// Returns (articles_scanned, beacon_tasks).
+    pub async fn scan(&self) -> Result<(u32, Vec<ScoutTask>)> {
         info!(feeds = NEWS_FEEDS.len(), "Starting news scan");
 
         // 1. Fetch all feeds
@@ -184,11 +184,11 @@ impl NewsScanner {
         }
 
         // 4. Create beacon tasks from clustered candidates
-        let beacons_created =
-            rootsignal_graph::beacon::create_beacons_from_news(&self.graph, beacon_candidates)
-                .await?;
+        let existing_hashes = rootsignal_graph::beacon::existing_task_hashes(&self.graph).await?;
+        let beacon_tasks =
+            rootsignal_graph::beacon::create_beacons_from_news(&existing_hashes, beacon_candidates);
 
-        info!(articles_scanned, beacons_created, "News scan complete");
-        Ok((articles_scanned, beacons_created))
+        info!(articles_scanned, beacons_created = beacon_tasks.len(), "News scan complete");
+        Ok((articles_scanned, beacon_tasks))
     }
 }

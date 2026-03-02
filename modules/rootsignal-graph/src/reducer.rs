@@ -2158,6 +2158,54 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
+            SystemEvent::SimilarityEdgesRebuilt { edges } => {
+                // Delete all existing SIMILAR_TO edges
+                let q = query(
+                    "MATCH ()-[e:SIMILAR_TO]->() DELETE e",
+                );
+                self.client.graph.run(q).await?;
+
+                if !edges.is_empty() {
+                    // UNWIND + MERGE new edges in batches
+                    for batch in edges.chunks(500) {
+                        let edge_data: Vec<neo4rs::BoltType> = batch
+                            .iter()
+                            .map(|e| {
+                                neo4rs::BoltType::Map(neo4rs::BoltMap::from_iter(vec![
+                                    (
+                                        neo4rs::BoltString::from("from"),
+                                        neo4rs::BoltType::String(neo4rs::BoltString::from(
+                                            e.from_id.to_string().as_str(),
+                                        )),
+                                    ),
+                                    (
+                                        neo4rs::BoltString::from("to"),
+                                        neo4rs::BoltType::String(neo4rs::BoltString::from(
+                                            e.to_id.to_string().as_str(),
+                                        )),
+                                    ),
+                                    (
+                                        neo4rs::BoltString::from("weight"),
+                                        neo4rs::BoltType::Float(neo4rs::BoltFloat::new(e.weight)),
+                                    ),
+                                ]))
+                            })
+                            .collect();
+
+                        let q = query(
+                            "UNWIND $edges AS edge
+                             MATCH (a) WHERE a.id = edge.from AND (a:Gathering OR a:Aid OR a:Need OR a:Notice OR a:Tension)
+                             MATCH (b) WHERE b.id = edge.to AND (b:Gathering OR b:Aid OR b:Need OR b:Notice OR b:Tension)
+                             MERGE (a)-[r:SIMILAR_TO]->(b)
+                             SET r.weight = edge.weight",
+                        )
+                        .param("edges", edge_data);
+                        self.client.graph.run(q).await?;
+                    }
+                }
+                Ok(ApplyResult::Applied)
+            }
+
             SystemEvent::BeaconDetected { task } => {
                 let q = query(
                     "MERGE (t:ScoutTask {id: $id})

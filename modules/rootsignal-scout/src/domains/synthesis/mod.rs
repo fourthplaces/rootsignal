@@ -1,6 +1,10 @@
 // Synthesis domain: similarity edges, parallel finders, severity inference.
 
 pub mod activities;
+pub mod events;
+
+#[cfg(test)]
+mod completion_tests;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -8,12 +12,20 @@ use std::sync::Arc;
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::{info, warn};
+use uuid::Uuid;
 
-use rootsignal_graph::GraphReader;
+use rootsignal_common::events::SystemEvent;
+use rootsignal_graph::{GraphReader, SimilarityBuilder};
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
+use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
+use crate::domains::synthesis::events::{
+    all_synthesis_roles, SynthesisEvent, SynthesisRole,
+};
 
 fn is_signal_expansion_completed(e: &LifecycleEvent) -> bool {
     matches!(
@@ -21,6 +33,14 @@ fn is_signal_expansion_completed(e: &LifecycleEvent) -> bool {
         LifecycleEvent::PhaseCompleted { phase }
             if matches!(phase, PipelinePhase::SignalExpansion)
     )
+}
+
+fn is_synthesis_triggered(e: &SynthesisEvent) -> bool {
+    matches!(e, SynthesisEvent::SynthesisTriggered { .. })
+}
+
+fn is_synthesis_role_completed(e: &SynthesisEvent) -> bool {
+    matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. })
 }
 
 fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
@@ -35,67 +55,352 @@ fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
 pub mod handlers {
     use super::*;
 
-    /// PhaseCompleted(SignalExpansion) → similarity edges, parallel finders,
-    /// emit PhaseCompleted(Synthesis).
-    #[handle(on = LifecycleEvent, id = "synthesis:run", filter = is_signal_expansion_completed)]
-    async fn synthesis(
+    // ---------------------------------------------------------------
+    // Trigger: PhaseCompleted(SignalExpansion) → SynthesisTriggered
+    // ---------------------------------------------------------------
+
+    #[handle(on = LifecycleEvent, id = "synthesis:trigger", filter = is_signal_expansion_completed)]
+    async fn trigger(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let (region, graph_client, budget) = match (
-            deps.region.as_ref(),
-            deps.graph_client.as_ref(),
-            deps.budget.as_ref(),
-        ) {
-            (Some(r), Some(g), Some(b)) => (r, g, b),
-            _ => {
-                return Ok(events![LifecycleEvent::PhaseCompleted {
-                    phase: PipelinePhase::Synthesis,
-                }]);
-            }
-        };
+        // Guard: if deps are missing, skip synthesis entirely
+        if deps.region.is_none()
+            || deps.graph_client.is_none()
+            || deps.budget.is_none()
+            || deps.archive.is_none()
+        {
+            return Ok(events![LifecycleEvent::PhaseCompleted {
+                phase: PipelinePhase::Synthesis,
+            }]);
+        }
 
+        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        info!("Synthesis triggered, dispatching to role handlers");
+        Ok(events![SynthesisEvent::SynthesisTriggered { run_id }])
+    }
+
+    // ---------------------------------------------------------------
+    // Role handlers: each listens for SynthesisTriggered, runs one activity
+    // ---------------------------------------------------------------
+
+    #[handle(on = SynthesisEvent, id = "synthesis:similarity", filter = is_synthesis_triggered)]
+    async fn similarity(
+        event: SynthesisEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let run_id = event.run_id();
+        let deps = ctx.deps();
+        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
+
+        info!("Building similarity edges...");
+        let similarity = SimilarityBuilder::new(graph_client.clone());
+        match similarity.compute_edges().await {
+            Ok(edges) => {
+                info!(edges = edges.len(), "Similarity edges computed");
+                let mut out = Events::new();
+                out.push(SystemEvent::SimilarityEdgesRebuilt { edges });
+                out.push(SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::Similarity,
+                });
+                Ok(out)
+            }
+            Err(e) => {
+                warn!(error = %e, "Similarity edge building failed (non-fatal)");
+                Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::Similarity,
+                }])
+            }
+        }
+    }
+
+    #[handle(on = SynthesisEvent, id = "synthesis:response_mapping", filter = is_synthesis_triggered)]
+    async fn response_mapping(
+        event: SynthesisEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let run_id = event.run_id();
+        let deps = ctx.deps();
+        let region = deps.region.as_ref().expect("guarded by trigger");
+        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
+        let budget = deps.budget.as_ref().expect("guarded by trigger");
+        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let graph = GraphReader::new(graph_client.clone());
+
+        let mut out = Events::new();
+        if budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
+            info!("Starting response mapping...");
+            let response_mapper = activities::response_mapper::ResponseMapper::new(
+                &graph,
+                api_key,
+                region.center_lat,
+                region.center_lng,
+                region.radius_km,
+            );
+            match response_mapper.map_responses(&mut out).await {
+                Ok(rm_stats) => info!("{rm_stats}"),
+                Err(e) => warn!(error = %e, "Response mapping failed (non-fatal)"),
+            }
+        } else if budget.is_active() {
+            info!("Skipping response mapping (budget exhausted)");
+        }
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
+            run_id,
+            role: SynthesisRole::ResponseMapping,
+        });
+        Ok(out)
+    }
+
+    #[handle(on = SynthesisEvent, id = "synthesis:tension_linker", filter = is_synthesis_triggered)]
+    async fn tension_linker(
+        event: SynthesisEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let run_id = event.run_id();
+        let deps = ctx.deps();
+        let region = deps.region.as_ref().expect("guarded by trigger");
+        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
+        let budget = deps.budget.as_ref().expect("guarded by trigger");
+        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
         let graph = GraphReader::new(graph_client.clone());
         let cancelled = deps
             .cancelled
             .clone()
             .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-        let api_key = deps
-            .anthropic_api_key
-            .as_deref()
-            .unwrap_or_default()
-            .to_string();
-
         let archive = match deps.archive.as_ref() {
             Some(a) => a.clone(),
             None => {
-                return Ok(events![LifecycleEvent::PhaseCompleted {
-                    phase: PipelinePhase::Synthesis,
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::TensionLinker,
                 }]);
             }
         };
 
-        let output = activities::run_synthesis(
-            &graph,
-            graph_client,
-            archive,
-            &*deps.embedder,
-            &api_key,
-            region,
-            budget,
-            cancelled,
-            deps.run_id.clone(),
-        )
-        .await;
-
-        let mut all_events = output.events;
-        all_events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::Synthesis,
+        let mut out = Events::new();
+        if budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER,
+        ) {
+            info!("Starting tension linker...");
+            let tl = activities::tension_linker::TensionLinker::new(
+                &graph,
+                archive,
+                &*deps.embedder,
+                api_key,
+                region.clone(),
+                cancelled,
+                deps.run_id.clone(),
+            );
+            let tl_stats = tl.run(&mut out).await;
+            info!("{tl_stats}");
+        } else if budget.is_active() {
+            info!("Skipping tension linker (budget exhausted)");
+        }
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
+            run_id,
+            role: SynthesisRole::TensionLinker,
         });
-        Ok(all_events)
+        Ok(out)
     }
+
+    #[handle(on = SynthesisEvent, id = "synthesis:response_finder", filter = is_synthesis_triggered)]
+    async fn response_finder(
+        event: SynthesisEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let run_id = event.run_id();
+        let deps = ctx.deps();
+        let region = deps.region.as_ref().expect("guarded by trigger");
+        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
+        let budget = deps.budget.as_ref().expect("guarded by trigger");
+        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let graph = GraphReader::new(graph_client.clone());
+        let cancelled = deps
+            .cancelled
+            .clone()
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let archive = match deps.archive.as_ref() {
+            Some(a) => a.clone(),
+            None => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::ResponseFinder,
+                }]);
+            }
+        };
+
+        let mut out = Events::new();
+        if budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_RESPONSE_FINDER + OperationCost::SEARCH_RESPONSE_FINDER,
+        ) {
+            info!("Starting response finder...");
+            let rf = activities::response_finder::ResponseFinder::new(
+                &graph,
+                archive,
+                &*deps.embedder,
+                api_key,
+                region.clone(),
+                cancelled,
+                deps.run_id.clone(),
+            );
+            let (rf_stats, rf_sources) = rf.run(&mut out).await;
+            info!("{rf_stats}");
+            for source in rf_sources {
+                out.push(DiscoveryEvent::SourceDiscovered {
+                    source,
+                    discovered_by: "synthesis".into(),
+                });
+            }
+        } else if budget.is_active() {
+            info!("Skipping response finder (budget exhausted)");
+        }
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
+            run_id,
+            role: SynthesisRole::ResponseFinder,
+        });
+        Ok(out)
+    }
+
+    #[handle(on = SynthesisEvent, id = "synthesis:gathering_finder", filter = is_synthesis_triggered)]
+    async fn gathering_finder(
+        event: SynthesisEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let run_id = event.run_id();
+        let deps = ctx.deps();
+        let region = deps.region.as_ref().expect("guarded by trigger");
+        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
+        let budget = deps.budget.as_ref().expect("guarded by trigger");
+        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let graph = GraphReader::new(graph_client.clone());
+        let cancelled = deps
+            .cancelled
+            .clone()
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let archive = match deps.archive.as_ref() {
+            Some(a) => a.clone(),
+            None => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::GatheringFinder,
+                }]);
+            }
+        };
+
+        let mut out = Events::new();
+        if budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_GATHERING_FINDER + OperationCost::SEARCH_GATHERING_FINDER,
+        ) {
+            info!("Starting gathering finder...");
+            let gf_deps = activities::gathering_finder::GatheringFinderDeps::new(
+                &graph,
+                archive,
+                &*deps.embedder,
+                api_key,
+                region.clone(),
+                cancelled,
+                deps.run_id.clone(),
+            );
+            let (gf_stats, gf_sources) =
+                activities::gathering_finder::find_gatherings(&gf_deps, &mut out).await;
+            info!("{gf_stats}");
+            for source in gf_sources {
+                out.push(DiscoveryEvent::SourceDiscovered {
+                    source,
+                    discovered_by: "synthesis".into(),
+                });
+            }
+        } else if budget.is_active() {
+            info!("Skipping gathering finder (budget exhausted)");
+        }
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
+            run_id,
+            role: SynthesisRole::GatheringFinder,
+        });
+        Ok(out)
+    }
+
+    #[handle(on = SynthesisEvent, id = "synthesis:investigation", filter = is_synthesis_triggered)]
+    async fn investigation(
+        event: SynthesisEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let run_id = event.run_id();
+        let deps = ctx.deps();
+        let region = deps.region.as_ref().expect("guarded by trigger");
+        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
+        let budget = deps.budget.as_ref().expect("guarded by trigger");
+        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let graph = GraphReader::new(graph_client.clone());
+        let cancelled = deps
+            .cancelled
+            .clone()
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let archive = match deps.archive.as_ref() {
+            Some(a) => a.clone(),
+            None => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::Investigation,
+                }]);
+            }
+        };
+
+        let mut out = Events::new();
+        if budget.has_budget(
+            OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION,
+        ) {
+            info!("Starting investigation phase...");
+            let investigator = activities::investigator::Investigator::new(
+                &graph,
+                archive,
+                api_key,
+                region,
+                cancelled,
+            );
+            let inv_stats = investigator.run(&mut out).await;
+            info!("{inv_stats}");
+        } else if budget.is_active() {
+            info!("Skipping investigation (budget exhausted)");
+        }
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
+            run_id,
+            role: SynthesisRole::Investigation,
+        });
+        Ok(out)
+    }
+
+    // ---------------------------------------------------------------
+    // Completion: all 6 roles done → PhaseCompleted(Synthesis)
+    // ---------------------------------------------------------------
+
+    #[handle(on = SynthesisEvent, id = "synthesis:phase_complete", filter = is_synthesis_role_completed)]
+    async fn phase_complete(
+        _event: SynthesisEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let (_, state) = ctx.singleton::<PipelineState>();
+
+        if state
+            .completed_synthesis_roles
+            .is_superset(&all_synthesis_roles())
+        {
+            info!("All synthesis roles complete, emitting PhaseCompleted");
+            Ok(events![LifecycleEvent::PhaseCompleted {
+                phase: PipelinePhase::Synthesis,
+            }])
+        } else {
+            Ok(Events::new())
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Severity inference: unchanged, triggers on PhaseCompleted(Synthesis)
+    // ---------------------------------------------------------------
 
     /// PhaseCompleted(Synthesis) → re-evaluate Notice severity now that
     /// EVIDENCE_OF edges have been projected to Neo4j by the graph projector.

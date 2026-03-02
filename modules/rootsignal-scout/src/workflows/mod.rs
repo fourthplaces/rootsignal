@@ -112,6 +112,29 @@ impl ScoutDeps {
         engine::build_engine(deps)
     }
 
+    /// Build a news-scan engine: NewsScanRequested → BeaconDetected.
+    ///
+    /// Minimal deps: no scope/region, no extractor.
+    pub fn build_news_engine(&self, run_id: &str) -> ScoutEngine {
+        let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
+        let embedder: Arc<dyn TextEmbedder> =
+            Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
+        let archive = create_archive(self);
+        let budget = Arc::new(
+            crate::domains::scheduling::activities::budget::BudgetTracker::new(
+                self.daily_budget_cents,
+            ),
+        );
+
+        let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
+        deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
+        deps.graph_client = Some(self.graph_client.clone());
+        deps.archive = Some(archive);
+        deps.budget = Some(budget);
+        deps.pg_pool = Some(self.pg_pool.clone());
+        engine::build_news_engine(deps)
+    }
+
     /// Build a full-chain engine: extends the scrape chain with
     /// situation_weaving → supervisor before finalize.
     ///

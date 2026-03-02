@@ -92,10 +92,20 @@ pub mod handlers {
             expansion_sources_created: output.expansion.expansion_sources_created,
             expansion_social_topics_queued: output.expansion.expansion_social_topics_queued,
         });
-        if let Some(topic_scrape) = output.topic_scrape {
-            let (scrape_events, pipeline_event) = topic_scrape.into_pipeline_event();
+        if let Some(mut topic_scrape) = output.topic_scrape {
+            let scrape_events = topic_scrape.take_events();
+            all_events.push(PipelineEvent::UrlsResolvedAccumulated {
+                url_mappings: topic_scrape.url_mappings,
+                pub_dates: topic_scrape.pub_dates,
+                query_api_errors: topic_scrape.query_api_errors,
+            });
+            all_events.push(PipelineEvent::ScrapeResultAccumulated {
+                source_signal_counts: topic_scrape.source_signal_counts,
+                collected_links: topic_scrape.collected_links,
+                expansion_queries: topic_scrape.expansion_queries,
+                stats_delta: topic_scrape.stats_delta,
+            });
             all_events.extend(scrape_events);
-            all_events.push(pipeline_event);
         }
         all_events.push(LifecycleEvent::PhaseCompleted {
             phase: PipelinePhase::SignalExpansion,

@@ -3980,3 +3980,230 @@ async fn actor_bio_location_corroborated_by_signal_wins() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// resolve_web_urls boundary tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn resolve_web_urls_collects_search_result_urls() {
+    let query = "mutual aid Minneapolis";
+    let fetcher = MockFetcher::new().on_search(
+        query,
+        search_results(query, &["https://org-a.org", "https://org-b.org"]),
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+    let extractor = MockExtractor::new();
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = web_query_source(query);
+    let sources: Vec<&_> = vec![&source];
+    let ctx = RunContext::from_sources(&[source.clone()]);
+    let log = run_log();
+
+    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, &log).await;
+
+    assert_eq!(resolution.urls.len(), 2, "should resolve 2 URLs from search");
+    assert!(resolution.query_api_errors.is_empty(), "no API errors");
+    assert!(
+        resolution.url_mappings.values().any(|v| v == &source.canonical_key),
+        "URL mappings should map to source canonical_key"
+    );
+}
+
+#[tokio::test]
+async fn resolve_web_urls_records_api_errors() {
+    // MockFetcher with no search configured → returns Err
+    let fetcher = MockFetcher::new();
+    let store = Arc::new(MockSignalReader::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+    let extractor = MockExtractor::new();
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = web_query_source("failing query");
+    let sources: Vec<&_> = vec![&source];
+    let ctx = RunContext::from_sources(&[source.clone()]);
+    let log = run_log();
+
+    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, &log).await;
+
+    assert!(resolution.urls.is_empty(), "no URLs on API error");
+    assert!(
+        resolution.query_api_errors.contains(&source.canonical_key),
+        "API error should be recorded"
+    );
+}
+
+#[tokio::test]
+async fn resolve_web_urls_includes_page_source_urls() {
+    let fetcher = MockFetcher::new();
+    let store = Arc::new(MockSignalReader::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+    let extractor = MockExtractor::new();
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source("https://localorg.org/events");
+    let sources: Vec<&_> = vec![&source];
+    let ctx = RunContext::from_sources(&[source.clone()]);
+    let log = run_log();
+
+    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, &log).await;
+
+    assert_eq!(resolution.urls.len(), 1);
+    assert_eq!(resolution.urls[0], "https://localorg.org/events");
+}
+
+// ---------------------------------------------------------------------------
+// fetch_and_extract boundary tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fetch_and_extract_produces_signals_and_stats() {
+    let url = "https://localorg.org/events";
+    let fetcher = MockFetcher::new().on_page(
+        url,
+        archived_page(url, "Community dinner at Powderhorn Park"),
+    );
+
+    let extractor = MockExtractor::new().on_url(
+        url,
+        ExtractionResult {
+            nodes: vec![tension_at("Community Dinner", 44.9489, -93.2583)],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let source = page_source(url);
+    let source_keys: std::collections::HashMap<String, Uuid> =
+        vec![(source.canonical_key.clone(), source.id)].into_iter().collect();
+    let ctx = RunContext::from_sources(&[source.clone()]);
+    let log = run_log();
+    let urls = vec![url.to_string()];
+
+    let result = phase.fetch_and_extract(
+        &urls,
+        &source_keys,
+        &ctx.url_to_canonical_key,
+        &ctx.actor_contexts,
+        &std::collections::HashMap::new(),
+        &log,
+    ).await;
+
+    assert_eq!(result.stats.urls_scraped, 1, "one URL scraped");
+    assert_eq!(result.stats.urls_failed, 0, "no failures");
+    assert_eq!(result.stats.signals_extracted, 1, "one signal extracted");
+    assert!(!result.events.is_empty(), "should produce events");
+}
+
+#[tokio::test]
+async fn fetch_and_extract_with_empty_urls_returns_empty() {
+    let fetcher = MockFetcher::new();
+    let store = Arc::new(MockSignalReader::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+    let extractor = MockExtractor::new();
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let ctx = RunContext::default();
+    let log = run_log();
+    let urls: Vec<String> = vec![];
+    let source_keys = std::collections::HashMap::new();
+
+    let result = phase.fetch_and_extract(
+        &urls,
+        &source_keys,
+        &ctx.url_to_canonical_key,
+        &ctx.actor_contexts,
+        &std::collections::HashMap::new(),
+        &log,
+    ).await;
+
+    assert_eq!(result.stats.urls_scraped, 0);
+    assert_eq!(result.stats.urls_failed, 0);
+    assert!(result.events.is_empty());
+}
+
+#[tokio::test]
+async fn fetch_and_extract_counts_failed_urls() {
+    // MockFetcher with no page configured → returns Err
+    let fetcher = MockFetcher::new();
+    let store = Arc::new(MockSignalReader::new());
+    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+    let extractor = MockExtractor::new();
+
+    let phase = ScrapePhase::new(
+        store.clone(),
+        Arc::new(extractor),
+        embedder,
+        Arc::new(fetcher),
+        mpls_region(),
+        "test-run".to_string(),
+    );
+
+    let ctx = RunContext::default();
+    let log = run_log();
+    let urls = vec!["https://unreachable.org".to_string()];
+    let source_keys = std::collections::HashMap::new();
+
+    let result = phase.fetch_and_extract(
+        &urls,
+        &source_keys,
+        &ctx.url_to_canonical_key,
+        &ctx.actor_contexts,
+        &std::collections::HashMap::new(),
+        &log,
+    ).await;
+
+    assert_eq!(result.stats.urls_failed, 1, "one URL should fail");
+    assert_eq!(result.stats.urls_scraped, 0);
+}
+

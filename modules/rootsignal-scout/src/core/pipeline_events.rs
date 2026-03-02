@@ -23,16 +23,6 @@ pub enum PipelineEvent {
         actor_contexts: HashMap<String, ActorContext>,
         url_mappings: HashMap<String, String>,
     },
-    /// Scrape phase accumulated output — URL mappings, signal counts, pub dates, links, etc.
-    ScrapeAccumulated {
-        url_mappings: HashMap<String, String>,
-        source_signal_counts: HashMap<String, u32>,
-        pub_dates: HashMap<String, DateTime<Utc>>,
-        collected_links: Vec<CollectedLink>,
-        expansion_queries: Vec<String>,
-        query_api_errors: HashSet<String>,
-        stats_delta: StatsDelta,
-    },
     /// Expansion phase accumulated output — social topics, stats.
     ExpansionAccumulated {
         social_expansion_topics: Vec<String>,
@@ -47,16 +37,30 @@ pub enum PipelineEvent {
     },
     /// Social topics consumed by response scrape.
     SocialTopicsConsumed,
+    /// URL resolution state — mappings, pub_dates, API errors.
+    UrlsResolvedAccumulated {
+        url_mappings: HashMap<String, String>,
+        pub_dates: HashMap<String, DateTime<Utc>>,
+        query_api_errors: HashSet<String>,
+    },
+    /// Fetch+extract state — signal counts, links, expansion queries, stats.
+    ScrapeResultAccumulated {
+        source_signal_counts: HashMap<String, u32>,
+        collected_links: Vec<CollectedLink>,
+        expansion_queries: Vec<String>,
+        stats_delta: StatsDelta,
+    },
 }
 
 impl PipelineEvent {
     pub fn event_type_str(&self) -> String {
         let variant = match self {
             Self::ScheduleResolved { .. } => "schedule_resolved",
-            Self::ScrapeAccumulated { .. } => "scrape_accumulated",
             Self::ExpansionAccumulated { .. } => "expansion_accumulated",
             Self::SocialTopicsCollected { .. } => "social_topics_collected",
             Self::SocialTopicsConsumed => "social_topics_consumed",
+            Self::UrlsResolvedAccumulated { .. } => "urls_resolved_accumulated",
+            Self::ScrapeResultAccumulated { .. } => "scrape_result_accumulated",
         };
         format!("pipeline:{variant}")
     }

@@ -22,7 +22,7 @@ pub struct BeaconCandidate {
 // ---------------------------------------------------------------------------
 
 /// Get geohash-5 cells of existing pending/running tasks.
-async fn existing_task_hashes(writer: &GraphStore) -> Result<HashSet<String>, neo4rs::Error> {
+pub async fn existing_task_hashes(writer: &GraphStore) -> Result<HashSet<String>, neo4rs::Error> {
     let existing_tasks = writer.list_scout_tasks(Some("pending"), 100).await?;
     let mut running_tasks = writer.list_scout_tasks(Some("running"), 100).await?;
     running_tasks.extend(existing_tasks);
@@ -74,7 +74,7 @@ fn most_common_location_name<'a>(
 /// 4. If not, create a ScoutTask with source: Beacon
 pub async fn detect_beacons(
     client: &GraphClient,
-    writer: &GraphStore,
+    existing_hashes: &HashSet<String>,
 ) -> Result<Vec<ScoutTask>, neo4rs::Error> {
     let q = query(
         "MATCH (s)
@@ -109,7 +109,6 @@ pub async fn detect_beacons(
         }
     }
 
-    let existing_hashes = existing_task_hashes(writer).await?;
     let mut new_tasks = Vec::new();
 
     for (hash, cell_signals) in &cells {
@@ -151,7 +150,6 @@ pub async fn detect_beacons(
             completed_at: None,
         };
 
-        writer.upsert_scout_task(&task).await?;
         new_tasks.push(task);
     }
 
@@ -173,12 +171,12 @@ pub async fn detect_beacons(
 /// Buckets candidates into geohash-5 cells, deduplicates against existing tasks,
 /// and creates tasks for cells with >= 2 candidates (a single article isn't enough
 /// signal, but two independent articles about the same area means something is happening).
-pub async fn create_beacons_from_news(
-    writer: &GraphStore,
+pub fn create_beacons_from_news(
+    existing_hashes: &HashSet<String>,
     candidates: Vec<BeaconCandidate>,
-) -> Result<u32, neo4rs::Error> {
+) -> Vec<ScoutTask> {
     if candidates.is_empty() {
-        return Ok(0);
+        return Vec::new();
     }
 
     // Bucket into geohash-5 cells
@@ -195,8 +193,7 @@ pub async fn create_beacons_from_news(
         }
     }
 
-    let existing_hashes = existing_task_hashes(writer).await?;
-    let mut created = 0u32;
+    let mut new_tasks = Vec::new();
 
     for (hash, cell_candidates) in &cells {
         // Threshold: 2+ candidates per cell
@@ -247,15 +244,14 @@ pub async fn create_beacons_from_news(
             completed_at: None,
         };
 
-        writer.upsert_scout_task(&task).await?;
-        created += 1;
+        new_tasks.push(task);
     }
 
     info!(
         candidates = candidates.len(),
         cells = cells.len(),
-        beacons_created = created,
+        beacons_created = new_tasks.len(),
         "News beacon creation complete"
     );
-    Ok(created)
+    new_tasks
 }

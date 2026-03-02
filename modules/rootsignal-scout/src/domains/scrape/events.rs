@@ -1,10 +1,23 @@
 //! Scrape domain events: content fetching, extraction, social scraping.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::core::events::FreshnessBucket;
+
+/// Sub-phase role within a scrape phase (tension or response).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrapeRole {
+    TensionWeb,
+    TensionSocial,
+    ResponseWeb,
+    ResponseSocial,
+    TopicDiscovery,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -56,6 +69,34 @@ pub enum ScrapeEvent {
         url: String,
         discovered_on: String,
     },
+    /// Web URLs resolved — triggers fetch+extract handler.
+    WebUrlsResolved {
+        run_id: Uuid,
+        role: ScrapeRole,
+        urls: Vec<String>,
+        /// canonical_key → source_id, populated by the resolve handler so
+        /// downstream fetch handlers don't re-derive it from sources.
+        source_keys: HashMap<String, Uuid>,
+        source_count: u32,
+    },
+    /// Social scrape triggered — handler reads sources from scheduled state.
+    SocialScrapeTriggered {
+        run_id: Uuid,
+        role: ScrapeRole,
+    },
+    /// Topic discovery triggered — handler reads topics from PipelineState.
+    TopicDiscoveryTriggered {
+        run_id: Uuid,
+    },
+    /// A scrape sub-phase completed fetch+extract.
+    ScrapeRoleCompleted {
+        run_id: Uuid,
+        role: ScrapeRole,
+        urls_scraped: u32,
+        urls_unchanged: u32,
+        urls_failed: u32,
+        signals_extracted: u32,
+    },
 }
 
 impl ScrapeEvent {
@@ -68,7 +109,11 @@ impl ScrapeEvent {
             | Self::ExtractionFailed { run_id, .. }
             | Self::SocialPostsFetched { run_id, .. }
             | Self::FreshnessRecorded { run_id, .. }
-            | Self::LinkCollected { run_id, .. } => *run_id,
+            | Self::LinkCollected { run_id, .. }
+            | Self::WebUrlsResolved { run_id, .. }
+            | Self::SocialScrapeTriggered { run_id, .. }
+            | Self::TopicDiscoveryTriggered { run_id, .. }
+            | Self::ScrapeRoleCompleted { run_id, .. } => *run_id,
         }
     }
 }

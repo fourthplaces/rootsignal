@@ -16,6 +16,8 @@ use rootsignal_common::Node;
 
 use crate::core::events::FreshnessBucket;
 use crate::core::pipeline_events::PipelineEvent;
+use crate::domains::scrape::events::ScrapeRole;
+use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
 use crate::core::stats::ScoutStats;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::scrape::events::ScrapeEvent;
@@ -88,6 +90,14 @@ pub struct PipelineState {
 
     /// Social topics collected during mid-run discovery, consumed by response scrape.
     pub social_topics: Vec<String>,
+
+    /// Scrape roles completed in current phase, for phase-completion tracking.
+    #[serde(default)]
+    pub completed_scrape_roles: HashSet<ScrapeRole>,
+
+    /// Synthesis roles completed, for phase-completion tracking.
+    #[serde(default)]
+    pub completed_synthesis_roles: HashSet<SynthesisRole>,
 }
 
 /// A batch of extracted nodes for a single URL, carried on `SignalsExtracted`
@@ -139,6 +149,8 @@ impl PipelineState {
             wiring_contexts: HashMap::new(),
             scheduled: None,
             social_topics: Vec::new(),
+            completed_scrape_roles: HashSet::new(),
+            completed_synthesis_roles: HashSet::new(),
         }
     }
 
@@ -201,6 +213,12 @@ impl PipelineState {
                 });
             }
             ScrapeEvent::ExtractionFailed { .. } => {}
+            ScrapeEvent::WebUrlsResolved { .. } => {}
+            ScrapeEvent::SocialScrapeTriggered { .. } => {}
+            ScrapeEvent::TopicDiscoveryTriggered { .. } => {}
+            ScrapeEvent::ScrapeRoleCompleted { role, .. } => {
+                self.completed_scrape_roles.insert(*role);
+            }
         }
     }
 
@@ -272,6 +290,16 @@ impl PipelineState {
         }
     }
 
+    /// Apply a synthesis domain event.
+    pub fn apply_synthesis(&mut self, event: &SynthesisEvent) {
+        match event {
+            SynthesisEvent::SynthesisTriggered { .. } => {}
+            SynthesisEvent::SynthesisRoleCompleted { role, .. } => {
+                self.completed_synthesis_roles.insert(*role);
+            }
+        }
+    }
+
     // LifecycleEvent and EnrichmentEvent are no-ops for aggregate state.
 
     // -----------------------------------------------------------------
@@ -322,27 +350,6 @@ impl PipelineState {
                 self.url_to_canonical_key.extend(url_mappings.clone());
                 self.scheduled = Some(scheduled_data.clone());
             }
-            PipelineEvent::ScrapeAccumulated {
-                url_mappings,
-                source_signal_counts,
-                pub_dates,
-                collected_links,
-                expansion_queries,
-                query_api_errors,
-                stats_delta,
-            } => {
-                self.url_to_canonical_key.extend(url_mappings.clone());
-                for (k, v) in source_signal_counts {
-                    *self.source_signal_counts.entry(k.clone()).or_default() += v;
-                }
-                self.query_api_errors.extend(query_api_errors.clone());
-                self.url_to_pub_date.extend(pub_dates.clone());
-                self.collected_links.extend(collected_links.clone());
-                self.expansion_queries.extend(expansion_queries.clone());
-                self.stats.social_media_posts += stats_delta.social_media_posts;
-                self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
-                self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
-            }
             PipelineEvent::ExpansionAccumulated {
                 social_expansion_topics,
                 expansion_deferred_expanded,
@@ -362,6 +369,30 @@ impl PipelineState {
             }
             PipelineEvent::SocialTopicsConsumed => {
                 self.social_topics.clear();
+            }
+            PipelineEvent::UrlsResolvedAccumulated {
+                url_mappings,
+                pub_dates,
+                query_api_errors,
+            } => {
+                self.url_to_canonical_key.extend(url_mappings.clone());
+                self.query_api_errors.extend(query_api_errors.clone());
+                self.url_to_pub_date.extend(pub_dates.clone());
+            }
+            PipelineEvent::ScrapeResultAccumulated {
+                source_signal_counts,
+                collected_links,
+                expansion_queries,
+                stats_delta,
+            } => {
+                for (k, v) in source_signal_counts {
+                    *self.source_signal_counts.entry(k.clone()).or_default() += v;
+                }
+                self.collected_links.extend(collected_links.clone());
+                self.expansion_queries.extend(expansion_queries.clone());
+                self.stats.social_media_posts += stats_delta.social_media_posts;
+                self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
+                self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
             }
         }
     }
@@ -395,6 +426,10 @@ pub mod pipeline_aggregators {
 
     fn on_pipeline(state: &mut PipelineState, event: PipelineEvent) {
         state.apply_pipeline(&event);
+    }
+
+    fn on_synthesis(state: &mut PipelineState, event: SynthesisEvent) {
+        state.apply_synthesis(&event);
     }
 }
 

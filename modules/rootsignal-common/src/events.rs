@@ -80,6 +80,14 @@ pub enum SourceChange {
     },
 }
 
+/// A similarity edge between two signals, computed from cosine similarity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimilarityEdge {
+    pub from_id: Uuid,
+    pub to_id: Uuid,
+    pub weight: f64,
+}
+
 /// A tag with its computed weight.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagFact {

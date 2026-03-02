@@ -312,13 +312,10 @@ async fn link_promotion_promotes_links_on_phase_completed() {
     // Seed collected links via PipelineEvent (simulates links found during scraping)
     use crate::core::pipeline_events::PipelineEvent;
     use crate::domains::scrape::activities::scrape_phase::StatsDelta;
-    use std::collections::HashSet;
 
     engine
-        .emit(PipelineEvent::ScrapeAccumulated {
-            url_mappings: HashMap::new(),
+        .emit(PipelineEvent::ScrapeResultAccumulated {
             source_signal_counts: HashMap::new(),
-            pub_dates: HashMap::new(),
             collected_links: vec![
                 CollectedLink {
                     url: "https://example.org/community".to_string(),
@@ -330,7 +327,6 @@ async fn link_promotion_promotes_links_on_phase_completed() {
                 },
             ],
             expansion_queries: vec![],
-            query_api_errors: HashSet::new(),
             stats_delta: StatsDelta::default(),
         })
         .settled()

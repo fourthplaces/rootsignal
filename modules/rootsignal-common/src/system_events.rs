@@ -12,7 +12,8 @@ use rootsignal_world::Eventlike;
 
 use crate::events::{
     AnnouncementCorrection, CauseHeatScore, ConcernCorrection, GatheringCorrection,
-    HelpRequestCorrection, ResourceCorrection, SituationChange, SourceChange, SystemSourceChange,
+    HelpRequestCorrection, ResourceCorrection, SimilarityEdge, SituationChange, SourceChange,
+    SystemSourceChange,
 };
 use crate::safety::SensitivityLevel;
 use crate::types::{
@@ -488,6 +489,10 @@ pub enum SystemEvent {
         scores: Vec<CauseHeatScore>,
     },
 
+    SimilarityEdgesRebuilt {
+        edges: Vec<SimilarityEdge>,
+    },
+
     BeaconDetected {
         task: ScoutTask,
     },
@@ -557,6 +562,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::SourcesBoostedForSituation { .. } => "sources_boosted_for_situation",
             SystemEvent::EchoScored { .. } => "echo_scored",
             SystemEvent::CauseHeatComputed { .. } => "cause_heat_computed",
+            SystemEvent::SimilarityEdgesRebuilt { .. } => "similarity_edges_rebuilt",
             SystemEvent::BeaconDetected { .. } => "beacon_detected",
         }
     }

@@ -23,7 +23,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
     let graph = GraphReader::new(graph_client.clone());
     let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
-    // 1. Run supervisor checks
+    // 1. Run supervisor checks — collects events from auto_fix, echo, source_penalty
     let notifier: Box<dyn rootsignal_scout_supervisor::notify::backend::NotifyBackend> =
         Box::new(rootsignal_scout_supervisor::notify::noop::NoopBackend);
 
@@ -36,7 +36,12 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
     );
 
     match supervisor.run().await {
-        Ok(stats) => info!(%stats, "Supervisor run complete"),
+        Ok((stats, supervisor_events)) => {
+            info!(%stats, "Supervisor run complete");
+            for evt in supervisor_events {
+                events.push(evt);
+            }
+        }
         Err(e) => warn!(error = %e, "Supervisor run failed"),
     }
 
@@ -60,7 +65,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
         Err(e) => warn!(error = %e, "Failed to find duplicate tension pairs"),
     }
 
-    // 3. Compute cause heat
+    // 3. Compute cause heat — push CauseHeatComputed for non-empty scores
     match rootsignal_graph::cause_heat::compute_cause_heat(
         graph_client,
         0.7,
@@ -71,14 +76,32 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
     )
     .await
     {
-        Ok(_) => info!("Cause heat computed"),
+        Ok(scores) => {
+            let hot: Vec<_> = scores.into_iter().filter(|s| s.cause_heat > 0.0).collect();
+            if !hot.is_empty() {
+                info!(count = hot.len(), "Cause heat computed");
+                events.push(SystemEvent::CauseHeatComputed { scores: hot });
+            }
+        }
         Err(e) => warn!(error = %e, "Failed to compute cause heat"),
     }
 
     // 4. Detect beacons (geographic signal clusters → new ScoutTasks)
     let graph_rw = GraphStore::new(graph_client.clone());
-    match rootsignal_graph::beacon::detect_beacons(graph_client, &graph_rw).await {
-        Ok(tasks) if !tasks.is_empty() => info!(count = tasks.len(), "Beacon tasks created"),
+    let existing_hashes = match rootsignal_graph::beacon::existing_task_hashes(&graph_rw).await {
+        Ok(h) => h,
+        Err(e) => {
+            warn!(error = %e, "Failed to load existing task hashes");
+            return;
+        }
+    };
+    match rootsignal_graph::beacon::detect_beacons(graph_client, &existing_hashes).await {
+        Ok(tasks) if !tasks.is_empty() => {
+            info!(count = tasks.len(), "Beacon tasks detected");
+            for task in tasks {
+                events.push(SystemEvent::BeaconDetected { task });
+            }
+        }
         Ok(_) => {}
         Err(e) => warn!(error = %e, "Beacon detection failed"),
     }

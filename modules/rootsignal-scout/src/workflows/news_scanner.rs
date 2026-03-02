@@ -8,8 +8,6 @@ use std::sync::Arc;
 use restate_sdk::prelude::*;
 use tracing::info;
 
-use rootsignal_graph::GraphStore;
-
 use super::types::{EmptyRequest, NewsScanResult};
 use super::ScoutDeps;
 
@@ -77,20 +75,20 @@ impl NewsScanWorkflow for NewsScanWorkflowImpl {
 
 /// Run a news scan using shared deps. Usable from both Restate and CLI.
 pub async fn scan_news(deps: &ScoutDeps) -> anyhow::Result<NewsScanResult> {
-    let archive = super::create_archive(deps);
-    let graph = GraphStore::new(deps.graph_client.clone());
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let engine = deps.build_news_engine(&run_id);
 
-    let scanner = crate::news_scanner::NewsScanner::new(
-        archive,
-        &deps.anthropic_api_key,
-        graph,
-        deps.daily_budget_cents,
-    );
+    engine
+        .emit(crate::domains::lifecycle::events::LifecycleEvent::NewsScanRequested)
+        .settled()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let (articles_scanned, beacons_created) = scanner.scan().await?;
+    let state = engine
+        .singleton::<crate::domains::news_scanning::aggregate::NewsScanState>();
 
     Ok(NewsScanResult {
-        articles_scanned,
-        beacons_created,
+        articles_scanned: 0,
+        beacons_created: state.beacons_created,
     })
 }

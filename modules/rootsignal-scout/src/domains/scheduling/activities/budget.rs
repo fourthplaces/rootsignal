@@ -93,6 +93,11 @@ impl BudgetTracker {
         self.daily_limit_cents > 0
     }
 
+    /// The configured daily limit in cents.
+    pub fn daily_limit(&self) -> u64 {
+        self.daily_limit_cents
+    }
+
     /// Log budget status.
     pub fn log_status(&self) {
         if self.is_active() {
