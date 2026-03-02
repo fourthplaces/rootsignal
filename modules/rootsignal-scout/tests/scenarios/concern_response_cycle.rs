@@ -1,8 +1,8 @@
-//! Scenario: Tension-Response Cycle
+//! Scenario: Concern-Response Cycle
 //!
-//! Tests the two-phase pipeline: Phase A finds tensions (youth violence, lack of safe spaces),
+//! Tests the two-phase pipeline: Phase A finds concerns (youth violence, lack of safe spaces),
 //! Phase B finds responses (after-school programs, mentorship, community centers).
-//! Verifies that RESPONDS_TO edges connect responses to tensions.
+//! Verifies that RESPONDS_TO edges connect responses to concerns.
 
 use simweb::{Fact, Geography, JudgeCriteria, Site, SocialProfile, World};
 

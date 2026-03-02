@@ -1,7 +1,7 @@
-//! Scenario: Tension Discovery Bridge
+//! Scenario: Concern Discovery Bridge
 //!
 //! Tests that mid-run discovery generates useful response-seeking queries after
-//! finding tensions. Only tension sources are in the initial world — response
+//! finding concerns. Only concern sources are in the initial world — response
 //! sources exist but must be found through discovery queries.
 
 use simweb::{Fact, Geography, JudgeCriteria, Site, SocialProfile, World};

@@ -165,6 +165,22 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             subject: n.subject.clone(),
             opposing: n.opposing.clone(),
         },
+        Node::Condition(n) => WorldEvent::ConditionObserved {
+            id: n.meta.id,
+            title: n.meta.title.clone(),
+            summary: n.meta.summary.clone(),
+            source_url: n.meta.source_url.clone(),
+            published_at: n.meta.published_at,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            references: vec![],
+            schedule: None,
+            subject: n.subject.clone(),
+            observed_by: n.observed_by.clone(),
+            measurement: n.measurement.clone(),
+            affected_scope: n.affected_scope.clone(),
+        },
         Node::Citation(_) => unreachable!("Evidence nodes use create_evidence, not create_node"),
     }
 }
