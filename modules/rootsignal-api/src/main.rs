@@ -10,7 +10,7 @@ use axum::{
     extract::State,
     http::{header, HeaderValue, Method},
     response::{Html, IntoResponse},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use tokio::sync::Mutex;
@@ -43,6 +43,7 @@ use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflo
 
 mod db;
 mod graphql;
+mod investigate;
 mod jwt;
 mod link_preview;
 mod restate_client;
@@ -333,6 +334,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         // GraphQL
         .route("/graphql", get(graphiql).post(graphql_handler))
+        // AI investigation (SSE streaming)
+        .route("/api/investigate", post(investigate::investigate_handler))
         // Health check
         .route("/", get(|| async { "ok" }))
         .with_state(state)

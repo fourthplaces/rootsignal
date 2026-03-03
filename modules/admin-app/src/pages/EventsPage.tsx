@@ -6,7 +6,9 @@ import {
   Group as PanelGroup,
   Separator as PanelResizeHandle,
 } from "react-resizable-panels";
+import { Search } from "lucide-react";
 import { ADMIN_EVENTS, ADMIN_CAUSAL_TREE } from "@/graphql/queries";
+import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -178,17 +180,19 @@ function EventRow({
   event,
   isSelected,
   onClick,
+  onInvestigate,
 }: {
   event: AdminEvent;
   isSelected: boolean;
   onClick: () => void;
+  onInvestigate: () => void;
 }) {
   const [payloadOpen, setPayloadOpen] = useState(false);
   const layerColor = LAYER_COLORS[event.layer] ?? "bg-zinc-500/20 text-zinc-400";
 
   return (
     <div
-      className={`w-full text-left px-3 py-2 border-b border-border hover:bg-accent/30 transition-colors ${
+      className={`group w-full text-left px-3 py-2 border-b border-border hover:bg-accent/30 transition-colors ${
         isSelected ? "bg-accent/50 ring-1 ring-blue-500/50" : ""
       }`}
     >
@@ -213,6 +217,13 @@ function EventRow({
           >
             {event.summary ?? compactPayload(event.payload)}
           </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onInvestigate(); }}
+            className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto p-1 rounded hover:bg-accent shrink-0"
+            title="Investigate with AI"
+          >
+            <Search className="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
         </div>
       </button>
       {payloadOpen && (
@@ -225,6 +236,33 @@ function EventRow({
 }
 
 // ---------------------------------------------------------------------------
+// InfiniteScrollSentinel
+// ---------------------------------------------------------------------------
+
+function InfiniteScrollSentinel({ onVisible, loading }: { onVisible: () => void; loading: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onVisibleRef = useRef(onVisible);
+  onVisibleRef.current = onVisible;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) onVisibleRef.current(); },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={ref} className="flex items-center justify-center py-3">
+      {loading && <span className="text-[10px] text-muted-foreground">Loading...</span>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // EventTimeline
 // ---------------------------------------------------------------------------
 
@@ -232,6 +270,7 @@ function EventTimeline({
   events,
   selectedSeq,
   onSelectSeq,
+  onInvestigate,
   loading,
   hasMore,
   onLoadMore,
@@ -241,6 +280,7 @@ function EventTimeline({
   events: AdminEvent[];
   selectedSeq: number | null;
   onSelectSeq: (seq: number) => void;
+  onInvestigate: (event: AdminEvent) => void;
   loading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
@@ -271,18 +311,11 @@ function EventTimeline({
           event={event}
           isSelected={event.seq === selectedSeq}
           onClick={() => onSelectSeq(event.seq)}
+          onInvestigate={() => onInvestigate(event)}
         />
       ))}
       {hasMore && (
-        <div className="p-3 text-center">
-          <button
-            onClick={onLoadMore}
-            disabled={loadingMore}
-            className="px-4 py-1.5 text-xs rounded bg-accent/50 text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-          >
-            {loadingMore ? "Loading..." : "Load more"}
-          </button>
-        </div>
+        <InfiniteScrollSentinel onVisible={onLoadMore} loading={loadingMore} />
       )}
     </div>
   );
@@ -297,12 +330,14 @@ function TreeNode({
   childrenMap,
   selectedSeq,
   onSelectSeq,
+  onInvestigate,
   depth,
 }: {
   event: AdminEvent;
   childrenMap: Map<string, AdminEvent[]>;
   selectedSeq: number | null;
   onSelectSeq: (seq: number) => void;
+  onInvestigate: (event: AdminEvent) => void;
   depth: number;
 }) {
   const [payloadOpen, setPayloadOpen] = useState(false);
@@ -323,7 +358,7 @@ function TreeNode({
     <div className={depth > 0 ? "pl-6" : ""}>
       <div
         ref={isSelected ? nodeRef : undefined}
-        className={`w-full text-left px-2 py-1.5 rounded transition-colors hover:bg-accent/30 ${
+        className={`group/tree w-full text-left px-2 py-1.5 rounded transition-colors hover:bg-accent/30 ${
           isSelected ? "bg-accent/50 ring-1 ring-blue-500/50" : ""
         }`}
       >
@@ -353,6 +388,13 @@ function TreeNode({
             <span className="text-[10px] text-muted-foreground shrink-0">
               {formatTs(event.ts)}
             </span>
+            <button
+              onClick={(e) => { e.stopPropagation(); onInvestigate(event); }}
+              className="opacity-0 group-hover/tree:opacity-100 transition-opacity ml-auto p-0.5 rounded hover:bg-accent shrink-0"
+              title="Investigate with AI"
+            >
+              <Search className="w-3 h-3 text-muted-foreground" />
+            </button>
           </div>
         </button>
         <button
@@ -377,6 +419,7 @@ function TreeNode({
           childrenMap={childrenMap}
           selectedSeq={selectedSeq}
           onSelectSeq={onSelectSeq}
+          onInvestigate={onInvestigate}
           depth={depth + 1}
         />
       ))}
@@ -393,11 +436,13 @@ function CausalTreePanel({
   loading,
   selectedSeq,
   onSelectSeq,
+  onInvestigate,
 }: {
   treeData: CausalTreeResult | null;
   loading: boolean;
   selectedSeq: number | null;
   onSelectSeq: (seq: number) => void;
+  onInvestigate: (event: AdminEvent) => void;
 }) {
   // Build tree from parentId (UUID) → children mapping.
   // parentId points to the parent event's UUID (the "id" field in the events table / payload).
@@ -446,6 +491,7 @@ function CausalTreePanel({
         childrenMap={childrenMap}
         selectedSeq={selectedSeq}
         onSelectSeq={onSelectSeq}
+        onInvestigate={onInvestigate}
         depth={0}
       />
     </div>
@@ -567,6 +613,18 @@ export function EventsPage() {
     [fetchTree],
   );
 
+  // Investigation drawer state
+  const [investigateEvent, setInvestigateEvent] = useState<AdminEvent | null>(null);
+
+  const handleInvestigate = useCallback(
+    (event: AdminEvent) => {
+      setInvestigateEvent(event);
+      setSelectedSeq(event.seq);
+      fetchTree({ variables: { seq: event.seq } });
+    },
+    [fetchTree],
+  );
+
   const toggleLayer = useCallback((layer: string) => {
     setLayers((prev) => {
       const next = new Set(prev);
@@ -580,7 +638,7 @@ export function EventsPage() {
     <div className="h-[calc(100vh-3rem)] -m-6">
       <PanelGroup orientation="horizontal" className="h-full">
         {/* Left: Timeline */}
-        <Panel defaultSize={60} minSize={30}>
+        <Panel defaultSize={investigateEvent ? 40 : 60} minSize={20}>
           <div className="flex flex-col h-full">
             <FilterBar
               layers={layers}
@@ -596,6 +654,7 @@ export function EventsPage() {
               events={filteredEvents}
               selectedSeq={selectedSeq}
               onSelectSeq={handleSelectSeq}
+              onInvestigate={handleInvestigate}
               loading={loading}
               hasMore={hasMore}
               onLoadMore={handleLoadMore}
@@ -607,15 +666,31 @@ export function EventsPage() {
 
         <PanelResizeHandle className="w-1.5 bg-border hover:bg-accent transition-colors cursor-col-resize" />
 
-        {/* Right: Causal Tree */}
-        <Panel defaultSize={40} minSize={20}>
+        {/* Middle: Causal Tree */}
+        <Panel defaultSize={investigateEvent ? 25 : 40} minSize={15}>
           <CausalTreePanel
             treeData={treeData?.adminCausalTree ?? null}
             loading={treeLoading}
             selectedSeq={selectedSeq}
             onSelectSeq={handleSelectSeq}
+            onInvestigate={handleInvestigate}
           />
         </Panel>
+
+        {/* Right: Investigation Panel */}
+        {investigateEvent && (
+          <>
+            <PanelResizeHandle className="w-1.5 bg-border hover:bg-accent transition-colors cursor-col-resize" />
+            <Panel defaultSize={35} minSize={20}>
+              <InvestigateDrawer
+                key={investigateEvent.seq}
+                event={investigateEvent}
+                causalTree={treeData?.adminCausalTree?.events ?? []}
+                onClose={() => setInvestigateEvent(null)}
+              />
+            </Panel>
+          </>
+        )}
       </PanelGroup>
     </div>
   );

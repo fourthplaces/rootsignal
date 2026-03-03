@@ -1,7 +1,9 @@
 use std::marker::PhantomData;
+use std::pin::Pin;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use futures::Stream;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use tracing::debug;
@@ -158,6 +160,10 @@ impl PromptBuilder for OpenRouterPromptBuilder {
 
             return Ok(choice.message.content.clone().unwrap_or_default());
         }
+    }
+
+    async fn stream(self) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
+        unimplemented!("streaming not yet supported for OpenRouter provider")
     }
 }
 

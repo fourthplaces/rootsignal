@@ -1,7 +1,10 @@
 use std::marker::PhantomData;
+use std::pin::Pin;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use futures::Stream;
+use futures::StreamExt;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use tracing::debug;
@@ -9,6 +12,7 @@ use tracing::debug;
 use crate::openai::StructuredOutput;
 use crate::traits::{Message, MessageRole, OutputBuilder, PromptBuilder};
 
+use super::streaming::ClaudeStreamEvent;
 use super::types::*;
 use super::Claude;
 
@@ -165,6 +169,54 @@ impl PromptBuilder for ClaudePromptBuilder {
 
             return Ok(response.text().unwrap_or_default());
         }
+    }
+
+    async fn stream(self) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
+        let client = self.agent.client();
+
+        let mut request = ChatRequest::new(&self.agent.model).streaming();
+
+        if let Some(temp) = self.temperature {
+            request = request.temperature(temp);
+        }
+
+        if let Some(ref preamble) = self.preamble {
+            request = request.system(preamble);
+        }
+
+        let mut messages = Vec::new();
+
+        for msg in &self.messages {
+            match msg.role {
+                MessageRole::System => {
+                    let existing = request.system.take().unwrap_or_default();
+                    let combined = if existing.is_empty() {
+                        msg.content.clone()
+                    } else {
+                        format!("{}\n\n{}", existing, msg.content)
+                    };
+                    request = request.system(combined);
+                }
+                MessageRole::User => messages.push(WireMessage::user(&msg.content)),
+                MessageRole::Assistant => messages.push(WireMessage::assistant(&msg.content)),
+            }
+        }
+
+        if !self.input.is_empty() {
+            messages.push(WireMessage::user(&self.input));
+        }
+
+        request = request.messages(messages);
+
+        let stream = client.chat_stream(&request).await?;
+
+        Ok(Box::pin(stream.filter_map(|event| async move {
+            match event {
+                Ok(ClaudeStreamEvent::Delta(text)) => Some(Ok(text)),
+                Ok(ClaudeStreamEvent::Done) => None,
+                Err(e) => Some(Err(e)),
+            }
+        })))
     }
 }
 

@@ -72,7 +72,7 @@ pub mod handlers {
 
         // Filter out irrelevant domains (SaaS, e-commerce, SEO spam, etc.) via LLM.
         // Fail-open: if api key or region is missing, skip filtering.
-        let links = match (deps.anthropic_api_key.as_deref(), deps.region.as_ref()) {
+        let (links, filter_events) = match (deps.anthropic_api_key.as_deref(), deps.region.as_ref()) {
             (Some(api_key), Some(region)) => {
                 let urls: Vec<String> = links.iter().map(|l| l.url.clone()).collect();
                 let accepted = domain_filter::filter_domains_batch(
@@ -84,25 +84,47 @@ pub mod handlers {
                 .await;
                 let accepted_set: std::collections::HashSet<&str> =
                     accepted.iter().map(|u| u.as_str()).collect();
+                let rejected_urls: Vec<&str> = urls.iter()
+                    .map(|u| u.as_str())
+                    .filter(|u| !accepted_set.contains(u))
+                    .collect();
                 let filtered: Vec<_> = links
                     .into_iter()
                     .filter(|l| accepted_set.contains(l.url.as_str()))
                     .collect();
-                let rejected = urls.len() - filtered.len();
-                if rejected > 0 {
+                let rejected = rejected_urls.len();
+                let log_event = if rejected > 0 {
                     info!(rejected, accepted = filtered.len(), "Domain filter applied to collected links");
-                }
-                filtered
+                    Some(TelemetryEvent::SystemLog {
+                        message: format!("Domain filter rejected {} of {} links", rejected, rejected + filtered.len()),
+                        context: Some(serde_json::json!({
+                            "handler": "discovery:link_promotion",
+                            "rejected": rejected,
+                            "accepted": filtered.len(),
+                            "rejected_urls": rejected_urls,
+                        })),
+                    })
+                } else {
+                    None
+                };
+                (filtered, log_event)
             }
-            _ => links,
+            _ => (links, None),
         };
 
         let promoted = link_promoter::promote_links(&links, &PromotionConfig::default());
         if promoted.is_empty() {
-            return Ok(events![]);
+            let mut events = Events::new();
+            if let Some(log) = filter_events {
+                events.push(log);
+            }
+            return Ok(events);
         }
         let count = promoted.len() as u32;
         let mut events = Events::new();
+        if let Some(log) = filter_events {
+            events.push(log);
+        }
         for s in promoted {
             events.push(DiscoveryEvent::SourceDiscovered {
                 source: s,

@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Result};
+use futures::Stream;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use tracing::debug;
 
+use super::streaming::{parse_claude_sse_stream, ClaudeStreamEvent};
 use super::types::*;
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1";
@@ -58,5 +60,30 @@ impl ClaudeClient {
         }
 
         Ok(response.json().await?)
+    }
+
+    pub async fn chat_stream(
+        &self,
+        request: &ChatRequest,
+    ) -> Result<impl Stream<Item = Result<ClaudeStreamEvent>>> {
+        let url = format!("{}/messages", self.base_url);
+
+        debug!(model = %request.model, "Claude streaming chat request");
+
+        let response = self
+            .http
+            .post(&url)
+            .headers(self.headers()?)
+            .json(request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow!("Claude API error ({}): {}", status, error_text));
+        }
+
+        Ok(parse_claude_sse_stream(response))
     }
 }

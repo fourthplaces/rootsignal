@@ -1,6 +1,8 @@
 use crate::tool::{DynTool, Tool};
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::Stream;
+use std::pin::Pin;
 use std::sync::Arc;
 
 // =============================================================================
@@ -66,6 +68,7 @@ pub trait PromptBuilder: Send + Sized {
     fn multi_turn(self, max_turns: usize) -> Self;
     fn messages(self, messages: Vec<Message>) -> Self;
     async fn send(self) -> Result<String>;
+    async fn stream(self) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>>;
 }
 
 // =============================================================================

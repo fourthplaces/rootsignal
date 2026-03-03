@@ -1,5 +1,6 @@
 mod client;
 pub mod prompt_builder;
+pub(crate) mod streaming;
 pub(crate) mod types;
 
 pub use prompt_builder::{ClaudeOutputBuilder, ClaudePromptBuilder};
