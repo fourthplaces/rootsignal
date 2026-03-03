@@ -64,10 +64,6 @@ function EventsPageInner() {
     [setInvestigateEvent],
   );
 
-  const handleResetLayout = useCallback(() => {
-    setInvestigateEvent(null);
-  }, [setInvestigateEvent]);
-
   return (
     <div className="h-[calc(100vh-3rem)] -m-6">
       <PaneManager
@@ -76,7 +72,6 @@ function EventsPageInner() {
         paneRegistry={PANE_REGISTRY}
         storageKey="events-pane-layout"
         onModelChange={handleModelChange}
-        onResetLayout={handleResetLayout}
       />
     </div>
   );

@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef } from "react";
 import { Layout, Model, Actions, DockLocation } from "flexlayout-react";
 import type { TabNode, TabSetNode, ITabSetRenderValues, Action } from "flexlayout-react";
-import { Plus, RotateCcw } from "lucide-react";
+import { Plus } from "lucide-react";
 
 export type PaneType = {
   name: string;
@@ -14,7 +14,6 @@ export type PaneManagerProps = {
   paneRegistry: PaneType[];
   storageKey?: string;
   onModelChange?: (model: Model, action: Action) => void;
-  onResetLayout?: () => void;
 };
 
 export type PaneManagerHandle = {
@@ -25,9 +24,9 @@ export type PaneManagerHandle = {
 };
 
 export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
-  function PaneManager({ defaultLayout, paneRegistry, storageKey, onModelChange, onResetLayout }, ref) {
+  function PaneManager({ defaultLayout, paneRegistry, storageKey, onModelChange }, ref) {
     const layoutRef = useRef<Layout>(null);
-    const [model, setModel] = useState(() => {
+    const [model] = useState(() => {
       if (storageKey) {
         try {
           const saved = localStorage.getItem(storageKey);
@@ -150,13 +149,6 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
       [model, pickerTabsetId],
     );
 
-    const handleResetLayout = useCallback(() => {
-      if (storageKey) localStorage.removeItem(storageKey);
-      setModel(Model.fromJson(defaultLayout as any));
-      setPickerTabsetId(null);
-      onResetLayout?.();
-    }, [storageKey, defaultLayout, onResetLayout]);
-
     // Close picker on click outside
     useEffect(() => {
       if (!pickerTabsetId) return;
@@ -170,22 +162,7 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
     }, [pickerTabsetId]);
 
     return (
-      <div className="flex flex-col h-full">
-        {/* Toolbar */}
-        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-card/50 shrink-0">
-          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Layout</span>
-          <button
-            onClick={handleResetLayout}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-            title="Reset layout to default"
-          >
-            <RotateCcw size={10} />
-            Reset
-          </button>
-        </div>
-
-        {/* Layout container — flexlayout-react needs position:relative parent */}
-        <div className="flex-1 relative">
+      <div className="h-full relative">
           <Layout
             ref={layoutRef}
             model={model}
@@ -213,7 +190,6 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
               ))}
             </div>
           )}
-        </div>
       </div>
     );
   },
