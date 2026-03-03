@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use rootsignal_common::Node;
-use rootsignal_graph::PublicGraphReader;
+use rootsignal_graph::{GraphStore, PublicGraphReader};
 
 use crate::db::scout_run::{self, EventRow, EventRowFull, json_str, event_layer, event_summary};
 
@@ -559,5 +559,261 @@ impl Tool for CreateGitHubIssueTool {
             issue_url: issue.html_url,
             issue_number: issue.number,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. FetchUrlTool
+// ---------------------------------------------------------------------------
+
+pub(crate) struct FetchUrlTool;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FetchUrlArgs {
+    url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct FetchUrlOutput {
+    status: u16,
+    content_type: Option<String>,
+    body: String,
+    truncated: bool,
+}
+
+const FETCH_MAX_BYTES: usize = 10_000;
+
+#[async_trait]
+impl Tool for FetchUrlTool {
+    const NAME: &'static str = "fetch_url";
+    type Error = ToolError;
+    type Args = FetchUrlArgs;
+    type Output = FetchUrlOutput;
+
+    async fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Fetch a URL and return the page text. Useful for comparing what a source page actually says versus what was extracted. Returns up to 10KB of text content.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "The URL to fetch" }
+                },
+                "required": ["url"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let resp = HttpClient::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| ToolError(format!("Failed to create HTTP client: {e}")))?
+            .get(&args.url)
+            .header("User-Agent", "rootsignal-investigator/1.0")
+            .send()
+            .await
+            .map_err(|e| ToolError(format!("Fetch failed: {e}")))?;
+
+        let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let bytes = resp.bytes().await
+            .map_err(|e| ToolError(format!("Failed to read response body: {e}")))?;
+
+        let full_text = String::from_utf8_lossy(&bytes);
+        let truncated = full_text.len() > FETCH_MAX_BYTES;
+        let body = if truncated {
+            full_text[..FETCH_MAX_BYTES].to_string()
+        } else {
+            full_text.into_owned()
+        };
+
+        Ok(FetchUrlOutput { status, content_type, body, truncated })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 9. GetFindingsForNodeTool
+// ---------------------------------------------------------------------------
+
+pub(crate) struct GetFindingsForNodeTool {
+    pub(crate) reader: Arc<PublicGraphReader>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GetFindingsForNodeArgs {
+    node_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct FindingOutput {
+    id: String,
+    issue_type: String,
+    severity: String,
+    description: String,
+    suggested_action: String,
+    status: String,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetFindingsForNodeOutput {
+    findings: Vec<FindingOutput>,
+}
+
+#[async_trait]
+impl Tool for GetFindingsForNodeTool {
+    const NAME: &'static str = "get_findings_for_node";
+    type Error = ToolError;
+    type Args = GetFindingsForNodeArgs;
+    type Output = GetFindingsForNodeOutput;
+
+    async fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Check if the supervisor has flagged any quality issues for a specific signal or source node. Returns open and resolved findings.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "node_id": { "type": "string", "description": "The UUID of the signal or source to check for supervisor findings" }
+                },
+                "required": ["node_id"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let rows = self.reader
+            .list_validation_issues_for_target(&args.node_id, 20)
+            .await
+            .map_err(|e| ToolError(format!("Query failed: {e}")))?;
+
+        let findings = rows.into_iter().map(|r| FindingOutput {
+            id: r.id,
+            issue_type: r.issue_type,
+            severity: r.severity,
+            description: r.description,
+            suggested_action: r.suggested_action,
+            status: r.status,
+            created_at: r.created_at.map(|t| t.to_rfc3339()),
+        }).collect();
+
+        Ok(GetFindingsForNodeOutput { findings })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 10. GetSourceInfoTool
+// ---------------------------------------------------------------------------
+
+pub(crate) struct GetSourceInfoTool {
+    pub(crate) writer: GraphStore,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GetSourceInfoArgs {
+    url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SourceInfoOutput {
+    found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    discovery_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quality_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effective_weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signals_produced: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signals_corroborated: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    consecutive_empty_runs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    avg_signals_per_scrape: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cadence_hours: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_scraped: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_produced_signal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gap_context: Option<String>,
+}
+
+#[async_trait]
+impl Tool for GetSourceInfoTool {
+    const NAME: &'static str = "get_source_info";
+    type Error = ToolError;
+    type Args = GetSourceInfoArgs;
+    type Output = SourceInfoOutput;
+
+    async fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Look up source metadata by URL. Returns weight, quality penalty, effective weight, discovery method, scrape cadence, signal production stats, and active status.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "The source URL to look up (substring match)" }
+                },
+                "required": ["url"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let sources = self.writer
+            .search_sources(Some(&args.url))
+            .await
+            .map_err(|e| ToolError(format!("Query failed: {e}")))?;
+
+        // Return the first match (search_sources does substring matching)
+        match sources.first() {
+            Some(s) => {
+                let effective_weight = s.weight * s.quality_penalty;
+                Ok(SourceInfoOutput {
+                    found: true,
+                    id: Some(s.id.to_string()),
+                    canonical_value: Some(s.canonical_value.clone()),
+                    discovery_method: Some(format!("{:?}", s.discovery_method)),
+                    weight: Some(s.weight),
+                    quality_penalty: Some(s.quality_penalty),
+                    effective_weight: Some(effective_weight),
+                    signals_produced: Some(s.signals_produced),
+                    signals_corroborated: Some(s.signals_corroborated),
+                    consecutive_empty_runs: Some(s.consecutive_empty_runs),
+                    avg_signals_per_scrape: Some(s.avg_signals_per_scrape),
+                    cadence_hours: s.cadence_hours,
+                    last_scraped: s.last_scraped.map(|t| t.to_rfc3339()),
+                    last_produced_signal: s.last_produced_signal.map(|t| t.to_rfc3339()),
+                    active: Some(s.active),
+                    gap_context: s.gap_context.clone(),
+                })
+            }
+            None => Ok(SourceInfoOutput {
+                found: false,
+                id: None, canonical_value: None, discovery_method: None,
+                weight: None, quality_penalty: None, effective_weight: None,
+                signals_produced: None, signals_corroborated: None,
+                consecutive_empty_runs: None, avg_signals_per_scrape: None,
+                cadence_hours: None, last_scraped: None, last_produced_signal: None,
+                active: None, gap_context: None,
+            }),
+        }
     }
 }

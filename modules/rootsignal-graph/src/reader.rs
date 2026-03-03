@@ -1174,6 +1174,34 @@ impl PublicGraphReader {
         Ok(results)
     }
 
+    /// List validation issues that target a specific node (signal/source) by its UUID.
+    pub async fn list_validation_issues_for_target(
+        &self,
+        target_id: &str,
+        limit: i64,
+    ) -> Result<Vec<ValidationIssueRow>, neo4rs::Error> {
+        let q = neo4rs::query(
+            "MATCH (v:ValidationIssue)
+             WHERE v.target_id = $target_id
+             RETURN v
+             ORDER BY v.created_at DESC
+             LIMIT $limit",
+        )
+        .param("target_id", target_id.to_string())
+        .param("limit", limit);
+
+        let mut stream = self.client.execute(q).await?;
+        let mut results = Vec::new();
+
+        while let Some(row) = stream.next().await? {
+            if let Ok(n) = row.get::<neo4rs::Node>("v") {
+                results.push(ValidationIssueRow::from_neo4j_node(&n));
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Aggregate counts of ValidationIssues by type, severity, and status for a region.
     pub async fn validation_issue_summary(
         &self,

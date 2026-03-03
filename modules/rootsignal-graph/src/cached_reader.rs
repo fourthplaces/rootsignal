@@ -797,6 +797,16 @@ impl CachedReader {
             .await
     }
 
+    pub async fn list_validation_issues_for_target(
+        &self,
+        target_id: &str,
+        limit: i64,
+    ) -> Result<Vec<crate::reader::ValidationIssueRow>, neo4rs::Error> {
+        self.neo4j_reader
+            .list_validation_issues_for_target(target_id, limit)
+            .await
+    }
+
     pub async fn validation_issue_summary(
         &self,
         region: &str,

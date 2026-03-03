@@ -16,7 +16,8 @@ use ai_client::{Agent, Claude, Message, PromptBuilder};
 
 use crate::db::scout_run::{self, event_layer, event_summary, json_str};
 use crate::investigate_tools::{
-    CreateGitHubIssueTool, FindEventsForNodeTool, GetEventTool, GetRunInfoTool, GetSignalTool,
+    CreateGitHubIssueTool, FetchUrlTool, FindEventsForNodeTool, GetEventTool,
+    GetFindingsForNodeTool, GetRunInfoTool, GetSignalTool, GetSourceInfoTool,
     LoadCausalTreeTool, SearchEventsTool,
 };
 use crate::jwt;
@@ -70,6 +71,9 @@ You have tools to query the event store and signal graph. Use them to investigat
 - `find_events_for_node` — trace what events touched a specific signal
 - `get_run_info` — understand the run that produced this event
 - `get_event` — load full payloads of specific events you want to inspect
+- `fetch_url` — fetch a source page to compare what it actually says vs what was extracted
+- `get_findings_for_node` — check if the supervisor already flagged quality issues for a signal or source
+- `get_source_info` — look up source metadata (weight, quality penalty, cadence, discovery method, production stats)
 
 ## How to Respond
 
@@ -198,7 +202,10 @@ pub async fn investigate_handler(
         .tool(GetEventTool { pool: pool.clone() })
         .tool(GetSignalTool { reader: state.reader.clone() })
         .tool(FindEventsForNodeTool { pool: pool.clone() })
-        .tool(GetRunInfoTool { pool });
+        .tool(GetRunInfoTool { pool })
+        .tool(FetchUrlTool)
+        .tool(GetFindingsForNodeTool { reader: state.reader.clone() })
+        .tool(GetSourceInfoTool { writer: state.writer.clone() });
 
     if let (Some(token), Some(repo)) = (&state.config.github_token, &state.config.github_repo) {
         claude = claude.tool(CreateGitHubIssueTool {
