@@ -415,11 +415,11 @@ impl QueryRoot {
         })
     }
 
-    /// List active sources with schedule preview.
+    /// List active sources with schedule preview, optionally filtered by search term.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_region_sources(&self, ctx: &Context<'_>) -> Result<Vec<AdminSource>> {
+    async fn admin_region_sources(&self, ctx: &Context<'_>, search: Option<String>) -> Result<Vec<AdminSource>> {
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let sources = writer.get_active_sources().await?;
+        let sources = writer.search_sources(search.as_deref()).await?;
         Ok(sources
             .iter()
             .map(|s| {

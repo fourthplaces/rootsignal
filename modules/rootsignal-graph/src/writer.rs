@@ -491,23 +491,51 @@ impl GraphReader {
 
     /// Get all active sources (global — used for dedup checks).
     pub async fn get_active_sources(&self) -> Result<Vec<SourceNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Source {active: true})
-             RETURN s.id AS id, s.canonical_key AS canonical_key,
-                    s.canonical_value AS canonical_value, s.url AS url,
-                    s.discovery_method AS discovery_method,
-                    s.created_at AS created_at, s.last_scraped AS last_scraped,
-                    s.last_produced_signal AS last_produced_signal,
-                    s.signals_produced AS signals_produced,
-                    s.signals_corroborated AS signals_corroborated,
-                    s.consecutive_empty_runs AS consecutive_empty_runs,
-                    s.active AS active, s.gap_context AS gap_context,
-                    s.weight AS weight, s.cadence_hours AS cadence_hours,
-                    s.avg_signals_per_scrape AS avg_signals_per_scrape,
-                    s.quality_penalty AS quality_penalty,
-                    s.source_role AS source_role,
-                    s.scrape_count AS scrape_count",
-        );
+        self.search_sources(None).await
+    }
+
+    /// Search sources with optional text filter on canonical_value, url, and source_role.
+    pub async fn search_sources(&self, search: Option<&str>) -> Result<Vec<SourceNode>, neo4rs::Error> {
+        let cypher = match search {
+            Some(_) => "MATCH (s:Source {active: true})
+                WHERE toLower(s.canonical_value) CONTAINS toLower($search)
+                   OR (s.url IS NOT NULL AND toLower(s.url) CONTAINS toLower($search))
+                   OR toLower(s.source_role) CONTAINS toLower($search)
+                RETURN s.id AS id, s.canonical_key AS canonical_key,
+                       s.canonical_value AS canonical_value, s.url AS url,
+                       s.discovery_method AS discovery_method,
+                       s.created_at AS created_at, s.last_scraped AS last_scraped,
+                       s.last_produced_signal AS last_produced_signal,
+                       s.signals_produced AS signals_produced,
+                       s.signals_corroborated AS signals_corroborated,
+                       s.consecutive_empty_runs AS consecutive_empty_runs,
+                       s.active AS active, s.gap_context AS gap_context,
+                       s.weight AS weight, s.cadence_hours AS cadence_hours,
+                       s.avg_signals_per_scrape AS avg_signals_per_scrape,
+                       s.quality_penalty AS quality_penalty,
+                       s.source_role AS source_role,
+                       s.scrape_count AS scrape_count",
+            None => "MATCH (s:Source {active: true})
+                RETURN s.id AS id, s.canonical_key AS canonical_key,
+                       s.canonical_value AS canonical_value, s.url AS url,
+                       s.discovery_method AS discovery_method,
+                       s.created_at AS created_at, s.last_scraped AS last_scraped,
+                       s.last_produced_signal AS last_produced_signal,
+                       s.signals_produced AS signals_produced,
+                       s.signals_corroborated AS signals_corroborated,
+                       s.consecutive_empty_runs AS consecutive_empty_runs,
+                       s.active AS active, s.gap_context AS gap_context,
+                       s.weight AS weight, s.cadence_hours AS cadence_hours,
+                       s.avg_signals_per_scrape AS avg_signals_per_scrape,
+                       s.quality_penalty AS quality_penalty,
+                       s.source_role AS source_role,
+                       s.scrape_count AS scrape_count",
+        };
+
+        let q = match search {
+            Some(s) => query(cypher).param("search", s.to_string()),
+            None => query(cypher),
+        };
 
         let mut sources = Vec::new();
         let mut stream = self.client().execute(q).await?;

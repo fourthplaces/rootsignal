@@ -309,7 +309,18 @@ function PromptDialog({
 }
 
 export function SourcesPage() {
-  const { data, loading, refetch } = useQuery(ADMIN_REGION_SOURCES);
+  // Search with debounce
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchInput), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  const { data, loading, refetch } = useQuery(ADMIN_REGION_SOURCES, {
+    variables: { search: debouncedSearch || undefined },
+  });
   const sources: Source[] = data?.adminRegionSources ?? [];
 
   const [updateSource] = useMutation(UPDATE_SOURCE);
@@ -324,7 +335,6 @@ export function SourcesPage() {
 
   // Filter
   const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
-  const [searchQuery, setSearchQuery] = useState("");
 
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>("signalsProduced");
@@ -358,15 +368,6 @@ export function SourcesPage() {
     let list = [...sources];
     if (activeFilter === "active") list = list.filter((s) => s.active);
     if (activeFilter === "inactive") list = list.filter((s) => !s.active);
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter((s) =>
-        s.canonicalValue.toLowerCase().includes(q) ||
-        s.url.toLowerCase().includes(q) ||
-        s.sourceLabel.toLowerCase().includes(q) ||
-        s.discoveryMethod.toLowerCase().includes(q),
-      );
-    }
     list.sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
@@ -385,7 +386,7 @@ export function SourcesPage() {
       return 0;
     });
     return list;
-  }, [sources, activeFilter, searchQuery, sortKey, sortDir]);
+  }, [sources, activeFilter, sortKey, sortDir]);
 
   // Visible slice
   const visibleSlice = filtered.slice(0, visibleCount);
@@ -555,8 +556,8 @@ export function SourcesPage() {
       <div className="flex items-center gap-2">
         <input
           type="text"
-          value={searchQuery}
-          onChange={(e) => { setSearchQuery(e.target.value); setVisibleCount(PAGE_SIZE_INCREMENT); }}
+          value={searchInput}
+          onChange={(e) => { setSearchInput(e.target.value); setVisibleCount(PAGE_SIZE_INCREMENT); }}
           placeholder="Search sources..."
           className="px-3 py-1.5 rounded-md border border-input bg-background text-sm w-64"
         />

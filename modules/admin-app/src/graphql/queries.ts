@@ -114,8 +114,8 @@ export const ADMIN_DASHBOARD = gql`
 `;
 
 export const ADMIN_REGION_SOURCES = gql`
-  query AdminRegionSources {
-    adminRegionSources {
+  query AdminRegionSources($search: String) {
+    adminRegionSources(search: $search) {
       id
       url
       canonicalValue
