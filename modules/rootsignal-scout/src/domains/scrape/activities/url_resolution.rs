@@ -8,7 +8,6 @@ use tracing::{info, warn};
 
 use rootsignal_common::{is_web_query, scraping_strategy, ScrapingStrategy, SourceNode};
 
-use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::sanitize_url;
 
 use super::scraper::Scraper;
@@ -21,7 +20,6 @@ impl Scraper {
         &self,
         sources: &[&SourceNode],
         url_to_canonical_key: &HashMap<String, String>,
-        run_log: &RunLogger,
     ) -> UrlResolution {
         let mut url_mappings: HashMap<String, String> = HashMap::new();
         let mut pub_dates: HashMap<String, DateTime<Utc>> = HashMap::new();
@@ -73,12 +71,6 @@ impl Scraper {
             for (canonical_key, query_str, result) in search_results {
                 match result {
                     Ok(archived) => {
-                        run_log.log(EventKind::SearchQuery {
-                            query: query_str.clone(),
-                            provider: "serper".to_string(),
-                            result_count: archived.results.len() as u32,
-                            canonical_key: canonical_key.clone(),
-                        });
                         for r in &archived.results {
                             let clean = sanitize_url(&r.url);
                             url_mappings
@@ -152,10 +144,6 @@ impl Scraper {
                     let feed_result = self.fetcher.feed(feed_url).await;
                     match feed_result {
                         Ok(archived) => {
-                            run_log.log(EventKind::ScrapeFeed {
-                                url: feed_url.clone(),
-                                items: archived.items.len() as u32,
-                            });
                             for item in archived.items {
                                 url_mappings
                                     .entry(item.url.clone())

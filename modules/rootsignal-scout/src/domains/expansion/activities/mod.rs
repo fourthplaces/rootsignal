@@ -11,7 +11,6 @@ use seesaw_core::Events;
 use crate::core::aggregate::PipelineState;
 use crate::domains::discovery::activities::source_finder::SourceFinder;
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::run_log::RunLogger;
 use self::expansion::{Expansion, ExpansionOutput};
 use crate::domains::scrape::activities::{register_sources_events, Scraper, ScrapeOutput};
 use crate::domains::scheduling::activities::budget::BudgetTracker;
@@ -38,11 +37,10 @@ pub async fn expand_and_discover(
     api_key: Option<&str>,
     budget: &BudgetTracker,
     embedder: &dyn TextEmbedder,
-    run_log: &RunLogger,
 ) -> ExpansionActivityOutput {
     // Signal expansion — create sources from implied queries
     let expansion_queries = state.expansion_queries.clone();
-    let mut expansion_output = expansion.generate_expansion_sources(expansion_queries, run_log).await;
+    let mut expansion_output = expansion.generate_expansion_sources(expansion_queries).await;
     let expansion_events = std::mem::replace(&mut expansion_output.events, Events::new());
 
     let mut collected_events = Events::new();
@@ -87,7 +85,6 @@ pub async fn expand_and_discover(
                     &end_social_topics,
                     &state.url_to_canonical_key,
                     &state.actor_contexts,
-                    run_log,
                 )
                 .await;
             Some(topic_output)

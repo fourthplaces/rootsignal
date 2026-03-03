@@ -7,11 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use rootsignal_archive::Archive;
 
-use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
-
 pub(crate) struct WebSearchTool {
     pub(crate) archive: Arc<Archive>,
-    pub(crate) run_log: Option<RunLogger>,
     pub(crate) agent_name: String,
     pub(crate) tension_title: String,
 }
@@ -91,15 +88,6 @@ impl Tool for WebSearchTool {
             })
             .collect();
 
-        if let Some(ref log) = self.run_log {
-            log.log(EventKind::AgentWebSearch {
-                provider: self.agent_name.clone(),
-                query: args.query,
-                result_count: results.len() as u32,
-                title: self.tension_title.clone(),
-            });
-        }
-
         Ok(WebSearchOutput { results })
     }
 }
@@ -108,7 +96,6 @@ pub(crate) struct ReadPageTool {
     pub(crate) archive: Arc<Archive>,
     /// When set, records every URL successfully read for post-hoc validation.
     pub(crate) visited_urls: Option<Arc<Mutex<HashSet<String>>>>,
-    pub(crate) run_log: Option<RunLogger>,
     pub(crate) agent_name: String,
     pub(crate) tension_title: String,
 }
@@ -157,15 +144,6 @@ impl Tool for ReadPageTool {
             if let Ok(mut set) = visited.lock() {
                 set.insert(args.url.clone());
             }
-        }
-
-        if let Some(ref log) = self.run_log {
-            log.log(EventKind::AgentPageRead {
-                provider: self.agent_name.clone(),
-                url: args.url,
-                content_chars: content.len(),
-                title: self.tension_title.clone(),
-            });
         }
 
         // Truncate to ~8k chars to fit in context

@@ -27,7 +27,6 @@ use rootsignal_graph::DuplicateMatch;
 use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
 use crate::core::extractor::{ExtractionResult, SignalExtractor};
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::run_log::RunLogger;
 use crate::traits::{ContentFetcher, SignalReader};
 
 // ---------------------------------------------------------------------------
@@ -1427,11 +1426,6 @@ pub fn archived_page(url: &str, markdown: &str) -> ArchivedPage {
         links: Vec::new(),
         published_at: None,
     }
-}
-
-/// Create a RunLogger for tests (encapsulates "test-run" and "Minneapolis").
-pub fn run_log() -> RunLogger {
-    RunLogger::noop()
 }
 
 /// Create a test engine with a dummy store, no event store, no projector.

@@ -13,7 +13,6 @@ use rootsignal_common::SourceNode;
 use seesaw_core::Events;
 
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
-use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 use crate::infra::util::{content_hash, sanitize_url};
 
 use super::scraper::Scraper;
@@ -34,9 +33,8 @@ impl Scraper {
         sources: &[&SourceNode],
         url_to_canonical_key: &HashMap<String, String>,
         actor_contexts: &HashMap<String, ActorContext>,
-        run_log: &RunLogger,
     ) -> ScrapeOutput {
-        let resolution = self.resolve_web_urls(sources, url_to_canonical_key, run_log).await;
+        let resolution = self.resolve_web_urls(sources, url_to_canonical_key).await;
 
         // Build merged url_to_ck for fetch_and_extract
         let mut url_to_ck = url_to_canonical_key.clone();
@@ -53,7 +51,6 @@ impl Scraper {
             &url_to_ck,
             actor_contexts,
             &resolution.pub_dates,
-            run_log,
         ).await;
 
         let mut output = ScrapeOutput::new();
@@ -76,7 +73,6 @@ impl Scraper {
         url_to_ck: &HashMap<String, String>,
         actor_contexts: &HashMap<String, ActorContext>,
         pub_dates: &HashMap<String, DateTime<Utc>>,
-        run_log: &RunLogger,
     ) -> FetchExtractResult {
         let mut result = FetchExtractResult {
             events: Events::new(),
@@ -184,12 +180,6 @@ impl Scraper {
                     author_actors,
                 } => {
                     result.stats.urls_scraped += 1;
-                    run_log.log(EventKind::ScrapeUrl {
-                        url: url.clone(),
-                        strategy: "web".to_string(),
-                        success: true,
-                        content_bytes: content.len(),
-                    });
 
                     // Count implied queries for logging
                     let mut implied_q_count = 0u32;
@@ -203,13 +193,6 @@ impl Scraper {
                             }
                         }
                     }
-
-                    run_log.log(EventKind::LlmExtraction {
-                        source_url: url.clone(),
-                        content_chars: content.len(),
-                        signals_extracted: nodes.len() as u32,
-                        implied_queries: implied_q_count,
-                    });
 
                     result.stats.signals_extracted += nodes.len() as u32;
 
@@ -255,12 +238,6 @@ impl Scraper {
                 }
                 ScrapeOutcome::Failed => {
                     result.stats.urls_failed += 1;
-                    run_log.log(EventKind::ScrapeUrl {
-                        url: url.clone(),
-                        strategy: "web".to_string(),
-                        success: false,
-                        content_bytes: 0,
-                    });
                 }
             }
         }

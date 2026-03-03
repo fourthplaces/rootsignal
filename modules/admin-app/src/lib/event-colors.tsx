@@ -24,7 +24,7 @@ export const EVENT_COLORS: Record<string, string> = {
 };
 
 export type ScoutRunEvent = {
-  id: string;
+  id: string | null;
   parentId: string | null;
   seq: number;
   ts: string;

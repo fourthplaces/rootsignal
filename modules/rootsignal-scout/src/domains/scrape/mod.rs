@@ -24,7 +24,6 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::activities::build_run_logger;
 use crate::domains::scrape::activities::Scraper;
 use crate::domains::scrape::activities::StatsDelta;
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
@@ -90,9 +89,6 @@ pub mod handlers {
             deps.fetcher.as_ref().expect("fetcher set").clone(),
         );
 
-        let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
-        let run_log = build_run_logger(&deps.run_id, region_name, deps.pg_pool.as_ref()).await;
-
         let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
@@ -116,7 +112,6 @@ pub mod handlers {
         let resolution = phase.resolve_web_urls(
             &tension_web_refs,
             &state.url_to_canonical_key,
-            &run_log,
         ).await;
 
         let mut all_events = Events::new();
@@ -167,9 +162,6 @@ pub mod handlers {
             deps.fetcher.as_ref().expect("fetcher set").clone(),
         );
 
-        let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
-        let run_log = build_run_logger(&deps.run_id, region_name, deps.pg_pool.as_ref()).await;
-
         let (_, state) = ctx.singleton::<PipelineState>();
 
         let fetch_result = phase.fetch_and_extract(
@@ -178,7 +170,6 @@ pub mod handlers {
             &state.url_to_canonical_key,
             &state.actor_contexts,
             &state.url_to_pub_date,
-            &run_log,
         ).await;
 
         let mut all_events = Events::new();
@@ -220,9 +211,6 @@ pub mod handlers {
             deps.extractor.as_ref().expect("extractor set").clone(),
             deps.fetcher.as_ref().expect("fetcher set").clone(),
         );
-
-        let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
-        let run_log = build_run_logger(&deps.run_id, region_name, deps.pg_pool.as_ref()).await;
 
         let (_, state) = ctx.singleton::<PipelineState>();
         let scheduled = state.scheduled.as_ref().expect("scheduled data stashed");
@@ -268,7 +256,6 @@ pub mod handlers {
                 &social_refs,
                 &state.url_to_canonical_key,
                 &state.actor_contexts,
-                &run_log,
             ).await;
 
             let events = social_output.take_events();
@@ -312,9 +299,6 @@ pub mod handlers {
             deps.fetcher.as_ref().expect("fetcher set").clone(),
         );
 
-        let region_name = deps.region.as_ref().map(|r| r.name.as_str()).unwrap_or("");
-        let run_log = build_run_logger(&deps.run_id, region_name, deps.pg_pool.as_ref()).await;
-
         let (_, state) = ctx.singleton::<PipelineState>();
 
         let mut all_social_topics = state.social_topics.clone();
@@ -337,7 +321,6 @@ pub mod handlers {
                 &all_social_topics,
                 &state.url_to_canonical_key,
                 &state.actor_contexts,
-                &run_log,
             ).await;
 
             let events = topic_output.take_events();
@@ -419,8 +402,6 @@ pub mod handlers {
             deps.fetcher.as_ref().expect("fetcher set").clone(),
         );
 
-        let run_log = build_run_logger(&deps.run_id, &region.name, deps.pg_pool.as_ref()).await;
-
         let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
         let scheduled = state.scheduled.as_ref().expect("scheduled data stashed");
@@ -483,7 +464,6 @@ pub mod handlers {
             let resolution = phase.resolve_web_urls(
                 &web_sources,
                 &state.url_to_canonical_key,
-                &run_log,
             ).await;
 
             all_events.push(PipelineEvent::UrlsResolvedAccumulated {

@@ -13,7 +13,6 @@ use tracing::{info, warn};
 
 use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 
 // ---------------------------------------------------------------------------
 // ExpansionOutput — accumulated output from the expansion stage
@@ -71,7 +70,6 @@ impl<'a> Expansion<'a> {
     pub async fn generate_expansion_sources(
         &self,
         expansion_queries: Vec<String>,
-        run_log: &RunLogger,
     ) -> ExpansionOutput {
         let mut all_queries = expansion_queries;
 
@@ -162,11 +160,6 @@ impl<'a> Expansion<'a> {
                 rootsignal_common::SourceRole::Response,
                 Some("Signal expansion: implied query from extracted signal".to_string()),
             );
-            run_log.log(EventKind::ExpansionSourceCreated {
-                canonical_key: ck.clone(),
-                query: query_text.clone(),
-                source_url: ck.clone(),
-            });
             sources.push(source);
             // Emit embedding event — projector stores on Source node for future dedup
             if let Ok(embedding) = self.embedder.embed(query_text).await {

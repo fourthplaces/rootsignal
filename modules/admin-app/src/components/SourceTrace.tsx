@@ -8,12 +8,14 @@ type TreeNode = ScoutRunEvent & { children: TreeNode[] };
 function buildTree(events: ScoutRunEvent[]): TreeNode[] {
   const byId = new Map<string, TreeNode>();
   for (const e of events) {
-    byId.set(e.id, { ...e, children: [] });
+    const key = e.id ?? String(e.seq);
+    byId.set(key, { ...e, children: [] });
   }
   const roots: TreeNode[] = [];
   for (const node of byId.values()) {
-    if (node.parentId && byId.has(node.parentId)) {
-      byId.get(node.parentId)!.children.push(node);
+    const parentKey = node.parentId;
+    if (parentKey && byId.has(parentKey)) {
+      byId.get(parentKey)!.children.push(node);
     } else {
       roots.push(node);
     }
@@ -208,7 +210,7 @@ function TreeNodeRow({
       {/* Children */}
       {expanded &&
         node.children.map((child) => (
-          <TreeNodeRow key={child.id} node={child} depth={depth + 1} />
+          <TreeNodeRow key={child.id ?? String(child.seq)} node={child} depth={depth + 1} />
         ))}
     </>
   );
@@ -313,7 +315,7 @@ export function SourceTrace({ runId }: { runId: string }) {
             </p>
           ) : (
             filtered.map((node) => (
-              <TreeNodeRow key={node.id} node={node} depth={0} />
+              <TreeNodeRow key={node.id ?? String(node.seq)} node={node} depth={0} />
             ))
           )}
         </div>

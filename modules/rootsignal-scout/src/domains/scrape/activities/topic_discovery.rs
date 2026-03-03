@@ -12,7 +12,6 @@ use rootsignal_common::{
 };
 
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
-use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 
 use super::scraper::Scraper;
 use super::signal_events::{register_sources_events, store_signals_events};
@@ -26,7 +25,6 @@ impl Scraper {
         topics: &[String],
         url_to_canonical_key: &HashMap<String, String>,
         actor_contexts: &HashMap<String, ActorContext>,
-        run_log: &RunLogger,
     ) -> ScrapeOutput {
         let mut output = ScrapeOutput::new();
         const MAX_SOCIAL_SEARCHES: usize = 10;
@@ -90,12 +88,6 @@ impl Scraper {
                 );
                 continue;
             }
-
-            run_log.log(EventKind::SocialTopicSearch {
-                platform: platform_name.to_string(),
-                topics: topic_strs.iter().map(|t| t.to_string()).collect(),
-                posts_found: discovered_posts.len() as u32,
-            });
 
             output.stats_delta.discovery_posts_found += discovered_posts.len() as u32;
 

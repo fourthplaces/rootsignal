@@ -247,7 +247,7 @@ function EventDetailPanel({ e }: { e: ScoutRunEvent }) {
 export function ScoutRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   const { data, loading } = useQuery(ADMIN_SCOUT_RUN, {
     variables: { runId: runId ?? "" },
@@ -358,13 +358,14 @@ export function ScoutRunDetailPage() {
             </thead>
             <tbody>
               {filtered.map((e: ScoutRunEvent) => {
-                const isExpanded = expandedId === e.id;
+                const eKey = e.id ?? String(e.seq);
+                const isExpanded = expandedKey === eKey;
                 return (
                   <>
                     <tr
-                      key={e.id}
+                      key={eKey}
                       className={`border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer ${isExpanded ? "bg-muted/40" : ""}`}
-                      onClick={() => setExpandedId(isExpanded ? null : e.id)}
+                      onClick={() => setExpandedKey(isExpanded ? null : eKey)}
                     >
                       <td className="px-4 py-2 text-muted-foreground tabular-nums">
                         {e.seq}
@@ -387,7 +388,7 @@ export function ScoutRunDetailPage() {
                       </td>
                     </tr>
                     {isExpanded && (
-                      <tr key={`${e.id}-detail`} className="border-b border-border bg-muted/20">
+                      <tr key={`${eKey}-detail`} className="border-b border-border bg-muted/20">
                         <td colSpan={4} className="px-6 py-4">
                           <EventDetailPanel e={e} />
                         </td>

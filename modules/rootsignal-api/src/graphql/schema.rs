@@ -538,6 +538,50 @@ impl QueryRoot {
         Ok(row.map(ScoutRun::from))
     }
 
+    /// List events for a scout run from the unified event store.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_run_events(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+        event_type_filter: Option<String>,
+    ) -> Result<Vec<ScoutRunEvent>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let rows = crate::db::scout_run::list_events_by_run_id(
+            pool,
+            &run_id,
+            event_type_filter.as_deref(),
+        )
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
+        Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
+    }
+
+    /// List events that touched a specific graph node.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_node_events(
+        &self,
+        ctx: &Context<'_>,
+        node_id: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<ScoutRunEvent>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let rows = crate::db::scout_run::list_events_by_node_id(
+            pool,
+            &node_id,
+            limit.unwrap_or(100),
+        )
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
+        Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
+    }
+
     /// Aggregate summary of supervisor findings for a region.
     #[graphql(guard = "AdminGuard")]
     async fn supervisor_summary(
@@ -1172,7 +1216,9 @@ struct ScoutRunStats {
 
 #[derive(SimpleObject)]
 struct ScoutRunEvent {
-    seq: u32,
+    id: Option<String>,
+    parent_id: Option<String>,
+    seq: i64,
     ts: DateTime<Utc>,
     #[graphql(name = "type")]
     event_type: String,
@@ -1243,7 +1289,9 @@ impl From<EventRow> for ScoutRunEvent {
     fn from(j: EventRow) -> Self {
         let d = &j.data;
         Self {
-            seq: j.seq as u32,
+            id: j.id.map(|u| u.to_string()),
+            parent_id: j.parent_id.map(|u| u.to_string()),
+            seq: j.seq,
             ts: j.ts,
             event_type: j.event_type,
             query: json_str(d, "query"),

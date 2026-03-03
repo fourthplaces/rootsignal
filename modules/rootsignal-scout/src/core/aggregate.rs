@@ -235,9 +235,7 @@ impl PipelineState {
                 ..
             } => {
                 self.stats.signals_stored += 1;
-                if let Some(idx) = signal_type_index(node_type) {
-                    self.stats.by_type[idx] += 1;
-                }
+                *self.stats.by_type.entry(*node_type).or_default() += 1;
                 self.wiring_contexts.insert(
                     *node_id,
                     WiringContext {
@@ -433,17 +431,3 @@ pub mod pipeline_aggregators {
     }
 }
 
-/// Map signal node types to the `by_type` stats index.
-/// Returns None for non-signal types (e.g. Citation).
-fn signal_type_index(nt: &NodeType) -> Option<usize> {
-    match nt {
-        NodeType::Gathering => Some(0),
-        NodeType::Resource => Some(1),
-        NodeType::HelpRequest => Some(2),
-        NodeType::Announcement => Some(3),
-        NodeType::Concern => Some(4),
-        NodeType::Condition => Some(5),
-        NodeType::Condition => Some(6),
-        NodeType::Citation => None,
-    }
-}

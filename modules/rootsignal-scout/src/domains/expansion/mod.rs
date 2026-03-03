@@ -14,7 +14,6 @@ use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::Scraper;
-use crate::infra::run_log::RunLogger;
 
 fn is_metrics_completed(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::MetricsCompleted)
@@ -47,18 +46,6 @@ pub mod handlers {
         };
         let graph = GraphReader::new(graph_client.clone());
 
-        let run_log = match deps.pg_pool.as_ref() {
-            Some(pool) => {
-                RunLogger::new(
-                    deps.run_id.clone(),
-                    region.name.clone(),
-                    pool.clone(),
-                )
-                .await
-            }
-            None => RunLogger::noop(),
-        };
-
         let expansion = Expansion::new(&graph, &*deps.embedder, &region.name);
         let phase = Scraper::new(
             deps.store.clone(),
@@ -76,7 +63,6 @@ pub mod handlers {
             deps.anthropic_api_key.as_deref(),
             budget,
             &*deps.embedder,
-            &run_log,
         )
         .await;
 

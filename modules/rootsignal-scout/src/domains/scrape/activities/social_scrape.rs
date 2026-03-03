@@ -17,7 +17,6 @@ use seesaw_core::Events;
 
 use crate::core::extractor::ResourceTag;
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
-use crate::infra::run_log::{EventKind, EventLogger, RunLogger};
 
 use super::scraper::Scraper;
 use super::signal_events::store_signals_events;
@@ -31,7 +30,6 @@ impl Scraper {
         social_sources: &[&SourceNode],
         url_to_canonical_key: &HashMap<String, String>,
         actor_contexts: &HashMap<String, ActorContext>,
-        run_log: &RunLogger,
     ) -> ScrapeOutput {
         let mut output = ScrapeOutput::new();
         type SocialResult = Option<(
@@ -377,19 +375,6 @@ impl Scraper {
                     discovered_on: source_url.clone(),
                 });
             }
-
-            run_log.log(EventKind::SocialScrape {
-                platform: "social".to_string(),
-                identifier: source_url.clone(),
-                post_count: post_count as u32,
-            });
-
-            run_log.log(EventKind::LlmExtraction {
-                source_url: source_url.clone(),
-                content_chars: combined_text.len(),
-                signals_extracted: nodes.len() as u32,
-                implied_queries: 0,
-            });
 
             // Collect implied queries from Tension/Need social signals
             for node in &nodes {

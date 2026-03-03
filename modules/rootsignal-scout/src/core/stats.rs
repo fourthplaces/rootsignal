@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use rootsignal_common::types::NodeType;
 use serde::{Deserialize, Serialize};
 
 /// Stats from a scout run.
@@ -9,7 +12,7 @@ pub struct ScoutStats {
     pub signals_extracted: u32,
     pub signals_deduplicated: u32,
     pub signals_stored: u32,
-    pub by_type: [u32; 5], // Gathering, Aid, Need, Notice, Tension
+    pub by_type: HashMap<NodeType, u32>,
     pub fresh_7d: u32,
     pub fresh_30d: u32,
     pub fresh_90d: u32,
@@ -33,8 +36,8 @@ impl ScoutStats {
         self.signals_extracted += other.signals_extracted;
         self.signals_deduplicated += other.signals_deduplicated;
         self.signals_stored += other.signals_stored;
-        for i in 0..5 {
-            self.by_type[i] += other.by_type[i];
+        for (nt, count) in &other.by_type {
+            *self.by_type.entry(*nt).or_default() += count;
         }
         self.fresh_7d += other.fresh_7d;
         self.fresh_30d += other.fresh_30d;
@@ -63,12 +66,14 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "Signals extracted:  {}", self.signals_extracted)?;
         writeln!(f, "Signals deduped:    {}", self.signals_deduplicated)?;
         writeln!(f, "Signals stored:     {}", self.signals_stored)?;
-        writeln!(f, "\nBy type:")?;
-        writeln!(f, "  Gathering: {}", self.by_type[0])?;
-        writeln!(f, "  Aid:       {}", self.by_type[1])?;
-        writeln!(f, "  Need:    {}", self.by_type[2])?;
-        writeln!(f, "  Notice:  {}", self.by_type[3])?;
-        writeln!(f, "  Tension: {}", self.by_type[4])?;
+        if !self.by_type.is_empty() {
+            writeln!(f, "\nBy type:")?;
+            let mut entries: Vec<_> = self.by_type.iter().collect();
+            entries.sort_by_key(|(nt, _)| format!("{nt}"));
+            for (nt, count) in entries {
+                writeln!(f, "  {nt}: {count}")?;
+            }
+        }
         let total = self.signals_stored.max(1);
         writeln!(f, "\nFreshness:")?;
         writeln!(

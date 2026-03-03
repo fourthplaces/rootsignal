@@ -1,10 +1,12 @@
-//! Infrastructure handlers: project events to Neo4j.
+//! Infrastructure handlers: project events to Neo4j, maintain scout_runs table.
 //!
 //! Persistence is handled by seesaw's built-in `persist_and_hydrate` via
 //! the `SeesawEventStoreAdapter`. Aggregator state is handled by seesaw's
 //! registered aggregators (priority 1).
 //!
-//! Only the Neo4j projection handler remains here (priority 2).
+//! Priority-2 handlers here:
+//! - `neo4j_projection_handler` — project events to Neo4j graph
+//! - `scout_runs_handler` — maintain the scout_runs lookup table
 
 use std::sync::Arc;
 
@@ -16,6 +18,7 @@ use rootsignal_common::events::{Event, Eventlike, SystemEvent, WorldEvent};
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::discovery::events::DiscoveryEvent;
+use crate::domains::lifecycle::events::LifecycleEvent;
 
 // Priority-0: event persistence — handled by seesaw's persist_and_hydrate + SeesawEventStoreAdapter.
 // Priority-1: aggregate state — handled by seesaw aggregators.
@@ -64,6 +67,61 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                     aggregate_id: None,
                 };
                 projector.project(&stored).await?;
+                Ok(events![])
+            }
+        })
+}
+
+/// Priority-2 handler: maintain the `scout_runs` lookup table.
+///
+/// On `EngineStarted`: INSERT a new row.
+/// On `RunCompleted`: UPDATE with finished_at and stats JSONB.
+pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
+    on_any()
+        .id("scout_runs_projection")
+        .priority(2)
+        .then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
+            async move {
+                let Some(lifecycle) = event.downcast_ref::<LifecycleEvent>() else {
+                    return Ok(events![]);
+                };
+
+                let deps = ctx.deps();
+                let Some(pool) = &deps.pg_pool else {
+                    return Ok(events![]);
+                };
+
+                match lifecycle {
+                    LifecycleEvent::EngineStarted { run_id } => {
+                        let region = deps
+                            .region
+                            .as_ref()
+                            .map(|r| r.name.as_str())
+                            .unwrap_or("unknown");
+                        sqlx::query(
+                            "INSERT INTO scout_runs (run_id, region, started_at) \
+                             VALUES ($1, $2, now()) \
+                             ON CONFLICT (run_id) DO NOTHING",
+                        )
+                        .bind(run_id)
+                        .bind(region)
+                        .execute(pool)
+                        .await?;
+                    }
+                    LifecycleEvent::RunCompleted { stats } => {
+                        let stats_json = serde_json::to_value(stats)?;
+                        sqlx::query(
+                            "UPDATE scout_runs SET finished_at = now(), stats = $2 \
+                             WHERE run_id = $1",
+                        )
+                        .bind(&deps.run_id)
+                        .bind(stats_json)
+                        .execute(pool)
+                        .await?;
+                    }
+                    _ => {}
+                }
+
                 Ok(events![])
             }
         })

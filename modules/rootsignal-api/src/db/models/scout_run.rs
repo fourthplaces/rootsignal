@@ -20,11 +20,11 @@ pub struct StatsJson {
     pub expansion_sources_created: Option<u32>,
 }
 
-/// Row from the `scout_run_events` table.
+/// Row from the `events` table (unified event store).
 pub struct EventRow {
-    pub id: Uuid,
+    pub id: Option<Uuid>,
     pub parent_id: Option<Uuid>,
-    pub seq: i32,
+    pub seq: i64,
     pub ts: DateTime<Utc>,
     pub event_type: String,
     pub data: serde_json::Value,
@@ -99,7 +99,7 @@ pub async fn find_by_id(pool: &PgPool, run_id: &str) -> Result<Option<ScoutRunRo
     Ok(row.map(row_to_scout_run))
 }
 
-/// List events for a run, ordered by sequence number.
+/// List events for a run from the unified event store, ordered by sequence number.
 pub async fn list_events_by_run_id(
     pool: &PgPool,
     run_id: &str,
@@ -108,8 +108,8 @@ pub async fn list_events_by_run_id(
     let rows = if let Some(et) = event_type_filter {
         sqlx::query(
             r#"
-            SELECT id, parent_id, seq, ts, event_type, data
-            FROM scout_run_events
+            SELECT seq, ts, event_type, payload AS data, id, parent_id
+            FROM events
             WHERE run_id = $1 AND event_type = $2
             ORDER BY seq
             "#,
@@ -121,8 +121,8 @@ pub async fn list_events_by_run_id(
     } else {
         sqlx::query(
             r#"
-            SELECT id, parent_id, seq, ts, event_type, data
-            FROM scout_run_events
+            SELECT seq, ts, event_type, payload AS data, id, parent_id
+            FROM events
             WHERE run_id = $1
             ORDER BY seq
             "#,
@@ -136,7 +136,7 @@ pub async fn list_events_by_run_id(
 }
 
 /// List events that touched a specific graph node (signal/source).
-/// Searches by node_id, matched_id, and existing_id within the JSONB data column.
+/// Searches by node_id, matched_id, and existing_id within the JSONB payload column.
 pub async fn list_events_by_node_id(
     pool: &PgPool,
     node_id: &str,
@@ -146,11 +146,11 @@ pub async fn list_events_by_node_id(
 
     let rows = sqlx::query(
         r#"
-        SELECT id, parent_id, seq, ts, event_type, data
-        FROM scout_run_events
-        WHERE data->>'node_id' = $1
-           OR data->>'matched_id' = $1
-           OR data->>'existing_id' = $1
+        SELECT seq, ts, event_type, payload AS data, id, parent_id
+        FROM events
+        WHERE payload->>'node_id' = $1
+           OR payload->>'matched_id' = $1
+           OR payload->>'existing_id' = $1
         ORDER BY ts DESC
         LIMIT $2
         "#,

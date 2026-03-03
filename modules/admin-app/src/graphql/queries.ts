@@ -728,6 +728,8 @@ export const ADMIN_NODE_EVENTS = gql`
       oldValue
       newValue
       summary
+      similarity
+      newSourceUrl
     }
   }
 `;
