@@ -84,7 +84,15 @@ Format:
 [When was this content extracted? When was it published? Include extracted_at, published_at, and event timestamps so the developer can tell whether this is a recent regression or a long-standing issue. If the content is old, say so — a fix may already be in place.]
 
 ### Impact
-[What downstream effects did this cause? Were signals misclassified, duplicated, dropped, corrupted? What is the blast radius?]`;
+[What downstream effects did this cause? Were signals misclassified, duplicated, dropped, corrupted? What is the blast radius?]
+
+### Investigation Queries
+GraphQL endpoint: \`${API_BASE}/graphql\` (POST, Content-Type: application/json)
+
+[Generate 2-5 GraphQL queries that let a developer inspect the data relevant to this issue. Use the exact seq numbers, signal IDs, node IDs, and run IDs from the investigation. Each query should:
+- Have a short comment explaining what it reveals
+- Include full field selections so the query is copy-pasteable as-is
+- Use the admin query names: adminCausalTree, adminEvents, adminScoutRunEvents, adminNodeEvents, signal, adminScoutRuns, supervisorFindings, adminRegionSources, etc.]`;
 
 async function streamInvestigation(
   seq: number,
