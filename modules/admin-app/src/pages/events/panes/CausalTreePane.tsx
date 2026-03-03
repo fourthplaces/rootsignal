@@ -188,8 +188,37 @@ export function CausalTreePane() {
 
   if (treeLoading) {
     return (
-      <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-        Loading causal tree...
+      <div className="p-3 space-y-1.5 animate-pulse">
+        <div className="h-3 w-32 bg-muted rounded mb-3" />
+        <div className="flex items-center gap-1.5">
+          <div className="h-4 w-12 bg-muted rounded" />
+          <div className="h-4 w-36 bg-muted rounded" />
+          <div className="h-3 w-24 bg-muted rounded" />
+        </div>
+        <div className="pl-6 space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <div className="h-4 w-14 bg-muted rounded" />
+            <div className="h-4 w-44 bg-muted rounded" />
+            <div className="h-3 w-24 bg-muted rounded" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-4 w-10 bg-muted rounded" />
+            <div className="h-4 w-32 bg-muted rounded" />
+            <div className="h-3 w-24 bg-muted rounded" />
+          </div>
+          <div className="pl-6 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <div className="h-4 w-12 bg-muted rounded" />
+              <div className="h-4 w-40 bg-muted rounded" />
+              <div className="h-3 w-24 bg-muted rounded" />
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-4 w-14 bg-muted rounded" />
+            <div className="h-4 w-28 bg-muted rounded" />
+            <div className="h-3 w-24 bg-muted rounded" />
+          </div>
+        </div>
       </div>
     );
   }
