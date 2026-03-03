@@ -236,6 +236,17 @@ export function GraphMap({
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Resize map when container changes size (e.g. panel drag)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      mapRef.current?.resize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   // Update GeoJSON data
   useEffect(() => {
     if (!mapReady) return;

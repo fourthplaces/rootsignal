@@ -52,9 +52,10 @@ export function InspectorPane({
   return (
     <div className="border-t border-border bg-card z-50">
       {/* Header */}
-      <button
+      <div
+        role="button"
         onClick={onToggleCollapse}
-        className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-accent/30"
+        className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-accent/30 cursor-pointer"
       >
         <div className="flex items-center gap-3">
           <span className="text-muted-foreground">{collapsed ? "▸" : "▾"} Inspector</span>
@@ -79,7 +80,7 @@ export function InspectorPane({
         <span className="text-xs text-muted-foreground">
           {selectedNode ? selectedNode.label : "No node selected"}
         </span>
-      </button>
+      </div>
 
       {/* Body */}
       {!collapsed && (
