@@ -12,24 +12,22 @@ use uuid::Uuid;
 
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{
-    canonical_value, ResourceOfferNode, DiscoveryMethod, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode,
-    Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel, SourceNode, SourceRole,
-    Urgency,
+    ResourceOfferNode, GatheringNode, HelpRequestNode,
+    Node, NodeType, ScoutScope, SourceNode, Urgency,
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphReader, ResponseHeuristic};
 use rootsignal_archive::Archive;
-use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
+use crate::domains::synthesis::util::{
+    self, build_future_query_source, build_node_meta, region_bounds, HAIKU_MODEL, MAX_TOOL_TURNS,
+    MAX_FUTURE_QUERIES_PER_TENSION,
+};
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 use rootsignal_common::events::WorldEvent;
 
-
-const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
-const MAX_TOOL_TURNS: usize = 10;
 const MAX_GATHERINGS_PER_TENSION: usize = 8;
-const MAX_FUTURE_QUERIES_PER_TENSION: usize = 3;
 
 // =============================================================================
 // Structured output types
@@ -306,16 +304,15 @@ impl<'a> GatheringFinderDeps<'a> {
                 tension_title: String::new(),
             });
 
-        let lat_delta = region.radius_km / 111.0;
-        let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
+        let (min_lat, max_lat, min_lng, max_lng) = region_bounds(&region);
         Self {
             graph,
             claude,
             embedder,
-            min_lat: region.center_lat - lat_delta,
-            max_lat: region.center_lat + lat_delta,
-            min_lng: region.center_lng - lng_delta,
-            max_lng: region.center_lng + lng_delta,
+            min_lat,
+            max_lat,
+            min_lng,
+            max_lng,
             region,
             cancelled,
             run_id,
@@ -451,7 +448,7 @@ async fn investigate_tension(
             .iter()
             .take(MAX_FUTURE_QUERIES_PER_TENSION)
         {
-            discovered_sources.push(build_future_query_source(query, target));
+            discovered_sources.push(build_future_query_source(query, &target.title, "Gathering finder"));
             stats.future_sources_created += 1;
         }
 
@@ -494,7 +491,7 @@ async fn investigate_tension(
         .iter()
         .take(MAX_FUTURE_QUERIES_PER_TENSION)
     {
-        discovered_sources.push(build_future_query_source(query, target));
+        discovered_sources.push(build_future_query_source(query, &target.title, "Gathering finder"));
         stats.future_sources_created += 1;
     }
 
@@ -608,7 +605,7 @@ async fn process_gathering(
 
             // Venue seeding: create future source for the venue
             let venue_query = format!("{} {} community events", venue, deps.region.name);
-            discovered_sources.push(build_future_query_source(&venue_query, target));
+            discovered_sources.push(build_future_query_source(&venue_query, &target.title, "Gathering finder"));
             stats.future_sources_created += 1;
         }
     }
@@ -625,38 +622,13 @@ async fn create_gathering_node(
     gathering: &DiscoveredGathering,
     events: &mut seesaw_core::Events,
 ) -> Result<Uuid> {
-    let now = Utc::now();
-    let meta = NodeMeta {
-        id: Uuid::new_v4(),
-        title: gathering.title.clone(),
-        summary: gathering.summary.clone(),
-        sensitivity: SensitivityLevel::General,
-        confidence: 0.7,
-
-        corroboration_count: 0,
-        about_location: Some(GeoPoint {
-            lat: deps.region.center_lat,
-            lng: deps.region.center_lng,
-            precision: GeoPrecision::Approximate,
-        }),
-        from_location: None,
-        about_location_name: Some(deps.region.name.clone()),
-        source_url: gathering.url.clone(),
-        extracted_at: now,
-        published_at: None,
-        last_confirmed_active: now,
-        source_diversity: 1,
-
-        cause_heat: 0.0,
-        channel_diversity: 1,
-        implied_queries: vec![],
-        review_status: ReviewStatus::Staged,
-        was_corrected: false,
-        corrections: None,
-        rejection_reason: None,
-        mentioned_actors: Vec::new(),
-        category: None,
-    };
+    let meta = build_node_meta(
+        gathering.title.clone(),
+        gathering.summary.clone(),
+        gathering.url.clone(),
+        &deps.region,
+        0.7,
+    );
 
     let node = match gathering.signal_type.to_lowercase().as_str() {
         "gathering" => {
@@ -722,36 +694,10 @@ async fn wire_also_addresses(
     explanation: &str,
     events: &mut seesaw_core::Events,
 ) -> Result<()> {
-    let lat_delta = deps.region.radius_km / 111.0;
-    let lng_delta = deps.region.radius_km / (111.0 * deps.region.center_lat.to_radians().cos());
-    let active_tensions = deps
-        .graph
-        .get_active_tensions(
-            deps.region.center_lat - lat_delta,
-            deps.region.center_lat + lat_delta,
-            deps.region.center_lng - lng_delta,
-            deps.region.center_lng + lng_delta,
-        )
-        .await?;
-    if active_tensions.is_empty() {
-        return Ok(());
-    }
-
     for tension_title in also_addresses {
-        let title_embedding = deps.embedder.embed(tension_title).await?;
-        let title_emb_f64: Vec<f64> = title_embedding.iter().map(|&v| v as f64).collect();
-
-        let mut best_match: Option<(Uuid, f64)> = None;
-        for (tid, temb) in &active_tensions {
-            let sim = cosine_sim_f64(&title_emb_f64, temb);
-            if sim >= 0.85 {
-                if best_match.as_ref().map_or(true, |b| sim > b.1) {
-                    best_match = Some((*tid, sim));
-                }
-            }
-        }
-
-        if let Some((concern_id, sim)) = best_match {
+        if let Some((concern_id, sim)) = util::find_best_tension_match(
+            deps.embedder, deps.graph, &deps.region, tension_title, 0.85,
+        ).await? {
             info!(
                 signal_id = %signal_id,
                 concern_id = %concern_id,
@@ -770,50 +716,6 @@ async fn wire_also_addresses(
     }
 
     Ok(())
-}
-
-fn build_future_query_source(
-    query: &str,
-    target: &GatheringFinderTarget,
-) -> SourceNode {
-    let cv = query.to_string();
-    let ck = canonical_value(&cv);
-    let gap_context = format!(
-        "Gathering finder: gathering discovery for \"{}\"",
-        target.title,
-    );
-
-    info!(
-        query = query,
-        tension = target.title.as_str(),
-        "Future query source built by gathering finder"
-    );
-
-    SourceNode {
-        id: Uuid::new_v4(),
-        canonical_key: ck,
-        canonical_value: cv,
-        url: None,
-        discovery_method: DiscoveryMethod::GapAnalysis,
-        created_at: Utc::now(),
-        last_scraped: None,
-        last_produced_signal: None,
-        signals_produced: 0,
-        signals_corroborated: 0,
-        consecutive_empty_runs: 0,
-        active: true,
-        gap_context: Some(gap_context),
-        weight: initial_weight_for_method(DiscoveryMethod::GapAnalysis, Some("unmet_tension")),
-        cadence_hours: None,
-        avg_signals_per_scrape: 0.0,
-        quality_penalty: 1.0,
-        source_role: SourceRole::Response,
-        scrape_count: 0,
-    }
-}
-
-fn cosine_sim_f64(a: &[f64], b: &[f64]) -> f64 {
-    crate::infra::util::cosine_similarity(a, b)
 }
 
 #[cfg(test)]
@@ -919,19 +821,6 @@ mod tests {
     }
 
     #[test]
-    fn cosine_similarity_works() {
-        let a = vec![1.0, 0.0, 0.0];
-        let b = vec![1.0, 0.0, 0.0];
-        assert!((cosine_sim_f64(&a, &b) - 1.0).abs() < 0.001);
-
-        let c = vec![0.0, 1.0, 0.0];
-        assert!(cosine_sim_f64(&a, &c).abs() < 0.001);
-
-        let d = vec![0.0, 0.0, 0.0];
-        assert!(cosine_sim_f64(&a, &d).abs() < 0.001);
-    }
-
-    #[test]
     fn event_date_parsing() {
         let date_str = "2026-03-15";
         let parsed = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d");
@@ -951,38 +840,13 @@ mod tests {
             radius_km: 30.0,
         };
 
-        let now = Utc::now();
-        let meta = NodeMeta {
-            id: Uuid::new_v4(),
-            title: "Singing Rebellion".to_string(),
-            summary: "Community singing event".to_string(),
-            sensitivity: SensitivityLevel::General,
-            confidence: 0.7,
-
-            corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat: region.center_lat,
-                lng: region.center_lng,
-                precision: GeoPrecision::Approximate,
-            }),
-            from_location: None,
-            about_location_name: Some(region.name.clone()),
-            source_url: "https://example.com/singing".to_string(),
-            extracted_at: now,
-            published_at: None,
-            last_confirmed_active: now,
-            source_diversity: 1,
-
-            cause_heat: 0.0,
-            channel_diversity: 1,
-            implied_queries: vec![],
-            review_status: ReviewStatus::Staged,
-            was_corrected: false,
-            corrections: None,
-            rejection_reason: None,
-            mentioned_actors: Vec::new(),
-            category: None,
-        };
+        let meta = build_node_meta(
+            "Singing Rebellion".to_string(),
+            "Community singing event".to_string(),
+            "https://example.com/singing".to_string(),
+            &region,
+            0.7,
+        );
 
         let node = Node::Gathering(GatheringNode {
             meta,
@@ -996,7 +860,7 @@ mod tests {
         let loc = node.meta().unwrap().about_location.as_ref().unwrap();
         assert!((loc.lat - 44.9778).abs() < 0.001);
         assert!((loc.lng - (-93.2650)).abs() < 0.001);
-        assert_eq!(loc.precision, GeoPrecision::Approximate);
+        assert_eq!(loc.precision, rootsignal_common::GeoPrecision::Approximate);
     }
 }
 

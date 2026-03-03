@@ -1241,51 +1241,72 @@ impl From<&StatsJson> for ScoutRunStats {
 
 impl From<EventRow> for ScoutRunEvent {
     fn from(j: EventRow) -> Self {
+        let d = &j.data;
         Self {
             seq: j.seq as u32,
             ts: j.ts,
             event_type: j.event_type,
-            query: j.query,
-            url: j.url,
-            provider: j.provider,
-            platform: j.platform,
-            identifier: j.identifier,
-            signal_type: j.signal_type,
-            title: j.title,
-            result_count: j.result_count.map(|v| v as u32),
-            post_count: j.post_count.map(|v| v as u32),
-            items: j.items.map(|v| v as u32),
-            content_bytes: j.content_bytes.map(|v| v as u64),
-            content_chars: j.content_chars.map(|v| v as u64),
-            signals_extracted: j.signals_extracted.map(|v| v as u32),
-            implied_queries: j.implied_queries.map(|v| v as u32),
-            similarity: j.similarity,
-            confidence: j.confidence,
-            success: j.success,
-            action: j.action,
-            node_id: j.node_id,
-            matched_id: j.matched_id,
-            existing_id: j.existing_id,
-            source_url: j.source_url,
-            new_source_url: j.new_source_url,
-            canonical_key: j.canonical_key,
-            gatherings: j.gatherings.map(|v| v as u64),
-            needs: j.needs.map(|v| v as u64),
-            stale: j.stale.map(|v| v as u64),
-            sources_created: j.sources_created.map(|v| v as u64),
-            spent_cents: j.spent_cents.map(|v| v as u64),
-            remaining_cents: j.remaining_cents.map(|v| v as u64),
-            topics: j.topics,
-            posts_found: j.posts_found.map(|v| v as u32),
-            reason: j.reason,
-            strategy: j.strategy,
-            field: j.field,
-            old_value: j.old_value,
-            new_value: j.new_value,
-            signal_count: j.signal_count.map(|v| v as u32),
-            summary: j.summary,
+            query: json_str(d, "query"),
+            url: json_str(d, "url"),
+            provider: json_str(d, "provider"),
+            platform: json_str(d, "platform"),
+            identifier: json_str(d, "identifier"),
+            signal_type: json_str(d, "signal_type"),
+            title: json_str(d, "title"),
+            result_count: json_u32(d, "result_count"),
+            post_count: json_u32(d, "post_count"),
+            items: json_u32(d, "items"),
+            content_bytes: json_u64(d, "content_bytes"),
+            content_chars: json_u64(d, "content_chars"),
+            signals_extracted: json_u32(d, "signals_extracted"),
+            implied_queries: json_u32(d, "implied_queries"),
+            similarity: json_f64(d, "similarity"),
+            confidence: json_f64(d, "confidence"),
+            success: d.get("success").and_then(|v| v.as_bool()),
+            action: json_str(d, "action"),
+            node_id: json_str(d, "node_id"),
+            matched_id: json_str(d, "matched_id"),
+            existing_id: json_str(d, "existing_id"),
+            source_url: json_str(d, "source_url"),
+            new_source_url: json_str(d, "new_source_url"),
+            canonical_key: json_str(d, "canonical_key"),
+            gatherings: json_u64(d, "gatherings"),
+            needs: json_u64(d, "needs"),
+            stale: json_u64(d, "stale"),
+            sources_created: json_u64(d, "sources_created"),
+            spent_cents: json_u64(d, "spent_cents"),
+            remaining_cents: json_u64(d, "remaining_cents"),
+            topics: d.get("topics").and_then(|v| {
+                v.as_array().map(|arr| {
+                    arr.iter().filter_map(|s| s.as_str().map(String::from)).collect()
+                })
+            }),
+            posts_found: json_u32(d, "posts_found"),
+            reason: json_str(d, "reason"),
+            strategy: json_str(d, "strategy"),
+            field: json_str(d, "field"),
+            old_value: json_str(d, "old_value"),
+            new_value: json_str(d, "new_value"),
+            signal_count: json_u32(d, "signal_count"),
+            summary: json_str(d, "summary"),
         }
     }
+}
+
+fn json_str(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|v| v.as_str()).map(String::from)
+}
+
+fn json_u32(v: &serde_json::Value, key: &str) -> Option<u32> {
+    v.get(key).and_then(|v| v.as_u64()).map(|n| n as u32)
+}
+
+fn json_u64(v: &serde_json::Value, key: &str) -> Option<u64> {
+    v.get(key).and_then(|v| v.as_u64())
+}
+
+fn json_f64(v: &serde_json::Value, key: &str) -> Option<f64> {
+    v.get(key).and_then(|v| v.as_f64())
 }
 
 // ========== Helpers ==========

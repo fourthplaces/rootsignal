@@ -2,6 +2,7 @@
 
 pub mod activities;
 pub mod events;
+pub mod util;
 
 #[cfg(test)]
 mod completion_tests;

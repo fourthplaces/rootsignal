@@ -31,6 +31,20 @@ use crate::services::tiktok::TikTokService;
 use crate::services::twitter::TwitterService;
 
 
+/// Implement `IntoFuture` for a request builder that has `async fn send(self) -> Result<T>`.
+macro_rules! impl_into_future {
+    ($request:ty => $output:ty) => {
+        impl IntoFuture for $request {
+            type Output = Result<$output>;
+            type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
+
+            fn into_future(self) -> Self::IntoFuture {
+                Box::pin(self.send())
+            }
+        }
+    };
+}
+
 /// Internal shared state for the archive. Holds services + store.
 pub(crate) struct ArchiveInner {
     pub store: Store,
@@ -258,69 +272,11 @@ impl PostsRequest {
             }
         };
 
-        // Persist and build result
-        let mut posts = Vec::with_capacity(fetched.len());
-        for (insert_post, insert_files) in fetched {
-            let post_id = self.inner.store.insert_post(&insert_post).await?;
-
-            // Persist files and create attachments
-            let mut attachments = Vec::new();
-            for insert_file in &insert_files {
-                let file = self.inner.store.upsert_file(insert_file).await?;
-                attachments.push(file);
-            }
-            let file_positions: Vec<(Uuid, i32)> = attachments
-                .iter()
-                .enumerate()
-                .map(|(i, f)| (f.id, i as i32))
-                .collect();
-            if !file_positions.is_empty() {
-                self.inner
-                    .store
-                    .insert_attachments("posts", post_id, &file_positions)
-                    .await?;
-            }
-
-            posts.push(Post {
-                id: post_id,
-                source_id,
-                fetched_at: Utc::now(),
-                content_hash: insert_post.content_hash,
-                text: insert_post.text,
-                author: insert_post.author,
-                location: insert_post.location,
-                engagement: insert_post.engagement,
-                published_at: insert_post.published_at,
-                permalink: insert_post.permalink,
-                mentions: insert_post.mentions,
-                hashtags: insert_post.hashtags,
-                media_type: insert_post.media_type,
-                platform_id: insert_post.platform_id,
-                attachments,
-            });
-        }
-
-        // Dispatch enrichment for media files with text = NULL (fire-and-forget)
-        let all_attachments: Vec<_> = posts.iter().flat_map(|p| &p.attachments).cloned().collect();
-        dispatch_enrichment(&self.inner, &all_attachments).await;
-
-        self.inner
-            .store
-            .update_last_scraped(source_id, "posts")
-            .await?;
-        self.inner.store.increment_fetch_count(source_id).await?;
-        Ok(posts)
+        persist_and_enrich_posts(&self.inner, source_id, fetched).await
     }
 }
 
-impl IntoFuture for PostsRequest {
-    type Output = Result<Vec<Post>>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
+impl_into_future!(PostsRequest => Vec<Post>);
 
 pub struct StoriesRequest {
     inner: Arc<ArchiveInner>,
@@ -399,14 +355,7 @@ impl StoriesRequest {
     }
 }
 
-impl IntoFuture for StoriesRequest {
-    type Output = Result<Vec<Story>>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
+impl_into_future!(StoriesRequest => Vec<Story>);
 
 pub struct ShortVideoRequest {
     inner: Arc<ArchiveInner>,
@@ -501,14 +450,7 @@ impl ShortVideoRequest {
     }
 }
 
-impl IntoFuture for ShortVideoRequest {
-    type Output = Result<Vec<ShortVideo>>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
+impl_into_future!(ShortVideoRequest => Vec<ShortVideo>);
 
 pub struct VideoRequest {
     inner: Arc<ArchiveInner>,
@@ -527,14 +469,7 @@ impl VideoRequest {
     }
 }
 
-impl IntoFuture for VideoRequest {
-    type Output = Result<Vec<LongVideo>>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
+impl_into_future!(VideoRequest => Vec<LongVideo>);
 
 pub struct PageRequest {
     inner: Arc<ArchiveInner>,
@@ -648,14 +583,7 @@ impl PageRequest {
     }
 }
 
-impl IntoFuture for PageRequest {
-    type Output = Result<ArchivedPage>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
+impl_into_future!(PageRequest => ArchivedPage);
 
 pub struct FeedRequest {
     inner: Arc<ArchiveInner>,
@@ -692,14 +620,7 @@ impl FeedRequest {
     }
 }
 
-impl IntoFuture for FeedRequest {
-    type Output = Result<ArchivedFeed>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
+impl_into_future!(FeedRequest => ArchivedFeed);
 
 pub struct SearchRequest {
     inner: Arc<ArchiveInner>,
@@ -752,14 +673,7 @@ impl SearchRequest {
     }
 }
 
-impl IntoFuture for SearchRequest {
-    type Output = Result<ArchivedSearchResults>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
+impl_into_future!(SearchRequest => ArchivedSearchResults);
 
 pub struct TopicSearchRequest {
     inner: Arc<ArchiveInner>,
@@ -838,65 +752,11 @@ impl TopicSearchRequest {
             }
         };
 
-        let mut posts = Vec::with_capacity(fetched.len());
-        for (insert_post, insert_files) in fetched {
-            let post_id = self.inner.store.insert_post(&insert_post).await?;
-            let mut attachments = Vec::new();
-            for insert_file in &insert_files {
-                let file = self.inner.store.upsert_file(insert_file).await?;
-                attachments.push(file);
-            }
-            let file_positions: Vec<(Uuid, i32)> = attachments
-                .iter()
-                .enumerate()
-                .map(|(i, f)| (f.id, i as i32))
-                .collect();
-            if !file_positions.is_empty() {
-                self.inner
-                    .store
-                    .insert_attachments("posts", post_id, &file_positions)
-                    .await?;
-            }
-            posts.push(Post {
-                id: post_id,
-                source_id,
-                fetched_at: Utc::now(),
-                content_hash: insert_post.content_hash,
-                text: insert_post.text,
-                author: insert_post.author,
-                location: insert_post.location,
-                engagement: insert_post.engagement,
-                published_at: insert_post.published_at,
-                permalink: insert_post.permalink,
-                mentions: insert_post.mentions,
-                hashtags: insert_post.hashtags,
-                media_type: insert_post.media_type,
-                platform_id: insert_post.platform_id,
-                attachments,
-            });
-        }
-
-        // Dispatch enrichment for media files with text = NULL (fire-and-forget)
-        let all_attachments: Vec<_> = posts.iter().flat_map(|p| &p.attachments).cloned().collect();
-        dispatch_enrichment(&self.inner, &all_attachments).await;
-
-        self.inner
-            .store
-            .update_last_scraped(source_id, "posts")
-            .await?;
-        self.inner.store.increment_fetch_count(source_id).await?;
-        Ok(posts)
+        persist_and_enrich_posts(&self.inner, source_id, fetched).await
     }
 }
 
-impl IntoFuture for TopicSearchRequest {
-    type Output = Result<Vec<Post>>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
+impl_into_future!(TopicSearchRequest => Vec<Post>);
 
 pub struct CrawlRequest {
     inner: Arc<ArchiveInner>,
@@ -1045,13 +905,64 @@ impl CrawlRequest {
     }
 }
 
-impl IntoFuture for CrawlRequest {
-    type Output = Result<Vec<ArchivedPage>>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send>>;
+impl_into_future!(CrawlRequest => Vec<ArchivedPage>);
 
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
+// ---------------------------------------------------------------------------
+// Shared post-fetch helper
+// ---------------------------------------------------------------------------
+
+/// Persist fetched posts (with files/attachments), dispatch enrichment, and update scrape tracking.
+async fn persist_and_enrich_posts(
+    inner: &Arc<ArchiveInner>,
+    source_id: Uuid,
+    fetched: Vec<(crate::store::InsertPost, Vec<crate::store::InsertFile>)>,
+) -> Result<Vec<Post>> {
+    let mut posts = Vec::with_capacity(fetched.len());
+    for (insert_post, insert_files) in fetched {
+        let post_id = inner.store.insert_post(&insert_post).await?;
+
+        let mut attachments = Vec::new();
+        for insert_file in &insert_files {
+            let file = inner.store.upsert_file(insert_file).await?;
+            attachments.push(file);
+        }
+        let file_positions: Vec<(Uuid, i32)> = attachments
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.id, i as i32))
+            .collect();
+        if !file_positions.is_empty() {
+            inner
+                .store
+                .insert_attachments("posts", post_id, &file_positions)
+                .await?;
+        }
+
+        posts.push(Post {
+            id: post_id,
+            source_id,
+            fetched_at: Utc::now(),
+            content_hash: insert_post.content_hash,
+            text: insert_post.text,
+            author: insert_post.author,
+            location: insert_post.location,
+            engagement: insert_post.engagement,
+            published_at: insert_post.published_at,
+            permalink: insert_post.permalink,
+            mentions: insert_post.mentions,
+            hashtags: insert_post.hashtags,
+            media_type: insert_post.media_type,
+            platform_id: insert_post.platform_id,
+            attachments,
+        });
     }
+
+    let all_attachments: Vec<_> = posts.iter().flat_map(|p| &p.attachments).cloned().collect();
+    dispatch_enrichment(inner, &all_attachments).await;
+
+    inner.store.update_last_scraped(source_id, "posts").await?;
+    inner.store.increment_fetch_count(source_id).await?;
+    Ok(posts)
 }
 
 // ---------------------------------------------------------------------------
