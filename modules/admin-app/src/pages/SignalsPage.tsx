@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { useQuery } from "@apollo/client";
 import { ADMIN_SIGNALS } from "@/graphql/queries";
 import { ReviewStatusBadge } from "@/components/ReviewStatusBadge";
+import { DataTable, type Column } from "@/components/DataTable";
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
   Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -24,7 +25,7 @@ const STATUS_OPTIONS = [
 type SortKey = "type" | "title" | "confidence" | "sourceUrl" | "contentDate" | "extractedAt" | "reviewStatus";
 type SortDir = "asc" | "desc";
 
-const PAGE_SIZES = [25, 50, 100] as const;
+const PAGE_SIZES = [25, 50, 100];
 
 type Signal = {
   id: string;
@@ -66,6 +67,76 @@ function truncateUrl(url: string, max = 40): string {
   }
 }
 
+const columns: Column<Signal>[] = [
+  {
+    key: "type",
+    label: "Type",
+    render: (s) => (
+      <span className={`px-2 py-0.5 rounded-full text-xs border ${SIGNAL_TYPE_COLORS[s.type] ?? "bg-secondary"}`}>
+        {s.type}
+      </span>
+    ),
+  },
+  {
+    key: "title",
+    label: "Title",
+    className: "max-w-[300px] truncate",
+    render: (s) => (
+      <Link to={`/signals/${s.id}`} className="text-blue-400 hover:underline">
+        {s.title}
+      </Link>
+    ),
+  },
+  {
+    key: "confidence",
+    label: "Confidence",
+    align: "right",
+    render: (s) => <span className="tabular-nums">{(s.confidence * 100).toFixed(0)}%</span>,
+  },
+  {
+    key: "sourceUrl",
+    label: "Source URL",
+    className: "max-w-[200px] truncate",
+    render: (s) =>
+      s.sourceUrl ? (
+        <a
+          href={s.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-muted-foreground hover:text-foreground"
+          title={s.sourceUrl}
+        >
+          {truncateUrl(s.sourceUrl)}
+        </a>
+      ) : (
+        <span className="text-muted-foreground/50">&mdash;</span>
+      ),
+  },
+  {
+    key: "contentDate",
+    label: "Content Date",
+    render: (s) => (
+      <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+        {s.contentDate ? new Date(s.contentDate).toLocaleDateString() : "\u2014"}
+      </span>
+    ),
+  },
+  {
+    key: "extractedAt",
+    label: "Extracted At",
+    render: (s) => (
+      <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+        {new Date(s.extractedAt).toLocaleDateString()}
+      </span>
+    ),
+  },
+  {
+    key: "reviewStatus",
+    label: "Status",
+    render: (s) => <ReviewStatusBadge status={s.reviewStatus} wasCorrected={s.wasCorrected} />,
+  },
+];
+
 export function SignalsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("All");
@@ -95,11 +166,12 @@ export function SignalsPage() {
     return counts;
   }, [signals]);
 
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
+  const handleSort = (key: string) => {
+    const k = key as SortKey;
+    if (sortKey === k) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
-      setSortKey(key);
+      setSortKey(k);
       setSortDir("desc");
     }
     setPage(0);
@@ -137,18 +209,6 @@ export function SignalsPage() {
   const safePageIndex = Math.min(page, totalPages - 1);
   const pageStart = safePageIndex * pageSize;
   const pageSlice = filtered.slice(pageStart, pageStart + pageSize);
-
-  const sortIndicator = (key: SortKey) =>
-    sortKey === key ? (sortDir === "asc" ? " \u2191" : " \u2193") : "";
-
-  const SortHeader = ({ k, label, className = "" }: { k: SortKey; label: string; className?: string }) => (
-    <th
-      className={`px-4 py-2 font-medium cursor-pointer select-none hover:text-foreground ${className}`}
-      onClick={() => handleSort(k)}
-    >
-      {label}{sortIndicator(k)}
-    </th>
-  );
 
   return (
     <div className="space-y-4">
@@ -188,125 +248,26 @@ export function SignalsPage() {
         ))}
       </div>
 
-      {loading ? (
-        <p className="text-muted-foreground">Loading signals...</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-muted-foreground">No signals match the current filters.</p>
-      ) : (
-        <>
-          <div className="rounded-lg border border-border overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
-                  <SortHeader k="type" label="Type" />
-                  <SortHeader k="title" label="Title" />
-                  <SortHeader k="confidence" label="Confidence" className="text-right" />
-                  <SortHeader k="sourceUrl" label="Source URL" />
-                  <SortHeader k="contentDate" label="Content Date" />
-                  <SortHeader k="extractedAt" label="Extracted At" />
-                  <SortHeader k="reviewStatus" label="Status" />
-                </tr>
-              </thead>
-              <tbody>
-                {pageSlice.map((s) => (
-                  <tr key={s.id} className="border-b border-border/50 hover:bg-muted/30">
-                    <td className="px-4 py-2">
-                      <span className={`px-2 py-0.5 rounded-full text-xs border ${SIGNAL_TYPE_COLORS[s.type] ?? "bg-secondary"}`}>
-                        {s.type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 max-w-[300px] truncate">
-                      <Link to={`/signals/${s.id}`} className="text-blue-400 hover:underline">
-                        {s.title}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums">
-                      {(s.confidence * 100).toFixed(0)}%
-                    </td>
-                    <td className="px-4 py-2 max-w-[200px] truncate">
-                      {s.sourceUrl ? (
-                        <a
-                          href={s.sourceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-muted-foreground hover:text-foreground"
-                          title={s.sourceUrl}
-                        >
-                          {truncateUrl(s.sourceUrl)}
-                        </a>
-                      ) : (
-                        <span className="text-muted-foreground/50">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-muted-foreground tabular-nums whitespace-nowrap">
-                      {s.contentDate
-                        ? new Date(s.contentDate).toLocaleDateString()
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-2 text-muted-foreground tabular-nums whitespace-nowrap">
-                      {new Date(s.extractedAt).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-2">
-                      <ReviewStatusBadge status={s.reviewStatus} wasCorrected={s.wasCorrected} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <span>
-                {pageStart + 1}–{Math.min(pageStart + pageSize, filtered.length)} of {filtered.length}
-              </span>
-              <select
-                value={pageSize}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
-                className="px-2 py-1 rounded border border-input bg-background text-sm"
-              >
-                {PAGE_SIZES.map((s) => (
-                  <option key={s} value={s}>{s} / page</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setPage(0)}
-                disabled={safePageIndex === 0}
-                className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-30"
-              >
-                First
-              </button>
-              <button
-                onClick={() => setPage(safePageIndex - 1)}
-                disabled={safePageIndex === 0}
-                className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-30"
-              >
-                Prev
-              </button>
-              <span className="px-2 text-muted-foreground">
-                Page {safePageIndex + 1} of {totalPages}
-              </span>
-              <button
-                onClick={() => setPage(safePageIndex + 1)}
-                disabled={safePageIndex >= totalPages - 1}
-                className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-30"
-              >
-                Next
-              </button>
-              <button
-                onClick={() => setPage(totalPages - 1)}
-                disabled={safePageIndex >= totalPages - 1}
-                className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-30"
-              >
-                Last
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+      <DataTable<Signal>
+        columns={columns}
+        data={pageSlice}
+        getRowKey={(s) => s.id}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={handleSort}
+        rowClassName={() => "border-border/50"}
+        loading={loading}
+        emptyMessage="No signals match the current filters."
+        pagination={{
+          mode: "offset",
+          page: safePageIndex,
+          pageSize,
+          totalRows: filtered.length,
+          pageSizes: PAGE_SIZES,
+          onPageChange: setPage,
+          onPageSizeChange: (size) => { setPageSize(size); setPage(0); },
+        }}
+      />
     </div>
   );
 }

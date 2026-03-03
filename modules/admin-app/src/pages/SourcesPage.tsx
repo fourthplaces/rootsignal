@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_REGION_SOURCES } from "@/graphql/queries";
 import { ADD_SOURCE, UPDATE_SOURCE, DELETE_SOURCE } from "@/graphql/mutations";
+import { DataTable, type Column } from "@/components/DataTable";
 
 type Source = {
   id: string;
@@ -81,109 +82,6 @@ function EditableCell({
     >
       {value.toFixed(2)}
     </button>
-  );
-}
-
-function SourceRow({
-  source: s,
-  selected,
-  onSelect,
-  onUpdate,
-  onDelete,
-}: {
-  source: Source;
-  selected: boolean;
-  onSelect: (id: string, checked: boolean) => void;
-  onUpdate: (id: string, fields: { active?: boolean; weight?: number; qualityPenalty?: number }) => Promise<void>;
-  onDelete: (id: string) => void;
-}) {
-  const [toggling, setToggling] = useState(false);
-
-  const handleToggle = async () => {
-    setToggling(true);
-    await onUpdate(s.id, { active: !s.active });
-    setToggling(false);
-  };
-
-  return (
-    <tr className={`border-b border-border last:border-0 hover:bg-muted/30 ${!s.active ? "opacity-50" : ""}`}>
-      <td className="px-4 py-2">
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={(e) => onSelect(s.id, e.target.checked)}
-          className="rounded border-border"
-        />
-      </td>
-      <td className="px-4 py-2 truncate" title={s.canonicalValue}>
-        <span className="inline-flex items-center gap-1.5">
-          <Link
-            to={`/sources/${s.id}`}
-            className="text-blue-400 hover:underline truncate"
-          >
-            {s.canonicalValue}
-          </Link>
-          {s.url && (
-            <a
-              href={s.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-muted-foreground hover:text-foreground shrink-0"
-              title="Open externally"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-            </a>
-          )}
-        </span>
-      </td>
-      <td className="px-4 py-2 text-muted-foreground">{s.sourceLabel}</td>
-      <td className="px-4 py-2">
-        <button
-          onClick={handleToggle}
-          disabled={toggling}
-          className={`text-xs px-2 py-0.5 rounded-full border ${
-            s.active
-              ? "bg-green-900/30 text-green-400 border-green-500/30"
-              : "bg-muted text-muted-foreground border-border"
-          } disabled:opacity-50`}
-        >
-          {s.active ? "Active" : "Inactive"}
-        </button>
-      </td>
-      <td className="px-4 py-2">
-        <EditableCell
-          value={s.weight}
-          onSave={(v) => onUpdate(s.id, { weight: v })}
-        />
-      </td>
-      <td className="px-4 py-2">
-        <EditableCell
-          value={s.qualityPenalty}
-          onSave={(v) => onUpdate(s.id, { qualityPenalty: v })}
-        />
-      </td>
-      <td className="px-4 py-2 tabular-nums">{s.effectiveWeight.toFixed(2)}</td>
-      <td className="px-4 py-2 tabular-nums text-right">{s.signalsProduced}</td>
-      <td className="px-4 py-2 text-muted-foreground tabular-nums">{s.cadenceHours}h</td>
-      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{formatDate(s.lastScraped)}</td>
-      <td className="px-4 py-2 text-muted-foreground text-xs">{s.discoveryMethod}</td>
-      <td className="px-4 py-2 text-right space-x-2">
-        <Link
-          to={`/events?q=${encodeURIComponent(s.canonicalValue)}`}
-          className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-        >
-          Events
-        </Link>
-        <button
-          onClick={() => onDelete(s.id)}
-          className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10"
-        >
-          Delete
-        </button>
-      </td>
-    </tr>
   );
 }
 
@@ -360,11 +258,12 @@ export function SourcesPage() {
     id?: string;
   } | null>(null);
 
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
+  const handleSort = (key: string) => {
+    const k = key as SortKey;
+    if (sortKey === k) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
-      setSortKey(key);
+      setSortKey(k);
       setSortDir("desc");
     }
     setVisibleCount(PAGE_SIZE_INCREMENT);
@@ -498,44 +397,113 @@ export function SourcesPage() {
     }
   };
 
-  const sortIndicator = (key: SortKey) =>
-    sortKey === key ? (sortDir === "asc" ? " \u2191" : " \u2193") : "";
-
-  const [colWidths, setColWidths] = useState<Record<string, number>>({});
-
-  const SortHeader = ({ k, label, className = "", defaultWidth }: { k: SortKey; label: string; className?: string; defaultWidth: number }) => {
-    const width = colWidths[k] ?? defaultWidth;
-
-    const handleResizeStart = (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const startX = e.clientX;
-      const startWidth = width;
-      const onMove = (me: MouseEvent) => {
-        setColWidths((prev) => ({ ...prev, [k]: Math.max(40, startWidth + me.clientX - startX) }));
-      };
-      const onUp = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-      };
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-    };
-
-    return (
-      <th
-        className={`px-4 py-2 font-medium cursor-pointer select-none hover:text-foreground overflow-hidden relative group/th ${className}`}
-        style={{ width }}
-        onClick={() => handleSort(k)}
-      >
-        {label}{sortIndicator(k)}
-        <div
-          onMouseDown={handleResizeStart}
-          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize opacity-0 group-hover/th:opacity-100 bg-border hover:bg-blue-500 transition-opacity"
-        />
-      </th>
-    );
-  };
+  // Column definitions
+  const columns: Column<Source>[] = useMemo(
+    () => [
+      {
+        key: "canonicalValue",
+        label: "Source",
+        resizable: true,
+        defaultWidth: 260,
+        render: (s) => (
+          <span className="inline-flex items-center gap-1.5 truncate" title={s.canonicalValue}>
+            <Link
+              to={`/sources/${s.id}`}
+              className="text-blue-400 hover:underline truncate"
+            >
+              {s.canonicalValue}
+            </Link>
+            {s.url && (
+              <a
+                href={s.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted-foreground hover:text-foreground shrink-0"
+                title="Open externally"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            )}
+          </span>
+        ),
+      },
+      {
+        key: "sourceLabel",
+        label: "Type",
+        resizable: true,
+        defaultWidth: 80,
+        render: (s) => <span className="text-muted-foreground">{s.sourceLabel}</span>,
+      },
+      {
+        key: "active",
+        label: "Status",
+        resizable: true,
+        defaultWidth: 80,
+        render: (s) => (
+          <StatusToggle source={s} onUpdate={handleUpdate} />
+        ),
+      },
+      {
+        key: "weight",
+        label: "Weight",
+        resizable: true,
+        defaultWidth: 70,
+        render: (s) => (
+          <EditableCell value={s.weight} onSave={(v) => handleUpdate(s.id, { weight: v })} />
+        ),
+      },
+      {
+        key: "qualityPenalty",
+        label: "Penalty",
+        resizable: true,
+        defaultWidth: 70,
+        render: (s) => (
+          <EditableCell value={s.qualityPenalty} onSave={(v) => handleUpdate(s.id, { qualityPenalty: v })} />
+        ),
+      },
+      {
+        key: "effectiveWeight",
+        label: "Eff. Wt",
+        resizable: true,
+        defaultWidth: 70,
+        render: (s) => <span className="tabular-nums">{s.effectiveWeight.toFixed(2)}</span>,
+      },
+      {
+        key: "signalsProduced",
+        label: "Signals",
+        resizable: true,
+        defaultWidth: 70,
+        align: "right",
+        render: (s) => <span className="tabular-nums">{s.signalsProduced}</span>,
+      },
+      {
+        key: "cadenceHours",
+        label: "Cadence",
+        resizable: true,
+        defaultWidth: 80,
+        render: (s) => <span className="tabular-nums text-muted-foreground">{s.cadenceHours}h</span>,
+      },
+      {
+        key: "lastScraped",
+        label: "Last Scraped",
+        resizable: true,
+        defaultWidth: 120,
+        render: (s) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(s.lastScraped)}</span>,
+      },
+      {
+        key: "discoveryMethod",
+        label: "Discovery",
+        resizable: true,
+        defaultWidth: 100,
+        render: (s) => <span className="text-muted-foreground text-xs">{s.discoveryMethod}</span>,
+      },
+    ],
+    // handleUpdate is stable enough — it only closes over refetch/updateSource which don't change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   return (
     <div className="space-y-4">
@@ -627,63 +595,66 @@ export function SourcesPage() {
         />
       )}
 
-      {loading ? (
-        <p className="text-muted-foreground">Loading sources...</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-muted-foreground">No sources match the current filter.</p>
-      ) : (
-        <>
-          <div className="rounded-lg border border-border overflow-x-auto">
-            <table className="w-full text-sm table-fixed">
-              <thead>
-                <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
-                  <th className="px-4 py-2 w-8">
-                    <input
-                      type="checkbox"
-                      checked={allPageSelected}
-                      ref={(el) => {
-                        if (el) el.indeterminate = somePageSelected && !allPageSelected;
-                      }}
-                      onChange={toggleSelectAll}
-                      className="rounded border-border"
-                    />
-                  </th>
-                  <SortHeader k="canonicalValue" label="Source" defaultWidth={260} />
-                  <SortHeader k="sourceLabel" label="Type" defaultWidth={80} />
-                  <SortHeader k="active" label="Status" defaultWidth={80} />
-                  <SortHeader k="weight" label="Weight" defaultWidth={70} />
-                  <SortHeader k="qualityPenalty" label="Penalty" defaultWidth={70} />
-                  <SortHeader k="effectiveWeight" label="Eff. Wt" defaultWidth={70} />
-                  <SortHeader k="signalsProduced" label="Signals" className="text-right" defaultWidth={70} />
-                  <SortHeader k="cadenceHours" label="Cadence" defaultWidth={80} />
-                  <SortHeader k="lastScraped" label="Last Scraped" defaultWidth={120} />
-                  <SortHeader k="discoveryMethod" label="Discovery" defaultWidth={100} />
-                  <th className="px-4 py-2 font-medium text-right overflow-hidden" style={{ width: 120 }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleSlice.map((s) => (
-                  <SourceRow
-                    key={s.id}
-                    source={s}
-                    selected={selected.has(s.id)}
-                    onSelect={toggleSelect}
-                    onUpdate={handleUpdate}
-                    onDelete={(id) => setDialog({ type: "delete", id })}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Infinite scroll sentinel + count */}
-          <div ref={sentinelRef} className="flex items-center justify-center py-2 text-sm text-muted-foreground">
-            {hasMore
-              ? `Showing ${visibleSlice.length} of ${filtered.length}`
-              : `${filtered.length} sources`}
-          </div>
-        </>
-      )}
+      <DataTable<Source>
+        columns={columns}
+        data={visibleSlice}
+        getRowKey={(s) => s.id}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={handleSort}
+        rowClassName={(s) => (!s.active ? "opacity-50" : "")}
+        loading={loading}
+        emptyMessage="No sources match the current filter."
+        headerPrefix={
+          <th className="px-4 py-2 w-8">
+            <input
+              type="checkbox"
+              checked={allPageSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = somePageSelected && !allPageSelected;
+              }}
+              onChange={toggleSelectAll}
+              className="rounded border-border"
+            />
+          </th>
+        }
+        renderRowPrefix={(s) => (
+          <td className="px-4 py-2">
+            <input
+              type="checkbox"
+              checked={selected.has(s.id)}
+              onChange={(e) => toggleSelect(s.id, e.target.checked)}
+              className="rounded border-border"
+            />
+          </td>
+        )}
+        headerSuffix={
+          <th className="px-4 py-2 font-medium text-right overflow-hidden" style={{ width: 120 }}>Actions</th>
+        }
+        renderRowSuffix={(s) => (
+          <td className="px-4 py-2 text-right space-x-2">
+            <Link
+              to={`/events?q=${encodeURIComponent(s.canonicalValue)}`}
+              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            >
+              Events
+            </Link>
+            <button
+              onClick={() => setDialog({ type: "delete", id: s.id })}
+              className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+            >
+              Delete
+            </button>
+          </td>
+        )}
+        pagination={{
+          mode: "infinite",
+          visibleCount: visibleSlice.length,
+          totalRows: filtered.length,
+          sentinelRef,
+          hasMore,
+        }}
+      />
 
       {/* Single delete confirmation */}
       {dialog?.type === "delete" && dialog.id && (
@@ -739,5 +710,35 @@ export function SourcesPage() {
         />
       )}
     </div>
+  );
+}
+
+function StatusToggle({
+  source: s,
+  onUpdate,
+}: {
+  source: Source;
+  onUpdate: (id: string, fields: { active?: boolean }) => Promise<void>;
+}) {
+  const [toggling, setToggling] = useState(false);
+
+  const handleToggle = async () => {
+    setToggling(true);
+    await onUpdate(s.id, { active: !s.active });
+    setToggling(false);
+  };
+
+  return (
+    <button
+      onClick={handleToggle}
+      disabled={toggling}
+      className={`text-xs px-2 py-0.5 rounded-full border ${
+        s.active
+          ? "bg-green-900/30 text-green-400 border-green-500/30"
+          : "bg-muted text-muted-foreground border-border"
+      } disabled:opacity-50`}
+    >
+      {s.active ? "Active" : "Inactive"}
+    </button>
   );
 }
