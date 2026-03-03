@@ -10,67 +10,11 @@ use crate::GraphClient;
 /// Single-region deployments use cosine only (geo/temporal add noise).
 const SIMILARITY_THRESHOLD: f64 = 0.65;
 
-/// Batch size for UNWIND edge creation.
-const EDGE_BATCH_SIZE: usize = 500;
-
 /// A signal with its embedding and confidence, fetched from the graph.
 struct SignalEmbedding {
     id: String,
     embedding: Vec<f64>,
     confidence: f64,
-}
-
-/// Build SIMILAR_TO edges for all signals. Compares every pair and creates
-/// edges for pairs with cosine similarity >= threshold.
-/// Returns the number of edges created.
-pub async fn build_edges(client: &GraphClient) -> Result<u64, neo4rs::Error> {
-    let graph = client;
-    let signals = fetch_all_embeddings(graph).await?;
-    let count = signals.len();
-    info!(
-        signals = count,
-        "Fetched signal embeddings for similarity computation"
-    );
-
-    if count < 2 {
-        info!("Too few signals for similarity edges");
-        return Ok(0);
-    }
-
-    // Compute pairwise cosine similarity, weighted by confidence.
-    // Weight = cosine_sim * geometric_mean(conf_a, conf_b)
-    // Low-confidence signals form weaker edges, resisting garbage clustering.
-    let mut edges: Vec<(String, String, f64)> = Vec::new();
-
-    for i in 0..count {
-        for j in (i + 1)..count {
-            let sim = cosine_similarity(&signals[i].embedding, &signals[j].embedding);
-            if sim >= SIMILARITY_THRESHOLD {
-                let conf_weight = (signals[i].confidence * signals[j].confidence).sqrt();
-                let weight = sim * conf_weight;
-                edges.push((signals[i].id.clone(), signals[j].id.clone(), weight));
-            }
-        }
-    }
-
-    info!(
-        edges = edges.len(),
-        "Computed similarity edges above threshold {}", SIMILARITY_THRESHOLD
-    );
-
-    if edges.is_empty() {
-        return Ok(0);
-    }
-
-    // Write edges in batches using UNWIND
-    let mut total_created = 0u64;
-    for batch in edges.chunks(EDGE_BATCH_SIZE) {
-        let created = write_edge_batch(graph, batch).await?;
-        total_created += created;
-    }
-
-    info!(total_created, "SIMILAR_TO edges written");
-    Ok(total_created)
 }
 
 /// Compute similarity edges without writing to Neo4j.
@@ -115,26 +59,6 @@ pub async fn compute_edges(client: &GraphClient) -> Result<Vec<SimilarityEdge>, 
     Ok(edges)
 }
 
-/// Remove all existing SIMILAR_TO edges (full rebuild).
-/// Called before build_edges() for a clean rebuild.
-pub async fn clear_edges(client: &GraphClient) -> Result<u64, neo4rs::Error> {
-    let graph = client;
-    let q = query(
-        "MATCH ()-[e:SIMILAR_TO]->()
-         DELETE e
-         RETURN count(e) AS deleted",
-    );
-
-    let mut stream = graph.execute(q).await?;
-    if let Some(row) = stream.next().await? {
-        let deleted: i64 = row.get("deleted").unwrap_or(0);
-        info!(deleted, "Cleared existing SIMILAR_TO edges");
-        return Ok(deleted as u64);
-    }
-
-    Ok(0)
-}
-
 /// Fetch all active signal embeddings from the graph.
 async fn fetch_all_embeddings(graph: &Graph) -> Result<Vec<SignalEmbedding>, neo4rs::Error> {
     let mut signals = Vec::new();
@@ -161,51 +85,6 @@ async fn fetch_all_embeddings(graph: &Graph) -> Result<Vec<SignalEmbedding>, neo
     }
 
     Ok(signals)
-}
-
-/// Write a batch of edges using UNWIND for efficiency.
-/// Uses MERGE to avoid duplicates.
-async fn write_edge_batch(
-    graph: &Graph,
-    batch: &[(String, String, f64)],
-) -> Result<u64, neo4rs::Error> {
-    let edge_data: Vec<neo4rs::BoltType> = batch
-        .iter()
-        .map(|(from, to, weight)| {
-            neo4rs::BoltType::Map(neo4rs::BoltMap::from_iter(vec![
-                (
-                    neo4rs::BoltString::from("from"),
-                    neo4rs::BoltType::String(neo4rs::BoltString::from(from.as_str())),
-                ),
-                (
-                    neo4rs::BoltString::from("to"),
-                    neo4rs::BoltType::String(neo4rs::BoltString::from(to.as_str())),
-                ),
-                (
-                    neo4rs::BoltString::from("weight"),
-                    neo4rs::BoltType::Float(neo4rs::BoltFloat::new(*weight)),
-                ),
-            ]))
-        })
-        .collect();
-
-    let q = query(
-        "UNWIND $edges AS edge
-         MATCH (a) WHERE a.id = edge.from AND (a:Gathering OR a:Resource OR a:HelpRequest OR a:Announcement OR a:Concern OR a:Condition)
-         MATCH (b) WHERE b.id = edge.to AND (b:Gathering OR b:Resource OR b:HelpRequest OR b:Announcement OR b:Concern OR b:Condition)
-         MERGE (a)-[r:SIMILAR_TO]->(b)
-         SET r.weight = edge.weight
-         RETURN count(*) AS created"
-    )
-    .param("edges", edge_data);
-
-    let mut stream = graph.execute(q).await?;
-    if let Some(row) = stream.next().await? {
-        let created: i64 = row.get("created").unwrap_or(0);
-        return Ok(created as u64);
-    }
-
-    Ok(0)
 }
 
 fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
