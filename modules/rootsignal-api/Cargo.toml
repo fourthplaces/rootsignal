@@ -40,6 +40,7 @@ bytes = { workspace = true }
 url = "2"
 regex = { workspace = true }
 ai-client = { workspace = true }
+async-trait = { workspace = true }
 schemars = { workspace = true }
 spider_transformations = { workspace = true }
 rrule = { workspace = true }

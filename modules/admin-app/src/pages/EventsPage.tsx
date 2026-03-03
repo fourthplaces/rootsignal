@@ -685,7 +685,6 @@ export function EventsPage() {
               <InvestigateDrawer
                 key={investigateEvent.seq}
                 event={investigateEvent}
-                causalTree={treeData?.adminCausalTree?.events ?? []}
                 onClose={() => setInvestigateEvent(null)}
               />
             </Panel>

@@ -44,6 +44,7 @@ use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflo
 mod db;
 mod graphql;
 mod investigate;
+mod investigate_tools;
 mod jwt;
 mod link_preview;
 mod restate_client;
@@ -51,7 +52,7 @@ mod restate_client;
 
 pub struct AppState {
     pub schema: ApiSchema,
-    pub reader: PublicGraphReader,
+    pub reader: Arc<PublicGraphReader>,
     pub writer: GraphStore,
     pub graph_client: GraphClient,
     pub config: Config,
@@ -59,6 +60,7 @@ pub struct AppState {
     pub region: String,
     pub rate_limiter: Mutex<HashMap<IpAddr, Vec<Instant>>>,
     pub jwt_service: JwtService,
+    pub pg_pool: Option<sqlx::PgPool>,
 }
 
 async fn graphql_handler(
@@ -319,7 +321,7 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(AppState {
         schema,
-        reader: PublicGraphReader::new(client.clone()),
+        reader: Arc::new(PublicGraphReader::new(client.clone())),
         writer: GraphStore::new(client.clone()),
         graph_client: client,
         config: config.clone(),
@@ -327,6 +329,7 @@ async fn main() -> Result<()> {
         region: config.region.clone(),
         rate_limiter: Mutex::new(HashMap::new()),
         jwt_service: jwt_service.clone(),
+        pg_pool: pg_pool.clone(),
     });
 
     let link_preview_cache = Arc::new(link_preview::LinkPreviewCache::new());

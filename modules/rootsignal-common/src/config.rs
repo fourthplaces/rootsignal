@@ -58,6 +58,10 @@ pub struct Config {
 
     // Session signing secret (separate from admin_password)
     pub session_secret: String,
+
+    // GitHub (optional — for investigator issue creation)
+    pub github_token: Option<String>,
+    pub github_repo: Option<String>,
 }
 
 impl Config {
@@ -99,6 +103,8 @@ impl Config {
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
             admin_numbers: Vec::new(),
+            github_token: None,
+            github_repo: None,
         }
     }
 
@@ -152,6 +158,8 @@ impl Config {
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
             admin_numbers: Vec::new(),
+            github_token: None,
+            github_repo: None,
         }
     }
 
@@ -189,6 +197,8 @@ impl Config {
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
             admin_numbers: Vec::new(),
+            github_token: None,
+            github_repo: None,
         }
     }
 
@@ -236,6 +246,8 @@ impl Config {
             twilio_auth_token: env::var("TWILIO_AUTH_TOKEN").unwrap_or_default(),
             twilio_service_id: env::var("TWILIO_SERVICE_ID").unwrap_or_default(),
             admin_numbers,
+            github_token: env::var("GITHUB_TOKEN").ok(),
+            github_repo: env::var("GITHUB_REPO").ok(),
         }
     }
 }
@@ -257,6 +269,17 @@ impl Config {
                 tracing::info!("{name} = (empty)");
             } else {
                 tracing::info!("{name} = ({} chars)", value.len());
+            }
+        }
+
+        // Optional vars
+        let optional_vars: [(&str, &Option<String>); 1] = [
+            ("GITHUB_TOKEN", &self.github_token),
+        ];
+        for (name, value) in optional_vars {
+            match value {
+                Some(v) => tracing::info!("{name} = ({} chars)", v.len()),
+                None => tracing::info!("{name} = (not set)"),
             }
         }
     }
