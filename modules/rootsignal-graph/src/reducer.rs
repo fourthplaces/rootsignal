@@ -1747,7 +1747,9 @@ impl GraphProjector {
             } => {
                 let q = query(
                     "MATCH (s:Situation {id: $situation_id})-[r:TAGGED]->(t:Tag {slug: $slug})
-                     DELETE r",
+                     DELETE r
+                     MERGE (s)-[sup:SUPPRESSED_TAG]->(t)
+                       ON CREATE SET sup.suppressed_at = datetime()",
                 )
                 .param("situation_id", situation_id.to_string())
                 .param("slug", tag_slug.as_str());
@@ -1760,19 +1762,41 @@ impl GraphProjector {
                 source_slug,
                 target_slug,
             } => {
-                let q = query(
-                    "MATCH (source:Tag {slug: $source_slug})
-                     MATCH (target:Tag {slug: $target_slug})
-                     OPTIONAL MATCH (s)-[r:TAGGED]->(source)
-                     FOREACH (_ IN CASE WHEN r IS NOT NULL THEN [1] ELSE [] END |
-                         MERGE (s)-[:TAGGED]->(target)
-                     )
-                     DETACH DELETE source",
+                // Step 1: Repoint TAGGED edges
+                let q1 = query(
+                    "MATCH (src:Tag {slug: $source}), (tgt:Tag {slug: $target})
+                     WITH src, tgt
+                     OPTIONAL MATCH (n)-[old:TAGGED]->(src)
+                     WITH src, tgt, n, old
+                     WHERE old IS NOT NULL
+                     MERGE (n)-[:TAGGED]->(tgt)
+                     DELETE old",
                 )
-                .param("source_slug", source_slug.as_str())
-                .param("target_slug", target_slug.as_str());
+                .param("source", source_slug.as_str())
+                .param("target", target_slug.as_str());
+                self.client.run(q1).await?;
 
-                self.client.run(q).await?;
+                // Step 2: Repoint SUPPRESSED_TAG edges
+                let q2 = query(
+                    "MATCH (src:Tag {slug: $source}), (tgt:Tag {slug: $target})
+                     WITH src, tgt
+                     OPTIONAL MATCH (s)-[old:SUPPRESSED_TAG]->(src)
+                     WITH src, tgt, s, old
+                     WHERE old IS NOT NULL
+                     MERGE (s)-[:SUPPRESSED_TAG]->(tgt)
+                     DELETE old",
+                )
+                .param("source", source_slug.as_str())
+                .param("target", target_slug.as_str());
+                self.client.run(q2).await?;
+
+                // Step 3: Delete source tag
+                let q3 = query(
+                    "MATCH (t:Tag {slug: $source}) DETACH DELETE t",
+                )
+                .param("source", source_slug.as_str());
+                self.client.run(q3).await?;
+
                 Ok(ApplyResult::Applied)
             }
 
@@ -2605,6 +2629,69 @@ impl GraphProjector {
                 )
                 .param("id", task_id.as_str())
                 .param("status", status.as_str());
+                self.client.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Admin actions
+            // ---------------------------------------------------------
+            SystemEvent::ValidationIssueDismissed { issue_id } => {
+                let q = query(
+                    "MATCH (v:ValidationIssue {id: $id})
+                     WHERE v.status = 'open'
+                     SET v.status = 'dismissed',
+                         v.resolved_at = datetime(),
+                         v.resolution = 'dismissed by admin'",
+                )
+                .param("id", issue_id.as_str());
+                self.client.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::ScoutTaskCreated {
+                task_id,
+                center_lat,
+                center_lng,
+                radius_km,
+                context,
+                geo_terms,
+                priority,
+                source,
+            } => {
+                let q = query(
+                    "MERGE (t:ScoutTask {id: $id})
+                     SET t.center_lat = $center_lat,
+                         t.center_lng = $center_lng,
+                         t.radius_km = $radius_km,
+                         t.context = $context,
+                         t.geo_terms = $geo_terms,
+                         t.priority = $priority,
+                         t.source = $source,
+                         t.status = 'pending',
+                         t.phase_status = coalesce(t.phase_status, 'idle'),
+                         t.created_at = datetime($ts)",
+                )
+                .param("id", task_id.to_string())
+                .param("center_lat", center_lat)
+                .param("center_lng", center_lng)
+                .param("radius_km", radius_km)
+                .param("context", context.as_str())
+                .param("geo_terms", geo_terms.clone())
+                .param("priority", priority)
+                .param("source", source.as_str())
+                .param("ts", format_dt_from_stored(event));
+                self.client.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::ScoutTaskCancelled { task_id } => {
+                let q = query(
+                    "MATCH (t:ScoutTask {id: $id})
+                     WHERE t.status IN ['pending', 'running']
+                     SET t.status = 'cancelled'",
+                )
+                .param("id", task_id.as_str());
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
             }

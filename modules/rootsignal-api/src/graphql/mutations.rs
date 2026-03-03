@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    Config, DemandSignal, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
+    Config, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphStore;
 use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
@@ -492,9 +492,15 @@ impl MutationRoot {
         situation_id: Uuid,
         tag_slug: String,
     ) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        writer
-            .suppress_situation_tag(situation_id, &tag_slug)
+        use rootsignal_common::events::SystemEvent;
+
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::TagSuppressed {
+                situation_id,
+                tag_slug,
+            })
+            .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to untag situation: {e}")))?;
         Ok(true)
@@ -508,9 +514,15 @@ impl MutationRoot {
         source_slug: String,
         target_slug: String,
     ) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        writer
-            .merge_tags(&source_slug, &target_slug)
+        use rootsignal_common::events::SystemEvent;
+
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::TagsMerged {
+                source_slug,
+                target_slug,
+            })
+            .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to merge tags: {e}")))?;
         Ok(true)
@@ -519,12 +531,17 @@ impl MutationRoot {
     /// Dismiss a supervisor finding (validation issue).
     #[graphql(guard = "AdminGuard")]
     async fn dismiss_finding(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let dismissed = writer
-            .dismiss_validation_issue(&id)
+        use rootsignal_common::events::SystemEvent;
+
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::ValidationIssueDismissed {
+                issue_id: id,
+            })
+            .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to dismiss finding: {e}")))?;
-        Ok(dismissed)
+        Ok(true)
     }
 
     /// Create a new scout task (manual demand signal). Geocodes the location server-side.
@@ -536,6 +553,8 @@ impl MutationRoot {
         radius_km: Option<f64>,
         priority: Option<f64>,
     ) -> Result<String> {
+        use rootsignal_common::events::SystemEvent;
+
         let (lat, lng, display_name) = geocode_location(&location)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
@@ -547,38 +566,39 @@ impl MutationRoot {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let task = rootsignal_common::ScoutTask {
-            id: Uuid::new_v4(),
-            center_lat: lat,
-            center_lng: lng,
-            radius_km: radius_km.unwrap_or(30.0),
-            context: display_name,
-            geo_terms,
-            priority: priority.unwrap_or(1.0),
-            source: rootsignal_common::ScoutTaskSource::Manual,
-            status: rootsignal_common::ScoutTaskStatus::Pending,
-            phase_status: "idle".to_string(),
-            created_at: chrono::Utc::now(),
-            completed_at: None,
-        };
-        let id = task.id.to_string();
-        writer
-            .upsert_scout_task(&task)
+        let task_id = Uuid::new_v4();
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::ScoutTaskCreated {
+                task_id,
+                center_lat: lat,
+                center_lng: lng,
+                radius_km: radius_km.unwrap_or(30.0),
+                context: display_name,
+                geo_terms,
+                priority: priority.unwrap_or(1.0),
+                source: "manual".to_string(),
+            })
+            .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create scout task: {e}")))?;
-        Ok(id)
+        Ok(task_id.to_string())
     }
 
     /// Cancel a scout task.
     #[graphql(guard = "AdminGuard")]
     async fn cancel_scout_task(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
-        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let cancelled = writer
-            .cancel_scout_task(&id)
+        use rootsignal_common::events::SystemEvent;
+
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::ScoutTaskCancelled {
+                task_id: id,
+            })
+            .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to cancel scout task: {e}")))?;
-        Ok(cancelled)
+        Ok(true)
     }
 
     /// Record a demand signal from a user search (public, rate-limited).
@@ -590,6 +610,8 @@ impl MutationRoot {
         center_lng: f64,
         radius_km: f64,
     ) -> Result<bool> {
+        use rootsignal_common::events::SystemEvent;
+
         rate_limit_check(ctx, DEMAND_RATE_LIMIT_PER_HOUR)?;
 
         // Validate inputs
@@ -607,18 +629,17 @@ impl MutationRoot {
             return Err("radius_km must be between 1 and 500".into());
         }
 
-        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let signal = DemandSignal {
-            id: Uuid::new_v4(),
-            query: query.clone(),
-            center_lat,
-            center_lng,
-            radius_km,
-            created_at: chrono::Utc::now(),
-        };
-
-        writer
-            .upsert_demand_signal(&signal)
+        let demand_id = Uuid::new_v4();
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::DemandReceived {
+                demand_id,
+                query: query.clone(),
+                center_lat,
+                center_lng,
+                radius_km,
+            })
+            .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to record demand: {e}")))?;
 
