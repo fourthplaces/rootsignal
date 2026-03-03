@@ -1561,8 +1561,10 @@ fn event_summary(variant_name: &str, data: &serde_json::Value) -> Option<String>
         "scrape:scrape_role_completed" => {
             let role = json_str(data, "role").unwrap_or_default();
             let scraped = json_u32(data, "urls_scraped").unwrap_or(0);
+            let unchanged = json_u32(data, "urls_unchanged").unwrap_or(0);
+            let failed = json_u32(data, "urls_failed").unwrap_or(0);
             let signals = json_u32(data, "signals_extracted").unwrap_or(0);
-            Some(format!("{role}: {scraped} scraped, {signals} signals"))
+            Some(format!("{role}: {scraped} scraped, {unchanged} unchanged, {failed} failed, {signals} signals"))
         }
 
         // ── Signal domain ──────────────────────────────────────────
@@ -1596,10 +1598,14 @@ fn event_summary(variant_name: &str, data: &serde_json::Value) -> Option<String>
 
         // ── Discovery domain ───────────────────────────────────────
         "discovery:source_discovered" => {
-            data.get("source")
-                .and_then(|s| s.get("canonical_key"))
-                .and_then(|v| v.as_str())
-                .map(String::from)
+            let src = data.get("source");
+            let key = src.and_then(|s| s.get("canonical_key")).and_then(|v| v.as_str()).unwrap_or("?");
+            let method = src.and_then(|s| s.get("discovery_method")).and_then(|v| v.as_str()).unwrap_or("");
+            let gap = src.and_then(|s| s.get("gap_context")).and_then(|v| v.as_str());
+            match gap {
+                Some(g) => Some(format!("\"{key}\" via {method} ({g})")),
+                None => Some(format!("\"{key}\" via {method}")),
+            }
         }
         "discovery:links_promoted" => json_u32(data, "count").map(|n| format!("{n} links")),
         "discovery:expansion_query_collected" => json_str(data, "query").map(|q| format!("\"{q}\"")),
