@@ -734,6 +734,66 @@ export const ADMIN_NODE_EVENTS = gql`
   }
 `;
 
+// --- Event browser queries ---
+
+export const ADMIN_EVENTS = gql`
+  query AdminEvents(
+    $limit: Int!
+    $cursor: Int
+    $eventTypes: [String!]
+    $runId: String
+    $correlationId: String
+    $from: DateTime
+    $to: DateTime
+    $payloadSearch: String
+  ) {
+    adminEvents(
+      limit: $limit
+      cursor: $cursor
+      eventTypes: $eventTypes
+      runId: $runId
+      correlationId: $correlationId
+      from: $from
+      to: $to
+      payloadSearch: $payloadSearch
+    ) {
+      events {
+        seq
+        ts
+        type
+        name
+        layer
+        id
+        parentId
+        correlationId
+        runId
+        summary
+        payload
+      }
+      nextCursor
+    }
+  }
+`;
+
+export const ADMIN_CAUSAL_TREE = gql`
+  query AdminCausalTree($seq: Int!) {
+    adminCausalTree(seq: $seq) {
+      events {
+        seq
+        ts
+        type
+        name
+        layer
+        id
+        parentId
+        summary
+        payload
+      }
+      rootSeq
+    }
+  }
+`;
+
 export const SITUATION_DETAIL = gql`
   query SituationDetail($id: UUID!) {
     situation(id: $id) {

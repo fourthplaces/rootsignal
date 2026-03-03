@@ -14,6 +14,7 @@ import { ArchivePage } from "@/pages/ArchivePage";
 import { SourcesPage } from "@/pages/SourcesPage";
 import { SourceDetailPage } from "@/pages/SourceDetailPage";
 import { GraphExplorerPage } from "@/pages/GraphExplorerPage";
+import { EventsPage } from "@/pages/EventsPage";
 import { DanglingSignalsPage } from "@/pages/DanglingSignalsPage";
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="sources" element={<SourcesPage />} />
         <Route path="sources/:id" element={<SourceDetailPage />} />
         <Route path="graph" element={<GraphExplorerPage />} />
+        <Route path="events" element={<EventsPage />} />
         <Route path="archive" element={<ArchivePage />} />
         <Route path="signals" element={<SignalsPage />} />
         <Route path="signals/:id" element={<SignalDetailPage />} />

@@ -30,6 +30,19 @@ pub struct EventRow {
     pub data: serde_json::Value,
 }
 
+/// Extended event row with run_id, correlation_id, parent_seq.
+pub struct EventRowFull {
+    pub id: Option<Uuid>,
+    pub parent_id: Option<Uuid>,
+    pub seq: i64,
+    pub ts: DateTime<Utc>,
+    pub event_type: String,
+    pub data: serde_json::Value,
+    pub run_id: Option<String>,
+    pub correlation_id: Option<Uuid>,
+    pub parent_seq: Option<i64>,
+}
+
 // ---------------------------------------------------------------------------
 // Domain row returned by queries
 // ---------------------------------------------------------------------------
@@ -163,6 +176,77 @@ pub async fn list_events_by_node_id(
     Ok(rows.into_iter().map(row_to_event).collect())
 }
 
+/// Paginated reverse-chronological event listing with optional filters.
+pub async fn list_events_paginated(
+    pool: &PgPool,
+    event_types: Option<&[String]>,
+    run_id: Option<&str>,
+    correlation_id: Option<Uuid>,
+    cursor: Option<i64>,
+    from: Option<DateTime<Utc>>,
+    to: Option<DateTime<Utc>>,
+    payload_search: Option<&str>,
+    limit: i64,
+) -> Result<Vec<EventRowFull>> {
+    let limit = limit.min(200);
+
+    let rows = sqlx::query(
+        r#"
+        SELECT seq, ts, event_type, payload AS data, id, parent_id,
+               run_id, correlation_id, parent_seq
+        FROM events
+        WHERE ($1::text[] IS NULL OR event_type = ANY($1))
+          AND ($2::text IS NULL OR run_id = $2)
+          AND ($3::uuid IS NULL OR correlation_id = $3)
+          AND ($4::bigint IS NULL OR seq < $4)
+          AND ($5::timestamptz IS NULL OR ts >= $5)
+          AND ($6::timestamptz IS NULL OR ts <= $6)
+          AND ($7::text IS NULL OR payload::text ILIKE '%' || $7 || '%')
+        ORDER BY seq DESC
+        LIMIT $8
+        "#,
+    )
+    .bind(event_types)
+    .bind(run_id)
+    .bind(correlation_id)
+    .bind(cursor)
+    .bind(from)
+    .bind(to)
+    .bind(payload_search)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(row_to_event_full).collect())
+}
+
+/// Fetch all events sharing the same correlation_id as the given event.
+/// Returns events ordered by seq, plus the root event's seq (the one with no parent_id).
+pub async fn causal_tree(pool: &PgPool, seq: i64) -> Result<(Vec<EventRowFull>, i64)> {
+    let rows = sqlx::query(
+        r#"
+        SELECT e.seq, e.ts, e.event_type, e.payload AS data, e.id, e.parent_id,
+               e.run_id, e.correlation_id, e.parent_seq
+        FROM events e
+        WHERE e.correlation_id = (SELECT correlation_id FROM events WHERE seq = $1)
+          AND e.correlation_id IS NOT NULL
+        ORDER BY e.seq
+        "#,
+    )
+    .bind(seq)
+    .fetch_all(pool)
+    .await?;
+
+    // Root = event with no parent_id (UUID)
+    let root_seq = rows
+        .iter()
+        .find(|r| r.get::<Option<Uuid>, _>("parent_id").is_none())
+        .map(|r| r.get::<i64, _>("seq"))
+        .unwrap_or(seq);
+
+    Ok((rows.into_iter().map(row_to_event_full).collect(), root_seq))
+}
+
 // ---------------------------------------------------------------------------
 // Internal
 // ---------------------------------------------------------------------------
@@ -193,5 +277,19 @@ fn row_to_event(r: sqlx::postgres::PgRow) -> EventRow {
         ts: r.get("ts"),
         event_type: r.get("event_type"),
         data: r.get::<serde_json::Value, _>("data"),
+    }
+}
+
+fn row_to_event_full(r: sqlx::postgres::PgRow) -> EventRowFull {
+    EventRowFull {
+        id: r.get("id"),
+        parent_id: r.get("parent_id"),
+        seq: r.get("seq"),
+        ts: r.get("ts"),
+        event_type: r.get("event_type"),
+        data: r.get::<serde_json::Value, _>("data"),
+        run_id: r.get("run_id"),
+        correlation_id: r.get("correlation_id"),
+        parent_seq: r.get("parent_seq"),
     }
 }

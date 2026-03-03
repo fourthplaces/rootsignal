@@ -16,7 +16,7 @@ use super::loaders::{
 use super::mutations::MutationRoot;
 use super::types::*;
 use crate::restate_client::RestateClient;
-use crate::db::scout_run::{EventRow, ScoutRunRow, StatsJson};
+use crate::db::scout_run::{EventRow, EventRowFull, ScoutRunRow, StatsJson};
 use crate::jwt::JwtService;
 use rootsignal_common::Config;
 
@@ -580,6 +580,73 @@ impl QueryRoot {
         .await
         .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
         Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
+    }
+
+    /// Browse the full event stream with filters and cursor pagination.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_events(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+        cursor: Option<i64>,
+        event_types: Option<Vec<String>>,
+        run_id: Option<String>,
+        correlation_id: Option<String>,
+        from: Option<DateTime<Utc>>,
+        to: Option<DateTime<Utc>>,
+        payload_search: Option<String>,
+    ) -> Result<AdminEventsPage> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let lim = (limit.unwrap_or(50) as i64).min(200);
+        let corr_id = correlation_id
+            .as_deref()
+            .and_then(|s| s.parse::<Uuid>().ok());
+
+        let rows = crate::db::scout_run::list_events_paginated(
+            pool,
+            event_types.as_deref(),
+            run_id.as_deref(),
+            corr_id,
+            cursor,
+            from,
+            to,
+            payload_search.as_deref(),
+            lim,
+        )
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
+
+        let next_cursor = if rows.len() as i64 == lim {
+            rows.last().map(|r| r.seq)
+        } else {
+            None
+        };
+
+        let events: Vec<AdminEvent> = rows.into_iter().map(AdminEvent::from).collect();
+        Ok(AdminEventsPage {
+            events,
+            next_cursor,
+        })
+    }
+
+    /// Walk the causal tree for an event (ancestors + descendants).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_causal_tree(&self, ctx: &Context<'_>, seq: i64) -> Result<AdminCausalTree> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let (rows, root_seq) = crate::db::scout_run::causal_tree(pool, seq)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load causal tree: {e}")))?;
+
+        let events: Vec<AdminEvent> = rows.into_iter().map(AdminEvent::from).collect();
+        Ok(AdminCausalTree { events, root_seq })
     }
 
     /// Aggregate summary of supervisor findings for a region.
@@ -1337,6 +1404,103 @@ impl From<EventRow> for ScoutRunEvent {
             new_value: json_str(d, "new_value"),
             signal_count: json_u32(d, "signal_count"),
             summary: json_str(d, "summary"),
+        }
+    }
+}
+
+// ========== Event Browser types ==========
+
+#[derive(SimpleObject)]
+struct AdminEvent {
+    seq: i64,
+    ts: DateTime<Utc>,
+    /// The event_type column — codec name like "DiscoveryEvent".
+    #[graphql(name = "type")]
+    event_type: String,
+    /// Human-readable variant name (e.g. "source_discovered") from payload "type" tag.
+    name: String,
+    layer: String,
+    /// Seesaw event UUID — this event's identity.
+    id: Option<String>,
+    /// Seesaw parent event UUID — which event caused this one.
+    parent_id: Option<String>,
+    correlation_id: Option<String>,
+    run_id: Option<String>,
+    summary: Option<String>,
+    payload: String,
+}
+
+#[derive(SimpleObject)]
+struct AdminEventsPage {
+    events: Vec<AdminEvent>,
+    next_cursor: Option<i64>,
+}
+
+#[derive(SimpleObject)]
+struct AdminCausalTree {
+    events: Vec<AdminEvent>,
+    root_seq: i64,
+}
+
+/// Classify by the codec name stored in event_type (e.g. "WorldEvent", "ScrapeEvent").
+fn event_layer(event_type: &str) -> &'static str {
+    match event_type {
+        "WorldEvent" => "world",
+        "SystemEvent" | "EnrichmentEvent" | "SignalEvent"
+        | "SynthesisEvent" | "DiscoveryEvent" => "system",
+        _ => "telemetry",
+    }
+}
+
+fn event_summary(variant_name: &str, data: &serde_json::Value) -> Option<String> {
+    // Try common summary-like fields in priority order
+    json_str(data, "message")
+        .or_else(|| json_str(data, "title"))
+        .or_else(|| json_str(data, "summary"))
+        .or_else(|| json_str(data, "action"))
+        .or_else(|| json_str(data, "reason"))
+        .or_else(|| json_str(data, "error"))
+        .or_else(|| {
+            // Correction: "field: old → new"
+            json_str(data, "field").map(|f| {
+                let old = json_str(data, "old_value").unwrap_or_default();
+                let new = json_str(data, "new_value").unwrap_or_default();
+                format!("{f}: {old} → {new}")
+            })
+        })
+        .or_else(|| json_str(data, "canonical_key"))
+        .or_else(|| json_str(data, "node_id").map(|id| format!("node {id}")))
+        .or_else(|| json_str(data, "url"))
+        .or_else(|| json_str(data, "query"))
+        .or_else(|| json_str(data, "source_url"))
+        .or_else(|| {
+            // Phase events: show the phase name
+            if variant_name.contains("phase") {
+                json_str(data, "phase")
+            } else {
+                None
+            }
+        })
+}
+
+impl From<EventRowFull> for AdminEvent {
+    fn from(r: EventRowFull) -> Self {
+        let name = json_str(&r.data, "type").unwrap_or_else(|| r.event_type.clone());
+        let summary = event_summary(&name, &r.data);
+        let layer = event_layer(&r.event_type).to_string();
+        let payload = serde_json::to_string(&r.data).unwrap_or_default();
+        Self {
+            seq: r.seq,
+            ts: r.ts,
+            event_type: r.event_type,
+            name,
+            layer,
+            id: r.id.map(|u| u.to_string()),
+            parent_id: r.parent_id.map(|u| u.to_string()),
+            correlation_id: r.correlation_id.map(|u| u.to_string()),
+            run_id: r.run_id,
+            summary,
+            payload,
         }
     }
 }
