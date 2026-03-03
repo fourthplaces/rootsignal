@@ -241,6 +241,7 @@ export function TimelinePane() {
     hasMore,
     loadMore,
     loadingMore,
+    live,
     selectedSeq,
     selectSeq,
     setRunId,
@@ -258,9 +259,27 @@ export function TimelinePane() {
   return (
     <div className="flex flex-col h-full">
       <FilterBar />
+      {live && (
+        <div className="flex items-center gap-1.5 px-3 py-1 border-b border-border text-[10px] text-emerald-400">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          Live
+        </div>
+      )}
       {loading && filteredEvents.length === 0 ? (
-        <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-          Loading events...
+        <div className="animate-pulse">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-border">
+              <div className="h-3 w-12 bg-muted rounded shrink-0" />
+              <div className="h-3 w-32 bg-muted rounded shrink-0" />
+              <div className="h-4 w-14 bg-muted rounded shrink-0" />
+              <div className="h-4 w-16 bg-muted rounded shrink-0" />
+              <div className="h-3 w-28 bg-muted rounded shrink-0" />
+              <div className="h-3 bg-muted rounded flex-1" style={{ maxWidth: `${150 + (i * 37) % 200}px` }} />
+            </div>
+          ))}
         </div>
       ) : filteredEvents.length === 0 ? (
         <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
