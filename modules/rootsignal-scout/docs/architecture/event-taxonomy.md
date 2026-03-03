@@ -173,7 +173,7 @@ These drive the signal processing sub-chain and scrape telemetry. They are persi
 
 **DiscoveryEvent**: `SourceDiscovered` (projectable), `LinksPromoted`, `ExpansionQueryCollected`, `SocialTopicCollected`
 
-**EnrichmentEvent**: `ActorEnrichmentCompleted`
+**EnrichmentEvent**: `EnrichmentRoleCompleted` (carries `EnrichmentRole` — one of: ActorExtraction, Diversity, ActorStats, ActorLocation)
 
 **SynthesisEvent**: `SynthesisTriggered`, `SynthesisRoleCompleted` (carries `SynthesisRole` — one of: Similarity, ResponseMapping, ConcernLinker, ResponseFinder, GatheringFinder, Investigation)
 

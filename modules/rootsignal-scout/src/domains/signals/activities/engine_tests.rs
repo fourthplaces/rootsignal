@@ -492,10 +492,10 @@ async fn actor_location_emits_events_on_response_complete() {
         "expected ActorLocationIdentified, got: {names:?}"
     );
 
-    // ActorEnrichmentCompleted event emitted
+    // EnrichmentRoleCompleted event emitted (actor_location role)
     assert!(
-        names.iter().any(|n| n.contains("actor_enrichment_completed")),
-        "expected ActorEnrichmentCompleted, got: {names:?}"
+        names.iter().any(|n| n.contains("enrichment_role_completed")),
+        "expected EnrichmentRoleCompleted, got: {names:?}"
     );
 }
 

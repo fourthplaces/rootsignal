@@ -3,15 +3,21 @@
 pub mod activities;
 pub mod events;
 
+#[cfg(test)]
+mod completion_tests;
+
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
+use tracing::info;
 
 use rootsignal_graph::GraphReader;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
-use crate::domains::enrichment::events::EnrichmentEvent;
+use crate::domains::enrichment::events::{
+    all_enrichment_roles, EnrichmentEvent, EnrichmentRole,
+};
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_response_scrape_completed(e: &LifecycleEvent) -> bool {
@@ -30,53 +36,31 @@ fn is_actor_enrichment_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
+fn is_enrichment_role_completed(e: &EnrichmentEvent) -> bool {
+    matches!(e, EnrichmentEvent::EnrichmentRoleCompleted { .. })
+}
+
 #[handlers]
 pub mod handlers {
     use super::*;
 
-    /// PhaseCompleted(ResponseScrape) → enrich actor locations from signal evidence.
-    #[handle(on = LifecycleEvent, id = "enrichment:actor_location", filter = is_response_scrape_completed)]
-    async fn enrich_actor_locations(
+    // ---------------------------------------------------------------
+    // Role handlers: each listens for PhaseCompleted(ResponseScrape)
+    // ---------------------------------------------------------------
+
+    /// Pin cleanup + actor extraction → EnrichmentRoleCompleted(ActorExtraction)
+    #[handle(on = LifecycleEvent, id = "enrichment:actor_extraction", filter = is_response_scrape_completed)]
+    async fn actor_extraction(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let actors = match deps.store.list_all_actors().await {
-            Ok(a) => a,
-            Err(_) => return Ok(events![]),
-        };
-        if actors.is_empty() {
-            return Ok(events![]);
-        }
-
-        let mut all_events =
-            activities::actor_location::triangulate_actor_location_events(&*deps.store, &actors).await;
-        let count = all_events.len();
-        if count == 0 {
-            return Ok(events![]);
-        }
-        all_events.push(EnrichmentEvent::ActorEnrichmentCompleted {
-            actors_updated: count as u32,
-        });
-        Ok(all_events)
-    }
-
-    /// PhaseCompleted(ResponseScrape) → delete pins, actor extraction, embedding + metric enrichment,
-    /// emit PhaseCompleted(ActorEnrichment).
-    #[handle(on = LifecycleEvent, id = "enrichment:post_scrape", filter = is_response_scrape_completed)]
-    async fn enrich_signals(
-        _event: LifecycleEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-
-        // Requires graph_client + region — skip in tests
         let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                return Ok(events![LifecycleEvent::PhaseCompleted {
-                    phase: PipelinePhase::ActorEnrichment,
+                return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
+                    role: EnrichmentRole::ActorExtraction,
                 }]);
             }
         };
@@ -90,21 +74,146 @@ pub mod handlers {
                 .unwrap_or_default()
         };
 
-        let actor_events = activities::compute_post_scrape_enrichment(
-            &*deps.store,
-            graph_client,
-            region,
-            deps.anthropic_api_key.as_deref().unwrap_or(""),
-            &consumed_pin_ids,
-        )
-        .await;
+        // Pin cleanup
+        let mut all_events = Events::new();
+        if !consumed_pin_ids.is_empty() {
+            info!(count = consumed_pin_ids.len(), "Emitting PinsConsumed for consumed pins");
+            all_events.push(rootsignal_common::events::SystemEvent::PinsConsumed {
+                pin_ids: consumed_pin_ids,
+            });
+        }
 
-        let mut all_events = actor_events;
-        all_events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::ActorEnrichment,
+        // Actor extraction
+        info!("=== Actor Extraction ===");
+        let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
+        let api_key = deps.anthropic_api_key.as_deref().unwrap_or("");
+        let (actor_stats, actor_events) =
+            activities::actor_extractor::run_actor_extraction(
+                &*deps.store,
+                graph_client,
+                api_key,
+                min_lat,
+                max_lat,
+                min_lng,
+                max_lng,
+            )
+            .await;
+        info!("{actor_stats}");
+
+        all_events.extend(actor_events);
+        all_events.push(EnrichmentEvent::EnrichmentRoleCompleted {
+            role: EnrichmentRole::ActorExtraction,
         });
         Ok(all_events)
     }
+
+    /// Diversity metrics → EnrichmentRoleCompleted(Diversity)
+    #[handle(on = LifecycleEvent, id = "enrichment:diversity", filter = is_response_scrape_completed)]
+    async fn diversity(
+        _event: LifecycleEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let deps = ctx.deps();
+
+        let graph_client = match deps.graph_client.as_ref() {
+            Some(g) => g,
+            None => {
+                return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
+                    role: EnrichmentRole::Diversity,
+                }]);
+            }
+        };
+
+        info!("=== Diversity Metrics ===");
+        let reader = GraphReader::new(graph_client.clone());
+        let mut all_events = activities::diversity::compute_diversity_events(&reader, &[]).await;
+        all_events.push(EnrichmentEvent::EnrichmentRoleCompleted {
+            role: EnrichmentRole::Diversity,
+        });
+        Ok(all_events)
+    }
+
+    /// Actor stats → EnrichmentRoleCompleted(ActorStats)
+    #[handle(on = LifecycleEvent, id = "enrichment:actor_stats", filter = is_response_scrape_completed)]
+    async fn actor_stats(
+        _event: LifecycleEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let deps = ctx.deps();
+
+        let graph_client = match deps.graph_client.as_ref() {
+            Some(g) => g,
+            None => {
+                return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
+                    role: EnrichmentRole::ActorStats,
+                }]);
+            }
+        };
+
+        info!("=== Actor Stats ===");
+        let reader = GraphReader::new(graph_client.clone());
+        let mut all_events = activities::actor_stats::compute_actor_stats_events(&reader).await;
+        all_events.push(EnrichmentEvent::EnrichmentRoleCompleted {
+            role: EnrichmentRole::ActorStats,
+        });
+        Ok(all_events)
+    }
+
+    /// Actor location triangulation → EnrichmentRoleCompleted(ActorLocation)
+    #[handle(on = LifecycleEvent, id = "enrichment:actor_location", filter = is_response_scrape_completed)]
+    async fn actor_location(
+        _event: LifecycleEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let deps = ctx.deps();
+
+        let actors = match deps.store.list_all_actors().await {
+            Ok(a) => a,
+            Err(_) => {
+                return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
+                    role: EnrichmentRole::ActorLocation,
+                }]);
+            }
+        };
+
+        let mut all_events = if actors.is_empty() {
+            Events::new()
+        } else {
+            activities::actor_location::triangulate_actor_location_events(&*deps.store, &actors).await
+        };
+        all_events.push(EnrichmentEvent::EnrichmentRoleCompleted {
+            role: EnrichmentRole::ActorLocation,
+        });
+        Ok(all_events)
+    }
+
+    // ---------------------------------------------------------------
+    // Completion: all 4 roles done → PhaseCompleted(ActorEnrichment)
+    // ---------------------------------------------------------------
+
+    #[handle(on = EnrichmentEvent, id = "enrichment:phase_complete", filter = is_enrichment_role_completed)]
+    async fn phase_complete(
+        _event: EnrichmentEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let (_, state) = ctx.singleton::<PipelineState>();
+
+        if state
+            .completed_enrichment_roles
+            .is_superset(&all_enrichment_roles())
+        {
+            info!("All enrichment roles complete, emitting PhaseCompleted");
+            Ok(events![LifecycleEvent::PhaseCompleted {
+                phase: PipelinePhase::ActorEnrichment,
+            }])
+        } else {
+            Ok(Events::new())
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Source metrics: unchanged, triggers on PhaseCompleted(ActorEnrichment)
+    // ---------------------------------------------------------------
 
     /// PhaseCompleted(ActorEnrichment) → update source weights/cadence, emit MetricsCompleted.
     #[handle(on = LifecycleEvent, id = "enrichment:metrics", filter = is_actor_enrichment_completed)]

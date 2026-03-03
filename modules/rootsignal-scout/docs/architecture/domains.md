@@ -87,15 +87,18 @@ Social scraping runs in parallel via Apify (Instagram, Facebook, Reddit).
 
 **Purpose**: Actor extraction, location triangulation, quality scoring, source metrics.
 
-**Handlers**:
+**Handlers** (parallel fan-out on `PhaseCompleted(ResponseScrape)`):
 
 | ID | Trigger | Emits |
 |----|---------|-------|
-| `enrichment:actor_location` | `PhaseCompleted(ResponseScrape)` | `SystemEvent::ActorLocationIdentified`, `ActorEnrichmentCompleted` |
-| `enrichment:post_scrape` | `PhaseCompleted(ResponseScrape)` | `SystemEvent::PinsConsumed`, actor events, `PhaseCompleted(ActorEnrichment)` |
+| `enrichment:actor_extraction` | `PhaseCompleted(ResponseScrape)` | `SystemEvent::PinsConsumed`, actor events, `EnrichmentRoleCompleted(ActorExtraction)` |
+| `enrichment:diversity` | `PhaseCompleted(ResponseScrape)` | `EnrichmentEvent::SignalDiversityComputed`, `EnrichmentRoleCompleted(Diversity)` |
+| `enrichment:actor_stats` | `PhaseCompleted(ResponseScrape)` | `EnrichmentEvent::ActorStatsComputed`, `EnrichmentRoleCompleted(ActorStats)` |
+| `enrichment:actor_location` | `PhaseCompleted(ResponseScrape)` | `SystemEvent::ActorLocationIdentified`, `EnrichmentRoleCompleted(ActorLocation)` |
+| `enrichment:phase_complete` | `EnrichmentRoleCompleted` | `PhaseCompleted(ActorEnrichment)` (when all 4 roles done) |
 | `enrichment:metrics` | `PhaseCompleted(ActorEnrichment)` | `SystemEvent::SourceChanged`, `SourceScraped`, `MetricsCompleted` |
 
-**Activities**: `triangulate_actor_location_events()` geolocates actors from signal evidence. `compute_post_scrape_enrichment()` handles consumed pins, actor extraction, and embedding enrichment. `compute_source_metrics()` updates source weights and cadences based on signal yield.
+**Activities**: `triangulate_actor_location_events()` geolocates actors from signal evidence. `run_actor_extraction()` handles actor extraction via LLM. `compute_diversity_events()` computes evidence diversity per signal. `compute_actor_stats_events()` computes per-actor statistics. `compute_source_metrics()` updates source weights and cadences based on signal yield.
 
 ---
 

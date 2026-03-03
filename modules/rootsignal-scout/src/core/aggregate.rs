@@ -17,6 +17,7 @@ use rootsignal_common::Node;
 use crate::core::events::FreshnessBucket;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::scrape::events::ScrapeRole;
+use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
 use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
 use crate::core::stats::ScoutStats;
 use crate::domains::discovery::events::DiscoveryEvent;
@@ -98,6 +99,10 @@ pub struct PipelineState {
     /// Synthesis roles completed, for phase-completion tracking.
     #[serde(default)]
     pub completed_synthesis_roles: HashSet<SynthesisRole>,
+
+    /// Enrichment roles completed, for phase-completion tracking.
+    #[serde(default)]
+    pub completed_enrichment_roles: HashSet<EnrichmentRole>,
 }
 
 /// A batch of extracted nodes for a single URL, carried on `SignalsExtracted`
@@ -151,6 +156,7 @@ impl PipelineState {
             social_topics: Vec::new(),
             completed_scrape_roles: HashSet::new(),
             completed_synthesis_roles: HashSet::new(),
+            completed_enrichment_roles: HashSet::new(),
         }
     }
 
@@ -298,7 +304,16 @@ impl PipelineState {
         }
     }
 
-    // LifecycleEvent and EnrichmentEvent are no-ops for aggregate state.
+    /// Apply an enrichment domain event.
+    pub fn apply_enrichment(&mut self, event: &EnrichmentEvent) {
+        match event {
+            EnrichmentEvent::EnrichmentRoleCompleted { role } => {
+                self.completed_enrichment_roles.insert(*role);
+            }
+        }
+    }
+
+    // LifecycleEvent is a no-op for aggregate state.
 
     // -----------------------------------------------------------------
     // Apply accumulated outputs from pure activity functions
@@ -428,6 +443,10 @@ pub mod pipeline_aggregators {
 
     fn on_synthesis(state: &mut PipelineState, event: SynthesisEvent) {
         state.apply_synthesis(&event);
+    }
+
+    fn on_enrichment(state: &mut PipelineState, event: EnrichmentEvent) {
+        state.apply_enrichment(&event);
     }
 }
 

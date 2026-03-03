@@ -61,14 +61,25 @@ PhaseCompleted(ReapExpired)
                 ├─[discovery:link_promotion]
                 │   └─ DiscoveryEvent::SourceDiscovered / LinksPromoted
                 │
+                ├─[enrichment:actor_extraction]
+                │   └─ SystemEvent::PinsConsumed
+                │   └─ SystemEvent::ActorIdentified (actor extraction)
+                │   └─ EnrichmentRoleCompleted(ActorExtraction)
+                │
+                ├─[enrichment:diversity]
+                │   └─ SignalDiversityComputed
+                │   └─ EnrichmentRoleCompleted(Diversity)
+                │
+                ├─[enrichment:actor_stats]
+                │   └─ ActorStatsComputed
+                │   └─ EnrichmentRoleCompleted(ActorStats)
+                │
                 ├─[enrichment:actor_location]
                 │   └─ SystemEvent::ActorLocationIdentified
-                │   └─ EnrichmentEvent::ActorEnrichmentCompleted
+                │   └─ EnrichmentRoleCompleted(ActorLocation)
                 │
-                └─[enrichment:post_scrape]
-                    └─ SystemEvent::PinsConsumed
-                    └─ SystemEvent::ActorIdentified (actor extraction)
-                    └─ PhaseCompleted(ActorEnrichment)
+                └─[enrichment:phase_complete]
+                    └─ PhaseCompleted(ActorEnrichment)  (when all 4 roles done)
                     │
                     ▼
                     PhaseCompleted(ActorEnrichment)
