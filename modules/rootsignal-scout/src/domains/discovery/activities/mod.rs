@@ -5,6 +5,7 @@ pub mod source_finder;
 
 use tracing::info;
 
+use ai_client::Agent;
 use seesaw_core::Events;
 use crate::domains::scheduling::activities::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
@@ -24,14 +25,14 @@ pub async fn discover_expansion_sources(
     graph: &GraphReader,
     region_name: &str,
     embedder: &dyn TextEmbedder,
-    api_key: Option<&str>,
+    ai: Option<&dyn Agent>,
     budget: &BudgetTracker,
 ) -> SourceExpansionOutput {
     let discoverer = source_finder::SourceFinder::new(
         graph,
         region_name,
         region_name,
-        api_key,
+        ai,
         budget,
     )
     .with_embedder(embedder);

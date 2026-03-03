@@ -106,6 +106,7 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
                     spent_cents: budget,
                 })
             })
+            .retry_policy(super::phase_retry_policy())
             .await
         {
             Ok(v) => v,

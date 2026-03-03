@@ -7,14 +7,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tracing::{info, warn};
 
 use rootsignal_common::extract_domain;
 
-use crate::infra::util::HAIKU_MODEL;
 use crate::traits::SignalReader;
 
 #[derive(Deserialize, JsonSchema)]
@@ -63,7 +62,7 @@ fn normalize_domain(domain: &str) -> String {
 pub async fn filter_domains_batch(
     urls: &[String],
     region_name: &str,
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     _store: &dyn SignalReader,
 ) -> Vec<String> {
     if urls.is_empty() {
@@ -112,10 +111,7 @@ pub async fn filter_domains_batch(
 
         let prompt = format!("Region: {region_name}\n\nDomains to evaluate:\n{domain_list}");
 
-        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
-
-        match claude
-            .extract::<DomainFilterResponse>(DOMAIN_FILTER_SYSTEM, &prompt)
+        match ai_extract::<DomainFilterResponse>(ai, DOMAIN_FILTER_SYSTEM, &prompt)
             .await
         {
             Ok(response) => {

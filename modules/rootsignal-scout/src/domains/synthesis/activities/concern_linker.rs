@@ -1,8 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use ai_client::claude::Claude;
-use ai_client::traits::{Agent, PromptBuilder};
+use ai_client::{ai_extract, Agent, DynTool, ToolWrapper};
 use anyhow::Result;
 use chrono::Utc;
 use schemars::JsonSchema;
@@ -19,7 +18,7 @@ use rootsignal_graph::{GraphReader, SituationBrief, ConcernLinkerOutcome, Concer
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::util::{HAIKU_MODEL, SIGNAL_CATEGORIES};
+use crate::infra::util::SIGNAL_CATEGORIES;
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 use rootsignal_common::events::WorldEvent;
 
@@ -174,7 +173,8 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 
 pub struct ConcernLinker<'a> {
     graph: &'a GraphReader,
-    claude: Claude,
+    ai: &'a dyn Agent,
+    tool_agent: Box<dyn Agent>,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
     min_lat: f64,
@@ -190,32 +190,33 @@ impl<'a> ConcernLinker<'a> {
         graph: &'a GraphReader,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
-        anthropic_api_key: &str,
+        ai: &'a dyn Agent,
         region: ScoutScope,
         cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
-        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
-            .tool(WebSearchTool {
+        let tools: Vec<Arc<dyn DynTool>> = vec![
+            Arc::new(ToolWrapper(WebSearchTool {
                 archive: archive.clone(),
-
                 agent_name: String::new(),
                 tension_title: String::new(),
-            })
-            .tool(ReadPageTool {
+            })),
+            Arc::new(ToolWrapper(ReadPageTool {
                 archive: archive.clone(),
                 visited_urls: None,
-
                 agent_name: String::new(),
                 tension_title: String::new(),
-            });
+            })),
+        ];
+        let tool_agent = ai.with_tools(tools);
 
         let lat_delta = region.radius_km / 111.0;
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
 
         Self {
             graph,
-            claude,
+            ai,
+            tool_agent,
             embedder,
             min_lat: region.center_lat - lat_delta,
             max_lat: region.center_lat + lat_delta,
@@ -381,7 +382,7 @@ impl<'a> ConcernLinker<'a> {
 
         // Phase 1: Agentic investigation with web_search + read_page tools
         let reasoning = self
-            .claude
+            .tool_agent
             .prompt(&user)
             .preamble(&system)
             .temperature(0.7)
@@ -396,9 +397,7 @@ impl<'a> ConcernLinker<'a> {
         );
 
         let structuring_prompt = structuring_system();
-        let finding: SignalFinding = self
-            .claude
-            .extract(&structuring_prompt, &structuring_user)
+        let finding: SignalFinding = ai_extract(self.ai, &structuring_prompt, &structuring_user)
             .await?;
 
         Ok(finding)

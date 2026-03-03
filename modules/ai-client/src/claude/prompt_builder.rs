@@ -45,31 +45,9 @@ impl ClaudePromptBuilder {
             _phantom: PhantomData,
         }
     }
-}
 
-#[async_trait]
-impl PromptBuilder for ClaudePromptBuilder {
-    fn preamble(mut self, preamble: impl Into<String>) -> Self {
-        self.preamble = Some(preamble.into());
-        self
-    }
-
-    fn temperature(mut self, temperature: f32) -> Self {
-        self.temperature = Some(temperature);
-        self
-    }
-
-    fn multi_turn(mut self, max_turns: usize) -> Self {
-        self.max_turns = max_turns;
-        self
-    }
-
-    fn messages(mut self, messages: Vec<Message>) -> Self {
-        self.messages = messages;
-        self
-    }
-
-    async fn send(self) -> Result<String> {
+    /// Internal send implementation (shared by trait impl and direct callers).
+    async fn send_impl(self) -> Result<String> {
         let client = self.agent.client();
 
         let mut request = ChatRequest::new(&self.agent.model);
@@ -171,7 +149,8 @@ impl PromptBuilder for ClaudePromptBuilder {
         }
     }
 
-    async fn stream(self) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
+    /// Internal stream implementation.
+    async fn stream_impl(self) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
         let client = self.agent.client();
 
         let mut request = ChatRequest::new(&self.agent.model).streaming();
@@ -217,6 +196,41 @@ impl PromptBuilder for ClaudePromptBuilder {
                 Err(e) => Some(Err(e)),
             }
         })))
+    }
+}
+
+// =============================================================================
+// Object-safe PromptBuilder implementation
+// =============================================================================
+
+#[async_trait]
+impl PromptBuilder for ClaudePromptBuilder {
+    fn preamble(mut self: Box<Self>, preamble: &str) -> Box<dyn PromptBuilder> {
+        self.preamble = Some(preamble.to_string());
+        self
+    }
+
+    fn temperature(mut self: Box<Self>, temperature: f32) -> Box<dyn PromptBuilder> {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    fn multi_turn(mut self: Box<Self>, max_turns: usize) -> Box<dyn PromptBuilder> {
+        self.max_turns = max_turns;
+        self
+    }
+
+    fn messages(mut self: Box<Self>, messages: Vec<Message>) -> Box<dyn PromptBuilder> {
+        self.messages = messages;
+        self
+    }
+
+    async fn send(self: Box<Self>) -> Result<String> {
+        (*self).send_impl().await
+    }
+
+    async fn stream(self: Box<Self>) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
+        (*self).stream_impl().await
     }
 }
 

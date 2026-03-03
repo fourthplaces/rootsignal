@@ -5,13 +5,12 @@ use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{DispatchType, ScoutScope, SensitivityLevel, SituationArc};
 use rootsignal_graph::{GraphReader, WeaveCandidate, WeaveSignal};
 
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::util::HAIKU_MODEL;
 
 use super::pure;
 use super::types::{SituationWeaverStats, WeavingResponse};
@@ -22,7 +21,7 @@ pub async fn weave_batch(
     candidates: &[WeaveCandidate],
     temp_id_map: &mut std::collections::HashMap<String, Uuid>,
     embedder: &Arc<dyn TextEmbedder>,
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     scope: &ScoutScope,
 ) -> Result<(Vec<SystemEvent>, SituationWeaverStats), Box<dyn std::error::Error + Send + Sync>> {
     let mut events = Vec::new();
@@ -78,8 +77,7 @@ pub async fn weave_batch(
         scope,
     );
 
-    let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
-    let response: WeavingResponse = claude.extract(pure::SYSTEM_PROMPT, &prompt).await?;
+    let response: WeavingResponse = ai_extract(ai, pure::SYSTEM_PROMPT, &prompt).await?;
 
     // Process new situations first (so assignments can reference them)
     for new_sit in &response.new_situations {

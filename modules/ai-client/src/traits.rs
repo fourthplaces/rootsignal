@@ -1,7 +1,9 @@
-use crate::tool::{DynTool, Tool};
+use crate::tool::DynTool;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::Stream;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -46,29 +48,36 @@ impl Message {
 }
 
 // =============================================================================
-// Agent Trait
-// =============================================================================
-
-pub trait Agent: Clone + Send + Sync {
-    type PromptBuilder: PromptBuilder;
-
-    fn tool<T: Tool + 'static>(self, tool: T) -> Self;
-    fn dyn_tool(self, tool: Arc<dyn DynTool>) -> Self;
-    fn prompt(&self, input: impl Into<String>) -> Self::PromptBuilder;
-}
-
-// =============================================================================
-// PromptBuilder Trait
+// Agent Trait (object-safe)
 // =============================================================================
 
 #[async_trait]
-pub trait PromptBuilder: Send + Sized {
-    fn preamble(self, preamble: impl Into<String>) -> Self;
-    fn temperature(self, temperature: f32) -> Self;
-    fn multi_turn(self, max_turns: usize) -> Self;
-    fn messages(self, messages: Vec<Message>) -> Self;
-    async fn send(self) -> Result<String>;
-    async fn stream(self) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>>;
+pub trait Agent: Send + Sync {
+    /// Extract structured JSON using a forced-tool-use schema.
+    async fn extract_json(&self, system: &str, user: &str, schema: Value) -> Result<Value>;
+
+    /// Simple chat completion.
+    async fn chat(&self, system: &str, user: &str) -> Result<String>;
+
+    /// Clone self with additional tools. Returns a boxed trait object.
+    fn with_tools(&self, tools: Vec<Arc<dyn DynTool>>) -> Box<dyn Agent>;
+
+    /// Start building a prompt. Returns a boxed PromptBuilder.
+    fn prompt(&self, input: &str) -> Box<dyn PromptBuilder>;
+}
+
+// =============================================================================
+// PromptBuilder Trait (object-safe, self: Box<Self>)
+// =============================================================================
+
+#[async_trait]
+pub trait PromptBuilder: Send {
+    fn preamble(self: Box<Self>, preamble: &str) -> Box<dyn PromptBuilder>;
+    fn temperature(self: Box<Self>, temperature: f32) -> Box<dyn PromptBuilder>;
+    fn multi_turn(self: Box<Self>, max_turns: usize) -> Box<dyn PromptBuilder>;
+    fn messages(self: Box<Self>, messages: Vec<Message>) -> Box<dyn PromptBuilder>;
+    async fn send(self: Box<Self>) -> Result<String>;
+    async fn stream(self: Box<Self>) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>>;
 }
 
 // =============================================================================
@@ -88,4 +97,20 @@ pub trait OutputBuilder<T>: Send {
 pub trait EmbedAgent: Send + Sync {
     async fn embed(&self, text: impl Into<String> + Send) -> Result<Vec<f32>>;
     async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
+}
+
+// =============================================================================
+// Helper: typed extraction via Agent trait
+// =============================================================================
+
+/// Extract a typed value from an LLM using the Agent trait.
+/// Derives the JSON schema from `T` at runtime, calls `extract_json`, deserializes.
+pub async fn ai_extract<T: DeserializeOwned + schemars::JsonSchema>(
+    ai: &dyn Agent,
+    system: &str,
+    user: &str,
+) -> Result<T> {
+    let schema = serde_json::to_value(schemars::schema_for!(T))?;
+    let json = ai.extract_json(system, user, schema).await?;
+    serde_json::from_value(json).map_err(Into::into)
 }

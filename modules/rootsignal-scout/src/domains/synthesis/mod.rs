@@ -144,7 +144,7 @@ pub mod handlers {
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let ai = deps.ai.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
 
         let mut out = Events::new();
@@ -152,7 +152,7 @@ pub mod handlers {
             info!("Starting response mapping...");
             match activities::response_mapper::map_responses(
                 &graph,
-                api_key,
+                ai.as_ref(),
                 region.center_lat,
                 region.center_lng,
                 region.radius_km,
@@ -187,7 +187,7 @@ pub mod handlers {
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let ai = deps.ai.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
         let cancelled = deps
             .cancelled
@@ -220,7 +220,7 @@ pub mod handlers {
                 &graph,
                 archive,
                 &*deps.embedder,
-                api_key,
+                ai.as_ref(),
                 region.clone(),
                 cancelled,
                 deps.run_id.clone(),
@@ -253,7 +253,7 @@ pub mod handlers {
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let ai = deps.ai.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
         let cancelled = deps
             .cancelled
@@ -286,7 +286,7 @@ pub mod handlers {
                 &graph,
                 archive,
                 &*deps.embedder,
-                api_key,
+                ai.as_ref(),
                 region.clone(),
                 cancelled,
                 deps.run_id.clone(),
@@ -325,7 +325,7 @@ pub mod handlers {
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let ai = deps.ai.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
         let cancelled = deps
             .cancelled
@@ -358,7 +358,7 @@ pub mod handlers {
                 &graph,
                 archive,
                 &*deps.embedder,
-                api_key,
+                ai.as_ref(),
                 region.clone(),
                 cancelled,
                 deps.run_id.clone(),
@@ -398,7 +398,7 @@ pub mod handlers {
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let api_key = deps.anthropic_api_key.as_deref().unwrap_or_default();
+        let ai = deps.ai.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
         let cancelled = deps
             .cancelled
@@ -430,7 +430,7 @@ pub mod handlers {
             let investigator = activities::investigator::Investigator::new(
                 &graph,
                 archive,
-                api_key,
+                ai.as_ref(),
                 region,
                 cancelled,
             );

@@ -114,6 +114,8 @@ pub mod handlers {
         let resolution = phase.resolve_web_urls(
             &tension_web_refs,
             &state.url_to_canonical_key,
+            deps.ai.as_deref(),
+            deps.region.as_ref().map(|r| r.name.as_str()),
         ).await;
 
         let mut all_events = Events::new();
@@ -478,6 +480,8 @@ pub mod handlers {
             let resolution = phase.resolve_web_urls(
                 &web_sources,
                 &state.url_to_canonical_key,
+                deps.ai.as_deref(),
+                deps.region.as_ref().map(|r| r.name.as_str()),
             ).await;
 
             all_events.push(PipelineEvent::UrlsResolvedAccumulated {

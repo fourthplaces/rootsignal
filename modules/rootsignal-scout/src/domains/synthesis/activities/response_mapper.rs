@@ -5,7 +5,7 @@
 //! verify → write), not a graph primitive. Follows the same pattern as the other
 //! finders: `&GraphReader` for reads, engine dispatch for writes.
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tracing::{info, warn};
@@ -14,7 +14,6 @@ use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::telemetry_events::TelemetryEvent;
 use rootsignal_graph::GraphReader;
 
-use crate::infra::util::HAIKU_MODEL;
 use seesaw_core::Events;
 
 /// Structured output for response verification.
@@ -30,7 +29,7 @@ struct ResponseVerdict {
 /// Uses embedding similarity as a cheap filter, then LLM as a verifier.
 pub async fn map_responses(
     graph: &GraphReader,
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     center_lat: f64,
     center_lng: f64,
     radius_km: f64,
@@ -85,7 +84,7 @@ pub async fn map_responses(
             };
 
             match verify_response(
-                anthropic_api_key,
+                ai,
                 &tension_title,
                 &tension_summary,
                 &candidate_title,
@@ -135,7 +134,7 @@ pub async fn map_responses(
 
 /// LLM verifies whether a candidate signal actually responds to a tension.
 async fn verify_response(
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     tension_title: &str,
     tension_summary: &str,
     candidate_title: &str,
@@ -150,13 +149,12 @@ Signal B: {candidate_title} — {candidate_summary}
 Determine whether B genuinely helps address A. Be strict — only confirm genuine matches."#,
     );
 
-    let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
-    let verdict = claude
-        .extract::<ResponseVerdict>(
-            "You evaluate whether community resources respond to community needs. Be strict — only confirm genuine matches.",
-            &prompt,
-        )
-        .await?;
+    let verdict = ai_extract::<ResponseVerdict>(
+        ai,
+        "You evaluate whether community resources respond to community needs. Be strict — only confirm genuine matches.",
+        &prompt,
+    )
+    .await?;
 
     if verdict.matches {
         Ok(verdict.explanation)

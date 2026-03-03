@@ -1,14 +1,13 @@
 //! In-universe check — LLM-based filter that decides whether a URL belongs
 //! in our universe of local civic content before we spend resources scraping it.
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tracing::{info, warn};
 
 use rootsignal_common::ScoutScope;
 
-use crate::infra::util::HAIKU_MODEL;
 use crate::traits::ContentFetcher;
 
 #[derive(Deserialize, JsonSchema)]
@@ -39,11 +38,9 @@ NOT in our universe:\n\
 pub async fn check_in_universe(
     url: &str,
     region: &ScoutScope,
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     fetcher: &dyn ContentFetcher,
 ) -> bool {
-    let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
-
     // Phase 1: URL-only check
     let prompt = format!(
         "Region: {region}\nURL: {url}\n\n\
@@ -53,7 +50,7 @@ pub async fn check_in_universe(
         url = url,
     );
 
-    let verdict: UniverseVerdict = match claude.extract(UNIVERSE_CHECK_SYSTEM, &prompt).await {
+    let verdict: UniverseVerdict = match ai_extract(ai, UNIVERSE_CHECK_SYSTEM, &prompt).await {
         Ok(v) => v,
         Err(e) => {
             warn!(url, error = %e, "Universe check failed, defaulting to pass");
@@ -89,8 +86,7 @@ pub async fn check_in_universe(
         content = &content[..content.len().min(4000)],
     );
 
-    match claude
-        .extract::<UniverseVerdict>(UNIVERSE_CHECK_SYSTEM, &content_prompt)
+    match ai_extract::<UniverseVerdict>(ai, UNIVERSE_CHECK_SYSTEM, &content_prompt)
         .await
     {
         Ok(v) => {

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -11,7 +11,6 @@ use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ActorType;
 use rootsignal_graph::{query, GraphClient};
 
-use crate::infra::util::HAIKU_MODEL;
 use crate::traits::SignalReader;
 
 /// Response schema for actor extraction LLM call.
@@ -71,7 +70,7 @@ If a signal mentions no extractable actors, simply omit it. Return an empty acto
 pub async fn run_actor_extraction(
     store: &dyn SignalReader,
     client: &GraphClient,
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -80,7 +79,7 @@ pub async fn run_actor_extraction(
     match try_extract_actors(
         store,
         client,
-        anthropic_api_key,
+        ai,
         min_lat,
         max_lat,
         min_lng,
@@ -99,7 +98,7 @@ pub async fn run_actor_extraction(
 async fn try_extract_actors(
     store: &dyn SignalReader,
     client: &GraphClient,
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
@@ -150,8 +149,6 @@ async fn try_extract_actors(
         "Actor extractor: found signals without actors"
     );
 
-    let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
-
     // Process in batches
     for batch in signals.chunks(BATCH_SIZE) {
         stats.signals_processed += batch.len();
@@ -165,7 +162,7 @@ async fn try_extract_actors(
         }
 
         let response: ActorExtractionResponse =
-            match claude.extract(SYSTEM_PROMPT, &user_prompt).await {
+            match ai_extract(ai, SYSTEM_PROMPT, &user_prompt).await {
                 Ok(r) => r,
                 Err(e) => {
                     warn!(error = %e, "Actor extraction LLM call failed, skipping batch");

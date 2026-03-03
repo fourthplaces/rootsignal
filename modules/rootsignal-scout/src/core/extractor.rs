@@ -1,4 +1,6 @@
-use ai_client::claude::Claude;
+use std::sync::Arc;
+
+use ai_client::{ai_extract, Agent};
 use anyhow::Result;
 use chrono::Utc;
 use schemars::JsonSchema;
@@ -14,7 +16,6 @@ use rootsignal_common::{
 use rootsignal_common::telemetry_events::TelemetryEvent;
 use serde::de;
 
-use crate::infra::util::HAIKU_MODEL;
 
 /// What the LLM returns for each extracted signal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -241,41 +242,39 @@ pub trait SignalExtractor: Send + Sync {
 }
 
 pub struct Extractor {
-    claude: Claude,
+    ai: Arc<dyn Agent>,
     system_prompt: String,
 }
 
 impl Extractor {
     pub fn new(
-        anthropic_api_key: &str,
+        ai: Arc<dyn Agent>,
         city_name: &str,
         default_lat: f64,
         default_lng: f64,
     ) -> Self {
-        Self::with_tag_vocabulary(anthropic_api_key, city_name, default_lat, default_lng, &[])
+        Self::with_tag_vocabulary(ai, city_name, default_lat, default_lng, &[])
     }
 
     pub fn with_tag_vocabulary(
-        anthropic_api_key: &str,
+        ai: Arc<dyn Agent>,
         city_name: &str,
         default_lat: f64,
         default_lng: f64,
         tag_vocabulary: &[String],
     ) -> Self {
-        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
         let system_prompt =
             build_system_prompt(city_name, default_lat, default_lng, tag_vocabulary);
         Self {
-            claude,
+            ai,
             system_prompt,
         }
     }
 
     /// Create an extractor with a pre-built system prompt (for genome-driven evolution).
-    pub fn with_system_prompt(anthropic_api_key: &str, system_prompt: String) -> Self {
-        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
+    pub fn with_system_prompt(ai: Arc<dyn Agent>, system_prompt: String) -> Self {
         Self {
-            claude,
+            ai,
             system_prompt,
         }
     }
@@ -297,9 +296,7 @@ impl Extractor {
             "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
         );
 
-        let response: ExtractionResponse = self
-            .claude
-            .extract(&self.system_prompt, &user_prompt)
+        let response: ExtractionResponse = ai_extract(&*self.ai, &self.system_prompt, &user_prompt)
             .await?;
 
         let result = Self::convert_signals(response, source_url);

@@ -72,6 +72,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
                     issues_found: 0,
                 })
             })
+            .retry_policy(super::phase_retry_policy())
             .await
         {
             Ok(v) => v,

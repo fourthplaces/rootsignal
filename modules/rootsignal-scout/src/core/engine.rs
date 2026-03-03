@@ -15,6 +15,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use ai_client::Agent;
 use rootsignal_common::{EmbeddingLookup, ScoutScope};
 use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector};
 use sqlx::PgPool;
@@ -39,6 +40,9 @@ pub struct ScoutEngineDeps {
     pub embedder: Arc<dyn TextEmbedder>,
     pub region: Option<ScoutScope>,
     pub fetcher: Option<Arc<dyn ContentFetcher>>,
+    pub ai: Option<Arc<dyn Agent>>,
+    /// Raw API key — only used by out-of-scope callers (supervisor, news_scanner)
+    /// that haven't been migrated to `dyn Agent` yet.
     pub anthropic_api_key: Option<String>,
     pub graph_client: Option<GraphClient>,
     pub extractor: Option<Arc<dyn SignalExtractor>>,
@@ -76,6 +80,7 @@ impl ScoutEngineDeps {
             embedder,
             region: None,
             fetcher: None,
+            ai: None,
             anthropic_api_key: None,
             graph_client: None,
             extractor: None,

@@ -5,9 +5,10 @@ pub(crate) mod types;
 pub use prompt_builder::{OpenRouterOutputBuilder, OpenRouterPromptBuilder};
 
 use crate::tool::{DynTool, Tool, ToolWrapper};
-use crate::traits::{Agent, EmbedAgent};
+use crate::traits::{Agent, EmbedAgent, PromptBuilder};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use serde_json::Value;
 use std::sync::Arc;
 
 use client::OpenRouterClient;
@@ -143,27 +144,68 @@ impl OpenRouter {
         let string_texts: Vec<String> = texts.iter().map(|t| t.to_string()).collect();
         self.client().embed_batch(model, &string_texts).await
     }
-}
 
-// =============================================================================
-// Agent Implementation
-// =============================================================================
+    /// Extract structured data using a runtime JSON schema. Returns raw Value.
+    pub async fn extract_with_schema(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Value,
+    ) -> Result<Value> {
+        let mut request = types::ChatRequest::new(&self.model).messages(vec![
+            types::WireMessage::system(system),
+            types::WireMessage::user(user),
+        ]);
+        request.temperature = Some(0.0);
+        request.response_format = Some(serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "structured_response",
+                "strict": true,
+                "schema": schema,
+            }
+        }));
 
-impl Agent for OpenRouter {
-    type PromptBuilder = OpenRouterPromptBuilder;
+        let json_str = self.client().structured_output(&request).await?;
+        serde_json::from_str(&json_str)
+            .map_err(|e| anyhow!("Failed to deserialize structured output: {}", e))
+    }
 
-    fn tool<T: Tool + 'static>(mut self, tool: T) -> Self {
+    /// Add a typed tool (inherent method).
+    pub fn tool<T: Tool + 'static>(mut self, tool: T) -> Self {
         self.tools.push(Arc::new(ToolWrapper(tool)));
         self
     }
 
-    fn dyn_tool(mut self, tool: Arc<dyn DynTool>) -> Self {
+    /// Add a dynamic tool (inherent method).
+    pub fn dyn_tool(mut self, tool: Arc<dyn DynTool>) -> Self {
         self.tools.push(tool);
         self
     }
+}
 
-    fn prompt(&self, input: impl Into<String>) -> OpenRouterPromptBuilder {
-        OpenRouterPromptBuilder::new(self.clone(), input.into())
+// =============================================================================
+// Agent Implementation (object-safe)
+// =============================================================================
+
+#[async_trait]
+impl Agent for OpenRouter {
+    async fn extract_json(&self, system: &str, user: &str, schema: Value) -> Result<Value> {
+        self.extract_with_schema(system, user, schema).await
+    }
+
+    async fn chat(&self, system: &str, user: &str) -> Result<String> {
+        self.chat_completion(system, user).await
+    }
+
+    fn with_tools(&self, tools: Vec<Arc<dyn DynTool>>) -> Box<dyn Agent> {
+        let mut clone = self.clone();
+        clone.tools.extend(tools);
+        Box::new(clone)
+    }
+
+    fn prompt(&self, input: &str) -> Box<dyn PromptBuilder> {
+        Box::new(OpenRouterPromptBuilder::new(self.clone(), input.to_string()))
     }
 }
 

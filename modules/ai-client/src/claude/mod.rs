@@ -7,8 +7,10 @@ pub use prompt_builder::{ClaudeOutputBuilder, ClaudePromptBuilder};
 
 use crate::openai::StructuredOutput;
 use crate::tool::{DynTool, Tool, ToolWrapper};
-use crate::traits::Agent;
+use crate::traits::{Agent, PromptBuilder};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use serde_json::Value;
 use std::sync::Arc;
 
 use client::ClaudeClient;
@@ -65,17 +67,29 @@ impl Claude {
         }
     }
 
+    /// Add a typed tool (inherent method — used by callers that have a concrete Claude).
+    pub fn tool<T: Tool + 'static>(mut self, tool: T) -> Self {
+        self.tools.push(Arc::new(ToolWrapper(tool)));
+        self
+    }
+
+    /// Add a dynamic tool (inherent method).
+    pub fn dyn_tool(mut self, tool: Arc<dyn DynTool>) -> Self {
+        self.tools.push(tool);
+        self
+    }
+
     // =========================================================================
     // Convenience methods
     // =========================================================================
 
-    pub async fn extract<T: StructuredOutput>(
+    /// Extract structured data using a runtime JSON schema. Returns raw Value.
+    pub async fn extract_with_schema(
         &self,
-        system_prompt: impl Into<String>,
-        user_prompt: impl Into<String>,
-    ) -> Result<T> {
-        let schema = T::openai_schema();
-
+        system_prompt: &str,
+        user_prompt: &str,
+        schema: Value,
+    ) -> Result<Value> {
         let tool_name = "structured_response";
         let mut request = ChatRequest::new(&self.model)
             .system(system_prompt)
@@ -94,12 +108,25 @@ impl Claude {
 
         for block in &response.content {
             if let ContentBlock::ToolUse { input, .. } = block {
-                return serde_json::from_value(input.clone())
-                    .map_err(|e| anyhow!("Failed to deserialize response: {}", e));
+                return Ok(input.clone());
             }
         }
 
         Err(anyhow!("No structured output in Claude response"))
+    }
+
+    /// Type-safe structured output extraction (convenience method).
+    pub async fn extract<T: StructuredOutput>(
+        &self,
+        system_prompt: impl Into<String>,
+        user_prompt: impl Into<String>,
+    ) -> Result<T> {
+        let schema = T::openai_schema();
+        let json = self
+            .extract_with_schema(&system_prompt.into(), &user_prompt.into(), schema)
+            .await?;
+        serde_json::from_value(json)
+            .map_err(|e| anyhow!("Failed to deserialize response: {}", e))
     }
 
     pub async fn chat_completion(
@@ -154,24 +181,27 @@ impl Claude {
 }
 
 // =============================================================================
-// Agent Implementation
+// Agent Implementation (object-safe)
 // =============================================================================
 
+#[async_trait]
 impl Agent for Claude {
-    type PromptBuilder = ClaudePromptBuilder;
-
-    fn tool<T: Tool + 'static>(mut self, tool: T) -> Self {
-        self.tools.push(Arc::new(ToolWrapper(tool)));
-        self
+    async fn extract_json(&self, system: &str, user: &str, schema: Value) -> Result<Value> {
+        self.extract_with_schema(system, user, schema).await
     }
 
-    fn dyn_tool(mut self, tool: Arc<dyn DynTool>) -> Self {
-        self.tools.push(tool);
-        self
+    async fn chat(&self, system: &str, user: &str) -> Result<String> {
+        self.chat_completion(system, user).await
     }
 
-    fn prompt(&self, input: impl Into<String>) -> ClaudePromptBuilder {
-        ClaudePromptBuilder::new(self.clone(), input.into())
+    fn with_tools(&self, tools: Vec<Arc<dyn DynTool>>) -> Box<dyn Agent> {
+        let mut clone = self.clone();
+        clone.tools.extend(tools);
+        Box::new(clone)
+    }
+
+    fn prompt(&self, input: &str) -> Box<dyn PromptBuilder> {
+        Box::new(ClaudePromptBuilder::new(self.clone(), input.to_string()))
     }
 }
 
@@ -193,4 +223,3 @@ mod tests {
         assert_eq!(ai.base_url, Some("https://custom.api.com".to_string()));
     }
 }
-

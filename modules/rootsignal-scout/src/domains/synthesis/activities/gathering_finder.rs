@@ -1,8 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use ai_client::claude::Claude;
-use ai_client::traits::{Agent, PromptBuilder};
+use ai_client::{ai_extract, Agent, DynTool, ToolWrapper};
 use anyhow::Result;
 use chrono::Utc;
 use schemars::JsonSchema;
@@ -268,7 +267,8 @@ Return valid JSON matching the GravityFinding schema.";
 
 pub struct GatheringFinderDeps<'a> {
     pub graph: &'a GraphReader,
-    pub claude: Claude,
+    pub ai: &'a dyn Agent,
+    pub tool_agent: Box<dyn Agent>,
     pub embedder: &'a dyn TextEmbedder,
     pub region: ScoutScope,
     pub min_lat: f64,
@@ -284,30 +284,31 @@ impl<'a> GatheringFinderDeps<'a> {
         graph: &'a GraphReader,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
-        anthropic_api_key: &str,
+        ai: &'a dyn Agent,
         region: ScoutScope,
         cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
-        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL)
-            .tool(WebSearchTool {
+        let tools: Vec<Arc<dyn DynTool>> = vec![
+            Arc::new(ToolWrapper(WebSearchTool {
                 archive: archive.clone(),
-
                 agent_name: String::new(),
                 tension_title: String::new(),
-            })
-            .tool(ReadPageTool {
+            })),
+            Arc::new(ToolWrapper(ReadPageTool {
                 archive: archive.clone(),
                 visited_urls: None,
-
                 agent_name: String::new(),
                 tension_title: String::new(),
-            });
+            })),
+        ];
+        let tool_agent = ai.with_tools(tools);
 
         let (min_lat, max_lat, min_lng, max_lng) = region_bounds(&region);
         Self {
             graph,
-            claude,
+            ai,
+            tool_agent,
             embedder,
             min_lat,
             max_lat,
@@ -413,7 +414,7 @@ async fn investigate_tension(
 
     // Phase 1: Agentic investigation with web_search + read_page tools
     let reasoning = deps
-        .claude
+        .tool_agent
         .prompt(&user)
         .preamble(&system)
         .temperature(0.7)
@@ -427,9 +428,7 @@ async fn investigate_tension(
         target.title, target.summary, reasoning,
     );
 
-    let finding: GravityFinding = deps
-        .claude
-        .extract(STRUCTURING_SYSTEM, &structuring_user)
+    let finding: GravityFinding = ai_extract(deps.ai, STRUCTURING_SYSTEM, &structuring_user)
         .await?;
 
     // Handle no_gravity early termination

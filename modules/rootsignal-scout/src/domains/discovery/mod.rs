@@ -72,13 +72,13 @@ pub mod handlers {
 
         // Filter out irrelevant domains (SaaS, e-commerce, SEO spam, etc.) via LLM.
         // Fail-open: if api key or region is missing, skip filtering.
-        let (links, filter_events) = match (deps.anthropic_api_key.as_deref(), deps.region.as_ref()) {
-            (Some(api_key), Some(region)) => {
+        let (links, filter_events) = match (deps.ai.as_ref(), deps.region.as_ref()) {
+            (Some(ai), Some(region)) => {
                 let urls: Vec<String> = links.iter().map(|l| l.url.clone()).collect();
                 let accepted = domain_filter::filter_domains_batch(
                     &urls,
                     &region.name,
-                    api_key,
+                    ai.as_ref(),
                     &*deps.store,
                 )
                 .await;
@@ -171,7 +171,7 @@ pub mod handlers {
             &graph,
             &region.name,
             &*deps.embedder,
-            deps.anthropic_api_key.as_deref(),
+            deps.ai.as_deref(),
             budget,
         )
         .await;

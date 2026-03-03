@@ -1074,7 +1074,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
     // Step 1: resolve URLs
-    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key).await;
+    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, None, None).await;
     assert_eq!(resolution.urls.len(), 1, "search resolved one URL");
     assert!(resolution.query_api_errors.is_empty());
 

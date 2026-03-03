@@ -7,9 +7,10 @@ pub use prompt_builder::{OpenAiOutputBuilder, OpenAiPromptBuilder};
 pub use schema::StructuredOutput;
 
 use crate::tool::{DynTool, Tool, ToolWrapper};
-use crate::traits::{Agent, EmbedAgent};
+use crate::traits::{Agent, EmbedAgent, PromptBuilder};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use serde_json::Value;
 use std::sync::Arc;
 
 use client::OpenAiClient;
@@ -166,7 +167,40 @@ impl OpenAi {
         self.client().embed_batch(model, &string_texts).await
     }
 
-    /// Generate structured output with raw schema (convenience method).
+    /// Extract structured data using a runtime JSON schema. Returns raw Value.
+    pub async fn extract_with_schema(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Value,
+    ) -> Result<Value> {
+        let request = types::StructuredRequest {
+            model: self.model.clone(),
+            messages: vec![
+                types::WireMessage::system(system),
+                types::WireMessage::user(user),
+            ],
+            temperature: if self.model.starts_with("gpt-5") {
+                None
+            } else {
+                Some(0.0)
+            },
+            response_format: types::ResponseFormat {
+                format_type: "json_schema".to_string(),
+                json_schema: types::JsonSchemaFormat {
+                    name: "structured_response".to_string(),
+                    strict: true,
+                    schema,
+                },
+            },
+        };
+
+        let json_str = self.client().structured_output(&request).await?;
+        serde_json::from_str(&json_str)
+            .map_err(|e| anyhow!("Failed to deserialize structured output: {}", e))
+    }
+
+    /// Generate structured output with raw schema (convenience method, returns raw string).
     pub async fn structured_output(
         &self,
         system: &str,
@@ -195,6 +229,18 @@ impl OpenAi {
         };
 
         self.client().structured_output(&request).await
+    }
+
+    /// Add a typed tool (inherent method).
+    pub fn tool<T: Tool + 'static>(mut self, tool: T) -> Self {
+        self.tools.push(Arc::new(ToolWrapper(tool)));
+        self
+    }
+
+    /// Add a dynamic tool (inherent method).
+    pub fn dyn_tool(mut self, tool: Arc<dyn DynTool>) -> Self {
+        self.tools.push(tool);
+        self
     }
 
     /// Function calling (tool use) with raw JSON messages/tools.
@@ -237,24 +283,27 @@ impl OpenAi {
 }
 
 // =============================================================================
-// Agent Implementation
+// Agent Implementation (object-safe)
 // =============================================================================
 
+#[async_trait]
 impl Agent for OpenAi {
-    type PromptBuilder = OpenAiPromptBuilder;
-
-    fn tool<T: Tool + 'static>(mut self, tool: T) -> Self {
-        self.tools.push(Arc::new(ToolWrapper(tool)));
-        self
+    async fn extract_json(&self, system: &str, user: &str, schema: Value) -> Result<Value> {
+        self.extract_with_schema(system, user, schema).await
     }
 
-    fn dyn_tool(mut self, tool: Arc<dyn DynTool>) -> Self {
-        self.tools.push(tool);
-        self
+    async fn chat(&self, system: &str, user: &str) -> Result<String> {
+        self.chat_completion(system, user).await
     }
 
-    fn prompt(&self, input: impl Into<String>) -> OpenAiPromptBuilder {
-        OpenAiPromptBuilder::new(self.clone(), input.into())
+    fn with_tools(&self, tools: Vec<Arc<dyn DynTool>>) -> Box<dyn Agent> {
+        let mut clone = self.clone();
+        clone.tools.extend(tools);
+        Box::new(clone)
+    }
+
+    fn prompt(&self, input: &str) -> Box<dyn PromptBuilder> {
+        Box::new(OpenAiPromptBuilder::new(self.clone(), input.to_string()))
     }
 }
 

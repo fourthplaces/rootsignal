@@ -3880,7 +3880,7 @@ async fn resolve_web_urls_collects_search_result_urls() {
     let sources: Vec<&_> = vec![&source];
     let ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key).await;
+    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, None, None).await;
 
     assert_eq!(resolution.urls.len(), 2, "should resolve 2 URLs from search");
     assert!(resolution.query_api_errors.is_empty(), "no API errors");
@@ -3908,7 +3908,7 @@ async fn resolve_web_urls_records_api_errors() {
     let sources: Vec<&_> = vec![&source];
     let ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key).await;
+    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, None, None).await;
 
     assert!(resolution.urls.is_empty(), "no URLs on API error");
     assert!(
@@ -3934,7 +3934,7 @@ async fn resolve_web_urls_includes_page_source_urls() {
     let sources: Vec<&_> = vec![&source];
     let ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key).await;
+    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, None, None).await;
 
     assert_eq!(resolution.urls.len(), 1);
     assert_eq!(resolution.urls[0], "https://localorg.org/events");

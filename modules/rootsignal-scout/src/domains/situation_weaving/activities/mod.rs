@@ -17,9 +17,9 @@ use crate::domains::scheduling::activities::budget::OperationCost;
 pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
     let mut events = seesaw_core::Events::new();
 
-    let (graph_client, api_key, region, budget) = match (
+    let (graph_client, ai, region, budget) = match (
         deps.graph_client.as_ref(),
-        deps.anthropic_api_key.as_deref(),
+        deps.ai.as_deref(),
         deps.region.as_ref(),
         deps.budget.as_ref(),
     ) {
@@ -82,7 +82,7 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
             &candidates,
             &mut temp_str_map,
             &deps.embedder,
-            api_key,
+            ai,
             region,
         )
         .await

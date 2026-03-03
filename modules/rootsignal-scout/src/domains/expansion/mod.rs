@@ -70,7 +70,7 @@ pub mod handlers {
             &state,
             &graph,
             &region.name,
-            deps.anthropic_api_key.as_deref(),
+            deps.ai.as_deref(),
             budget,
             &*deps.embedder,
         )

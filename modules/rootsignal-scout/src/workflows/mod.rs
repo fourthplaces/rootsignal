@@ -23,8 +23,10 @@ use rootsignal_graph::GraphClient;
 use sqlx::PgPool;
 use typed_builder::TypedBuilder;
 
+use ai_client::Claude;
 use crate::core::engine::{self, ScoutEngine, ScoutEngineDeps};
 use crate::infra::embedder::TextEmbedder;
+use crate::infra::util::HAIKU_MODEL;
 use crate::traits::{ContentFetcher, SignalReader};
 
 /// Shared dependency container for all scout workflows.
@@ -73,9 +75,12 @@ impl ScoutDeps {
         let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
         let embedder: Arc<dyn TextEmbedder> =
             Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
+        let ai: Arc<dyn ai_client::Agent> = Arc::new(
+            Claude::new(&self.anthropic_api_key, HAIKU_MODEL),
+        );
         let extractor: Arc<dyn crate::core::extractor::SignalExtractor> =
             Arc::new(crate::core::extractor::Extractor::new(
-                &self.anthropic_api_key,
+                ai.clone(),
                 scope.name.as_str(),
                 scope.center_lat,
                 scope.center_lng,
@@ -91,6 +96,7 @@ impl ScoutDeps {
         let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
         deps.region = Some(scope.clone());
         deps.fetcher = Some(archive.clone() as Arc<dyn crate::traits::ContentFetcher>);
+        deps.ai = Some(ai);
         deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
         deps.graph_client = Some(self.graph_client.clone());
         deps.extractor = Some(extractor);
@@ -139,7 +145,12 @@ impl ScoutDeps {
             ),
         );
 
+        let ai: Arc<dyn ai_client::Agent> = Arc::new(
+            Claude::new(&self.anthropic_api_key, HAIKU_MODEL),
+        );
+
         let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
+        deps.ai = Some(ai);
         deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
         deps.graph_client = Some(self.graph_client.clone());
         deps.archive = Some(archive);

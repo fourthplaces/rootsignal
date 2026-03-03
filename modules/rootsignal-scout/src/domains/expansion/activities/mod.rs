@@ -9,6 +9,7 @@ use rootsignal_graph::GraphReader;
 
 use seesaw_core::Events;
 use crate::core::aggregate::PipelineState;
+use ai_client::Agent;
 use crate::domains::discovery::activities::source_finder::SourceFinder;
 use crate::infra::embedder::TextEmbedder;
 use self::expansion::{Expansion, ExpansionOutput};
@@ -34,7 +35,7 @@ pub async fn expand_and_discover(
     state: &PipelineState,
     graph: &GraphReader,
     region_name: &str,
-    api_key: Option<&str>,
+    ai: Option<&dyn Agent>,
     budget: &BudgetTracker,
     embedder: &dyn TextEmbedder,
 ) -> ExpansionActivityOutput {
@@ -57,7 +58,7 @@ pub async fn expand_and_discover(
         graph,
         region_name,
         region_name,
-        api_key,
+        ai,
         budget,
     )
     .with_embedder(embedder);

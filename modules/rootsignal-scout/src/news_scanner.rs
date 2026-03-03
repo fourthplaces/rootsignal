@@ -5,6 +5,7 @@ use anyhow::Result;
 use rootsignal_common::{Node, ScoutTask};
 use tracing::{info, warn};
 
+use ai_client::Agent;
 use rootsignal_graph::beacon::BeaconCandidate;
 use rootsignal_graph::GraphStore;
 
@@ -54,12 +55,12 @@ pub struct NewsScanner {
 impl NewsScanner {
     pub fn new(
         archive: Arc<Archive>,
-        anthropic_api_key: &str,
+        ai: Arc<dyn Agent>,
         graph: GraphStore,
         daily_budget_cents: u64,
     ) -> Self {
         // Use a generic "Global" scope for extraction — no region bias
-        let extractor = Box::new(Extractor::new(anthropic_api_key, "Global", 0.0, 0.0));
+        let extractor = Box::new(Extractor::new(ai, "Global", 0.0, 0.0));
 
         Self {
             archive,

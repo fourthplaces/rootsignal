@@ -2,8 +2,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ai_client::claude::Claude;
-use ai_client::traits::{Agent, PromptBuilder};
+use ai_client::{ai_extract, Agent, DynTool, ToolWrapper};
 use anyhow::Result;
 use chrono::Utc;
 use schemars::JsonSchema;
@@ -275,7 +274,7 @@ Return valid JSON matching the ResponseFinding schema.";
 
 pub struct ResponseFinder<'a> {
     graph: &'a GraphReader,
-    anthropic_api_key: String,
+    ai: &'a dyn Agent,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
     region: ScoutScope,
@@ -293,7 +292,7 @@ impl<'a> ResponseFinder<'a> {
         graph: &'a GraphReader,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
-        anthropic_api_key: &str,
+        ai: &'a dyn Agent,
         region: ScoutScope,
         cancelled: Arc<AtomicBool>,
         run_id: String,
@@ -302,7 +301,7 @@ impl<'a> ResponseFinder<'a> {
         let region_slug = region.name.clone();
         Self {
             graph,
-            anthropic_api_key: anthropic_api_key.to_string(),
+            ai,
             archive,
             embedder,
             min_lat,
@@ -316,24 +315,23 @@ impl<'a> ResponseFinder<'a> {
         }
     }
 
-    /// Build a Claude agent with URL tracking for a single investigation.
-    fn build_tracked_agent(&self) -> (Claude, Arc<Mutex<HashSet<String>>>) {
+    /// Build a tool-armed agent with URL tracking for a single investigation.
+    fn build_tracked_agent(&self) -> (Box<dyn Agent>, Arc<Mutex<HashSet<String>>>) {
         let visited = Arc::new(Mutex::new(HashSet::new()));
-        let claude = Claude::new(&self.anthropic_api_key, HAIKU_MODEL)
-            .tool(WebSearchTool {
+        let tools: Vec<Arc<dyn DynTool>> = vec![
+            Arc::new(ToolWrapper(WebSearchTool {
                 archive: self.archive.clone(),
-
                 agent_name: String::new(),
                 tension_title: String::new(),
-            })
-            .tool(ReadPageTool {
+            })),
+            Arc::new(ToolWrapper(ReadPageTool {
                 archive: self.archive.clone(),
                 visited_urls: Some(visited.clone()),
-
                 agent_name: String::new(),
                 tension_title: String::new(),
-            });
-        (claude, visited)
+            })),
+        ];
+        (self.ai.with_tools(tools), visited)
     }
 
     pub async fn run(&self, events: &mut seesaw_core::Events) -> (ResponseFinderStats, Vec<SourceNode>) {
@@ -433,10 +431,10 @@ impl<'a> ResponseFinder<'a> {
         let user = investigation_user_prompt(target, &existing, situation_context);
 
         // Build a tracked agent for this investigation
-        let (claude, visited_urls) = self.build_tracked_agent();
+        let (agent, visited_urls) = self.build_tracked_agent();
 
         // Phase 1: Agentic investigation with web_search + read_page tools
-        let reasoning = claude
+        let reasoning = agent
             .prompt(&user)
             .preamble(&system)
             .temperature(0.7)
@@ -450,9 +448,7 @@ impl<'a> ResponseFinder<'a> {
             target.title, target.summary, reasoning,
         );
 
-        let extraction_claude = Claude::new(&self.anthropic_api_key, HAIKU_MODEL);
-        let finding: ResponseFinding = extraction_claude
-            .extract(STRUCTURING_SYSTEM, &structuring_user)
+        let finding: ResponseFinding = ai_extract(self.ai, STRUCTURING_SYSTEM, &structuring_user)
             .await?;
 
         // Validate URLs: only keep responses whose URLs were actually visited

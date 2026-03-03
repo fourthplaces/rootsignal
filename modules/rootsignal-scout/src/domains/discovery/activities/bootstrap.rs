@@ -11,10 +11,10 @@ use tracing::{info, warn};
 
 use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode, SourceRole};
 
+use ai_client::{ai_extract, Agent};
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::PipelineState;
 use crate::domains::discovery::events::DiscoveryEvent;
-use crate::infra::util::HAIKU_MODEL;
 
 /// Handle the EngineStarted event: seed sources if region is empty.
 pub async fn seed_sources_if_empty(
@@ -26,8 +26,8 @@ pub async fn seed_sources_if_empty(
         return Ok(seesaw_core::Events::new());
     }
 
-    let api_key = match &deps.anthropic_api_key {
-        Some(k) => k.clone(),
+    let ai = match deps.ai.as_ref() {
+        Some(a) => a.as_ref(),
         None => return Ok(seesaw_core::Events::new()),
     };
 
@@ -41,9 +41,9 @@ pub async fn seed_sources_if_empty(
         "No sources found — seeding from EngineStarted"
     );
 
-    let seed_sources = generate_seed_queries(&api_key, region).await?;
+    let seed_sources = generate_seed_queries(ai, region).await?;
     let platform_sources =
-        generate_platform_sources(&api_key, region, deps.fetcher.as_deref()).await;
+        generate_platform_sources(ai, region, deps.fetcher.as_deref()).await;
 
     let mut events = seesaw_core::Events::new();
     for source in seed_sources.into_iter().chain(platform_sources) {
@@ -65,11 +65,10 @@ struct SeedQueryList {
 /// Use Claude Haiku to generate seed web search queries for the region.
 /// Returns SourceNodes (one per query).
 pub async fn generate_seed_queries(
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     region: &ScoutScope,
 ) -> Result<Vec<SourceNode>> {
     let region_name = &region.name;
-    let claude = ai_client::claude::Claude::new(anthropic_api_key, HAIKU_MODEL);
     let system = "Generate search queries for community signal discovery.";
 
     let tension_prompt = format!(
@@ -119,9 +118,9 @@ Include a mix of:
     );
 
     let (tension_resp, response_resp, social_resp) = tokio::join!(
-        claude.extract::<SeedQueryList>(system, &tension_prompt),
-        claude.extract::<SeedQueryList>(system, &response_prompt),
-        claude.extract::<SeedQueryList>(system, &social_prompt),
+        ai_extract::<SeedQueryList>(ai, system, &tension_prompt),
+        ai_extract::<SeedQueryList>(ai, system, &response_prompt),
+        ai_extract::<SeedQueryList>(ai, system, &social_prompt),
     );
 
     let mut sources = Vec::new();
@@ -178,7 +177,7 @@ Include a mix of:
 /// Generate standard platform sources for the region (Reddit, GoFundMe, Eventbrite, etc.)
 /// Reddit subreddits are discovered via LLM. RSS feeds are discovered by fetching homepages.
 pub async fn generate_platform_sources(
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     region: &ScoutScope,
     fetcher: Option<&dyn crate::traits::ContentFetcher>,
 ) -> Vec<SourceNode> {
@@ -257,7 +256,7 @@ pub async fn generate_platform_sources(
     ];
 
     // Reddit — discover relevant subreddits via LLM
-    match discover_subreddits(anthropic_api_key, region).await {
+    match discover_subreddits(ai, region).await {
         Ok(subreddits) => {
             info!(
                 count = subreddits.len(),
@@ -277,7 +276,7 @@ pub async fn generate_platform_sources(
 
     // RSS — discover local news outlet feeds via LLM + fetcher
     if let Some(fetcher) = fetcher {
-        match discover_news_outlets(anthropic_api_key, region, fetcher).await {
+        match discover_news_outlets(ai, region, fetcher).await {
             Ok(outlets) => {
                 info!(
                     count = outlets.len(),
@@ -316,7 +315,7 @@ struct SubredditList {
 }
 
 /// Ask Claude for relevant subreddits for this region.
-async fn discover_subreddits(anthropic_api_key: &str, region: &ScoutScope) -> Result<Vec<String>> {
+async fn discover_subreddits(ai: &dyn Agent, region: &ScoutScope) -> Result<Vec<String>> {
     let region_name = &region.name;
     let prompt = format!(
         r#"What are the active Reddit subreddits specifically for {region_name} and its immediate metro area?
@@ -331,9 +330,7 @@ Rules:
 - Maximum 5 subreddits"#
     );
 
-    let claude = ai_client::claude::Claude::new(anthropic_api_key, HAIKU_MODEL);
-    let list = claude
-        .extract::<SubredditList>("Discover relevant subreddits for a geographic region.", &prompt)
+    let list = ai_extract::<SubredditList>(ai, "Discover relevant subreddits for a geographic region.", &prompt)
         .await?;
 
     let subreddits = list.subreddits.into_iter().take(5).collect();
@@ -356,7 +353,7 @@ struct NewsOutletList {
 /// Ask Claude for local news outlets, then discover their real RSS feed URLs
 /// by fetching each homepage and looking for `<link rel="alternate">` tags.
 async fn discover_news_outlets(
-    anthropic_api_key: &str,
+    ai: &dyn Agent,
     region: &ScoutScope,
     fetcher: &dyn crate::traits::ContentFetcher,
 ) -> Result<Vec<(String, String)>> {
@@ -371,9 +368,7 @@ For each outlet, provide the name and homepage URL.
 Maximum 8 outlets."#
     );
 
-    let claude = ai_client::claude::Claude::new(anthropic_api_key, HAIKU_MODEL);
-    let list = claude
-        .extract::<NewsOutletList>("Identify local news outlets for a geographic region.", &prompt)
+    let list = ai_extract::<NewsOutletList>(ai, "Identify local news outlets for a geographic region.", &prompt)
         .await?;
 
     let mut results = Vec::new();

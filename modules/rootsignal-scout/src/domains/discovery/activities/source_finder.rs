@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
@@ -12,7 +12,6 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::util::HAIKU_MODEL;
 const MAX_CURIOSITY_QUERIES: usize = 12;
 const MAX_DISCOVERY_DEPTH: u32 = 2;
 
@@ -433,7 +432,7 @@ pub struct SourceFinder<'a> {
     graph: &'a GraphReader,
     region_slug: String,
     region_name: String,
-    claude: Option<Claude>,
+    ai: Option<&'a dyn Agent>,
     budget: &'a BudgetTracker,
     embedder: Option<&'a dyn TextEmbedder>,
 }
@@ -448,17 +447,14 @@ impl<'a> SourceFinder<'a> {
         graph: &'a GraphReader,
         region_slug: &str,
         region_name: &str,
-        anthropic_api_key: Option<&str>,
+        ai: Option<&'a dyn Agent>,
         budget: &'a BudgetTracker,
     ) -> Self {
-        let claude = anthropic_api_key
-            .filter(|k| !k.is_empty())
-            .map(|k| Claude::new(k, HAIKU_MODEL));
         Self {
             graph,
             region_slug: region_slug.to_string(),
             region_name: region_name.to_string(),
-            claude,
+            ai,
             budget,
             embedder: None,
         }
@@ -616,8 +612,8 @@ impl<'a> SourceFinder<'a> {
         sources_events: &mut seesaw_core::Events,
     ) {
         // Guard: no Claude client → mechanical fallback
-        let claude = match &self.claude {
-            Some(c) => c,
+        let ai = match &self.ai {
+            Some(a) => *a,
             None => {
                 self.discover_from_gaps_mechanical(stats, social_topics, sources)
                     .await;
@@ -661,7 +657,7 @@ impl<'a> SourceFinder<'a> {
         let system = discovery_system_prompt(&self.region_name);
         let user = discovery_user_prompt(&self.region_name, &formatted);
 
-        let plan: DiscoveryPlan = match claude.extract(&system, &user).await {
+        let plan: DiscoveryPlan = match ai_extract(ai, &system, &user).await {
             Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, "LLM discovery failed, falling back to mechanical");

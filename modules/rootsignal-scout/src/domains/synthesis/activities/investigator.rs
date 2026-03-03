@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
 use anyhow::Result;
 use chrono::Utc;
 use schemars::JsonSchema;
@@ -15,7 +15,7 @@ use rootsignal_graph::{EvidenceSummary, GraphReader, InvestigationTarget};
 
 
 use rootsignal_archive::Archive;
-use crate::infra::util::{self, HAIKU_MODEL};
+use crate::infra::util;
 
 const MAX_SEARCH_QUERIES_PER_RUN: usize = 15;
 const MAX_SIGNALS_INVESTIGATED: usize = 8;
@@ -24,7 +24,7 @@ const MAX_QUERIES_PER_SIGNAL: usize = 3;
 pub struct Investigator<'a> {
     graph: &'a GraphReader,
     archive: Arc<Archive>,
-    claude: Claude,
+    ai: &'a dyn Agent,
     region: String,
     min_lat: f64,
     max_lat: f64,
@@ -116,7 +116,7 @@ impl<'a> Investigator<'a> {
     pub fn new(
         graph: &'a GraphReader,
         archive: Arc<Archive>,
-        anthropic_api_key: &str,
+        ai: &'a dyn Agent,
         region: &ScoutScope,
         cancelled: Arc<AtomicBool>,
     ) -> Self {
@@ -125,7 +125,7 @@ impl<'a> Investigator<'a> {
         Self {
             graph,
             archive,
-            claude: Claude::new(anthropic_api_key, HAIKU_MODEL),
+            ai,
             region: region.name.clone(),
             min_lat: region.center_lat - lat_delta,
             max_lat: region.center_lat + lat_delta,
@@ -233,7 +233,7 @@ impl<'a> Investigator<'a> {
         );
 
         let queries: InvestigationQueries =
-            self.claude.extract(&system_prompt, &user_prompt).await?;
+            ai_extract(self.ai, &system_prompt, &user_prompt).await?;
 
         let queries: Vec<_> = queries
             .queries
@@ -309,10 +309,12 @@ impl<'a> Investigator<'a> {
             target.title, target.summary, results_text,
         );
 
-        let evaluation: EvidenceEvaluation = self
-            .claude
-            .extract(EVIDENCE_EVALUATION_SYSTEM, &eval_user_prompt)
-            .await?;
+        let evaluation: EvidenceEvaluation = ai_extract(
+            self.ai,
+            EVIDENCE_EVALUATION_SYSTEM,
+            &eval_user_prompt,
+        )
+        .await?;
 
         // 4. Create EvidenceNodes for items with confidence >= 0.5
         let now = Utc::now();

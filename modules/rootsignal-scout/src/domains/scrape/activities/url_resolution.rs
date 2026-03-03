@@ -6,8 +6,10 @@ use chrono::{DateTime, Utc};
 use futures::stream::{self, StreamExt};
 use tracing::{info, warn};
 
+use ai_client::Agent;
 use rootsignal_common::{is_web_query, scraping_strategy, ScrapingStrategy, SourceNode};
 
+use crate::domains::enrichment::activities::domain_filter;
 use crate::infra::util::sanitize_url;
 
 use super::scraper::Scraper;
@@ -20,6 +22,8 @@ impl Scraper {
         &self,
         sources: &[&SourceNode],
         url_to_canonical_key: &HashMap<String, String>,
+        ai: Option<&dyn Agent>,
+        region_name: Option<&str>,
     ) -> UrlResolution {
         let mut url_mappings: HashMap<String, String> = HashMap::new();
         let mut pub_dates: HashMap<String, DateTime<Utc>> = HashMap::new();
@@ -181,6 +185,28 @@ impl Scraper {
             .into_iter()
             .filter(|u| !blocked.contains(u))
             .collect();
+
+        // Domain filter: remove infrastructure URLs (SaaS, e-commerce, SEO spam, etc.)
+        // Fail-open: skip filtering when AI or region is unavailable.
+        let phase_urls = match (ai, region_name) {
+            (Some(ai), Some(region)) => {
+                let accepted = domain_filter::filter_domains_batch(
+                    &phase_urls,
+                    region,
+                    ai,
+                    &*self.store,
+                )
+                .await;
+                let before = phase_urls.len();
+                let after = accepted.len();
+                if before != after {
+                    info!(before, after, rejected = before - after, "Domain filter applied to resolved URLs");
+                }
+                accepted
+            }
+            _ => phase_urls,
+        };
+
         info!(urls = phase_urls.len(), "Phase URLs to scrape");
 
         let source_count = sources.len() as u32;

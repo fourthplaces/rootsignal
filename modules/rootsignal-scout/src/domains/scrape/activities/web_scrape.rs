@@ -34,7 +34,7 @@ impl Scraper {
         url_to_canonical_key: &HashMap<String, String>,
         actor_contexts: &HashMap<String, ActorContext>,
     ) -> ScrapeOutput {
-        let resolution = self.resolve_web_urls(sources, url_to_canonical_key).await;
+        let resolution = self.resolve_web_urls(sources, url_to_canonical_key, None, None).await;
 
         // Build merged url_to_ck for fetch_and_extract
         let mut url_to_ck = url_to_canonical_key.clone();

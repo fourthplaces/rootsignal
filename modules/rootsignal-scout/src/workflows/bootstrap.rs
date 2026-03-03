@@ -98,6 +98,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
                 let sources = state.stats.sources_discovered;
                 Ok(sources)
             })
+            .retry_policy(super::phase_retry_policy())
             .await
         {
             Ok(v) => v,

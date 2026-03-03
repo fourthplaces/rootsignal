@@ -96,12 +96,12 @@ pub mod handlers {
         // Actor extraction
         info!("=== Actor Extraction ===");
         let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-        let api_key = deps.anthropic_api_key.as_deref().unwrap_or("");
+        let ai = deps.ai.as_ref().expect("guarded by enrichment trigger");
         let (actor_stats, actor_events) =
             activities::actor_extractor::run_actor_extraction(
                 &*deps.store,
                 graph_client,
-                api_key,
+                ai.as_ref(),
                 min_lat,
                 max_lat,
                 min_lng,
