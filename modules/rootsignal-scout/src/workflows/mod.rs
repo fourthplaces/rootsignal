@@ -67,6 +67,8 @@ impl ScoutDeps {
         scope: &rootsignal_common::ScoutScope,
         run_id: &str,
         spent_cents: u64,
+        task_id: Option<&str>,
+        completion_phase_status: Option<&str>,
     ) -> ScoutEngineDeps {
         let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
         let embedder: Arc<dyn TextEmbedder> =
@@ -96,6 +98,8 @@ impl ScoutDeps {
         deps.budget = Some(budget);
         deps.cancelled = Some(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         deps.pg_pool = Some(self.pg_pool.clone());
+        deps.task_id = task_id.map(String::from);
+        deps.completion_phase_status = completion_phase_status.map(String::from);
         deps
     }
 
@@ -107,8 +111,10 @@ impl ScoutDeps {
         &self,
         scope: &rootsignal_common::ScoutScope,
         run_id: &str,
+        task_id: Option<&str>,
+        completion_phase_status: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_engine_deps(scope, run_id, 0);
+        let deps = self.build_engine_deps(scope, run_id, 0, task_id, completion_phase_status);
         engine::build_engine(deps)
     }
 
@@ -145,8 +151,10 @@ impl ScoutDeps {
         scope: &rootsignal_common::ScoutScope,
         run_id: &str,
         spent_cents: u64,
+        task_id: Option<&str>,
+        completion_phase_status: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_engine_deps(scope, run_id, spent_cents);
+        let deps = self.build_engine_deps(scope, run_id, spent_cents, task_id, completion_phase_status);
         engine::build_full_engine(deps)
     }
 
@@ -212,15 +220,6 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
 // Workflow helpers — shared across all workflows
 // ---------------------------------------------------------------------------
 
-/// Write phase status to the ScoutTask node.
-/// Called by individual workflows to persist completion status for the admin UI.
-pub async fn write_task_phase_status(deps: &ScoutDeps, task_id: &str, status: &str) {
-    let graph = rootsignal_graph::GraphStore::new(deps.graph_client.clone());
-    if let Err(e) = graph.set_task_phase_status(task_id, status).await {
-        tracing::warn!(%e, task_id, status, "Failed to write task phase status to graph");
-    }
-}
-
 /// Standard retry policy for durable workflow side-effects.
 pub fn phase_retry_policy() -> RunRetryPolicy {
     RunRetryPolicy::new()
@@ -229,21 +228,33 @@ pub fn phase_retry_policy() -> RunRetryPolicy {
         .max_attempts(3)
 }
 
-/// Write task phase status as a journaled side-effect (skipped on replay).
-pub async fn journaled_write_task_phase_status(
+/// Emit a TaskPhaseTransitioned event through a fresh infra engine inside `ctx.run()`.
+///
+/// Used by error paths where the main engine is dead. Takes only the two
+/// infrastructure handles needed — no full `ScoutDeps` clone.
+/// Running inside `ctx.run()` ensures replay safety (Restate journals the side-effect).
+pub async fn journaled_emit_task_phase_status(
     ctx: &WorkflowContext<'_>,
-    deps: &ScoutDeps,
+    pg_pool: PgPool,
+    graph_client: GraphClient,
     task_id: &str,
     status: &str,
 ) -> Result<(), HandlerError> {
-    let graph_client = deps.graph_client.clone();
     let tid = task_id.to_string();
     let st = status.to_string();
     ctx.run::<_, _, ()>(|| async move {
-        let graph = rootsignal_graph::GraphStore::new(graph_client);
-        if let Err(e) = graph.set_task_phase_status(&tid, &st).await {
-            tracing::warn!(%e, task_id = %tid, status = %st, "Failed to write task phase status");
-        }
+        use rootsignal_common::events::SystemEvent;
+
+        let engine = engine::build_infra_only_engine(pg_pool, graph_client);
+        engine
+            .emit(SystemEvent::TaskPhaseTransitioned {
+                task_id: tid,
+                phase: String::new(),
+                status: st,
+            })
+            .settled()
+            .await
+            .map_err(|e| TerminalError::new(e.to_string()))?;
         Ok(())
     })
     .await?;

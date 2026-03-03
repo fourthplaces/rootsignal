@@ -379,12 +379,21 @@ impl MutationRoot {
     /// Reset a stuck scout task status to idle.
     #[graphql(guard = "AdminGuard")]
     async fn reset_scout_status(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
-        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        use rootsignal_common::events::SystemEvent;
+
         info!(task_id = task_id.as_str(), "Scout status reset requested");
-        writer
-            .reset_task_phase_status(&task_id)
+
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::TaskPhaseTransitioned {
+                task_id: task_id.clone(),
+                phase: String::new(),
+                status: "idle".to_string(),
+            })
+            .settled()
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to reset status: {e}")))?;
+            .map_err(|e| async_graphql::Error::new(format!("Failed to reset: {e}")))?;
+
         Ok(ScoutResult {
             success: true,
             message: Some("Status reset to idle".to_string()),

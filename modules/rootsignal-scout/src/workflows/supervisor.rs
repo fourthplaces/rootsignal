@@ -12,7 +12,7 @@ use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::{EmptyRequest, SupervisorResult, TaskRequest};
-use super::ScoutDeps;
+use super::{journaled_emit_task_phase_status, ScoutDeps};
 
 #[restate_sdk::workflow]
 #[name = "SupervisorWorkflow"]
@@ -67,11 +67,18 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
 
         let deps = self.deps.clone();
         let scope = req.scope.clone();
+        let tid = task_id.clone();
 
         let result = match ctx
             .run(|| async {
                 let run_id = uuid::Uuid::new_v4().to_string();
-                let engine = deps.build_full_engine(&scope, &run_id, 0);
+                let engine = deps.build_full_engine(
+                    &scope,
+                    &run_id,
+                    0,
+                    Some(&tid),
+                    Some("complete"),
+                );
 
                 // Emit PhaseCompleted(SituationWeaving) — triggers supervisor + finalize
                 engine
@@ -89,14 +96,13 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                let _ =
-                    super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "idle")
-                        .await;
+                let _ = journaled_emit_task_phase_status(
+                    &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
+                    &task_id, "idle",
+                ).await;
                 return Err(e.into());
             }
         };
-
-        super::journaled_write_task_phase_status(&ctx, &self.deps, &task_id, "complete").await?;
 
         ctx.set(
             "status",

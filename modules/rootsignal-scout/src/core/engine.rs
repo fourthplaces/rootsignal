@@ -57,6 +57,10 @@ pub struct ScoutEngineDeps {
     pub pg_pool: Option<PgPool>,
     /// Archive for web search/page reading in synthesis finders.
     pub archive: Option<Arc<rootsignal_archive::Archive>>,
+    /// Task ID for emitting TaskPhaseTransitioned on finalize.
+    pub task_id: Option<String>,
+    /// Phase status to emit on successful finalize (e.g. "scrape_complete").
+    pub completion_phase_status: Option<String>,
 }
 
 impl ScoutEngineDeps {
@@ -81,6 +85,8 @@ impl ScoutEngineDeps {
             cancelled: None,
             pg_pool: None,
             archive: None,
+            task_id: None,
+            completion_phase_status: None,
         }
     }
 }
@@ -243,6 +249,35 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     }
 
     engine
+}
+
+/// Build an infrastructure-only engine: event store + Neo4j projector.
+///
+/// No domain handlers, no aggregators, no production deps — used for emitting
+/// system events (e.g. TaskPhaseTransitioned) from error paths where the main
+/// engine is dead. Takes only the two infrastructure handles it actually needs.
+pub fn build_infra_only_engine(pg_pool: PgPool, graph_client: GraphClient) -> SeesawEngine {
+    let run_id = format!("infra-{}", uuid::Uuid::new_v4());
+
+    let event_store_adapter = Arc::new(SeesawEventStoreAdapter::new(
+        rootsignal_events::EventStore::new(pg_pool.clone()),
+    )) as Arc<dyn seesaw_core::event_store::EventStore>;
+
+    let projector = GraphProjector::new(graph_client.clone());
+
+    let deps = ScoutEngineDeps::new(
+        Arc::new(crate::traits::NoOpSignalReader),
+        Arc::new(crate::infra::embedder::NoOpEmbedder),
+        &run_id,
+    );
+
+    seesaw_core::Engine::new(deps)
+        .with_event_store(event_store_adapter)
+        .with_event_metadata(serde_json::json!({
+            "run_id": run_id,
+            "schema_v": 1
+        }))
+        .with_handler(projection::neo4j_projection_handler(projector))
 }
 
 /// Build a news-scan engine: NewsScanRequested → scan RSS → BeaconDetected.

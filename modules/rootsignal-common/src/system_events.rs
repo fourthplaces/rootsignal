@@ -543,6 +543,15 @@ pub enum SystemEvent {
     BeaconDetected {
         task: ScoutTask,
     },
+
+    // -----------------------------------------------------------------------
+    // Task lifecycle
+    // -----------------------------------------------------------------------
+    TaskPhaseTransitioned {
+        task_id: String,
+        phase: String,
+        status: String,
+    },
 }
 
 impl Eventlike for SystemEvent {
@@ -618,6 +627,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::ActorStatsComputed { .. } => "actor_stats_computed",
             SystemEvent::SimilarityEdgesRebuilt { .. } => "similarity_edges_rebuilt",
             SystemEvent::BeaconDetected { .. } => "beacon_detected",
+            SystemEvent::TaskPhaseTransitioned { .. } => "task_phase_transitioned",
         }
     }
 

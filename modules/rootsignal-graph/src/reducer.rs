@@ -90,7 +90,10 @@ impl GraphProjector {
             return self.project_pipeline(event).await;
         }
 
-        let parsed = match Event::from_payload(&event.payload) {
+        let mut payload = event.payload.clone();
+        rootsignal_events::upcast(&event.event_type, event.schema_v, &mut payload);
+
+        let parsed = match Event::from_payload(&payload) {
             Ok(e) => e,
             Err(e) => {
                 warn!(seq = event.seq, error = %e, "Failed to deserialize event payload");
@@ -928,13 +931,15 @@ impl GraphProjector {
                 new_status,
                 ..
             } => {
+                // Update the signal's review status
                 let q = query(
                     "OPTIONAL MATCH (g:Gathering {id: $id})
                      OPTIONAL MATCH (a:Resource {id: $id})
                      OPTIONAL MATCH (n:HelpRequest {id: $id})
                      OPTIONAL MATCH (nc:Announcement {id: $id})
                      OPTIONAL MATCH (t:Concern {id: $id})
-                     WITH coalesce(g, a, n, nc, t) AS node
+                     OPTIONAL MATCH (c:Condition {id: $id})
+                     WITH coalesce(g, a, n, nc, t, c) AS node
                      WHERE node IS NOT NULL
                      SET node.review_status = $status",
                 )
@@ -942,6 +947,32 @@ impl GraphProjector {
                 .param("status", new_status.as_str());
 
                 self.client.run(q).await?;
+
+                // Reactively promote situations: if all constituent signals
+                // are now 'live', promote the situation too.
+                if new_status == "live" {
+                    let promote = query(
+                        "OPTIONAL MATCH (g:Gathering {id: $id})
+                         OPTIONAL MATCH (a:Resource {id: $id})
+                         OPTIONAL MATCH (n:HelpRequest {id: $id})
+                         OPTIONAL MATCH (nc:Announcement {id: $id})
+                         OPTIONAL MATCH (t:Concern {id: $id})
+                         OPTIONAL MATCH (c:Condition {id: $id})
+                         WITH coalesce(g, a, n, nc, t, c) AS node
+                         WHERE node IS NOT NULL
+                         OPTIONAL MATCH (node)-[:PART_OF]->(sit:Situation)
+                         WHERE sit.review_status = 'staged'
+                           AND NOT EXISTS {
+                             MATCH (other)-[:PART_OF]->(sit)
+                             WHERE other.review_status <> 'live'
+                           }
+                         SET sit.review_status = 'live'",
+                    )
+                    .param("id", signal_id.to_string());
+
+                    self.client.run(promote).await?;
+                }
+
                 Ok(ApplyResult::Applied)
             }
 
@@ -2558,6 +2589,22 @@ impl GraphProjector {
                 .param("status", task.status.to_string())
                 .param("phase_status", task.phase_status.as_str())
                 .param("created_at", task.created_at.format("%Y-%m-%dT%H:%M:%S%.6f").to_string());
+                self.client.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::TaskPhaseTransitioned {
+                task_id,
+                status,
+                ..
+            } => {
+                let q = query(
+                    "MATCH (t:ScoutTask {id: $id})
+                     SET t.phase_status = $status,
+                         t.phase_status_updated_at = datetime()",
+                )
+                .param("id", task_id.as_str())
+                .param("status", status.as_str());
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
             }

@@ -28,6 +28,7 @@ rootsignal-scout = { path = "../rootsignal-scout" }
 rootsignal-archive = { workspace = true }
 sqlx = { workspace = true }
 rootsignal-scout-supervisor = { path = "../rootsignal-scout-supervisor" }
+rootsignal-events = { workspace = true }
 twilio = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }

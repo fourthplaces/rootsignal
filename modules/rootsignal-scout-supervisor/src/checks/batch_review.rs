@@ -8,6 +8,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use ai_client::claude::Claude;
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ScoutScope;
 use rootsignal_graph::GraphClient;
 
@@ -83,6 +84,8 @@ pub struct BatchReviewOutput {
     /// The raw signals + verdicts for the feedback loop
     pub reviewed_signals: Vec<SignalForReview>,
     pub verdicts: Vec<Verdict>,
+    /// Events describing all review decisions (for event store persistence).
+    pub events: Vec<SystemEvent>,
 }
 
 // =============================================================================
@@ -276,17 +279,16 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
 }
 
 // =============================================================================
-// Run the batch review
+// Run the batch review (pure function: signals in → verdicts + events out)
 // =============================================================================
 
 pub async fn review_batch(
-    client: &GraphClient,
     api_key: &str,
     region: &ScoutScope,
+    signals: Vec<SignalForReview>,
     suspects: &[Suspect],
 ) -> Result<BatchReviewOutput> {
-    // 1. Fetch staged signals
-    let mut signals = fetch_staged_signals(client, region).await?;
+    let mut signals = signals;
 
     if signals.is_empty() {
         info!("No staged signals to review");
@@ -298,23 +300,24 @@ pub async fn review_batch(
             run_analysis: None,
             reviewed_signals: Vec::new(),
             verdicts: Vec::new(),
+            events: Vec::new(),
         });
     }
 
-    // 2. Annotate with triage flags
+    // 1. Annotate with triage flags
     annotate_triage_flags(&mut signals, suspects);
 
-    // 3. Build prompts
+    // 2. Build prompts
     let system = build_system_prompt(region);
     let user = build_user_prompt(&signals);
 
-    // 4. Call LLM
+    // 3. Call LLM
     let claude = Claude::new(api_key, "claude-sonnet-4-5-20250929");
     let result: BatchReviewResult = claude.extract(&system, &user).await?;
 
     debug!(raw_verdicts = ?result.verdicts.len(), "Batch review LLM response");
 
-    // 5. Validate signal_ids
+    // 4. Validate signal_ids
     let valid_ids: HashSet<String> = signals.iter().map(|s| s.id.clone()).collect();
     let mut valid_verdicts = Vec::new();
     for verdict in &result.verdicts {
@@ -328,28 +331,39 @@ pub async fn review_batch(
         }
     }
 
-    // 6. Apply verdicts
+    // 5. Build events and issues from verdicts (no direct graph writes)
     let mut passed = 0u64;
     let mut rejected = 0u64;
     let mut issues = Vec::new();
-    let g = client;
+    let mut events = Vec::new();
 
     for verdict in &valid_verdicts {
+        let signal_id = Uuid::parse_str(&verdict.signal_id).unwrap_or(Uuid::nil());
+
         match verdict.decision.as_str() {
             "pass" => {
-                promote_to_live(g, &verdict.signal_id).await?;
+                events.push(SystemEvent::ReviewVerdictReached {
+                    signal_id,
+                    old_status: "staged".into(),
+                    new_status: "live".into(),
+                    reason: "passed_review".into(),
+                });
                 passed += 1;
             }
             "reject" => {
                 let reason = verdict.rejection_reason.as_deref().unwrap_or("unspecified");
-                mark_rejected(g, &verdict.signal_id, reason).await?;
+                events.push(SystemEvent::ReviewVerdictReached {
+                    signal_id,
+                    old_status: "staged".into(),
+                    new_status: "rejected".into(),
+                    reason: reason.into(),
+                });
                 rejected += 1;
+
                 let explanation = verdict
                     .explanation
                     .as_deref()
                     .unwrap_or("No explanation provided");
-
-                let signal_id = Uuid::parse_str(&verdict.signal_id).unwrap_or(Uuid::nil());
                 let signal_title = signals
                     .iter()
                     .find(|s| s.id == verdict.signal_id)
@@ -372,14 +386,19 @@ pub async fn review_batch(
                     decision = other,
                     "Unknown verdict decision, treating as pass"
                 );
-                promote_to_live(g, &verdict.signal_id).await?;
+                events.push(SystemEvent::ReviewVerdictReached {
+                    signal_id,
+                    old_status: "staged".into(),
+                    new_status: "live".into(),
+                    reason: "passed_review".into(),
+                });
                 passed += 1;
             }
         }
     }
 
-    // 7. Promote situations where all constituent signals are live
-    promote_ready_situations(g).await?;
+    // Situation promotion is handled reactively by the projector after
+    // ReviewVerdictReached events are applied — no separate event needed.
 
     let reviewed = signals.len() as u64;
     info!(reviewed, passed, rejected, "Batch review complete");
@@ -392,65 +411,6 @@ pub async fn review_batch(
         run_analysis: result.run_analysis,
         reviewed_signals: signals,
         verdicts: valid_verdicts,
+        events,
     })
-}
-
-// =============================================================================
-// Graph mutations
-// =============================================================================
-
-async fn promote_to_live(graph: &neo4rs::Graph, signal_id: &str) -> Result<(), neo4rs::Error> {
-    // Use UNION-per-label pattern for index utilization
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
-    for label in &labels {
-        let cypher = format!(
-            "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' SET n.review_status = 'live'"
-        );
-        graph.run(query(&cypher).param("id", signal_id)).await?;
-    }
-    Ok(())
-}
-
-async fn mark_rejected(
-    graph: &neo4rs::Graph,
-    signal_id: &str,
-    reason: &str,
-) -> Result<(), neo4rs::Error> {
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
-    for label in &labels {
-        let cypher = format!(
-            "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' \
-             SET n.review_status = 'rejected', n.rejection_reason = $reason"
-        );
-        graph
-            .run(
-                query(&cypher)
-                    .param("id", signal_id)
-                    .param("reason", reason),
-            )
-            .await?;
-    }
-    Ok(())
-}
-
-async fn promote_ready_situations(graph: &neo4rs::Graph) -> Result<(), neo4rs::Error> {
-    // A situation is ready when all its PART_OF signals are 'live' (none are 'staged')
-    let q = query(
-        "MATCH (s:Situation)
-         WHERE s.review_status = 'staged'
-         AND NOT EXISTS {
-           MATCH (n)-[:PART_OF]->(s)
-           WHERE n.review_status <> 'live'
-         }
-         SET s.review_status = 'live'
-         RETURN count(s) AS promoted",
-    );
-    let mut stream = graph.execute(q).await?;
-    if let Some(row) = stream.next().await? {
-        let promoted: i64 = row.get("promoted").unwrap_or(0);
-        if promoted > 0 {
-            info!(promoted, "Situations promoted to live");
-        }
-    }
-    Ok(())
 }

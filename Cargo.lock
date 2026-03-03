@@ -3532,6 +3532,7 @@ dependencies = [
  "restate-sdk",
  "rootsignal-archive",
  "rootsignal-common",
+ "rootsignal-events",
  "rootsignal-graph",
  "rootsignal-scout",
  "rootsignal-scout-supervisor",

@@ -32,7 +32,7 @@ impl Supervisor {
         anthropic_api_key: String,
         notifier: Box<dyn NotifyBackend>,
     ) -> Self {
-        let state = SupervisorState::new(client.clone(), region.name.clone());
+        let state = SupervisorState::new(pg_pool.clone(), client.clone(), region.name.clone());
         let issues = IssueStore::new(pg_pool.clone());
         Self {
             client,

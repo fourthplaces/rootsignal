@@ -13,7 +13,7 @@ use crate::core::aggregate::PipelineState;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::*;
-use super::ScoutDeps;
+use super::{journaled_emit_task_phase_status, ScoutDeps};
 
 #[restate_sdk::workflow]
 #[name = "FullScoutRunWorkflow"]
@@ -46,9 +46,16 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         ctx.set("status", "Running full scout...".to_string());
 
         let deps = self.deps.clone();
+        let tid = task_id.clone();
         let result = match ctx
             .run(|| async {
-                let engine = deps.build_full_engine(&scope, &run_id, 0);
+                let engine = deps.build_full_engine(
+                    &scope,
+                    &run_id,
+                    0,
+                    Some(&tid),
+                    Some("complete"),
+                );
                 engine
                     .emit(LifecycleEvent::EngineStarted {
                         run_id: run_id.clone(),
@@ -69,12 +76,13 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
+                let _ = journaled_emit_task_phase_status(
+                    &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
+                    &task_id, "idle",
+                ).await;
                 return Err(e.into());
             }
         };
-
-        super::write_task_phase_status(&self.deps, &task_id, "complete").await;
 
         ctx.set("status", WorkflowPhase::Complete.to_string());
         info!("FullScoutRunWorkflow complete");

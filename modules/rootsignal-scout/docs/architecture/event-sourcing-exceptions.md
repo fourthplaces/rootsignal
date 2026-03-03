@@ -2,9 +2,9 @@
 
 Components that bypass the event-sourced causal chain by writing directly to Neo4j. Each is documented with the rationale for keeping it as a direct write.
 
-## 1. Task phase_status (workflows/mod.rs)
+## 1. Task phase_status CAS guard (workflows)
 
-`write_task_phase_status` and `journaled_write_task_phase_status` write directly to Neo4j. These are Restate workflow observability bookkeeping — they happen before/after engines exist, inside replay-sensitive `ctx.run()` closures, and serve the admin UI. `transition_task_phase_status` is a distributed CAS lock. None are domain facts.
+`transition_task_phase_status` is a compare-and-swap distributed lock preventing concurrent workflow execution. Not a domain event — stays as direct Neo4j write. The actual phase status transitions (`TaskPhaseTransitioned`) now flow through seesaw on both success and error paths.
 
 ## 2. Embedding enrichment (rootsignal-graph/src/embedding_enrichment.rs)
 

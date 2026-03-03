@@ -12,7 +12,7 @@ use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 use super::types::{BudgetedTaskRequest, EmptyRequest, SynthesisResult};
-use super::ScoutDeps;
+use super::{journaled_emit_task_phase_status, ScoutDeps};
 
 #[restate_sdk::workflow]
 #[name = "SynthesisWorkflow"]
@@ -73,11 +73,18 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         let deps = self.deps.clone();
         let scope = req.scope.clone();
         let spent_cents = req.spent_cents;
+        let tid = task_id.clone();
 
         let result = match ctx
             .run(|| async {
                 let run_id = uuid::Uuid::new_v4().to_string();
-                let engine = deps.build_full_engine(&scope, &run_id, spent_cents);
+                let engine = deps.build_full_engine(
+                    &scope,
+                    &run_id,
+                    spent_cents,
+                    Some(&tid),
+                    Some("synthesis_complete"),
+                );
 
                 // Emit PhaseCompleted(SignalExpansion) — triggers synthesis + all downstream
                 engine
@@ -102,12 +109,13 @@ impl SynthesisWorkflow for SynthesisWorkflowImpl {
         {
             Ok(v) => v,
             Err(e) => {
-                super::write_task_phase_status(&self.deps, &task_id, "idle").await;
+                let _ = journaled_emit_task_phase_status(
+                    &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
+                    &task_id, "idle",
+                ).await;
                 return Err(e.into());
             }
         };
-
-        super::write_task_phase_status(&self.deps, &task_id, "synthesis_complete").await;
 
         ctx.set("status", "Synthesis complete".to_string());
         info!("SynthesisWorkflow complete");

@@ -8,7 +8,9 @@
 pub mod snapshot_store;
 pub mod store;
 pub mod types;
+pub mod upcasting;
 
 pub use snapshot_store::PostgresSnapshotStore;
 pub use store::{EventHandle, EventStore};
 pub use types::{AppendEvent, StoredEvent};
+pub use upcasting::upcast;
