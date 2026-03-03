@@ -11,6 +11,7 @@ use tracing::info;
 use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
+use super::restate_runtime::RestateRuntime;
 use super::types::{EmptyRequest, SupervisorResult, TaskRequest};
 use super::{journaled_emit_task_phase_status, ScoutDeps};
 
@@ -66,43 +67,29 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
 
         ctx.set("status", "Starting supervisor...".to_string());
 
-        let deps = self.deps.clone();
-        let scope = req.scope.clone();
-        let tid = task_id.clone();
-
-        let result = match ctx
-            .run(|| async {
-                let engine = deps.build_full_engine(
-                    &scope,
-                    &run_id,
-                    0,
-                    Some(&tid),
-                    Some("complete"),
-                );
-
-                // Emit PhaseCompleted(SituationWeaving) — triggers supervisor + finalize
-                engine
-                    .emit(LifecycleEvent::PhaseCompleted {
-                        phase: PipelinePhase::SituationWeaving,
-                    })
-                    .settled()
-                    .await
-                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
-
-                Ok(SupervisorResult { issues_found: 0 })
+        let engine = self.deps.build_full_engine(
+            &req.scope,
+            &run_id,
+            0,
+            Some(&task_id),
+            Some("complete"),
+        );
+        let runtime = RestateRuntime::new(&ctx);
+        if let Err(e) = engine
+            .emit(LifecycleEvent::PhaseCompleted {
+                phase: PipelinePhase::SituationWeaving,
             })
-            .retry_policy(super::phase_retry_policy())
+            .settled_with(&runtime)
             .await
         {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = journaled_emit_task_phase_status(
-                    &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
-                    &task_id, "idle",
-                ).await;
-                return Err(e.into());
-            }
-        };
+            let _ = journaled_emit_task_phase_status(
+                &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
+                &task_id, "idle",
+            ).await;
+            return Err(TerminalError::new(e.to_string()).into());
+        }
+
+        let result = SupervisorResult { issues_found: 0 };
 
         ctx.set(
             "status",

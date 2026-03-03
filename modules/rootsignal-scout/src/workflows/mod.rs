@@ -9,6 +9,7 @@
 pub mod bootstrap;
 pub mod full_run;
 pub mod news_scanner;
+pub mod restate_runtime;
 pub mod scrape;
 pub mod situation_weaver;
 pub mod supervisor;

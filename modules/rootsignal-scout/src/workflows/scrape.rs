@@ -12,6 +12,7 @@ use tracing::info;
 use crate::core::aggregate::PipelineState;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
+use super::restate_runtime::RestateRuntime;
 use super::types::{EmptyRequest, ScrapeResult, TaskRequest};
 use super::{journaled_emit_task_phase_status, ScoutDeps};
 
@@ -73,50 +74,38 @@ impl ScrapeWorkflow for ScrapeWorkflowImpl {
 
         ctx.set("status", "Starting scrape pipeline...".to_string());
 
-        let deps = self.deps.clone();
-        let scope = req.scope.clone();
-        let tid = task_id.clone();
-
-        let result = match ctx
-            .run(|| async {
-                let engine = deps.build_scrape_engine(
-                    &scope,
-                    &run_id,
-                    Some(&tid),
-                    Some("scrape_complete"),
-                );
-                engine
-                    .emit(LifecycleEvent::EngineStarted {
-                        run_id: run_id.clone(),
-                    })
-                    .settled()
-                    .await
-                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
-
-                let state = engine.singleton::<PipelineState>();
-                let budget = engine
-                    .deps()
-                    .budget
-                    .as_ref()
-                    .map(|b| b.total_spent())
-                    .unwrap_or(0);
-                Ok(ScrapeResult {
-                    urls_scraped: state.stats.urls_scraped,
-                    signals_stored: state.stats.signals_stored,
-                    spent_cents: budget,
-                })
+        let engine = self.deps.build_scrape_engine(
+            &req.scope,
+            &run_id,
+            Some(&task_id),
+            Some("scrape_complete"),
+        );
+        let runtime = RestateRuntime::new(&ctx);
+        if let Err(e) = engine
+            .emit(LifecycleEvent::EngineStarted {
+                run_id: run_id.clone(),
             })
-            .retry_policy(super::phase_retry_policy())
+            .settled_with(&runtime)
             .await
         {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = journaled_emit_task_phase_status(
-                    &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
-                    &task_id, "idle",
-                ).await;
-                return Err(e.into());
-            }
+            let _ = journaled_emit_task_phase_status(
+                &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
+                &task_id, "idle",
+            ).await;
+            return Err(TerminalError::new(e.to_string()).into());
+        }
+
+        let state = engine.singleton::<PipelineState>();
+        let budget = engine
+            .deps()
+            .budget
+            .as_ref()
+            .map(|b| b.total_spent())
+            .unwrap_or(0);
+        let result = ScrapeResult {
+            urls_scraped: state.stats.urls_scraped,
+            signals_stored: state.stats.signals_stored,
+            spent_cents: budget,
         };
 
         ctx.set(

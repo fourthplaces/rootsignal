@@ -1,8 +1,11 @@
 //! Restate durable workflow for a full scout run.
 //!
-//! One `engine.emit(EngineStarted).settled()` drives the entire run:
+//! One `engine.emit(EngineStarted).settled_with(&runtime)` drives the entire run:
 //! reap → schedule → scrape → enrichment → synthesis → situation weaving →
 //! supervisor → finalize → RunCompleted.
+//!
+//! Each handler invocation is individually journaled through Restate via
+//! `RestateRuntime`, so mid-settle crashes resume from the last completed handler.
 
 use std::sync::Arc;
 
@@ -12,6 +15,7 @@ use tracing::info;
 use crate::core::aggregate::PipelineState;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
+use super::restate_runtime::RestateRuntime;
 use super::types::*;
 use super::{journaled_emit_task_phase_status, ScoutDeps};
 
@@ -45,44 +49,34 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
 
         ctx.set("status", "Running full scout...".to_string());
 
-        let deps = self.deps.clone();
-        let tid = task_id.clone();
-        let result = match ctx
-            .run(|| async {
-                let engine = deps.build_full_engine(
-                    &scope,
-                    &run_id,
-                    0,
-                    Some(&tid),
-                    Some("complete"),
-                );
-                engine
-                    .emit(LifecycleEvent::EngineStarted {
-                        run_id: run_id.clone(),
-                    })
-                    .settled()
-                    .await
-                    .map_err(|e| -> HandlerError { TerminalError::new(e.to_string()).into() })?;
-
-                let state = engine.singleton::<PipelineState>();
-                Ok(FullRunResult {
-                    sources_created: state.stats.sources_discovered,
-                    urls_scraped: state.stats.urls_scraped,
-                    signals_stored: state.stats.signals_stored,
-                    issues_found: 0,
-                })
+        let engine = self.deps.build_full_engine(
+            &scope,
+            &run_id,
+            0,
+            Some(&task_id),
+            Some("complete"),
+        );
+        let runtime = RestateRuntime::new(&ctx);
+        if let Err(e) = engine
+            .emit(LifecycleEvent::EngineStarted {
+                run_id: run_id.clone(),
             })
-            .retry_policy(super::phase_retry_policy())
+            .settled_with(&runtime)
             .await
         {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = journaled_emit_task_phase_status(
-                    &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
-                    &task_id, "idle",
-                ).await;
-                return Err(e.into());
-            }
+            let _ = journaled_emit_task_phase_status(
+                &ctx, self.deps.pg_pool.clone(), self.deps.graph_client.clone(),
+                &task_id, "idle",
+            ).await;
+            return Err(TerminalError::new(e.to_string()).into());
+        }
+
+        let state = engine.singleton::<PipelineState>();
+        let result = FullRunResult {
+            sources_created: state.stats.sources_discovered,
+            urls_scraped: state.stats.urls_scraped,
+            signals_stored: state.stats.signals_stored,
+            issues_found: 0,
         };
 
         ctx.set("status", WorkflowPhase::Complete.to_string());
