@@ -11,6 +11,8 @@ use rootsignal_common::{
     GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
 use crate::GraphClient;
+use crate::writer::{row_to_source_node, row_datetime_opt_pub, SignalBrief};
+use rootsignal_common::SourceNode;
 
 
 /// Read-only wrapper for the graph. Used by the web server.
@@ -1254,6 +1256,64 @@ impl PublicGraphReader {
             count_by_type: count_by_type.into_iter().collect(),
             count_by_severity: count_by_severity.into_iter().collect(),
         })
+    }
+
+    /// Fetch a single source by UUID.
+    pub async fn source_by_id(&self, id: &Uuid) -> Result<Option<SourceNode>, neo4rs::Error> {
+        let cypher = "MATCH (s:Source {id: $id})
+            RETURN s.id AS id, s.canonical_key AS canonical_key,
+                   s.canonical_value AS canonical_value, s.url AS url,
+                   s.discovery_method AS discovery_method,
+                   s.created_at AS created_at, s.last_scraped AS last_scraped,
+                   s.last_produced_signal AS last_produced_signal,
+                   s.signals_produced AS signals_produced,
+                   s.signals_corroborated AS signals_corroborated,
+                   s.consecutive_empty_runs AS consecutive_empty_runs,
+                   s.active AS active, s.gap_context AS gap_context,
+                   s.weight AS weight, s.cadence_hours AS cadence_hours,
+                   s.avg_signals_per_scrape AS avg_signals_per_scrape,
+                   s.quality_penalty AS quality_penalty,
+                   s.source_role AS source_role,
+                   s.scrape_count AS scrape_count";
+
+        let q = query(cypher).param("id", id.to_string());
+        let mut stream = self.client.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row_to_source_node(&row))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Fetch recent signals produced by a source.
+    pub async fn signals_for_source(&self, source_id: &Uuid) -> Result<Vec<SignalBrief>, neo4rs::Error> {
+        let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
+            WHERE n.review_status IN ['staged', 'accepted', 'live']
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
+                   n.confidence AS confidence, n.extracted_at AS extracted_at,
+                   s.url AS source_url
+            ORDER BY n.extracted_at DESC
+            LIMIT 50";
+
+        let q = query(cypher).param("id", source_id.to_string());
+        let mut signals = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            signals.push(SignalBrief {
+                id,
+                title: row.get("title").unwrap_or_default(),
+                signal_type: row.get("signal_type").unwrap_or_default(),
+                confidence: row.get::<f64>("confidence").unwrap_or(0.0) as f32,
+                extracted_at: row_datetime_opt_pub(&row, "extracted_at"),
+                source_url: row.get("source_url").unwrap_or_default(),
+            });
+        }
+        Ok(signals)
     }
 }
 

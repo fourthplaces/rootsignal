@@ -452,6 +452,78 @@ impl QueryRoot {
             .collect())
     }
 
+    /// Full detail for a single source, including recent signals and discovery tree.
+    #[graphql(guard = "AdminGuard")]
+    async fn source_detail(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<AdminSourceDetail>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+
+        let source = match reader.source_by_id(&id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let signals = reader.signals_for_source(&id).await?;
+
+        let effective_weight = source.weight * source.quality_penalty;
+        let cadence = source.cadence_hours.unwrap_or_else(|| {
+            rootsignal_scout::domains::scheduling::activities::scheduler::cadence_hours_for_weight(
+                effective_weight,
+            )
+        });
+        let source_label = source_label_from_value(source.value());
+
+        let admin_signals: Vec<AdminSignalBrief> = signals
+            .into_iter()
+            .map(|s| AdminSignalBrief {
+                id: s.id.to_string(),
+                title: s.title,
+                signal_type: s.signal_type,
+                confidence: s.confidence,
+                extracted_at: s.extracted_at,
+                source_url: s.source_url,
+            })
+            .collect();
+
+        let discovery_tree = AdminDiscoveryTree {
+            nodes: vec![AdminDiscoveryTreeNode {
+                id: source.id.to_string(),
+                canonical_value: source.canonical_value.clone(),
+                discovery_method: format!("{:?}", source.discovery_method),
+                active: source.active,
+                signals_produced: source.signals_produced,
+            }],
+            edges: vec![],
+            root_id: source.id.to_string(),
+        };
+
+        Ok(Some(AdminSourceDetail {
+            id: source.id,
+            url: source.url.clone().unwrap_or_default(),
+            canonical_value: source.canonical_value.clone(),
+            source_label,
+            weight: source.weight,
+            quality_penalty: source.quality_penalty,
+            effective_weight,
+            discovery_method: format!("{:?}", source.discovery_method),
+            last_scraped: source.last_scraped,
+            cadence_hours: cadence as f64,
+            signals_produced: source.signals_produced,
+            signals_corroborated: source.signals_corroborated,
+            consecutive_empty_runs: source.consecutive_empty_runs,
+            active: source.active,
+            gap_context: source.gap_context.clone(),
+            scrape_count: source.scrape_count,
+            avg_signals_per_scrape: source.avg_signals_per_scrape,
+            source_role: format!("{:?}", source.source_role),
+            created_at: source.created_at,
+            last_produced_signal: source.last_produced_signal,
+            signals: admin_signals,
+            archive_summary: None,
+            discovery_tree,
+        }))
+    }
+
     /// Scout status for a specific region.
     #[graphql(guard = "AdminGuard")]
     async fn admin_scout_status(
@@ -1117,6 +1189,80 @@ pub struct AdminSource {
     pub cadence_hours: f64,
     pub signals_produced: u32,
     pub active: bool,
+}
+
+// ========== Source Detail GQL Types ==========
+
+#[derive(SimpleObject)]
+pub struct AdminSourceDetail {
+    pub id: Uuid,
+    pub url: String,
+    pub canonical_value: String,
+    pub source_label: String,
+    pub weight: f64,
+    pub quality_penalty: f64,
+    pub effective_weight: f64,
+    pub discovery_method: String,
+    pub last_scraped: Option<DateTime<Utc>>,
+    pub cadence_hours: f64,
+    pub signals_produced: u32,
+    pub signals_corroborated: u32,
+    pub consecutive_empty_runs: u32,
+    pub active: bool,
+    pub gap_context: Option<String>,
+    pub scrape_count: u32,
+    pub avg_signals_per_scrape: f64,
+    pub source_role: String,
+    pub created_at: DateTime<Utc>,
+    pub last_produced_signal: Option<DateTime<Utc>>,
+    pub signals: Vec<AdminSignalBrief>,
+    pub archive_summary: Option<AdminArchiveSummary>,
+    pub discovery_tree: AdminDiscoveryTree,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminSignalBrief {
+    pub id: String,
+    pub title: String,
+    pub signal_type: String,
+    pub confidence: f32,
+    pub extracted_at: Option<DateTime<Utc>>,
+    pub source_url: String,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminArchiveSummary {
+    pub posts: u32,
+    pub pages: u32,
+    pub feeds: u32,
+    pub short_videos: u32,
+    pub long_videos: u32,
+    pub stories: u32,
+    pub search_results: u32,
+    pub files: u32,
+    pub last_fetched_at: Option<DateTime<Utc>>,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminDiscoveryTree {
+    pub nodes: Vec<AdminDiscoveryTreeNode>,
+    pub edges: Vec<AdminDiscoveryTreeEdge>,
+    pub root_id: String,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminDiscoveryTreeNode {
+    pub id: String,
+    pub canonical_value: String,
+    pub discovery_method: String,
+    pub active: bool,
+    pub signals_produced: u32,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminDiscoveryTreeEdge {
+    pub child_id: String,
+    pub parent_id: String,
 }
 
 // ========== Archive GQL Types ==========

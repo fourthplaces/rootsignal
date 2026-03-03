@@ -31,7 +31,7 @@ pub use writer::{
 ConsolidationStats, DiscoveryTreeNode, DuplicateMatch, EvidenceSummary, ExtractionYield,
 FieldCorrection, GapTypeStats, GatheringFinderTarget, GraphReader, GraphStore,
 InvestigationTarget, NoticeInferenceRow, ReapStats, ResponseFinderTarget, ResponseHeuristic,
-SignalBrief, SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StagedSignal,
+SignalBrief, SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StagedSignal, row_to_source_node,
 ConcernHub, ConcernLinkerOutcome, ConcernLinkerTarget, ConcernRespondent, ConcernResponseShape,
 UnmetTension, WeaveCandidate, WeaveSignal,
 };

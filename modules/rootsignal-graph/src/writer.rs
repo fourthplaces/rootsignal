@@ -4499,7 +4499,7 @@ pub fn format_datetime_pub(dt: &DateTime<Utc>) -> String {
 
 /// Parse a neo4rs Row (with aliased columns) into a SourceNode.
 /// Returns None if the row is missing required fields (e.g. invalid UUID).
-fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
+pub fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
     let id_str: String = row.get("id").unwrap_or_default();
     let id = Uuid::parse_str(&id_str).ok()?;
 
