@@ -39,6 +39,7 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
         req: TaskRequest,
     ) -> Result<SupervisorResult, HandlerError> {
         let task_id = req.task_id.clone();
+        let run_id = req.run_id.clone();
 
         // Status transition guard (journaled so it's skipped on replay)
         let tid = task_id.clone();
@@ -71,7 +72,6 @@ impl SupervisorWorkflow for SupervisorWorkflowImpl {
 
         let result = match ctx
             .run(|| async {
-                let run_id = uuid::Uuid::new_v4().to_string();
                 let engine = deps.build_full_engine(
                     &scope,
                     &run_id,

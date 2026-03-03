@@ -41,7 +41,7 @@ impl FullScoutRunWorkflow for FullScoutRunWorkflowImpl {
     ) -> Result<FullRunResult, HandlerError> {
         let task_id = req.task_id.clone();
         let scope = req.scope.clone();
-        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_id = req.run_id.clone();
 
         ctx.set("status", "Running full scout...".to_string());
 

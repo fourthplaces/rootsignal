@@ -107,9 +107,10 @@ impl RestateClient {
     /// Restate key = task_id (UUID, inherently unique, one-shot).
     pub async fn run_scout(&self, task_id: &str, scope: &ScoutScope) -> Result<(), RestateError> {
         let url = format!("{}/FullScoutRunWorkflow/{task_id}/run", self.ingress_url);
-        info!(url = url.as_str(), task_id, "Dispatching scout via Restate");
+        let run_id = uuid::Uuid::new_v4().to_string();
+        info!(url = url.as_str(), task_id, run_id = run_id.as_str(), "Dispatching scout via Restate");
 
-        let body = serde_json::json!({ "task_id": task_id, "scope": scope });
+        let body = serde_json::json!({ "task_id": task_id, "scope": scope, "run_id": run_id });
         let resp = self.http.post(&url).json(&body).send().await?;
 
         if resp.status().is_success() {
@@ -134,11 +135,12 @@ impl RestateClient {
         let url = format!("{}/{workflow_name}/{key}/run", self.ingress_url);
         info!(url = url.as_str(), phase = ?phase, task_id, "Dispatching individual phase via Restate");
 
+        let run_id = uuid::Uuid::new_v4().to_string();
         let body = match phase {
             ScoutPhase::Synthesis | ScoutPhase::SituationWeaver => {
-                serde_json::json!({ "task_id": task_id, "scope": scope, "spent_cents": 0u64 })
+                serde_json::json!({ "task_id": task_id, "scope": scope, "spent_cents": 0u64, "run_id": run_id })
             }
-            _ => serde_json::json!({ "task_id": task_id, "scope": scope }),
+            _ => serde_json::json!({ "task_id": task_id, "scope": scope, "run_id": run_id }),
         };
 
         let resp = self.http.post(&url).json(&body).send().await?;

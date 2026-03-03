@@ -297,30 +297,12 @@ impl Extractor {
             "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
         );
 
-        let original_len = content.len();
         let response: ExtractionResponse = self
             .claude
             .extract(&self.system_prompt, &user_prompt)
             .await?;
 
-        let mut result = Self::convert_signals(response, source_url);
-        result.logs.push(TelemetryEvent::SystemLog {
-            message: format!(
-                "LLM extraction: {} chars → {} signals, {} rejected from {}",
-                original_len,
-                result.nodes.len(),
-                result.rejected.len(),
-                source_url,
-            ),
-            context: Some(serde_json::json!({
-                "activity": "extractor",
-                "source_url": source_url,
-                "content_chars": original_len,
-                "signals_extracted": result.nodes.len(),
-                "signals_rejected": result.rejected.len(),
-                "implied_queries": result.implied_queries.len(),
-            })),
-        });
+        let result = Self::convert_signals(response, source_url);
         Ok(result)
     }
 

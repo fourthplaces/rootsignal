@@ -41,6 +41,7 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         req: TaskRequest,
     ) -> Result<BootstrapResult, HandlerError> {
         let task_id = req.task_id.clone();
+        let run_id = req.run_id.clone();
 
         // Status transition guard (journaled so it's skipped on replay)
         let tid = task_id.clone();
@@ -79,7 +80,6 @@ impl BootstrapWorkflow for BootstrapWorkflowImpl {
         let tid = task_id.clone();
         let sources_created = match ctx
             .run(|| async {
-                let run_id = uuid::Uuid::new_v4().to_string();
                 let engine = deps.build_scrape_engine(
                     &scope,
                     &run_id,

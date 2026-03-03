@@ -4,15 +4,13 @@ import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_SCOUT_TASKS, ADMIN_SCOUT_RUNS, SIGNALS_NEAR, SITUATIONS_IN_BOUNDS, ACTORS_IN_BOUNDS } from "@/graphql/queries";
 import { RUN_SCOUT, RUN_SCOUT_PHASE, SCRAPE_URL, PURGE_AREA } from "@/graphql/mutations";
 import { RegionMap, type MapSignal } from "@/pages/MapPage";
-import { SourceTrace } from "@/components/SourceTrace";
 
-type Tab = "map" | "signals" | "situations" | "actors" | "trace";
+type Tab = "map" | "signals" | "situations" | "actors";
 const TABS: { key: Tab; label: string }[] = [
   { key: "map", label: "Map" },
   { key: "signals", label: "Signals" },
   { key: "situations", label: "Situations" },
   { key: "actors", label: "Actors" },
-  { key: "trace", label: "Trace" },
 ];
 
 type Signal = {
@@ -254,9 +252,9 @@ export function ScoutTaskDetailPage() {
   const actors: Actor[] = actorsData?.actorsInBounds ?? [];
 
   // Fetch most recent scout run for trace tab
-  const { data: runsData, loading: runsLoading } = useQuery(ADMIN_SCOUT_RUNS, {
+  const { data: runsData } = useQuery(ADMIN_SCOUT_RUNS, {
     variables: task ? { region: task.context, limit: 1 } : undefined,
-    skip: !task || tab !== "trace",
+    skip: !task,
   });
   const latestRunId: string | null = runsData?.adminScoutRuns?.[0]?.runId ?? null;
 
@@ -310,6 +308,14 @@ export function ScoutTaskDetailPage() {
                 {runLoading ? "Running..." : "Run"}
               </button>
             </div>
+          )}
+          {latestRunId && (
+            <Link
+              to={`/events?runId=${latestRunId}`}
+              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 ml-2"
+            >
+              Events
+            </Link>
           )}
           <button
             onClick={handlePurge}
@@ -574,16 +580,6 @@ export function ScoutTaskDetailPage() {
         )
       )}
 
-      {/* Trace tab — latest run */}
-      {tab === "trace" && (
-        runsLoading ? (
-          <p className="text-muted-foreground">Loading...</p>
-        ) : !latestRunId ? (
-          <p className="text-muted-foreground">No scout runs found for this task.</p>
-        ) : (
-          <SourceTrace runId={latestRunId} />
-        )
-      )}
     </div>
   );
 }

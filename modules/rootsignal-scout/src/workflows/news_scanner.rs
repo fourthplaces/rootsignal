@@ -38,10 +38,11 @@ impl NewsScanWorkflow for NewsScanWorkflowImpl {
         ctx.set("status", "Starting news scan...".to_string());
 
         let deps = self.deps.clone();
+        let run_id = uuid::Uuid::new_v4().to_string();
 
         let result = ctx
             .run(|| async {
-                scan_news(&deps)
+                scan_news(&deps, &run_id)
                     .await
                     .map_err(|e| -> HandlerError { e.into() })
             })
@@ -74,9 +75,8 @@ impl NewsScanWorkflow for NewsScanWorkflowImpl {
 }
 
 /// Run a news scan using shared deps. Usable from both Restate and CLI.
-pub async fn scan_news(deps: &ScoutDeps) -> anyhow::Result<NewsScanResult> {
-    let run_id = uuid::Uuid::new_v4().to_string();
-    let engine = deps.build_news_engine(&run_id);
+pub async fn scan_news(deps: &ScoutDeps, run_id: &str) -> anyhow::Result<NewsScanResult> {
+    let engine = deps.build_news_engine(run_id);
 
     engine
         .emit(crate::domains::lifecycle::events::LifecycleEvent::NewsScanRequested)
