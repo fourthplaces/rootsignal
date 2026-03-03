@@ -567,14 +567,14 @@ fn build_all_events() -> Vec<Event> {
         }),
         Event::System(SystemEvent::ResponseLinked {
             signal_id: id,
-            tension_id: id,
+            concern_id: id,
             strength: 0.7,
             explanation: "".into(),
             source_url: None,
         }),
         Event::System(SystemEvent::ConcernLinked {
             signal_id: id,
-            tension_id: id,
+            concern_id: id,
             strength: 0.6,
             explanation: "".into(),
             source_url: None,

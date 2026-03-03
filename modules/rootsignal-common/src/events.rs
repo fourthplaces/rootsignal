@@ -255,7 +255,7 @@ pub enum HelpRequestCorrection {
         old: Option<String>,
         new: Option<String>,
     },
-    Goal {
+    StatedGoal {
         old: Option<String>,
         new: Option<String>,
     },
@@ -315,7 +315,7 @@ pub enum ConcernCorrection {
         old: Option<Location>,
         new: Option<Location>,
     },
-    WhatWouldHelp {
+    Opposing {
         old: Option<String>,
         new: Option<String>,
     },

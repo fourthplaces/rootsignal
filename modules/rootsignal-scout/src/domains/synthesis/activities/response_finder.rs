@@ -398,7 +398,7 @@ impl<'a> ResponseFinder<'a> {
                 }
                 Err(e) => {
                     warn!(
-                        tension_id = %target.tension_id,
+                        concern_id = %target.concern_id,
                         title = target.title.as_str(),
                         error = %e,
                         "Response scout investigation failed"
@@ -408,7 +408,7 @@ impl<'a> ResponseFinder<'a> {
 
             // Emit event — projector sets response_scouted_at on the Tension node
             events.push(SystemEvent::ResponseScouted {
-                tension_id: target.tension_id,
+                concern_id: target.concern_id,
                 scouted_at: Utc::now(),
             });
         }
@@ -427,7 +427,7 @@ impl<'a> ResponseFinder<'a> {
         // Fetch existing response heuristics
         let existing = self
             .graph
-            .get_existing_responses(target.tension_id)
+            .get_existing_responses(target.concern_id)
             .await
             .unwrap_or_default();
 
@@ -490,7 +490,7 @@ impl<'a> ResponseFinder<'a> {
         {
             if let Err(e) = self.process_response(target, &response, stats, events).await {
                 warn!(
-                    tension_id = %target.tension_id,
+                    concern_id = %target.concern_id,
                     response_title = response.title.as_str(),
                     error = %e,
                     "Failed to process discovered response"
@@ -520,7 +520,7 @@ impl<'a> ResponseFinder<'a> {
         }
 
         info!(
-            tension_id = %target.tension_id,
+            concern_id = %target.concern_id,
             title = target.title.as_str(),
             responses = stats.responses_discovered,
             "Tension response investigation complete"
@@ -592,7 +592,7 @@ impl<'a> ResponseFinder<'a> {
         // Wire RESPONDS_TO edge to the target tension
         events.push(SystemEvent::ResponseLinked {
             signal_id,
-            tension_id: target.tension_id,
+            concern_id: target.concern_id,
             strength: response.match_strength.clamp(0.0, 1.0),
             explanation: response.explanation.clone(),
             source_url: None,
@@ -716,6 +716,7 @@ impl<'a> ResponseFinder<'a> {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         };
 
         let node = match response.signal_type.to_lowercase().as_str() {
@@ -739,7 +740,7 @@ impl<'a> ResponseFinder<'a> {
                 urgency: Urgency::Medium,
                 what_needed: Some(response.summary.clone()),
                 action_url: Some(response.url.clone()),
-                goal: None,
+                stated_goal: None,
             }),
             _ => Node::Resource(ResourceOfferNode {
                 meta,
@@ -810,17 +811,17 @@ impl<'a> ResponseFinder<'a> {
                 }
             }
 
-            if let Some((tension_id, sim)) = best_match {
+            if let Some((concern_id, sim)) = best_match {
                 info!(
                     signal_id = %signal_id,
-                    tension_id = %tension_id,
+                    concern_id = %concern_id,
                     similarity = sim,
                     also_addresses = tension_title.as_str(),
                     "Wiring also_addresses edge"
                 );
                 let also_event = SystemEvent::ResponseLinked {
                     signal_id,
-                    tension_id,
+                    concern_id,
                     strength: sim.clamp(0.0, 1.0),
                     explanation: explanation.to_string(),
                     source_url: None,
@@ -911,15 +912,15 @@ impl<'a> ResponseFinder<'a> {
                 corrections: None,
                 rejection_reason: None,
                 mentioned_actors: Vec::new(),
+                category: None,
             },
             severity,
-            category: Some(tension.category.clone()),
             subject: None,
             opposing: Some(tension.opposing.clone()),
         };
 
         let node = Node::Concern(tension_node);
-        let tension_id = node.meta().unwrap().id;
+        let concern_id = node.meta().unwrap().id;
 
         // Push world event + system events into caller's event collection
         let world_event = node_to_world_event(&node);
@@ -931,7 +932,7 @@ impl<'a> ResponseFinder<'a> {
         }
 
         info!(
-            tension_id = %tension_id,
+            concern_id = %concern_id,
             title = tension.title.as_str(),
             relationship = tension.relationship.as_str(),
             "Emergent tension discovered by response finder"
@@ -1132,6 +1133,7 @@ mod tests {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         };
 
         let node = Node::Resource(ResourceOfferNode {

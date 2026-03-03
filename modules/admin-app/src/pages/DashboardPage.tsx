@@ -107,17 +107,17 @@ export function DashboardPage() {
                 <th className="pb-2 font-medium">Title</th>
                 <th className="pb-2 font-medium">Severity</th>
                 <th className="pb-2 font-medium">Category</th>
-                <th className="pb-2 font-medium">What Would Help</th>
+                <th className="pb-2 font-medium">Opposing</th>
               </tr>
             </thead>
             <tbody>
               {d.unmetConcerns.map(
-                (t: { title: string; severity: string; category: string; whatWouldHelp: string }, i: number) => (
+                (t: { title: string; severity: string; category: string; opposing: string }, i: number) => (
                   <tr key={i} className="border-b border-border/50">
                     <td className="py-2">{t.title}</td>
                     <td className="py-2">{t.severity}</td>
                     <td className="py-2">{t.category}</td>
-                    <td className="py-2 text-muted-foreground">{t.whatWouldHelp}</td>
+                    <td className="py-2 text-muted-foreground">{t.opposing}</td>
                   </tr>
                 ),
               )}

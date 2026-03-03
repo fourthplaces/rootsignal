@@ -103,7 +103,7 @@ pub async fn fetch_staged_signals(
     let max_lng = region.center_lng + lng_delta;
 
     // UNION-per-label for index utilization
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
     let branches: Vec<String> = labels
         .iter()
         .map(|label| {
@@ -401,7 +401,7 @@ pub async fn review_batch(
 
 async fn promote_to_live(graph: &neo4rs::Graph, signal_id: &str) -> Result<(), neo4rs::Error> {
     // Use UNION-per-label pattern for index utilization
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' SET n.review_status = 'live'"
@@ -416,7 +416,7 @@ async fn mark_rejected(
     signal_id: &str,
     reason: &str,
 ) -> Result<(), neo4rs::Error> {
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' \

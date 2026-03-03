@@ -22,9 +22,10 @@ pub const SUPPRESS_MIN_YIELD: i64 = 1;
 /// Standard limit for single-org social accounts.
 pub const SOCIAL_POST_LIMIT: u32 = 10;
 
-/// Shared tension category list for LLM prompts. These are guidance, not constraints —
-/// the LLM may propose categories outside this list per Principle 13 ("Emergent Over Engineered").
-pub const TENSION_CATEGORIES: &str =
+/// Shared signal category list for LLM prompts. Applies to ALL signal types.
+/// These are guidance, not constraints — the LLM may propose categories outside
+/// this list per Principle 13 ("Emergent Over Engineered").
+pub const SIGNAL_CATEGORIES: &str =
     "housing, safety, economic, health, education, infrastructure, \
 environment, social, governance, immigration, civil_rights, other";
 

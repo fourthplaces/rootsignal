@@ -93,25 +93,25 @@ pub async fn compute_cause_heat(
     // Compute evidence_boost for Tensions from EVIDENCE_OF edges.
     // Severity weights: Low=1, Medium=2, High=3, Critical=4.
     // Boost = 1.0 + ln(1 + score) * 0.5, capped at 3.0.
-    let tension_ids: Vec<&str> = signals
+    let concern_ids: Vec<&str> = signals
         .iter()
         .filter(|s| s.label == "Concern")
         .map(|s| s.id.as_str())
         .collect();
 
-    if !tension_ids.is_empty() {
+    if !concern_ids.is_empty() {
         let q = query(
             "UNWIND $ids AS tid
              MATCH (sig)-[r:EVIDENCE_OF]->(t:Concern {id: tid})
              WHERE sig.severity IS NOT NULL
-             RETURN t.id AS tension_id,
+             RETURN t.id AS concern_id,
                     collect(sig.severity) AS severities",
         )
-        .param("ids", tension_ids);
+        .param("ids", concern_ids);
 
         let mut stream = g.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            let tid: String = row.get("tension_id").unwrap_or_default();
+            let tid: String = row.get("concern_id").unwrap_or_default();
             let sevs: Vec<String> = row.get("severities").unwrap_or_default();
             let score: f64 = sevs.iter().map(|s| severity_weight(s)).sum();
             let boost = (1.0 + (score).ln_1p() * 0.5).min(3.0);

@@ -179,7 +179,7 @@ export const RE_EXTRACT_SIGNAL = gql`
         contentDate
         tags
         isFirsthand
-        whatWouldHelp
+        opposing
       }
       rejected {
         title

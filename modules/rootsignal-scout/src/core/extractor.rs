@@ -50,8 +50,10 @@ pub struct ExtractedSignal {
     pub urgency: Option<String>,
     /// What is needed (for HelpRequest signals)
     pub what_needed: Option<String>,
-    /// Goal description (for HelpRequest signals)
-    pub goal: Option<String>,
+    /// The goal as explicitly stated in the content (for HelpRequest signals)
+    pub stated_goal: Option<String>,
+    /// Core subject in 5 words or fewer (for Concern, Condition, Announcement)
+    pub subject: Option<String>,
     /// Severity: "low", "medium", "high", "critical" (for Concern, Condition, Announcement)
     pub severity: Option<String>,
     /// Category (for Announcement and Concern signals)
@@ -69,7 +71,6 @@ pub struct ExtractedSignal {
     /// When extracting from multiple posts, return the URL of the post this signal came from.
     pub source_url: Option<String>,
     /// What is being opposed (for Concern signals)
-    #[serde(alias = "what_would_help")]
     pub opposing: Option<String>,
     /// Who or what reported/observed this (for Condition signals)
     pub observed_by: Option<String>,
@@ -178,6 +179,9 @@ pub struct ExtractionResult {
     /// Author actor display names paired with the signal node UUID.
     /// Used for actor creation on owned sources (social accounts).
     pub author_actors: Vec<(Uuid, String)>,
+    /// Category classifications paired with the signal node UUID.
+    /// Emitted as CategoryClassified system events by the caller.
+    pub categories: Vec<(Uuid, String)>,
 }
 
 // --- SignalExtractor trait ---
@@ -277,6 +281,7 @@ impl Extractor {
         let mut rejected: Vec<RejectedSignal> = Vec::new();
         let mut schedules: Vec<(Uuid, ScheduleNode)> = Vec::new();
         let mut author_actors: Vec<(Uuid, String)> = Vec::new();
+        let mut categories: Vec<(Uuid, String)> = Vec::new();
 
         for signal in response.signals {
             // Skip junk signals from extraction failures
@@ -375,6 +380,7 @@ impl Extractor {
                 corrections: None,
                 rejection_reason: None,
                 mentioned_actors: signal.mentioned_actors.clone().unwrap_or_default(),
+                category: None,
             };
 
             let node = match signal.signal_type.as_str() {
@@ -418,7 +424,7 @@ impl Extractor {
                         urgency,
                         what_needed: signal.what_needed,
                         action_url: signal.action_url,
-                        goal: signal.goal,
+                        stated_goal: signal.stated_goal,
                     })
                 }
                 "announcement" => {
@@ -437,7 +443,7 @@ impl Extractor {
                     Node::Announcement(AnnouncementNode {
                         meta,
                         severity,
-                        category: signal.category,
+                        subject: signal.subject.clone(),
                         effective_date,
                         source_authority: signal.source_authority,
                     })
@@ -452,8 +458,7 @@ impl Extractor {
                     Node::Concern(ConcernNode {
                         meta,
                         severity,
-                        category: signal.category.clone(),
-                        subject: None,
+                        subject: signal.subject.clone(),
                         opposing: signal.opposing.clone(),
                     })
                 }
@@ -467,8 +472,7 @@ impl Extractor {
                     Node::Condition(ConditionNode {
                         meta,
                         severity,
-                        category: signal.category.clone(),
-                        subject: None,
+                        subject: signal.subject.clone(),
                         observed_by: signal.observed_by.clone(),
                         measurement: signal.measurement.clone(),
                         affected_scope: signal.affected_scope.clone(),
@@ -583,6 +587,14 @@ impl Extractor {
                 }
             }
 
+            // Collect category for CategoryClassified system event
+            if let Some(ref cat) = signal.category {
+                let cat = cat.trim();
+                if !cat.is_empty() {
+                    categories.push((node_id, cat.to_string()));
+                }
+            }
+
             nodes.push(node);
         }
 
@@ -600,6 +612,7 @@ impl Extractor {
             rejected,
             schedules,
             author_actors,
+            categories,
         }
     }
 }
@@ -618,7 +631,7 @@ pub fn build_system_prompt(
     tag_vocabulary: &[String],
 ) -> String {
     let today = Utc::now().format("%Y-%m-%d").to_string();
-    let concern_cats = crate::infra::util::TENSION_CATEGORIES;
+    let concern_cats = crate::infra::util::SIGNAL_CATEGORIES;
     let tag_vocab_section = if tag_vocabulary.is_empty() {
         String::new()
     } else {
@@ -654,9 +667,11 @@ Your job: find real problems and the people addressing them. The most valuable s
 **Context signals:**
 - **Announcement**: An official advisory, policy change, OR community warning about active threats.
   Community members publicly warning each other about enforcement activity (ICE sightings),
-  environmental hazards, or safety concerns are valid Announcements with category "community_report".
+  environmental hazards, or safety concerns are valid Announcements.
   These are distinct from rumors — they come from people with first-hand or local knowledge
-  broadcasting publicly to enable protective action.
+  broadcasting publicly to enable protective action. Announcement is the category of last resort —
+  if a signal has tangible utility (Resource, Gathering, HelpRequest) or describes a physical state
+  (Condition) or social friction (Concern), classify it as that instead.
 - **Condition**: A state of the world being described — infrastructure, environment, emergencies, public health, safety. The severity and urgency fields distinguish routine observations from acute events. If the content describes a physical state (pothole, pollution, outage, flood), that's a Condition. If it describes social friction (opposition, protest, dispute), that's a Concern.
 
 If content doesn't map to one of these types, return an empty signals array.
@@ -728,23 +743,42 @@ Look for: byline dates, "Published on...", article timestamps, post dates.
 - Do NOT use event start times as published_at — published_at is when the page was written, not when an event occurs
 Signals without a published_at may be dropped, so extracting this accurately is important.
 
-## Announcement Fields
-- severity: "low", "medium", "high", "critical"
-- category: "psa", "policy", "advisory", "enforcement", "health", "community_report"
-- effective_date: ISO 8601 when the notice takes effect
-- source_authority: The official body issuing it
-
-## Concern Fields
-- severity: "low", "medium", "high", "critical"
+## Category (all signal types)
 - category: One of: {concern_cats}. These are guidance, not constraints — propose a new category if none fit.
-- opposing: What is being opposed (e.g. "proposed rezoning", "budget cuts to after-school programs")
+  A food shelf is "housing" or "economic", a legal clinic gathering is "immigration", a river cleanup is "environment".
 
-## Condition Fields
-- severity: "low", "medium", "high", "critical"
-- category: One of: {concern_cats}. These are guidance, not constraints — propose a new category if none fit.
-- observed_by: Who or what reported/observed this (e.g. "MPCA", "neighborhood resident"). Null if not stated.
-- measurement: Quantitative reading if the content includes one (e.g. "PM2.5 at 35 µg/m³", "4 inches of flooding"). Null if none.
-- affected_scope: Scope of what's affected as stated in the content (e.g. "North Minneapolis", "I-35W bridge"). Null if not stated.
+## Type-Specific Fields
+
+For condition_observed, extract these fields ONLY if the source content explicitly states them:
+- subject: Core subject in 5 words or fewer. The what and the where.
+- observed_by: Who/what reported this?
+- measurement: Any quantitative reading.
+- affected_scope: Scope as described.
+
+For concern_raised:
+- subject: Core subject in 5 words or fewer.
+- opposing: What is being opposed, as explicitly stated.
+
+For announcement_shared:
+- subject: Core subject in 5 words or fewer.
+- effective_date: Date something takes effect, only if explicitly stated.
+
+For resource_offered:
+- eligibility: Who can access this, only if explicitly stated.
+
+For help_requested:
+- stated_goal: The goal as explicitly stated in the content.
+
+All types with severity: "low", "medium", "high", "critical"
+
+## Classification Priority
+When content could be multiple types, classify by priority:
+1. **Tangible utility first** — Gathering, Resource, HelpRequest, Condition. If the content describes a physical state, a resource, a need, or a gathering, classify as that even if there's friction layered on top. ("Boil water advisory" → Condition, not Concern, even if people are complaining.)
+2. **Community friction** — Concern. Only when there's nothing more specific underneath the opposition/dispute.
+3. **Last resort** — Announcement. Pure information broadcast with no tangible utility and no friction.
+
+## Bundled Content
+If a page contains multiple distinct signals (e.g., a food shelf listing AND a volunteer call), emit a separate signal for each. Do not bundle unrelated content into one signal. All signals from the same page share the same extraction_id — this is how the system knows they came from the same source.
 
 ## Source URL
 - When extracting from multiple posts (e.g. "--- Post 1 (https://...) ---"), set source_url to the specific post URL the signal came from
@@ -884,7 +918,8 @@ mod tests {
             is_ongoing: None,
             urgency: None,
             what_needed: None,
-            goal: None,
+            stated_goal: None,
+            subject: Some("housing displacement".to_string()),
             severity: Some("high".to_string()),
             category: Some("housing".to_string()),
             effective_date: None,
@@ -959,6 +994,7 @@ mod tests {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         };
         let aid = ResourceOfferNode {
             meta,
@@ -996,13 +1032,14 @@ mod tests {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         };
         let need = HelpRequestNode {
             meta,
             urgency: Urgency::Medium,
             what_needed: None,
             action_url: None,
-            goal: None,
+            stated_goal: None,
         };
         assert!(need.what_needed.is_none());
     }
@@ -1017,7 +1054,7 @@ mod tests {
                 "sensitivity": "sensitive",
                 "severity": "high",
                 "category": "safety",
-                "what_would_help": "legal defense, emergency housing",
+                "opposing": "legal defense, emergency housing",
                 "implied_queries": [
                     "immigration legal aid Minneapolis",
                     "emergency housing detained immigrants Minneapolis"
@@ -1076,6 +1113,7 @@ mod tests {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         };
         assert_eq!(result.implied_queries.len(), 2);
     }

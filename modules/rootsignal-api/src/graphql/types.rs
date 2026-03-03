@@ -422,6 +422,9 @@ impl GqlGatheringSignal {
     async fn rejection_reason(&self) -> Option<&str> {
         self.meta().rejection_reason.as_deref()
     }
+    async fn category(&self) -> Option<&str> {
+        self.meta().category.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
         Ok(loader
@@ -532,6 +535,9 @@ impl GqlResourceSignal {
     async fn rejection_reason(&self) -> Option<&str> {
         self.meta().rejection_reason.as_deref()
     }
+    async fn category(&self) -> Option<&str> {
+        self.meta().category.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
         Ok(loader
@@ -636,6 +642,9 @@ impl GqlHelpRequestSignal {
     async fn rejection_reason(&self) -> Option<&str> {
         self.meta().rejection_reason.as_deref()
     }
+    async fn category(&self) -> Option<&str> {
+        self.meta().category.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
         Ok(loader
@@ -666,8 +675,8 @@ impl GqlHelpRequestSignal {
     async fn action_url(&self) -> Option<&str> {
         self.0.action_url.as_deref()
     }
-    async fn goal(&self) -> Option<&str> {
-        self.0.goal.as_deref()
+    async fn stated_goal(&self) -> Option<&str> {
+        self.0.stated_goal.as_deref()
     }
 }
 
@@ -739,6 +748,9 @@ impl GqlAnnouncementSignal {
     async fn rejection_reason(&self) -> Option<&str> {
         self.meta().rejection_reason.as_deref()
     }
+    async fn category(&self) -> Option<&str> {
+        self.meta().category.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
         Ok(loader
@@ -762,9 +774,6 @@ impl GqlAnnouncementSignal {
 
     async fn severity(&self) -> GqlSeverity {
         self.0.severity.into()
-    }
-    async fn category(&self) -> Option<&str> {
-        self.0.category.as_deref()
     }
     async fn effective_date(&self) -> Option<DateTime<Utc>> {
         self.0.effective_date
@@ -842,6 +851,9 @@ impl GqlConcernSignal {
     async fn rejection_reason(&self) -> Option<&str> {
         self.meta().rejection_reason.as_deref()
     }
+    async fn category(&self) -> Option<&str> {
+        self.meta().category.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
         Ok(loader
@@ -865,9 +877,6 @@ impl GqlConcernSignal {
 
     async fn severity(&self) -> GqlSeverity {
         self.0.severity.into()
-    }
-    async fn category(&self) -> Option<&str> {
-        self.0.category.as_deref()
     }
     async fn subject(&self) -> Option<&str> {
         self.0.subject.as_deref()
@@ -953,6 +962,9 @@ impl GqlConditionSignal {
     async fn rejection_reason(&self) -> Option<&str> {
         self.meta().rejection_reason.as_deref()
     }
+    async fn category(&self) -> Option<&str> {
+        self.meta().category.as_deref()
+    }
     async fn citations(&self, ctx: &Context<'_>) -> Result<Vec<GqlCitation>> {
         let loader = ctx.data_unchecked::<DataLoader<CitationBySignalLoader>>();
         Ok(loader
@@ -976,9 +988,6 @@ impl GqlConditionSignal {
 
     async fn severity(&self) -> GqlSeverity {
         self.0.severity.into()
-    }
-    async fn category(&self) -> Option<&str> {
-        self.0.category.as_deref()
     }
     async fn subject(&self) -> Option<&str> {
         self.0.subject.as_deref()

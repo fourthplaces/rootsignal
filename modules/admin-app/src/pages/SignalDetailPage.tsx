@@ -23,7 +23,7 @@ type ReExtractedSignal = {
   contentDate: string | null;
   tags: string[];
   isFirsthand: boolean | null;
-  whatWouldHelp: string | null;
+  opposing: string | null;
 };
 
 type ReExtractedRejection = {
@@ -183,7 +183,7 @@ export function SignalDetailPage() {
                 {s.urgency && <p>Urgency: {s.urgency}</p>}
                 {s.severity && <p>Severity: {s.severity}</p>}
                 {s.category && <p>Category: {s.category}</p>}
-                {s.whatWouldHelp && <p>What would help: {s.whatWouldHelp}</p>}
+                {s.opposing && <p>Opposing: {s.opposing}</p>}
                 {s.isFirsthand != null && <p>First-hand: {s.isFirsthand ? "yes" : "no"}</p>}
               </div>
             </div>

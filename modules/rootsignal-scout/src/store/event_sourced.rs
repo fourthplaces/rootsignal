@@ -135,7 +135,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             references: vec![],
             schedule: None,
             what_needed: n.what_needed.clone(),
-            stated_goal: n.goal.clone(),
+            stated_goal: n.stated_goal.clone(),
         },
         Node::Announcement(n) => WorldEvent::AnnouncementShared {
             id: n.meta.id,
@@ -148,7 +148,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             mentioned_entities: meta_to_mentioned_entities(&n.meta),
             references: vec![],
             schedule: None,
-            subject: n.category.clone(),
+            subject: n.subject.clone(),
             effective_date: n.effective_date,
         },
         Node::Concern(n) => WorldEvent::ConcernRaised {
@@ -472,6 +472,7 @@ mod tests {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         }
     }
 
@@ -605,7 +606,7 @@ mod tests {
             urgency: Urgency::High,
             what_needed: Some("20 volunteers".to_string()),
             action_url: None,
-            goal: Some("clean up after storm".to_string()),
+            stated_goal: Some("clean up after storm".to_string()),
         });
 
         let world = node_to_world_event(&node);
@@ -818,7 +819,7 @@ mod tests {
             urgency: rootsignal_common::Urgency::Medium,
             what_needed: Some("Volunteers".to_string()),
             action_url: None,
-            goal: None,
+            stated_goal: None,
         });
 
         let world = node_to_world_event(&node);

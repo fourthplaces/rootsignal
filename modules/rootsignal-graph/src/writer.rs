@@ -1655,7 +1655,7 @@ impl GraphReader {
                  gathering_type: r.gathering_type
              }) AS respondents
              WHERE size(respondents) >= 2
-             RETURN t.id AS tension_id, t.title AS title, t.summary AS summary,
+             RETURN t.id AS concern_id, t.title AS title, t.summary AS summary,
                     t.category AS category, t.opposing AS opposing,
                     t.cause_heat AS cause_heat,
                     respondents
@@ -1671,8 +1671,8 @@ impl GraphReader {
         let mut hubs = Vec::new();
         let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("tension_id").unwrap_or_default();
-            let tension_id = match Uuid::parse_str(&id_str) {
+            let id_str: String = row.get("concern_id").unwrap_or_default();
+            let concern_id = match Uuid::parse_str(&id_str) {
                 Ok(id) => id,
                 Err(_) => continue,
             };
@@ -1703,7 +1703,7 @@ impl GraphReader {
             }
 
             hubs.push(ConcernHub {
-                tension_id,
+                concern_id,
                 title,
                 summary,
                 category,
@@ -2039,11 +2039,11 @@ impl GraphReader {
         let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
-            let Ok(tension_id) = Uuid::parse_str(&id_str) else {
+            let Ok(concern_id) = Uuid::parse_str(&id_str) else {
                 continue;
             };
             results.push(ResponseFinderTarget {
-                tension_id,
+                concern_id,
                 title: row.get("title").unwrap_or_default(),
                 summary: row.get("summary").unwrap_or_default(),
                 severity: row.get("severity").unwrap_or_default(),
@@ -2076,7 +2076,7 @@ impl GraphReader {
     /// Fetch existing responses for a tension (used as heuristics in the response scout prompt).
     pub async fn get_existing_responses(
         &self,
-        tension_id: Uuid,
+        concern_id: Uuid,
     ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
         let q = query(
             "MATCH (r)-[:RESPONDS_TO]->(t:Concern {id: $id})
@@ -2084,7 +2084,7 @@ impl GraphReader {
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
              LIMIT 5",
         )
-        .param("id", tension_id.to_string());
+        .param("id", concern_id.to_string());
 
         let mut results = Vec::new();
         let mut stream = self.client().execute(q).await?;
@@ -2141,11 +2141,11 @@ impl GraphReader {
         let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
-            let Ok(tension_id) = Uuid::parse_str(&id_str) else {
+            let Ok(concern_id) = Uuid::parse_str(&id_str) else {
                 continue;
             };
             results.push(GatheringFinderTarget {
-                tension_id,
+                concern_id,
                 title: row.get("title").unwrap_or_default(),
                 summary: row.get("summary").unwrap_or_default(),
                 severity: row.get("severity").unwrap_or_default(),
@@ -2175,7 +2175,7 @@ impl GraphReader {
     /// filtered to signals within `radius_km` of the given center point.
     pub async fn get_existing_gathering_signals(
         &self,
-        tension_id: Uuid,
+        concern_id: Uuid,
         center_lat: f64,
         center_lng: f64,
         radius_km: f64,
@@ -2190,7 +2190,7 @@ impl GraphReader {
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
              LIMIT 5",
         )
-        .param("id", tension_id.to_string())
+        .param("id", concern_id.to_string())
         .param("lat_min", center_lat - lat_delta)
         .param("lat_max", center_lat + lat_delta)
         .param("lng_min", center_lng - lng_delta)
@@ -2291,7 +2291,7 @@ impl GraphReader {
     ) -> Result<Vec<(Uuid, String)>, neo4rs::Error> {
         let g = &self.client();
 
-        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
         let mut results = Vec::new();
 
         for label in &labels {
@@ -2643,7 +2643,7 @@ impl GraphReader {
         let g = &self.client;
         let mut signals = Vec::new();
 
-        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
         for label in &labels {
             let q = query(&format!(
                 "MATCH (n:{label} {{scout_run_id: $run_id}})
@@ -3490,17 +3490,17 @@ impl GraphStore {
     pub async fn create_response_edge(
         &self,
         responder_id: Uuid,
-        tension_id: Uuid,
+        concern_id: Uuid,
         match_strength: f64,
         explanation: &str,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Resource OR resp:Gathering OR resp:HelpRequest)
-             MATCH (t:Concern {id: $tension_id})
+             MATCH (t:Concern {id: $concern_id})
              MERGE (resp)-[:RESPONDS_TO {match_strength: $strength, explanation: $explanation}]->(t)"
         )
         .param("resp_id", responder_id.to_string())
-        .param("tension_id", tension_id.to_string())
+        .param("concern_id", concern_id.to_string())
         .param("strength", match_strength)
         .param("explanation", explanation);
 
@@ -3629,13 +3629,13 @@ impl GraphStore {
     }
 
     /// Mark a tension as having been scouted for responses.
-    pub async fn mark_response_found(&self, tension_id: Uuid) -> Result<(), neo4rs::Error> {
+    pub async fn mark_response_found(&self, concern_id: Uuid) -> Result<(), neo4rs::Error> {
         let now = format_datetime(&Utc::now());
         let q = query(
             "MATCH (t:Concern {id: $id})
              SET t.response_scouted_at = $now",
         )
-        .param("id", tension_id.to_string())
+        .param("id", concern_id.to_string())
         .param("now", now);
 
         self.client().run(q).await
@@ -3650,14 +3650,14 @@ impl GraphStore {
     pub async fn create_drawn_to_edge(
         &self,
         signal_id: Uuid,
-        tension_id: Uuid,
+        concern_id: Uuid,
         match_strength: f64,
         explanation: &str,
         gathering_type: &str,
     ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (resp) WHERE resp.id = $resp_id AND (resp:Resource OR resp:Gathering OR resp:HelpRequest)
-             MATCH (t:Concern {id: $tension_id})
+             MATCH (t:Concern {id: $concern_id})
              MERGE (resp)-[r:DRAWN_TO]->(t)
              ON CREATE SET
                  r.match_strength = $strength,
@@ -3669,7 +3669,7 @@ impl GraphStore {
                  r.gathering_type = $gathering_type",
         )
         .param("resp_id", signal_id.to_string())
-        .param("tension_id", tension_id.to_string())
+        .param("concern_id", concern_id.to_string())
         .param("strength", match_strength)
         .param("explanation", explanation)
         .param("gathering_type", gathering_type);
@@ -4322,7 +4322,7 @@ impl ConcernLinkerOutcome {
 /// A tension hub: a Tension node with 2+ responding signals, ready to materialize as a Story.
 #[derive(Debug)]
 pub struct ConcernHub {
-    pub tension_id: Uuid,
+    pub concern_id: Uuid,
     pub title: String,
     pub summary: String,
     pub category: Option<String>,
@@ -4349,7 +4349,7 @@ pub struct ConcernRespondent {
 /// A tension that needs response discovery.
 #[derive(Debug)]
 pub struct ResponseFinderTarget {
-    pub tension_id: Uuid,
+    pub concern_id: Uuid,
     pub title: String,
     pub summary: String,
     pub severity: String,
@@ -4372,7 +4372,7 @@ pub struct ResponseHeuristic {
 /// A tension that needs gathering discovery (where are people gathering?).
 #[derive(Debug)]
 pub struct GatheringFinderTarget {
-    pub tension_id: Uuid,
+    pub concern_id: Uuid,
     pub title: String,
     pub summary: String,
     pub severity: String,
@@ -4898,7 +4898,7 @@ impl GraphStore {
             return Ok(());
         }
 
-        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
         for label in &labels {
             let cypher = format!(
                 "MATCH (n:{label}) WHERE n.id = $id SET {}",
@@ -4999,7 +4999,7 @@ mod tests {
     #[test]
     fn tension_hub_respondent_count() {
         let hub = ConcernHub {
-            tension_id: Uuid::new_v4(),
+            concern_id: Uuid::new_v4(),
             title: "Housing affordability crisis".to_string(),
             summary: "Rents rising faster than wages".to_string(),
             category: Some("housing".to_string()),

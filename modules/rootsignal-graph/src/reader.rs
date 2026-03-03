@@ -4,8 +4,9 @@ use neo4rs::query;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    fuzz_location, ResourceOfferNode, CitationNode, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode, Node,
-    NodeMeta, NodeType, AnnouncementNode, ScheduleNode, SensitivityLevel, Severity, ConcernNode,
+    fuzz_location, ConditionNode, ResourceOfferNode, CitationNode, GatheringNode, GeoPoint,
+    GeoPrecision, HelpRequestNode, Node, NodeMeta, NodeType, AnnouncementNode, ScheduleNode,
+    SensitivityLevel, Severity, ConcernNode,
     ConcernResponse, Urgency, CONFIDENCE_DISPLAY_LIMITED, FRESHNESS_MAX_DAYS,
     GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
@@ -354,7 +355,7 @@ impl PublicGraphReader {
     /// Get Aid/Gathering/Need signals that respond to a tension, with edge metadata.
     pub async fn concern_responses(
         &self,
-        tension_id: Uuid,
+        concern_id: Uuid,
     ) -> Result<Vec<ConcernResponse>, neo4rs::Error> {
         let response_types = [NodeType::Resource, NodeType::Gathering, NodeType::HelpRequest];
 
@@ -371,7 +372,7 @@ impl PublicGraphReader {
             .collect();
 
         let cypher = branches.join("\nUNION ALL\n");
-        let q = query(&cypher).param("id", tension_id.to_string());
+        let q = query(&cypher).param("id", concern_id.to_string());
 
         let mut results = Vec::new();
         let mut stream = self.client.execute(q).await?;
@@ -393,12 +394,12 @@ impl PublicGraphReader {
     }
 
     /// Count EVIDENCE_OF edges on a Tension — a structural measure of how well-grounded it is.
-    pub async fn evidence_of_count(&self, tension_id: Uuid) -> Result<u32, neo4rs::Error> {
+    pub async fn evidence_of_count(&self, concern_id: Uuid) -> Result<u32, neo4rs::Error> {
         let q = query(
             "MATCH (sig)-[:EVIDENCE_OF]->(t:Concern {id: $id})
              RETURN count(sig) AS cnt",
         )
-        .param("id", tension_id.to_string());
+        .param("id", concern_id.to_string());
 
         let mut stream = self.client.execute(q).await?;
         if let Some(row) = stream.next().await? {
@@ -627,7 +628,7 @@ impl PublicGraphReader {
     pub async fn confidence_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern
+            WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
             WITH CASE
                 WHEN n.confidence >= 0.8 THEN 'high (0.8+)'
                 WHEN n.confidence >= 0.6 THEN 'good (0.6-0.8)'
@@ -652,7 +653,7 @@ impl PublicGraphReader {
     pub async fn freshness_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern
+            WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
             WITH (datetime() - n.last_confirmed_active).day AS age_days
             WITH CASE
                 WHEN age_days <= 7 THEN '< 7 days'
@@ -750,7 +751,7 @@ impl PublicGraphReader {
 
         let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
         let cypher = "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-             WHERE n.id IN $ids AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern)
+             WHERE n.id IN $ids AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
              RETURN n.id AS signal_id, collect(ev) AS evidence";
 
         let q = query(cypher).param("ids", id_strs);
@@ -781,7 +782,7 @@ impl PublicGraphReader {
 
         let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
         let cypher = "MATCH (n)-[:HAS_SCHEDULE]->(s:Schedule)
-             WHERE n.id IN $ids AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern)
+             WHERE n.id IN $ids AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
              RETURN n.id AS signal_id, s";
 
         let q = query(cypher).param("ids", id_strs);
@@ -1516,6 +1517,8 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     let cause_heat: f64 = n.get("cause_heat").unwrap_or(0.0);
     let channel_diversity: i64 = n.get("channel_diversity").unwrap_or(1);
 
+    let category: Option<String> = n.get("category").ok().filter(|s: &String| !s.is_empty());
+
     let meta = NodeMeta {
         id,
         title,
@@ -1568,6 +1571,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             }
         },
         mentioned_actors: Vec::new(),
+        category,
     };
 
     match node_type {
@@ -1635,7 +1639,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             };
             let what_needed: String = n.get("what_needed").unwrap_or_default();
             let action_url: String = n.get("action_url").unwrap_or_default();
-            let goal: String = n.get("goal").unwrap_or_default();
+            let stated_goal: String = n.get("stated_goal").unwrap_or_default();
 
             Some(Node::HelpRequest(HelpRequestNode {
                 meta,
@@ -1650,7 +1654,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 } else {
                     Some(action_url)
                 },
-                goal: if goal.is_empty() { None } else { Some(goal) },
+                stated_goal: if stated_goal.is_empty() { None } else { Some(stated_goal) },
             }))
         }
         NodeType::Announcement => {
@@ -1661,7 +1665,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 "low" => Severity::Low,
                 _ => Severity::Medium,
             };
-            let category: String = n.get("category").unwrap_or_default();
+            let subject: String = n.get("subject").unwrap_or_default();
             let effective_date_str: String = n.get("effective_date").unwrap_or_default();
             let effective_date = if effective_date_str.is_empty() {
                 None
@@ -1682,10 +1686,10 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             Some(Node::Announcement(AnnouncementNode {
                 meta,
                 severity,
-                category: if category.is_empty() {
+                subject: if subject.is_empty() {
                     None
                 } else {
-                    Some(category)
+                    Some(subject)
                 },
                 effective_date,
                 source_authority: if source_authority.is_empty() {
@@ -1703,18 +1707,12 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 "low" => Severity::Low,
                 _ => Severity::Medium,
             };
-            let category: String = n.get("category").unwrap_or_default();
             let subject: String = n.get("subject").unwrap_or_default();
             let opposing: String = n.get("opposing").unwrap_or_default();
 
             Some(Node::Concern(ConcernNode {
                 meta,
                 severity,
-                category: if category.is_empty() {
-                    None
-                } else {
-                    Some(category)
-                },
                 subject: if subject.is_empty() {
                     None
                 } else {
@@ -1727,7 +1725,28 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 },
             }))
         }
-        NodeType::Condition => None,
+        NodeType::Condition => {
+            let severity_str: String = n.get("severity").unwrap_or_default();
+            let severity = match severity_str.as_str() {
+                "high" => Severity::High,
+                "critical" => Severity::Critical,
+                "low" => Severity::Low,
+                _ => Severity::Medium,
+            };
+            let subject: String = n.get("subject").unwrap_or_default();
+            let observed_by: String = n.get("observed_by").unwrap_or_default();
+            let measurement: String = n.get("measurement").unwrap_or_default();
+            let affected_scope: String = n.get("affected_scope").unwrap_or_default();
+
+            Some(Node::Condition(ConditionNode {
+                meta,
+                severity,
+                subject: if subject.is_empty() { None } else { Some(subject) },
+                observed_by: if observed_by.is_empty() { None } else { Some(observed_by) },
+                measurement: if measurement.is_empty() { None } else { Some(measurement) },
+                affected_scope: if affected_scope.is_empty() { None } else { Some(affected_scope) },
+            }))
+        }
         NodeType::Citation => None,
     }
 }

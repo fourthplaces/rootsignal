@@ -18,19 +18,19 @@ const SIGNAL_FIELDS = `
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
-    urgency whatNeeded actionUrl goal
+    urgency whatNeeded actionUrl statedGoal
   }
   ... on GqlAnnouncementSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
-    severity category effectiveDate sourceAuthority
+    severity subject effectiveDate sourceAuthority
   }
   ... on GqlConcernSignal {
     id title summary sensitivity confidence location { lat lng precision }
     locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
-    severity category whatWouldHelp
+    severity subject opposing
   }
 `;
 
@@ -82,7 +82,7 @@ export const ADMIN_DASHBOARD = gql`
         title
         severity
         category
-        whatWouldHelp
+        opposing
       }
       topSources {
         name
@@ -175,19 +175,19 @@ export const SIGNALS_NEAR = gql`
       ... on GqlHelpRequestSignal {
         id title summary sensitivity confidence location { lat lng precision }
         locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
-        urgency whatNeeded actionUrl goal
+        urgency whatNeeded actionUrl statedGoal
         actors { id name actorType }
       }
       ... on GqlAnnouncementSignal {
         id title summary sensitivity confidence location { lat lng precision }
         locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
-        severity category effectiveDate sourceAuthority
+        severity subject effectiveDate sourceAuthority
         actors { id name actorType }
       }
       ... on GqlConcernSignal {
         id title summary sensitivity confidence location { lat lng precision }
         locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
-        severity category whatWouldHelp
+        severity subject opposing
         actors { id name actorType }
       }
     }

@@ -633,7 +633,7 @@ async fn backfill_channel_diversity(client: &GraphClient) -> Result<(), neo4rs::
 
     info!("Backfilling channel_diversity...");
 
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.channel_diversity IS NULL SET n.channel_diversity = 1 RETURN count(n) AS updated"
@@ -743,7 +743,7 @@ pub async fn backfill_source_diversity(
     let mut total = 0u32;
     let mut updated = 0u32;
 
-    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label})
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
@@ -803,7 +803,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
     // Keeps evs[0] (arbitrary but stable), deletes evs[1..].
     let dedup_q = query(
         "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
          WITH n, ev.source_url AS src, collect(ev) AS evs
          WHERE size(evs) > 1
          UNWIND evs[1..] AS dup
@@ -826,7 +826,7 @@ pub async fn deduplicate_evidence(client: &GraphClient) -> Result<(), neo4rs::Er
     // Step 2: Recompute corroboration_count = (evidence_count - 1) for all signals.
     // After dedup, each evidence node = one unique source URL.
     // The original source isn't a corroboration, so subtract 1.
-    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let recount_q = query(&format!(
             "MATCH (n:{label})
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
@@ -1191,7 +1191,7 @@ async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Erro
 
     info!("Backfilling review_status on existing signals...");
 
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.review_status IS NULL SET n.review_status = 'live' RETURN count(n) AS updated"
@@ -1217,7 +1217,7 @@ async fn backfill_review_status(client: &GraphClient) -> Result<(), neo4rs::Erro
 /// Idempotent — only touches nodes that still have the old value.
 async fn rename_quarantined_to_rejected(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let g = client;
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.review_status = 'quarantined' \
@@ -1242,7 +1242,7 @@ async fn rename_quarantined_to_rejected(client: &GraphClient) -> Result<(), neo4
 /// Idempotent — only sets the default on nodes missing the property.
 async fn backfill_was_corrected(client: &GraphClient) -> Result<(), neo4rs::Error> {
     let g = client;
-    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
     for label in &labels {
         let cypher = format!(
             "MATCH (n:{label}) WHERE n.was_corrected IS NULL \

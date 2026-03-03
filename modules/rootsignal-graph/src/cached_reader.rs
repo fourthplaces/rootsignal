@@ -315,12 +315,12 @@ impl CachedReader {
 
     pub async fn concern_responses(
         &self,
-        tension_id: Uuid,
+        concern_id: Uuid,
     ) -> Result<Vec<ConcernResponse>, neo4rs::Error> {
         let snap = self.cache.load_full();
         let responses = snap
             .concern_responses
-            .get(&tension_id)
+            .get(&concern_id)
             .map(|v| {
                 v.iter()
                     .filter(|tr| passes_display_filter(&tr.node))
@@ -368,7 +368,7 @@ impl CachedReader {
         let mut total_count: u32 = 0;
 
         // --- Collect signals ---
-        let want_signals = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"]
+        let want_signals = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"]
             .iter()
             .any(|t| type_set.contains(t));
 
@@ -501,8 +501,8 @@ impl CachedReader {
         }
 
         // Tension → Responses (RespondsTo)
-        for (&tension_id, responses) in &snap.concern_responses {
-            if !node_ids.contains(&tension_id) {
+        for (&concern_id, responses) in &snap.concern_responses {
+            if !node_ids.contains(&concern_id) {
                 continue;
             }
             for tr in responses {
@@ -510,7 +510,7 @@ impl CachedReader {
                 if node_ids.contains(&responder_id) {
                     edges.push(GraphEdgeItem {
                         source_id: responder_id,
-                        target_id: tension_id,
+                        target_id: concern_id,
                         edge_type: "RespondsTo".to_string(),
                     });
                 }

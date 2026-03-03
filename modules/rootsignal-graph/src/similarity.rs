@@ -139,7 +139,7 @@ pub async fn clear_edges(client: &GraphClient) -> Result<u64, neo4rs::Error> {
 async fn fetch_all_embeddings(graph: &Graph) -> Result<Vec<SignalEmbedding>, neo4rs::Error> {
     let mut signals = Vec::new();
 
-    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label}) WHERE n.embedding IS NOT NULL \
              RETURN n.id AS id, n.embedding AS embedding, n.confidence AS confidence"

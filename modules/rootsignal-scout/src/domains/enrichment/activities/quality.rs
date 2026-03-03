@@ -136,6 +136,7 @@ mod tests {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         }
     }
 
@@ -243,7 +244,7 @@ mod tests {
         let node = Node::Announcement(AnnouncementNode {
             meta,
             severity: Severity::Medium,
-            category: None,
+            subject: None,
             effective_date: None,
             source_authority: None,
         });
@@ -265,7 +266,6 @@ mod tests {
         let node = Node::Concern(ConcernNode {
             meta,
             severity: Severity::High,
-            category: None,
             subject: None,
             opposing: None,
         });

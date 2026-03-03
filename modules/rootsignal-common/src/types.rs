@@ -224,6 +224,10 @@ pub struct NodeMeta {
     /// Actor names mentioned in the extracted signal content.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentioned_actors: Vec<String>,
+    /// Thematic domain classification (housing, safety, health, etc.).
+    /// Written by CategoryClassified system event, not set during extraction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -263,14 +267,15 @@ pub struct HelpRequestNode {
     pub urgency: Urgency,
     pub what_needed: Option<String>,
     pub action_url: Option<String>,
-    pub goal: Option<String>,
+    pub stated_goal: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnouncementNode {
     pub meta: NodeMeta,
     pub severity: Severity,
-    pub category: Option<String>,
+    /// 5-word topic subject for the announcement.
+    pub subject: Option<String>,
     pub effective_date: Option<DateTime<Utc>>,
     pub source_authority: Option<String>,
 }
@@ -279,7 +284,6 @@ pub struct AnnouncementNode {
 pub struct ConcernNode {
     pub meta: NodeMeta,
     pub severity: Severity,
-    pub category: Option<String>,
     /// The core subject of the friction in plain terms.
     pub subject: Option<String>,
     /// What is being opposed, as explicitly stated in the content.
@@ -290,7 +294,6 @@ pub struct ConcernNode {
 pub struct ConditionNode {
     pub meta: NodeMeta,
     pub severity: Severity,
-    pub category: Option<String>,
     /// The core subject in plain terms, for search/retrieval.
     pub subject: Option<String>,
     /// Who or what reported/observed this condition.
@@ -1464,20 +1467,22 @@ mod tests {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: vec![],
+            category: None,
         }
     }
 
     #[test]
     fn concern_node_has_all_fields() {
+        let mut meta = test_meta();
+        meta.category = Some("housing".to_string());
         let c = ConcernNode {
-            meta: test_meta(),
+            meta,
             severity: Severity::High,
-            category: Some("housing".to_string()),
             subject: Some("opposition highway expansion Midway".to_string()),
             opposing: Some("proposed rezoning of 2100 Hennepin".to_string()),
         };
         assert_eq!(c.severity, Severity::High);
-        assert_eq!(c.category.as_deref(), Some("housing"));
+        assert_eq!(c.meta.category.as_deref(), Some("housing"));
         assert_eq!(
             c.subject.as_deref(),
             Some("opposition highway expansion Midway")
@@ -1493,12 +1498,11 @@ mod tests {
         let c = ConcernNode {
             meta: test_meta(),
             severity: Severity::Medium,
-            category: None,
             subject: None,
             opposing: None,
         };
         assert_eq!(c.severity, Severity::Medium);
-        assert!(c.category.is_none());
+        assert!(c.meta.category.is_none());
         assert!(c.subject.is_none());
     }
 

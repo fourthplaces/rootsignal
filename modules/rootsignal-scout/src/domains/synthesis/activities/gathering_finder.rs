@@ -371,7 +371,7 @@ pub async fn find_gatherings(
             }
             Err(e) => {
                 warn!(
-                    tension_id = %target.tension_id,
+                    concern_id = %target.concern_id,
                     title = target.title.as_str(),
                     error = %e,
                     "Gathering finder investigation failed"
@@ -382,7 +382,7 @@ pub async fn find_gatherings(
 
         // Mark scouted with backoff (success resets miss count, failure increments)
         events.push(SystemEvent::GatheringScouted {
-            tension_id: target.tension_id,
+            concern_id: target.concern_id,
             found_gatherings,
             scouted_at: Utc::now(),
         });
@@ -403,7 +403,7 @@ async fn investigate_tension(
     let existing = deps
         .graph
         .get_existing_gathering_signals(
-            target.tension_id,
+            target.concern_id,
             deps.region.center_lat,
             deps.region.center_lng,
             deps.region.radius_km,
@@ -438,7 +438,7 @@ async fn investigate_tension(
     // Handle no_gravity early termination
     if finding.no_gravity {
         info!(
-            tension_id = %target.tension_id,
+            concern_id = %target.concern_id,
             title = target.title.as_str(),
             reason = finding.no_gravity_reason.as_deref().unwrap_or("unknown"),
             "No gravity found — early termination"
@@ -461,7 +461,7 @@ async fn investigate_tension(
     // Handle contradiction: no_gravity=false but check if gatherings is empty
     if finding.gatherings.is_empty() {
         info!(
-            tension_id = %target.tension_id,
+            concern_id = %target.concern_id,
             title = target.title.as_str(),
             "Investigation complete but no gatherings extracted"
         );
@@ -480,7 +480,7 @@ async fn investigate_tension(
             .await
         {
             warn!(
-                tension_id = %target.tension_id,
+                concern_id = %target.concern_id,
                 gathering_title = gathering.title.as_str(),
                 error = %e,
                 "Failed to process discovered gathering"
@@ -499,7 +499,7 @@ async fn investigate_tension(
     }
 
     info!(
-        tension_id = %target.tension_id,
+        concern_id = %target.concern_id,
         title = target.title.as_str(),
         gatherings = stats.gatherings_discovered,
         "Tension gravity investigation complete"
@@ -572,7 +572,7 @@ async fn process_gathering(
     // Wire DRAWN_TO edge to the target tension
     events.push(SystemEvent::ConcernLinked {
         signal_id,
-        tension_id: target.tension_id,
+        concern_id: target.concern_id,
         strength: gathering.match_strength.clamp(0.0, 1.0),
         explanation: gathering.explanation.clone(),
         source_url: None,
@@ -655,6 +655,7 @@ async fn create_gathering_node(
         corrections: None,
         rejection_reason: None,
         mentioned_actors: Vec::new(),
+        category: None,
     };
 
     let node = match gathering.signal_type.to_lowercase().as_str() {
@@ -678,7 +679,7 @@ async fn create_gathering_node(
             urgency: Urgency::Medium,
             what_needed: Some(gathering.summary.clone()),
             action_url: Some(gathering.url.clone()),
-            goal: None,
+            stated_goal: None,
         }),
         _ => Node::Resource(ResourceOfferNode {
             meta,
@@ -750,17 +751,17 @@ async fn wire_also_addresses(
             }
         }
 
-        if let Some((tension_id, sim)) = best_match {
+        if let Some((concern_id, sim)) = best_match {
             info!(
                 signal_id = %signal_id,
-                tension_id = %tension_id,
+                concern_id = %concern_id,
                 similarity = sim,
                 also_addresses = tension_title.as_str(),
                 "Wiring gravity also_addresses edge"
             );
             events.push(SystemEvent::ConcernLinked {
                 signal_id,
-                tension_id,
+                concern_id,
                 strength: sim.clamp(0.0, 1.0),
                 explanation: explanation.to_string(),
                 source_url: None,
@@ -980,6 +981,7 @@ mod tests {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         };
 
         let node = Node::Gathering(GatheringNode {

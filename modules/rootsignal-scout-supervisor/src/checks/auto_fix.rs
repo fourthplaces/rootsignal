@@ -162,7 +162,7 @@ async fn fix_duplicate_actors(client: &GraphClient) -> Result<Vec<SystemEvent>, 
 async fn fix_empty_signals(client: &GraphClient) -> Result<Option<SystemEvent>, neo4rs::Error> {
     let mut ids = Vec::new();
 
-    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.title IS NULL OR n.title = ''
@@ -196,7 +196,7 @@ async fn fix_fake_center_coords(
     let mut signal_ids = Vec::new();
     let mut old_coords = Vec::new();
 
-    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.lat IS NOT NULL AND n.lng IS NOT NULL

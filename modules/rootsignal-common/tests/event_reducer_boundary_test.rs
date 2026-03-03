@@ -67,6 +67,7 @@ const GRAPH_MUTATING_TYPES: &[&str] = &[
     "tone_classified",
     "severity_classified",
     "urgency_classified",
+    "category_classified",
     "implied_queries_extracted",
     // System: Corrections (5 typed)
     "gathering_corrected",
@@ -743,14 +744,14 @@ fn build_all_events() -> Vec<Event> {
         }),
         Event::System(SystemEvent::ResponseLinked {
             signal_id: id,
-            tension_id: id,
+            concern_id: id,
             strength: 0.7,
             explanation: "x".into(),
             source_url: None,
         }),
         Event::System(SystemEvent::ConcernLinked {
             signal_id: id,
-            tension_id: id,
+            concern_id: id,
             strength: 0.6,
             explanation: "x".into(),
             source_url: None,
@@ -862,6 +863,10 @@ fn build_all_events() -> Vec<Event> {
         Event::System(SystemEvent::UrgencyClassified {
             signal_id: id,
             urgency: rootsignal_common::types::Urgency::Low,
+        }),
+        Event::System(SystemEvent::CategoryClassified {
+            signal_id: id,
+            category: "housing".into(),
         }),
         Event::System(SystemEvent::ImpliedQueriesExtracted {
             signal_id: id,

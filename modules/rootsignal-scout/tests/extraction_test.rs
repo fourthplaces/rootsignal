@@ -330,10 +330,12 @@ async fn urgent_community_issue_yields_tension_signal() {
                 t.severity,
                 rootsignal_common::Severity::High | rootsignal_common::Severity::Critical
             );
-            let category_ok = t
-                .category
-                .as_deref()
-                .map(|c| {
+            // Category is now emitted as a system event in result.categories
+            let category_ok = result
+                .categories
+                .iter()
+                .find(|(id, _)| *id == t.meta.id)
+                .map(|(_, c)| {
                     let cl = c.to_lowercase();
                     cl.contains("enforcement")
                         || cl.contains("immigration")

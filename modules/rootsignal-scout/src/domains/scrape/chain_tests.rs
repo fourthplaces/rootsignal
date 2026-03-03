@@ -95,6 +95,7 @@ async fn linktree_page_discovers_outbound_links() {
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+            categories: Vec::new(),
             },
         )
         .on_url(
@@ -107,6 +108,7 @@ async fn linktree_page_discovers_outbound_links() {
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+            categories: Vec::new(),
             },
         );
 
@@ -197,6 +199,7 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -247,6 +250,7 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -301,6 +305,7 @@ async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+            categories: Vec::new(),
             },
         );
     }
@@ -374,6 +379,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: vec![(node_id, "Northside Mutual Aid".to_string())],
+            categories: Vec::new(),
         },
     );
 
@@ -449,6 +455,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -512,6 +519,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -595,6 +603,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -672,6 +681,7 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -753,6 +763,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
                     rejected: Vec::new(),
                     schedules: Vec::new(),
                     author_actors: Vec::new(),
+            categories: Vec::new(),
                 },
             )
             // Org site: one signal
@@ -766,6 +777,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
                     rejected: Vec::new(),
                     schedules: Vec::new(),
                     author_actors: Vec::new(),
+            categories: Vec::new(),
                 },
             ),
     );
@@ -879,6 +891,7 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
             rejected: Vec::new(),
             schedules: vec![(node_id, schedule)],
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -923,6 +936,7 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -980,6 +994,7 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
             rejected: Vec::new(),
             schedules: vec![(node_id, schedule)],
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1039,6 +1054,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 

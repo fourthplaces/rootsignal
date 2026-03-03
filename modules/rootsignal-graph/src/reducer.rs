@@ -640,7 +640,7 @@ impl GraphProjector {
                 let q = query(
                     "MATCH (n)
                      WHERE n.id = $signal_id
-                       AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern)
+                       AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
                      MATCH (s:Source {id: $source_id})
                      MERGE (n)-[:PRODUCED_BY]->(s)",
                 )
@@ -732,6 +732,24 @@ impl GraphProjector {
                 )
                 .param("id", signal_id.to_string())
                 .param("value", urgency.to_string());
+                self.client.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::CategoryClassified { signal_id, category } => {
+                let q = query(
+                    "OPTIONAL MATCH (g:Gathering {id: $id})
+                     OPTIONAL MATCH (a:Resource {id: $id})
+                     OPTIONAL MATCH (n:HelpRequest {id: $id})
+                     OPTIONAL MATCH (nc:Announcement {id: $id})
+                     OPTIONAL MATCH (t:Concern {id: $id})
+                     OPTIONAL MATCH (cond:Condition {id: $id})
+                     WITH coalesce(g, a, n, nc, t, cond) AS node
+                     WHERE node IS NOT NULL
+                     SET node.category = $value",
+                )
+                .param("id", signal_id.to_string())
+                .param("value", category.as_str());
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
@@ -1073,8 +1091,8 @@ impl GraphProjector {
                         )
                         .await?
                     }
-                    HelpRequestCorrection::Goal { new, .. } => {
-                        self.set_str("HelpRequest", signal_id, "goal", new.as_deref().unwrap_or(""))
+                    HelpRequestCorrection::StatedGoal { new, .. } => {
+                        self.set_str("HelpRequest", signal_id, "stated_goal", new.as_deref().unwrap_or(""))
                             .await?
                     }
                     HelpRequestCorrection::Unknown => {
@@ -1147,7 +1165,7 @@ impl GraphProjector {
                     ConcernCorrection::Location { new, .. } => {
                         self.set_location("Concern", signal_id, &new).await?
                     }
-                    ConcernCorrection::WhatWouldHelp { new, .. } => {
+                    ConcernCorrection::Opposing { new, .. } => {
                         self.set_str(
                             "Concern",
                             signal_id,
@@ -1305,7 +1323,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             SystemEvent::ResponseLinked {
                 signal_id,
-                tension_id,
+                concern_id,
                 strength,
                 explanation,
                 ..
@@ -1318,7 +1336,7 @@ impl GraphProjector {
                      ON MATCH SET r.match_strength = $strength, r.explanation = $explanation"
                 )
                 .param("resp_id", signal_id.to_string())
-                .param("tid", tension_id.to_string())
+                .param("tid", concern_id.to_string())
                 .param("strength", strength)
                 .param("explanation", explanation.as_str());
 
@@ -1328,7 +1346,7 @@ impl GraphProjector {
 
             SystemEvent::ConcernLinked {
                 signal_id,
-                tension_id,
+                concern_id,
                 strength,
                 explanation,
                 ..
@@ -1341,7 +1359,7 @@ impl GraphProjector {
                      ON MATCH SET r.match_strength = $strength, r.explanation = $explanation"
                 )
                 .param("resp_id", signal_id.to_string())
-                .param("tid", tension_id.to_string())
+                .param("tid", concern_id.to_string())
                 .param("strength", strength)
                 .param("explanation", explanation.as_str());
 
@@ -1656,7 +1674,7 @@ impl GraphProjector {
                 let q = query(
                     "UNWIND $ids AS sid
                      MATCH (n) WHERE n.id = sid
-                       AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern)
+                       AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
                      SET n.situation_pending = true",
                 )
                 .param("ids", ids);
@@ -2025,7 +2043,7 @@ impl GraphProjector {
             // Response scouting
             // ---------------------------------------------------------
             SystemEvent::ResponseScouted {
-                tension_id,
+                concern_id,
                 scouted_at,
             } => {
                 let ts = format_dt(&scouted_at);
@@ -2033,7 +2051,7 @@ impl GraphProjector {
                     "MATCH (t:Concern {id: $id})
                      SET t.response_scouted_at = datetime($ts)",
                 )
-                .param("id", tension_id.to_string())
+                .param("id", concern_id.to_string())
                 .param("ts", ts.as_str());
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -2149,7 +2167,7 @@ impl GraphProjector {
             }
 
             SystemEvent::GatheringScouted {
-                tension_id,
+                concern_id,
                 found_gatherings,
                 scouted_at,
             } => {
@@ -2161,7 +2179,7 @@ impl GraphProjector {
                              ELSE coalesce(t.gravity_scout_miss_count, 0) + 1
                          END",
                 )
-                .param("id", tension_id.to_string())
+                .param("id", concern_id.to_string())
                 .param("ts", format_dt(&scouted_at))
                 .param("found", found_gatherings);
                 self.client.run(q).await?;

@@ -882,6 +882,7 @@ impl SignalExtractor for MockExtractor {
                 rejected: result.rejected.clone(),
                 schedules: result.schedules.clone(),
                 author_actors: result.author_actors.clone(),
+                categories: result.categories.clone(),
             });
         }
         if let Some(ref default) = self.default_result {
@@ -893,6 +894,7 @@ impl SignalExtractor for MockExtractor {
                 rejected: default.rejected.clone(),
                 schedules: default.schedules.clone(),
                 author_actors: default.author_actors.clone(),
+                categories: default.categories.clone(),
             });
         }
         bail!("MockExtractor: no result registered for {source_url}")
@@ -932,9 +934,9 @@ pub fn tension(title: &str) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         severity: Severity::Medium,
-        category: None,
         subject: None,
         opposing: None,
     })
@@ -974,9 +976,9 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         severity: Severity::Medium,
-        category: None,
         subject: None,
         opposing: None,
     })
@@ -1011,11 +1013,12 @@ pub fn need(title: &str) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         urgency: Urgency::Medium,
         what_needed: None,
         action_url: None,
-        goal: None,
+        stated_goal: None,
     })
 }
 
@@ -1053,11 +1056,12 @@ pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         urgency: Urgency::Medium,
         what_needed: None,
         action_url: None,
-        goal: None,
+        stated_goal: None,
     })
 }
 
@@ -1090,6 +1094,7 @@ pub fn gathering(title: &str) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         starts_at: None,
         ends_at: None,
@@ -1133,6 +1138,7 @@ pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         starts_at: None,
         ends_at: None,
@@ -1171,6 +1177,7 @@ pub fn aid(title: &str) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         action_url: String::new(),
         availability: None,
@@ -1213,6 +1220,7 @@ pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         action_url: String::new(),
         availability: None,
@@ -1250,9 +1258,10 @@ pub fn notice(title: &str) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         severity: Severity::Medium,
-        category: None,
+        subject: None,
         effective_date: None,
         source_authority: None,
     })
@@ -1292,9 +1301,10 @@ pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
             corrections: None,
             rejection_reason: None,
             mentioned_actors: Vec::new(),
+            category: None,
         },
         severity: Severity::Medium,
-        category: None,
+        subject: None,
         effective_date: None,
         source_authority: None,
     })
@@ -1395,6 +1405,7 @@ pub fn test_meta(source_url: &str) -> NodeMeta {
         corrections: None,
         rejection_reason: None,
         mentioned_actors: Vec::new(),
+        category: None,
     }
 }
 

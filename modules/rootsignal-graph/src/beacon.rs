@@ -78,7 +78,7 @@ pub async fn detect_beacons(
 ) -> Result<Vec<ScoutTask>, neo4rs::Error> {
     let q = query(
         "MATCH (s)
-         WHERE (s:Gathering OR s:Resource OR s:HelpRequest OR s:Announcement OR s:Concern)
+         WHERE (s:Gathering OR s:Resource OR s:HelpRequest OR s:Announcement OR s:Concern OR s:Condition)
            AND s.lat IS NOT NULL AND s.lng IS NOT NULL
            AND s.extracted_at > datetime() - duration('P7D')
            AND s.review_status = 'live'

@@ -57,7 +57,7 @@ async fn triage_misclassification(
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let mut suspects = Vec::new();
 
-    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.extracted_at >= datetime($from) AND n.extracted_at <= datetime($to)
@@ -194,7 +194,7 @@ async fn triage_bad_responds_to(
                 labels(responder)[0] AS responder_label,
                 responder.title AS responder_title,
                 responder.summary AS responder_summary,
-                tension.id AS tension_id,
+                tension.id AS concern_id,
                 tension.title AS tension_title,
                 tension.summary AS tension_summary,
                 r.match_strength AS match_strength,

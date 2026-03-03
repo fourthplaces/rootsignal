@@ -19,7 +19,7 @@ use rootsignal_graph::{GraphReader, SituationBrief, ConcernLinkerOutcome, Concer
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::util::TENSION_CATEGORIES;
+use crate::infra::util::SIGNAL_CATEGORIES;
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 use rootsignal_common::events::WorldEvent;
 
@@ -144,7 +144,7 @@ Extract the tensions discovered in the investigation. For each tension:
 
 If the signal is self-explanatory (not curious), set curious=false and provide a skip_reason. \
 Return at most 3 tensions. Only include tensions you have evidence for.",
-        TENSION_CATEGORIES,
+        SIGNAL_CATEGORIES,
     )
 }
 
@@ -430,7 +430,7 @@ impl<'a> ConcernLinker<'a> {
             )
             .await;
 
-        let tension_id = match existing {
+        let concern_id = match existing {
             Ok(Some(dup)) => {
                 info!(
                     existing_id = %dup.id,
@@ -451,7 +451,7 @@ impl<'a> ConcernLinker<'a> {
 
         events.push(SystemEvent::ResponseLinked {
             signal_id: target.signal_id,
-            tension_id,
+            concern_id,
             strength: tension.match_strength.clamp(0.0, 1.0),
             explanation: tension.explanation.clone(),
             source_url: None,
@@ -505,14 +505,14 @@ impl<'a> ConcernLinker<'a> {
                 corrections: None,
                 rejection_reason: None,
                 mentioned_actors: Vec::new(),
+                category: None,
             },
             severity,
-            category: Some(tension.category.clone()),
             subject: None,
             opposing: Some(tension.opposing.clone()),
         };
 
-        let tension_id = tension_node.meta.id;
+        let concern_id = tension_node.meta.id;
         let node = Node::Concern(tension_node);
 
         // Collect world event + system events for causal chain dispatch
@@ -525,13 +525,13 @@ impl<'a> ConcernLinker<'a> {
         }
 
         info!(
-            tension_id = %tension_id,
+            concern_id = %concern_id,
             title = tension.title.as_str(),
             severity = tension.severity.as_str(),
             "New tension discovered"
         );
 
-        Ok(tension_id)
+        Ok(concern_id)
     }
 }
 
@@ -646,9 +646,9 @@ mod tests {
                 corrections: None,
                 rejection_reason: None,
                 mentioned_actors: Vec::new(),
+                category: None,
             },
             severity,
-            category: Some(tension.category.clone()),
             subject: None,
             opposing: Some(tension.opposing.clone()),
         };

@@ -43,6 +43,7 @@ fn test_meta() -> NodeMeta {
         corrections: None,
         rejection_reason: None,
         mentioned_actors: Vec::new(),
+        category: None,
     }
 }
 
@@ -197,7 +198,6 @@ fn ice_enforcement_tension_moderate_confidence() {
             ..test_meta()
         },
         severity: Severity::High,
-        category: Some("immigration".into()),
         subject: None,
         opposing: Some("Legal support, community safe spaces, know-your-rights information".into()),
     });
@@ -307,7 +307,7 @@ fn notice_always_actionable_even_empty() {
             ..test_meta()
         },
         severity: Severity::Low,
-        category: None,
+        subject: None,
         effective_date: None,
         source_authority: None,
     });
@@ -375,7 +375,7 @@ fn need_with_url_is_actionable_without_timing() {
         urgency: Urgency::High,
         what_needed: Some("Winter coats".into()),
         action_url: Some("https://donate.example.com".into()),
-        goal: Some("500 coats".into()),
+        stated_goal: Some("500 coats".into()),
     });
 
     let q = quality::score(&node);
@@ -398,7 +398,7 @@ fn need_without_url_not_actionable() {
         urgency: Urgency::Critical,
         what_needed: Some("Emergency housing".into()),
         action_url: None,
-        goal: None,
+        stated_goal: None,
     });
 
     let q = quality::score(&node);
@@ -476,7 +476,6 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
             ..test_meta()
         },
         severity: Severity::Medium,
-        category: None,
         subject: None,
         opposing: None,
     });
@@ -496,7 +495,6 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
             ..test_meta()
         },
         severity: Severity::Medium,
-        category: None,
         subject: None,
         opposing: None,
     });

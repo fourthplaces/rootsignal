@@ -204,9 +204,9 @@ mod tests {
                 corrections: None,
                 rejection_reason: None,
                 mentioned_actors: Vec::new(),
+                category: None,
             },
             severity: Severity::Medium,
-            category: None,
             subject: None,
             opposing: None,
         })
@@ -237,11 +237,12 @@ mod tests {
                 corrections: None,
                 rejection_reason: None,
                 mentioned_actors: Vec::new(),
+                category: None,
             },
             urgency: Urgency::Medium,
             what_needed: None,
             action_url: None,
-            goal: None,
+            stated_goal: None,
         })
     }
 
@@ -467,9 +468,9 @@ mod tests {
                 corrections: None,
                 rejection_reason: None,
                 mentioned_actors: Vec::new(),
+                category: None,
             },
             severity: Severity::Medium,
-            category: None,
             subject: None,
             opposing: None,
         })
@@ -500,9 +501,9 @@ mod tests {
                 corrections: None,
                 rejection_reason: None,
                 mentioned_actors: Vec::new(),
+                category: None,
             },
             severity: Severity::Medium,
-            category: None,
             subject: None,
             opposing: None,
         })

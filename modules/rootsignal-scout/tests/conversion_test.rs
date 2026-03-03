@@ -798,9 +798,11 @@ fn community_warning_extracted_as_notice_with_community_report_category() {
 
     assert_eq!(result.nodes.len(), 1);
     if let Node::Announcement(n) = &result.nodes[0] {
-        assert_eq!(n.category.as_deref(), Some("community_report"));
         assert_eq!(n.severity, Severity::High);
         assert_eq!(n.meta.sensitivity, SensitivityLevel::Sensitive);
+        // Category is now emitted as a system event, not stored on the node
+        let cat = result.categories.iter().find(|(id, _)| *id == n.meta.id);
+        assert_eq!(cat.map(|(_, c)| c.as_str()), Some("community_report"));
     } else {
         panic!("expected Notice");
     }
@@ -825,8 +827,10 @@ fn notice_category_passes_through_from_extraction() {
 
     assert_eq!(result.nodes.len(), 1);
     if let Node::Announcement(n) = &result.nodes[0] {
+        // Category is now emitted as a system event via ExtractionResult.categories
+        let cat = result.categories.iter().find(|(id, _)| *id == n.meta.id);
         assert_eq!(
-            n.category.as_deref(),
+            cat.map(|(_, c)| c.as_str()),
             Some("community_report"),
             "category passes through as-is; LLM prompt constrains what gets this label"
         );

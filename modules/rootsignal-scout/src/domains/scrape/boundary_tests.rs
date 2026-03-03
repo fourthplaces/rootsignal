@@ -118,6 +118,7 @@ async fn page_with_content_produces_signal() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -156,6 +157,7 @@ async fn empty_page_produces_nothing() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -236,6 +238,7 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -283,6 +286,7 @@ async fn same_title_extracted_twice_produces_one_signal() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -340,6 +344,7 @@ async fn all_signals_stored_regardless_of_region() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -383,6 +388,7 @@ async fn blocked_url_produces_nothing() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -477,6 +483,7 @@ async fn outbound_links_on_page_are_collected() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -596,6 +603,7 @@ async fn scrape_then_promote_creates_new_sources() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -682,6 +690,7 @@ async fn page_with_no_extractable_content_produces_nothing() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -728,6 +737,7 @@ async fn database_write_failure_does_not_crash() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -775,6 +785,7 @@ async fn blocked_url_produces_no_signals() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -824,6 +835,7 @@ async fn all_signal_types_are_stored() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -873,6 +885,7 @@ async fn unicode_and_emoji_titles_are_preserved() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -914,6 +927,7 @@ async fn signal_at_zero_zero_is_still_stored() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -995,6 +1009,7 @@ async fn blank_author_name_does_not_create_actor() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1053,6 +1068,7 @@ async fn signal_with_resource_needs_gets_resource_edge() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1282,6 +1298,7 @@ async fn mixed_outcome_pages_each_handled_independently() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1367,6 +1384,7 @@ async fn batch_title_dedup_is_case_insensitive() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1416,6 +1434,7 @@ async fn web_source_without_actor_stores_content_location_only() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1456,6 +1475,7 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1507,6 +1527,7 @@ async fn explicit_content_location_not_overwritten_by_actor() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1568,6 +1589,7 @@ async fn new_actor_inherits_parent_depth_plus_one() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: vec![(node_id, "Depth Child Org".to_string())],
+            categories: Vec::new(),
         },
     );
 
@@ -1626,6 +1648,7 @@ async fn bootstrap_actor_gets_depth_zero() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: vec![(node_id, "Bootstrap Org".to_string())],
+            categories: Vec::new(),
         },
     );
 
@@ -1696,6 +1719,7 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1758,6 +1782,7 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1803,6 +1828,7 @@ async fn social_published_at_becomes_published_at_fallback() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1855,6 +1881,7 @@ async fn ocean_coordinates_store_ecological_signal() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1906,6 +1933,7 @@ async fn antarctic_coordinates_store_signal() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -1959,6 +1987,7 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2021,6 +2050,7 @@ async fn environmental_disaster_produces_all_signal_types() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2081,6 +2111,7 @@ async fn hallucinated_future_date_does_not_crash() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2130,6 +2161,7 @@ async fn epoch_zero_date_does_not_crash() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2182,6 +2214,7 @@ async fn extremely_long_title_survives_pipeline() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2239,6 +2272,7 @@ async fn same_signal_from_two_sources_corroborates() {
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+                categories: Vec::new(),
             },
         )
         .on_url(
@@ -2251,6 +2285,7 @@ async fn same_signal_from_two_sources_corroborates() {
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+                categories: Vec::new(),
             },
         );
 
@@ -2339,6 +2374,7 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2390,6 +2426,7 @@ async fn minimum_viable_signal_with_no_optional_fields() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2443,6 +2480,7 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: vec![(node_id, "Friends of the Falls".to_string())],
+            categories: Vec::new(),
         },
     );
 
@@ -2488,6 +2526,7 @@ async fn aggregator_source_author_does_not_create_actor_node() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2533,6 +2572,7 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2580,6 +2620,7 @@ async fn signal_has_produced_by_edge_to_its_source() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -2620,6 +2661,7 @@ async fn social_signal_has_produced_by_edge() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -3348,6 +3390,7 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -3416,6 +3459,7 @@ async fn resource_roles_wire_to_correct_edge_types() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -3481,6 +3525,7 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 
@@ -3539,6 +3584,7 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+                categories: Vec::new(),
             },
         )
         .on_url(
@@ -3551,6 +3597,7 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+                categories: Vec::new(),
             },
         );
 
@@ -3625,6 +3672,7 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+                categories: Vec::new(),
             },
         )
         .on_url(
@@ -3637,6 +3685,7 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+                categories: Vec::new(),
             },
         );
 
@@ -3720,6 +3769,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+                categories: Vec::new(),
             },
         )
         .on_url(
@@ -3732,6 +3782,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
                 rejected: Vec::new(),
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
+                categories: Vec::new(),
             },
         );
 
@@ -3921,6 +3972,7 @@ async fn fetch_and_extract_produces_signals_and_stats() {
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),
+            categories: Vec::new(),
         },
     );
 

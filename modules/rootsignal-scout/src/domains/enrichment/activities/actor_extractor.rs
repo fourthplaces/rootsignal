@@ -110,7 +110,7 @@ async fn try_extract_actors(
     // Find signals with no ACTED_IN edges pointing at them, within bounding box
     let q = query(
         "MATCH (n)
-         WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern)
+         WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
            AND NOT ()-[:ACTED_IN]->(n)
            AND n.lat >= $min_lat AND n.lat <= $max_lat
            AND n.lng >= $min_lng AND n.lng <= $max_lng

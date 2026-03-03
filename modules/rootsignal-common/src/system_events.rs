@@ -122,6 +122,12 @@ pub enum SystemEvent {
         urgency: Urgency,
     },
 
+    /// Thematic domain classification for any signal type.
+    CategoryClassified {
+        signal_id: Uuid,
+        category: String,
+    },
+
     ImpliedQueriesExtracted {
         signal_id: Uuid,
         queries: Vec<String>,
@@ -177,7 +183,7 @@ pub enum SystemEvent {
     // -----------------------------------------------------------------------
     ResponseLinked {
         signal_id: Uuid,
-        tension_id: Uuid,
+        concern_id: Uuid,
         strength: f64,
         explanation: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,7 +192,7 @@ pub enum SystemEvent {
 
     ConcernLinked {
         signal_id: Uuid,
-        tension_id: Uuid,
+        concern_id: Uuid,
         strength: f64,
         explanation: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -414,7 +420,7 @@ pub enum SystemEvent {
     // Response scouting
     // -----------------------------------------------------------------------
     ResponseScouted {
-        tension_id: Uuid,
+        concern_id: Uuid,
         scouted_at: DateTime<Utc>,
     },
 
@@ -472,7 +478,7 @@ pub enum SystemEvent {
     },
 
     GatheringScouted {
-        tension_id: Uuid,
+        concern_id: Uuid,
         found_gatherings: bool,
         scouted_at: DateTime<Utc>,
     },
@@ -556,6 +562,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::ToneClassified { .. } => "tone_classified",
             SystemEvent::SeverityClassified { .. } => "severity_classified",
             SystemEvent::UrgencyClassified { .. } => "urgency_classified",
+            SystemEvent::CategoryClassified { .. } => "category_classified",
             SystemEvent::ImpliedQueriesExtracted { .. } => "implied_queries_extracted",
             SystemEvent::ObservationCorroborated { .. } => "observation_corroborated",
             SystemEvent::ActorIdentified { .. } => "actor_identified",

@@ -1814,7 +1814,7 @@ async fn response_finder_targets_finds_unscouted_tensions() {
         .expect("query failed");
 
     assert_eq!(targets.len(), 1, "Only 1 target should qualify");
-    assert_eq!(targets[0].tension_id, t1);
+    assert_eq!(targets[0].concern_id, t1);
     assert_eq!(targets[0].title, "ICE Enforcement Fear");
     assert_eq!(targets[0].response_count, 0);
 }
@@ -1845,7 +1845,7 @@ async fn response_finder_targets_includes_stale_scouted_tensions() {
         1,
         "Stale-scouted tension should be re-eligible"
     );
-    assert_eq!(targets[0].tension_id, t1);
+    assert_eq!(targets[0].concern_id, t1);
 }
 
 #[tokio::test]
@@ -1887,11 +1887,11 @@ async fn response_finder_targets_sorted_by_response_count_then_heat() {
     assert_eq!(targets.len(), 2);
     // t2 (0 responses) should come first
     assert_eq!(
-        targets[0].tension_id, t2,
+        targets[0].concern_id, t2,
         "Neglected tension should sort first"
     );
     assert_eq!(targets[0].response_count, 0);
-    assert_eq!(targets[1].tension_id, t1);
+    assert_eq!(targets[1].concern_id, t1);
     assert_eq!(targets[1].response_count, 1);
 }
 
@@ -1900,8 +1900,8 @@ async fn get_existing_responses_returns_heuristics() {
     let (_container, client) = setup().await;
     let writer = GraphStore::new(client.clone());
 
-    let tension_id = Uuid::new_v4();
-    create_tension_for_response_finder(&client, tension_id, "Housing Crisis", 0.7, None).await;
+    let concern_id = Uuid::new_v4();
+    create_tension_for_response_finder(&client, concern_id, "Housing Crisis", 0.7, None).await;
 
     let aid_id = Uuid::new_v4();
     create_signal(
@@ -1918,14 +1918,14 @@ async fn get_existing_responses_returns_heuristics() {
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.9, explanation: 'provides rent help'}]->(t)",
     )
     .param("gid", aid_id.to_string())
-    .param("tid", tension_id.to_string());
+    .param("tid", concern_id.to_string());
     client
         .run(edge_q)
         .await
         .expect("edge creation failed");
 
     let heuristics = writer
-        .get_existing_responses(tension_id)
+        .get_existing_responses(concern_id)
         .await
         .expect("query failed");
     assert_eq!(heuristics.len(), 1);
@@ -1938,8 +1938,8 @@ async fn mark_response_found_sets_timestamp() {
     let (_container, client) = setup().await;
     let writer = GraphStore::new(client.clone());
 
-    let tension_id = Uuid::new_v4();
-    create_tension_for_response_finder(&client, tension_id, "Test Tension", 0.7, None).await;
+    let concern_id = Uuid::new_v4();
+    create_tension_for_response_finder(&client, concern_id, "Test Tension", 0.7, None).await;
 
     // Before marking — should be a target
     let targets = writer
@@ -1950,7 +1950,7 @@ async fn mark_response_found_sets_timestamp() {
 
     // Mark as scouted
     writer
-        .mark_response_found(tension_id)
+        .mark_response_found(concern_id)
         .await
         .expect("mark failed");
 
@@ -1971,8 +1971,8 @@ async fn create_response_edge_wires_give_to_tension() {
     let (_container, client) = setup().await;
     let writer = GraphStore::new(client.clone());
 
-    let tension_id = Uuid::new_v4();
-    create_tension_for_response_finder(&client, tension_id, "Test Tension", 0.7, None).await;
+    let concern_id = Uuid::new_v4();
+    create_tension_for_response_finder(&client, concern_id, "Test Tension", 0.7, None).await;
 
     let aid_id = Uuid::new_v4();
     create_signal(
@@ -1985,7 +1985,7 @@ async fn create_response_edge_wires_give_to_tension() {
     .await;
 
     writer
-        .create_response_edge(aid_id, tension_id, 0.85, "provides mutual aid")
+        .create_response_edge(aid_id, concern_id, 0.85, "provides mutual aid")
         .await
         .expect("create_response_edge failed");
 
@@ -1995,7 +1995,7 @@ async fn create_response_edge_wires_give_to_tension() {
          RETURN rel.match_strength AS strength, rel.explanation AS explanation",
     )
     .param("gid", aid_id.to_string())
-    .param("tid", tension_id.to_string());
+    .param("tid", concern_id.to_string());
 
     let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().expect("Edge should exist");
@@ -2092,7 +2092,7 @@ async fn gathering_finder_targets_requires_minimum_heat() {
         .await
         .expect("query failed");
     assert_eq!(targets.len(), 1, "Only hot tension should qualify");
-    assert_eq!(targets[0].tension_id, t1);
+    assert_eq!(targets[0].concern_id, t1);
 }
 
 #[tokio::test]
@@ -2115,10 +2115,10 @@ async fn gathering_finder_targets_sorted_by_heat_desc() {
     assert_eq!(targets.len(), 2);
     // Hottest first
     assert_eq!(
-        targets[0].tension_id, t2,
+        targets[0].concern_id, t2,
         "Hottest tension should sort first"
     );
-    assert_eq!(targets[1].tension_id, t1);
+    assert_eq!(targets[1].concern_id, t1);
 }
 
 #[tokio::test]
@@ -2198,7 +2198,7 @@ async fn gathering_finder_backoff_on_consecutive_misses() {
         .await
         .expect("query failed");
     assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].tension_id, t2);
+    assert_eq!(targets[0].concern_id, t2);
 }
 
 #[tokio::test]
@@ -2223,7 +2223,7 @@ async fn gathering_finder_backoff_resets_on_success() {
     // Mark as scouted with success — should reset miss_count to 0
     let projector = GraphProjector::new(client.clone());
     let event = Event::System(SystemEvent::GatheringScouted {
-        tension_id: t1,
+        concern_id: t1,
         found_gatherings: true,
         scouted_at: Utc::now(),
     });
@@ -2247,8 +2247,8 @@ async fn create_drawn_to_edge_includes_gathering_type() {
     let (_container, client) = setup().await;
     let writer = GraphStore::new(client.clone());
 
-    let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None)
+    let concern_id = Uuid::new_v4();
+    create_tension_for_gathering_finder(&client, concern_id, "ICE Fear", 0.7, 0.5, None, None)
         .await;
 
     let gathering_id = Uuid::new_v4();
@@ -2264,7 +2264,7 @@ async fn create_drawn_to_edge_includes_gathering_type() {
     writer
         .create_drawn_to_edge(
             gathering_id,
-            tension_id,
+            concern_id,
             0.9,
             "solidarity through singing",
             "singing",
@@ -2278,7 +2278,7 @@ async fn create_drawn_to_edge_includes_gathering_type() {
          RETURN rel.match_strength AS strength, rel.gathering_type AS gt",
     )
     .param("eid", gathering_id.to_string())
-    .param("tid", tension_id.to_string());
+    .param("tid", concern_id.to_string());
 
     let mut stream = client.execute(q).await.unwrap();
     let row = stream.next().await.unwrap().expect("Edge should exist");
@@ -2294,10 +2294,10 @@ async fn drawn_to_edge_coexists_with_response_edge() {
     let (_container, client) = setup().await;
     let writer = GraphStore::new(client.clone());
 
-    let tension_id = Uuid::new_v4();
+    let concern_id = Uuid::new_v4();
     create_tension_for_gathering_finder(
         &client,
-        tension_id,
+        concern_id,
         "Housing Crisis",
         0.7,
         0.5,
@@ -2318,7 +2318,7 @@ async fn drawn_to_edge_coexists_with_response_edge() {
 
     // First: create a regular response edge
     writer
-        .create_response_edge(aid_id, tension_id, 0.8, "provides rent assistance")
+        .create_response_edge(aid_id, concern_id, 0.8, "provides rent assistance")
         .await
         .expect("create_response_edge failed");
 
@@ -2327,7 +2327,7 @@ async fn drawn_to_edge_coexists_with_response_edge() {
     writer
         .create_drawn_to_edge(
             aid_id,
-            tension_id,
+            concern_id,
             0.9,
             "solidarity fund",
             "solidarity fund",
@@ -2341,7 +2341,7 @@ async fn drawn_to_edge_coexists_with_response_edge() {
          RETURN count(rel) AS edge_count",
     )
     .param("gid", aid_id.to_string())
-    .param("tid", tension_id.to_string());
+    .param("tid", concern_id.to_string());
 
     let mut stream = client.execute(q1).await.unwrap();
     let row = stream.next().await.unwrap().expect("Should have results");
@@ -2354,7 +2354,7 @@ async fn drawn_to_edge_coexists_with_response_edge() {
          RETURN count(rel) AS edge_count, rel.gathering_type AS gt",
     )
     .param("gid", aid_id.to_string())
-    .param("tid", tension_id.to_string());
+    .param("tid", concern_id.to_string());
 
     let mut stream = client.execute(q2).await.unwrap();
     let row = stream.next().await.unwrap().expect("Should have results");
@@ -2369,10 +2369,10 @@ async fn get_existing_gathering_signals_filters_by_bbox() {
     let (_container, client) = setup().await;
     let writer = GraphStore::new(client.clone());
 
-    let tension_id = Uuid::new_v4();
+    let concern_id = Uuid::new_v4();
     create_tension_for_gathering_finder(
         &client,
-        tension_id,
+        concern_id,
         "Immigration Fear",
         0.7,
         0.5,
@@ -2396,7 +2396,7 @@ async fn get_existing_gathering_signals_filters_by_bbox() {
     writer
         .create_drawn_to_edge(
             mpls_event,
-            tension_id,
+            concern_id,
             0.9,
             "solidarity through singing",
             "singing",
@@ -2417,13 +2417,13 @@ async fn get_existing_gathering_signals_filters_by_bbox() {
     )
     .await;
     writer
-        .create_drawn_to_edge(nyc_event, tension_id, 0.85, "solidarity vigil", "vigil")
+        .create_drawn_to_edge(nyc_event, concern_id, 0.85, "solidarity vigil", "vigil")
         .await
         .expect("edge failed");
 
     // When querying from NYC, should only see the NYC gathering
     let nyc_results = writer
-        .get_existing_gathering_signals(tension_id, 40.7128, -74.0060, 50.0)
+        .get_existing_gathering_signals(concern_id, 40.7128, -74.0060, 50.0)
         .await
         .expect("query failed");
     assert_eq!(
@@ -2435,7 +2435,7 @@ async fn get_existing_gathering_signals_filters_by_bbox() {
 
     // When querying from Minneapolis, should only see the Minneapolis gathering
     let mpls_results = writer
-        .get_existing_gathering_signals(tension_id, 44.9778, -93.2650, 50.0)
+        .get_existing_gathering_signals(concern_id, 44.9778, -93.2650, 50.0)
         .await
         .expect("query failed");
     assert_eq!(
@@ -2551,10 +2551,10 @@ async fn tension_response_shape_correct_breakdown() {
     let writer = GraphStore::new(client.clone());
 
     // Create a high-heat tension
-    let tension_id = Uuid::new_v4();
+    let concern_id = Uuid::new_v4();
     create_tension_for_response_finder(
         &client,
-        tension_id,
+        concern_id,
         "Immigration Enforcement Fear",
         0.7,
         None,
@@ -2598,7 +2598,7 @@ async fn tension_response_shape_correct_breakdown() {
         );
         let q = query(&cypher)
             .param("sid", sig_id.to_string())
-            .param("tid", tension_id.to_string());
+            .param("tid", concern_id.to_string());
         client.run(q).await.expect("edge creation failed");
     }
 
@@ -2765,10 +2765,10 @@ async fn recently_linked_signals_collects_and_clears_queries() {
     let writer = GraphStore::new(client.clone());
 
     // Create a heated tension
-    let tension_id = Uuid::new_v4();
+    let concern_id = Uuid::new_v4();
     create_tension_for_gathering_finder(
         &client,
-        tension_id,
+        concern_id,
         "Housing Crisis",
         0.7,
         0.5,
@@ -2796,7 +2796,7 @@ async fn recently_linked_signals_collects_and_clears_queries() {
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'provides rent help'}]->(t)",
     )
     .param("gid", aid_id.to_string())
-    .param("tid", tension_id.to_string());
+    .param("tid", concern_id.to_string());
     client.run(q).await.expect("edge creation failed");
 
     // First call: should collect the queries
@@ -2841,8 +2841,8 @@ async fn recently_linked_signals_ignores_cold_tensions() {
     let writer = GraphStore::new(client.clone());
 
     // Create a COLD tension (heat = 0.0)
-    let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "Cold Tension", 0.7, 0.0, None, None)
+    let concern_id = Uuid::new_v4();
+    create_tension_for_gathering_finder(&client, concern_id, "Cold Tension", 0.7, 0.0, None, None)
         .await;
 
     // Create an Aid with implied_queries linked to the cold tension
@@ -2860,7 +2860,7 @@ async fn recently_linked_signals_ignores_cold_tensions() {
          CREATE (g)-[:RESPONDS_TO {match_strength: 0.8, explanation: 'test'}]->(t)",
     )
     .param("gid", aid_id.to_string())
-    .param("tid", tension_id.to_string());
+    .param("tid", concern_id.to_string());
     client.run(q).await.expect("edge failed");
 
     let (queries, _) = writer
@@ -2884,8 +2884,8 @@ async fn recently_linked_signals_works_with_drawn_to() {
     let writer = GraphStore::new(client.clone());
 
     // Create a heated tension
-    let tension_id = Uuid::new_v4();
-    create_tension_for_gathering_finder(&client, tension_id, "ICE Fear", 0.7, 0.5, None, None)
+    let concern_id = Uuid::new_v4();
+    create_tension_for_gathering_finder(&client, concern_id, "ICE Fear", 0.7, 0.5, None, None)
         .await;
 
     // Create a Gathering with implied_queries
@@ -2918,7 +2918,7 @@ async fn recently_linked_signals_works_with_drawn_to() {
 
     // Link via DRAWN_TO (gravity scout edge)
     writer
-        .create_drawn_to_edge(gathering_id, tension_id, 0.85, "solidarity", "vigil")
+        .create_drawn_to_edge(gathering_id, concern_id, 0.85, "solidarity", "vigil")
         .await
         .expect("create_drawn_to failed");
 

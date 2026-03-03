@@ -76,7 +76,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         location { lat lng }
         locationName
         severity
-        whatWouldHelp
+        opposing
       }
     }
   }
@@ -162,7 +162,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           location { lat lng }
           locationName
           severity
-          whatWouldHelp
+          opposing
         }
       }
     }
@@ -226,7 +226,7 @@ export const SIGNAL_DETAIL = gql`
         sourceUrl
         urgency
         whatNeeded
-        goal
+        statedGoal
         citations { sourceUrl snippet relevance }
       }
       ... on GqlAnnouncementSignal {
@@ -257,7 +257,7 @@ export const SIGNAL_DETAIL = gql`
         sourceUrl
         severity
         category
-        whatWouldHelp
+        opposing
         citations { sourceUrl snippet relevance }
       }
     }

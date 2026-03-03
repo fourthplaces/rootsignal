@@ -52,7 +52,7 @@ pub async fn map_responses(
 
     info!(tensions = tensions.len(), "Running response mapping");
 
-    for (tension_id, tension_embedding) in &tensions {
+    for (concern_id, tension_embedding) in &tensions {
         let candidates = graph
             .find_response_candidates(
                 tension_embedding,
@@ -68,7 +68,7 @@ pub async fn map_responses(
             continue;
         }
 
-        let tension_info = graph.get_signal_info(*tension_id).await?;
+        let tension_info = graph.get_signal_info(*concern_id).await?;
         let Some((tension_title, tension_summary)) = tension_info else {
             continue;
         };
@@ -91,7 +91,7 @@ pub async fn map_responses(
                 Ok(Some(explanation)) => {
                     events.push(SystemEvent::ResponseLinked {
                         signal_id: *candidate_id,
-                        tension_id: *tension_id,
+                        concern_id: *concern_id,
                         strength: *candidate_similarity,
                         explanation: explanation.clone(),
                         source_url: None,
