@@ -84,7 +84,7 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     // World: Relationship edges
     "resource_linked",
     "response_linked",
-    "tension_linked",
+    "concern_linked",
     // World: Lifecycle
     "gathering_cancelled",
     "resource_depleted",
@@ -108,6 +108,7 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "tone_classified",
     "severity_classified",
     "urgency_classified",
+    "category_classified",
     "implied_queries_extracted",
     // System: Corrections (5 typed variants)
     "gathering_corrected",
@@ -122,6 +123,10 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "situation_identified",
     "situation_changed",
     "situation_promoted",
+    "signal_assigned_to_situation",
+    "situation_tags_aggregated",
+    "dispatch_flagged_for_review",
+    "signals_pending_weaving",
     // System: Tags
     "signal_tagged",
     "tag_suppressed",
@@ -145,10 +150,34 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "submission_received",
     // System: Source scrape telemetry
     "source_scraped",
+    // System: Synthesis telemetry
+    "response_scouted",
+    "query_embedding_stored",
+    "curiosity_triggered",
+    "signal_investigated",
+    "exhausted_retries_promoted",
+    "concern_linker_outcome_recorded",
+    "gathering_scouted",
+    // System: Place & gathering geography
+    "place_discovered",
+    "gathers_at_place_linked",
+    // System: Concern deduplication
+    "duplicate_concern_merged",
+    // System: Source weight adjustments
+    "sources_boosted_for_situation",
     // System: Supervisor analytics
     "echo_scored",
     "cause_heat_computed",
+    "signal_diversity_computed",
+    "actor_stats_computed",
+    "similarity_edges_rebuilt",
     "beacon_detected",
+    // System: Task lifecycle
+    "task_phase_transitioned",
+    // System: Admin actions
+    "validation_issue_dismissed",
+    "scout_task_created",
+    "scout_task_cancelled",
 ];
 
 #[test]
@@ -238,27 +267,13 @@ fn projector_source_has_no_uuid_new() {
     );
 }
 
-#[test]
-fn projector_source_has_no_embedding_writes() {
-    let source = include_str!("../src/projector.rs");
+// Embedding writes are now legitimate in the projector for:
+// - SituationIdentified: narrative_embedding, causal_embedding
+// - QueryEmbeddingStored: source query embedding
+// Signal-level embeddings (n.embedding) remain an enrichment-pass concern.
 
-    assert!(
-        !source.contains("n.embedding =") && !source.contains("embedding: $embedding"),
-        "Projector must not write embeddings — that's an enrichment pass"
-    );
-}
-
-#[test]
-fn projector_source_has_no_diversity_writes() {
-    let source = include_str!("../src/projector.rs");
-
-    assert!(
-        !source.contains("n.source_diversity =")
-            && !source.contains("n.channel_diversity =")
-            && !source.contains("n.external_ratio ="),
-        "Projector must not write diversity metrics — those are enrichment pass values"
-    );
-}
+// Diversity writes are now event-sourced via SignalDiversityComputed — the projector legitimately
+// writes source_diversity, channel_diversity, and external_ratio.
 
 // cause_heat is now event-sourced via CauseHeatComputed — the projector legitimately writes it.
 
@@ -875,6 +890,86 @@ fn build_all_events() -> Vec<Event> {
             query: "".into(),
             source_url: "".into(),
         }),
+        // Classifications (cont.)
+        Event::System(SystemEvent::CategoryClassified {
+            signal_id: id,
+            category: "housing".into(),
+        }),
+        // Situations (cont.)
+        Event::System(SystemEvent::SignalAssignedToSituation {
+            signal_id: id,
+            situation_id: id,
+            signal_label: "".into(),
+            confidence: 0.8,
+            reasoning: "".into(),
+        }),
+        Event::System(SystemEvent::SituationTagsAggregated {
+            situation_id: id,
+            tag_slugs: vec![],
+        }),
+        Event::System(SystemEvent::DispatchFlaggedForReview {
+            dispatch_id: id,
+            reason: "".into(),
+        }),
+        Event::System(SystemEvent::SignalsPendingWeaving {
+            signal_ids: vec![id],
+            scout_run_id: "".into(),
+        }),
+        // Synthesis telemetry
+        Event::System(SystemEvent::ResponseScouted {
+            concern_id: id,
+            scouted_at: now,
+        }),
+        Event::System(SystemEvent::QueryEmbeddingStored {
+            canonical_key: "".into(),
+            embedding: vec![],
+        }),
+        Event::System(SystemEvent::CuriosityTriggered {
+            situation_id: id,
+            signal_ids: vec![],
+        }),
+        Event::System(SystemEvent::SignalInvestigated {
+            signal_id: id,
+            node_type: NodeType::Gathering,
+            investigated_at: now,
+        }),
+        Event::System(SystemEvent::ExhaustedRetriesPromoted {
+            promoted_at: now,
+        }),
+        Event::System(SystemEvent::ConcernLinkerOutcomeRecorded {
+            signal_id: id,
+            label: "".into(),
+            outcome: "".into(),
+            increment_retry: false,
+        }),
+        Event::System(SystemEvent::GatheringScouted {
+            concern_id: id,
+            found_gatherings: false,
+            scouted_at: now,
+        }),
+        // Place & gathering geography
+        Event::System(SystemEvent::PlaceDiscovered {
+            place_id: id,
+            name: "".into(),
+            slug: "".into(),
+            lat: 0.0,
+            lng: 0.0,
+            discovered_at: now,
+        }),
+        Event::System(SystemEvent::GathersAtPlaceLinked {
+            signal_id: id,
+            place_slug: "".into(),
+        }),
+        // Concern deduplication
+        Event::System(SystemEvent::DuplicateConcernMerged {
+            survivor_id: id,
+            duplicate_id: id,
+        }),
+        // Source weight adjustments
+        Event::System(SystemEvent::SourcesBoostedForSituation {
+            headline: "".into(),
+            factor: 1.0,
+        }),
         // Supervisor analytics
         Event::System(SystemEvent::EchoScored {
             situation_id: id,
@@ -882,6 +977,15 @@ fn build_all_events() -> Vec<Event> {
         }),
         Event::System(SystemEvent::CauseHeatComputed {
             scores: vec![],
+        }),
+        Event::System(SystemEvent::SignalDiversityComputed {
+            metrics: vec![],
+        }),
+        Event::System(SystemEvent::ActorStatsComputed {
+            stats: vec![],
+        }),
+        Event::System(SystemEvent::SimilarityEdgesRebuilt {
+            edges: vec![],
         }),
         Event::System(SystemEvent::BeaconDetected {
             task: ScoutTask {
@@ -898,6 +1002,29 @@ fn build_all_events() -> Vec<Event> {
                 created_at: now,
                 completed_at: None,
             },
+        }),
+        // Task lifecycle
+        Event::System(SystemEvent::TaskPhaseTransitioned {
+            task_id: "".into(),
+            phase: "".into(),
+            status: "".into(),
+        }),
+        // Admin actions
+        Event::System(SystemEvent::ValidationIssueDismissed {
+            issue_id: "".into(),
+        }),
+        Event::System(SystemEvent::ScoutTaskCreated {
+            task_id: id,
+            center_lat: 0.0,
+            center_lng: 0.0,
+            radius_km: 10.0,
+            context: "".into(),
+            geo_terms: vec![],
+            priority: 0.5,
+            source: "beacon".into(),
+        }),
+        Event::System(SystemEvent::ScoutTaskCancelled {
+            task_id: "".into(),
         }),
     ]
 }
