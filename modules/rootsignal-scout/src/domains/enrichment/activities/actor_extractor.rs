@@ -11,6 +11,7 @@ use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ActorType;
 use rootsignal_graph::{query, GraphClient};
 
+use crate::infra::util::HAIKU_MODEL;
 use crate::traits::SignalReader;
 
 /// Response schema for actor extraction LLM call.
@@ -149,7 +150,7 @@ async fn try_extract_actors(
         "Actor extractor: found signals without actors"
     );
 
-    let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
 
     // Process in batches
     for batch in signals.chunks(BATCH_SIZE) {

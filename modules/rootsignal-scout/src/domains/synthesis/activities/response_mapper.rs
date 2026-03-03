@@ -12,6 +12,8 @@ use tracing::{info, warn};
 
 use rootsignal_common::system_events::SystemEvent;
 use rootsignal_graph::GraphReader;
+
+use crate::infra::util::HAIKU_MODEL;
 use seesaw_core::Events;
 
 /// Structured output for response verification.
@@ -131,7 +133,7 @@ Signal B: {candidate_title} — {candidate_summary}
 Determine whether B genuinely helps address A. Be strict — only confirm genuine matches."#,
     );
 
-    let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
     let verdict = claude
         .extract::<ResponseVerdict>(
             "You evaluate whether community resources respond to community needs. Be strict — only confirm genuine matches.",

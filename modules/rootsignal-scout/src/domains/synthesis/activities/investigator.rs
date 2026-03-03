@@ -15,7 +15,7 @@ use rootsignal_graph::{EvidenceSummary, GraphReader, InvestigationTarget};
 
 
 use rootsignal_archive::Archive;
-use crate::infra::util;
+use crate::infra::util::{self, HAIKU_MODEL};
 
 const MAX_SEARCH_QUERIES_PER_RUN: usize = 15;
 const MAX_SIGNALS_INVESTIGATED: usize = 8;
@@ -111,8 +111,6 @@ DIRECT = independently confirms same fact. \
 SUPPORTING = provides credibility context. \
 CONTRADICTING = evidence of inaccuracy. \
 Only include genuinely relevant results. Set confidence 0.0-1.0.";
-
-const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 
 impl<'a> Investigator<'a> {
     pub fn new(

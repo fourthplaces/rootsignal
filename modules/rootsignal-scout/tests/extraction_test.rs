@@ -284,7 +284,7 @@ async fn food_shelf_post_yields_aid_signal() {
     let has_food_resource = response.signals.iter().any(|s| {
         s.resources
             .iter()
-            .any(|r| r.slug.contains("food") && r.role == "offers")
+            .any(|r| r.slug.contains("food") && r.role == rootsignal_scout::core::extractor::ResourceRole::Offers)
     });
     assert!(
         has_food_resource,

@@ -29,96 +29,128 @@ pub struct ScoutStats {
 
 impl ScoutStats {
     /// Merge another stats snapshot into this one (additive).
+    ///
+    /// Destructures `other` so the compiler forces you to handle new fields.
     pub fn merge(&mut self, other: &ScoutStats) {
-        self.urls_scraped += other.urls_scraped;
-        self.urls_unchanged += other.urls_unchanged;
-        self.urls_failed += other.urls_failed;
-        self.signals_extracted += other.signals_extracted;
-        self.signals_deduplicated += other.signals_deduplicated;
-        self.signals_stored += other.signals_stored;
-        for (nt, count) in &other.by_type {
+        let ScoutStats {
+            urls_scraped,
+            urls_unchanged,
+            urls_failed,
+            signals_extracted,
+            signals_deduplicated,
+            signals_stored,
+            ref by_type,
+            fresh_7d,
+            fresh_30d,
+            fresh_90d,
+            social_media_posts,
+            discovery_posts_found,
+            discovery_accounts_found,
+            expansion_queries_collected,
+            expansion_sources_created,
+            expansion_deferred_expanded,
+            expansion_social_topics_queued,
+            sources_discovered,
+            link_failures,
+        } = *other;
+
+        self.urls_scraped += urls_scraped;
+        self.urls_unchanged += urls_unchanged;
+        self.urls_failed += urls_failed;
+        self.signals_extracted += signals_extracted;
+        self.signals_deduplicated += signals_deduplicated;
+        self.signals_stored += signals_stored;
+        for (nt, count) in by_type {
             *self.by_type.entry(*nt).or_default() += count;
         }
-        self.fresh_7d += other.fresh_7d;
-        self.fresh_30d += other.fresh_30d;
-        self.fresh_90d += other.fresh_90d;
-        self.social_media_posts += other.social_media_posts;
-        self.discovery_posts_found += other.discovery_posts_found;
-        self.discovery_accounts_found += other.discovery_accounts_found;
-        self.expansion_queries_collected += other.expansion_queries_collected;
-        self.expansion_sources_created += other.expansion_sources_created;
-        self.expansion_deferred_expanded += other.expansion_deferred_expanded;
-        self.expansion_social_topics_queued += other.expansion_social_topics_queued;
-        self.sources_discovered += other.sources_discovered;
-        self.link_failures += other.link_failures;
+        self.fresh_7d += fresh_7d;
+        self.fresh_30d += fresh_30d;
+        self.fresh_90d += fresh_90d;
+        self.social_media_posts += social_media_posts;
+        self.discovery_posts_found += discovery_posts_found;
+        self.discovery_accounts_found += discovery_accounts_found;
+        self.expansion_queries_collected += expansion_queries_collected;
+        self.expansion_sources_created += expansion_sources_created;
+        self.expansion_deferred_expanded += expansion_deferred_expanded;
+        self.expansion_social_topics_queued += expansion_social_topics_queued;
+        self.sources_discovered += sources_discovered;
+        self.link_failures += link_failures;
     }
 }
 
 impl std::fmt::Display for ScoutStats {
+    /// Destructures self so the compiler forces you to handle new fields.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ScoutStats {
+            urls_scraped,
+            urls_unchanged,
+            urls_failed,
+            signals_extracted,
+            signals_deduplicated,
+            signals_stored,
+            ref by_type,
+            fresh_7d,
+            fresh_30d,
+            fresh_90d,
+            social_media_posts,
+            discovery_posts_found,
+            discovery_accounts_found,
+            expansion_queries_collected,
+            expansion_sources_created,
+            expansion_deferred_expanded,
+            expansion_social_topics_queued,
+            sources_discovered,
+            link_failures,
+        } = *self;
+
         writeln!(f, "\n=== Scout Run Complete ===")?;
-        writeln!(f, "URLs scraped:       {}", self.urls_scraped)?;
-        writeln!(f, "URLs unchanged:     {}", self.urls_unchanged)?;
-        writeln!(f, "URLs failed:        {}", self.urls_failed)?;
-        writeln!(f, "Social media posts: {}", self.social_media_posts)?;
-        writeln!(f, "Discovery posts:    {}", self.discovery_posts_found)?;
-        writeln!(f, "Accounts discovered:{}", self.discovery_accounts_found)?;
-        writeln!(f, "Signals extracted:  {}", self.signals_extracted)?;
-        writeln!(f, "Signals deduped:    {}", self.signals_deduplicated)?;
-        writeln!(f, "Signals stored:     {}", self.signals_stored)?;
-        if !self.by_type.is_empty() {
+        writeln!(f, "URLs scraped:       {urls_scraped}")?;
+        writeln!(f, "URLs unchanged:     {urls_unchanged}")?;
+        writeln!(f, "URLs failed:        {urls_failed}")?;
+        writeln!(f, "Social media posts: {social_media_posts}")?;
+        writeln!(f, "Discovery posts:    {discovery_posts_found}")?;
+        writeln!(f, "Accounts discovered:{discovery_accounts_found}")?;
+        writeln!(f, "Signals extracted:  {signals_extracted}")?;
+        writeln!(f, "Signals deduped:    {signals_deduplicated}")?;
+        writeln!(f, "Signals stored:     {signals_stored}")?;
+        if !by_type.is_empty() {
             writeln!(f, "\nBy type:")?;
-            let mut entries: Vec<_> = self.by_type.iter().collect();
+            let mut entries: Vec<_> = by_type.iter().collect();
             entries.sort_by_key(|(nt, _)| format!("{nt}"));
             for (nt, count) in entries {
                 writeln!(f, "  {nt}: {count}")?;
             }
         }
-        let total = self.signals_stored.max(1);
+        let total = signals_stored.max(1);
         writeln!(f, "\nFreshness:")?;
         writeln!(
             f,
-            "  < 7 days:   {} ({:.0}%)",
-            self.fresh_7d,
-            self.fresh_7d as f64 / total as f64 * 100.0
+            "  < 7 days:   {fresh_7d} ({:.0}%)",
+            fresh_7d as f64 / total as f64 * 100.0
         )?;
         writeln!(
             f,
-            "  7-30 days:  {} ({:.0}%)",
-            self.fresh_30d,
-            self.fresh_30d as f64 / total as f64 * 100.0
+            "  7-30 days:  {fresh_30d} ({:.0}%)",
+            fresh_30d as f64 / total as f64 * 100.0
         )?;
         writeln!(
             f,
-            "  30-90 days: {} ({:.0}%)",
-            self.fresh_90d,
-            self.fresh_90d as f64 / total as f64 * 100.0
+            "  30-90 days: {fresh_90d} ({:.0}%)",
+            fresh_90d as f64 / total as f64 * 100.0
         )?;
-        if self.sources_discovered > 0 {
-            writeln!(f, "Sources discovered: {}", self.sources_discovered)?;
+        if sources_discovered > 0 {
+            writeln!(f, "Sources discovered: {sources_discovered}")?;
         }
-        if self.link_failures > 0 {
-            writeln!(f, "Link failures:      {}", self.link_failures)?;
+        if link_failures > 0 {
+            writeln!(f, "Link failures:      {link_failures}")?;
         }
-        if self.expansion_queries_collected > 0 {
+        if expansion_queries_collected > 0 {
             writeln!(f, "\nSignal expansion:")?;
-            writeln!(
-                f,
-                "  Queries collected: {}",
-                self.expansion_queries_collected
-            )?;
-            writeln!(f, "  Sources created:   {}", self.expansion_sources_created)?;
-            writeln!(
-                f,
-                "  Deferred expanded: {}",
-                self.expansion_deferred_expanded
-            )?;
-            if self.expansion_social_topics_queued > 0 {
-                writeln!(
-                    f,
-                    "  Social topics:     {}",
-                    self.expansion_social_topics_queued
-                )?;
+            writeln!(f, "  Queries collected: {expansion_queries_collected}")?;
+            writeln!(f, "  Sources created:   {expansion_sources_created}")?;
+            writeln!(f, "  Deferred expanded: {expansion_deferred_expanded}")?;
+            if expansion_social_topics_queued > 0 {
+                writeln!(f, "  Social topics:     {expansion_social_topics_queued}")?;
             }
         }
         Ok(())

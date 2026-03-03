@@ -14,6 +14,7 @@ use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::PipelineState;
 use crate::domains::discovery::events::DiscoveryEvent;
+use crate::infra::util::HAIKU_MODEL;
 
 /// Handle the EngineStarted event: seed sources if region is empty.
 pub async fn seed_sources_if_empty(
@@ -68,7 +69,7 @@ pub async fn generate_seed_queries(
     region: &ScoutScope,
 ) -> Result<Vec<SourceNode>> {
     let region_name = &region.name;
-    let claude = ai_client::claude::Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let claude = ai_client::claude::Claude::new(anthropic_api_key, HAIKU_MODEL);
     let system = "Generate search queries for community signal discovery.";
 
     let tension_prompt = format!(
@@ -330,7 +331,7 @@ Rules:
 - Maximum 5 subreddits"#
     );
 
-    let claude = ai_client::claude::Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let claude = ai_client::claude::Claude::new(anthropic_api_key, HAIKU_MODEL);
     let list = claude
         .extract::<SubredditList>("Discover relevant subreddits for a geographic region.", &prompt)
         .await?;
@@ -370,7 +371,7 @@ For each outlet, provide the name and homepage URL.
 Maximum 8 outlets."#
     );
 
-    let claude = ai_client::claude::Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let claude = ai_client::claude::Claude::new(anthropic_api_key, HAIKU_MODEL);
     let list = claude
         .extract::<NewsOutletList>("Identify local news outlets for a geographic region.", &prompt)
         .await?;

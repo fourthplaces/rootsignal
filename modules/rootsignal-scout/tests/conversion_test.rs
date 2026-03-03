@@ -594,7 +594,7 @@ fn resource_tags_paired_with_signal() {
     assert_eq!(result.resource_tags.len(), 1);
     let (_, resources) = &result.resource_tags[0];
     assert_eq!(resources[0].slug, "food");
-    assert_eq!(resources[0].role, "offers");
+    assert_eq!(resources[0].role, rootsignal_scout::core::extractor::ResourceRole::Offers);
 }
 
 // ---------------------------------------------------------------------------

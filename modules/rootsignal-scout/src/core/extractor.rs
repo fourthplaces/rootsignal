@@ -13,6 +13,8 @@ use rootsignal_common::{
 };
 use serde::de;
 
+use crate::infra::util::HAIKU_MODEL;
+
 /// What the LLM returns for each extracted signal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExtractedSignal {
@@ -83,7 +85,7 @@ pub struct ExtractedSignal {
     #[serde(default)]
     pub implied_queries: Vec<String>,
     /// Resource capabilities this signal requires, prefers, or offers.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_resource_tags")]
     pub resources: Vec<ResourceTag>,
     /// 3-5 thematic tags as lowercase-with-hyphens slugs (e.g. "ice-enforcement", "housing-displacement").
     #[serde(default)]
@@ -111,14 +113,39 @@ pub struct ExtractedSignal {
     pub schedule_timezone: Option<String>,
 }
 
+/// The relationship a signal has with a resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceRole {
+    Requires,
+    Prefers,
+    Offers,
+}
+
+impl ResourceRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ResourceRole::Requires => "requires",
+            ResourceRole::Prefers => "prefers",
+            ResourceRole::Offers => "offers",
+        }
+    }
+}
+
+impl std::fmt::Display for ResourceRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A resource capability extracted from a signal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResourceTag {
     /// Canonical slug (e.g. "vehicle", "bilingual-spanish", "legal-expertise").
     /// Use the seed vocabulary when it fits; otherwise propose a concise noun-phrase slug.
     pub slug: String,
-    /// "requires", "prefers", or "offers"
-    pub role: String,
+    /// The relationship: requires, prefers, or offers.
+    pub role: ResourceRole,
     /// 0.0–1.0 confidence that this resource is relevant
     #[serde(default = "default_confidence")]
     pub confidence: f64,
@@ -128,6 +155,25 @@ pub struct ResourceTag {
 
 fn default_confidence() -> f64 {
     0.8
+}
+
+/// Deserialize resource tags, silently dropping any with invalid roles.
+/// This prevents a single bad LLM output from losing the entire batch.
+pub fn deserialize_resource_tags<'de, D>(deserializer: D) -> std::result::Result<Vec<ResourceTag>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let values: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    let mut tags = Vec::with_capacity(values.len());
+    for value in values {
+        match serde_json::from_value::<ResourceTag>(value) {
+            Ok(tag) => tags.push(tag),
+            Err(e) => {
+                warn!("Skipping resource tag with invalid role: {e}");
+            }
+        }
+    }
+    Ok(tags)
 }
 
 /// The full extraction response from the LLM.
@@ -213,7 +259,7 @@ impl Extractor {
         default_lng: f64,
         tag_vocabulary: &[String],
     ) -> Self {
-        let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
         let system_prompt =
             build_system_prompt(city_name, default_lat, default_lng, tag_vocabulary);
         Self {
@@ -224,7 +270,7 @@ impl Extractor {
 
     /// Create an extractor with a pre-built system prompt (for genome-driven evolution).
     pub fn with_system_prompt(anthropic_api_key: &str, system_prompt: String) -> Self {
-        let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
         Self {
             claude,
             system_prompt,
@@ -956,7 +1002,7 @@ mod tests {
         let json = r#"{"slug":"vehicle","role":"requires","confidence":0.9,"context":"Saturday mornings"}"#;
         let tag: ResourceTag = serde_json::from_str(json).unwrap();
         assert_eq!(tag.slug, "vehicle");
-        assert_eq!(tag.role, "requires");
+        assert_eq!(tag.role, ResourceRole::Requires);
         assert!((tag.confidence - 0.9).abs() < f64::EPSILON);
         assert_eq!(tag.context.as_deref(), Some("Saturday mornings"));
     }
@@ -965,7 +1011,36 @@ mod tests {
     fn resource_tag_default_confidence() {
         let json = r#"{"slug":"food","role":"offers","context":null}"#;
         let tag: ResourceTag = serde_json::from_str(json).unwrap();
+        assert_eq!(tag.role, ResourceRole::Offers);
         assert!((tag.confidence - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn unknown_resource_role_does_not_lose_valid_tags() {
+        let json = r#"[
+            {"slug":"vehicle","role":"requires","confidence":0.9},
+            {"slug":"bad","role":"unknown_role","confidence":0.5},
+            {"slug":"food","role":"offers","confidence":0.8}
+        ]"#;
+        let tags: Vec<ResourceTag> = {
+            let values: Vec<serde_json::Value> = serde_json::from_str(json).unwrap();
+            values
+                .into_iter()
+                .filter_map(|v| serde_json::from_value::<ResourceTag>(v).ok())
+                .collect()
+        };
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].slug, "vehicle");
+        assert_eq!(tags[1].slug, "food");
+    }
+
+    #[test]
+    fn missing_resources_field_deserializes_to_empty_vec() {
+        // When the LLM omits "resources" entirely, serde(default) kicks in
+        // before the custom deserializer — result is an empty vec.
+        let json = r#"{"signal_type":"gathering","title":"Test","summary":"s","sensitivity":"general"}"#;
+        let signal: ExtractedSignal = serde_json::from_str(json).unwrap();
+        assert!(signal.resources.is_empty());
     }
 
     #[test]

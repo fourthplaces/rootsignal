@@ -19,12 +19,10 @@ use rootsignal_graph::{GraphReader, SituationBrief, ConcernLinkerOutcome, Concer
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::util::SIGNAL_CATEGORIES;
+use crate::infra::util::{HAIKU_MODEL, SIGNAL_CATEGORIES};
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 use rootsignal_common::events::WorldEvent;
 
-
-const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;
 const MAX_TOOL_TURNS: usize = 8;
 const MAX_TENSIONS_PER_SIGNAL: usize = 3;

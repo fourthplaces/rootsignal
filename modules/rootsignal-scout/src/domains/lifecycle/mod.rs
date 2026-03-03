@@ -111,7 +111,7 @@ async fn finalize_impl(ctx: Context<ScoutEngineDeps>) -> Result<Events> {
 }
 
 /// Finalize handler for the scrape chain: triggers on PhaseCompleted(Synthesis).
-#[handle(on = LifecycleEvent, id = "lifecycle:finalize", filter = is_synthesis_completed)]
+#[handle(on = LifecycleEvent, id = "lifecycle:scrape_finalize", filter = is_synthesis_completed)]
 pub async fn scrape_finalize(
     _event: LifecycleEvent,
     ctx: Context<ScoutEngineDeps>,
@@ -120,7 +120,7 @@ pub async fn scrape_finalize(
 }
 
 /// Finalize handler for the full chain: triggers on PhaseCompleted(Supervisor).
-#[handle(on = LifecycleEvent, id = "lifecycle:finalize", filter = is_supervisor_completed)]
+#[handle(on = LifecycleEvent, id = "lifecycle:full_finalize", filter = is_supervisor_completed)]
 pub async fn full_finalize(
     _event: LifecycleEvent,
     ctx: Context<ScoutEngineDeps>,

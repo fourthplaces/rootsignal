@@ -4,6 +4,12 @@ pub use rootsignal_common::content_hash;
 // These were consolidated from duplicate implementations across scout.rs,
 // investigator.rs, response_finder.rs, and gathering_finder.rs.
 
+/// Central model constant — change here when Anthropic retires this model.
+pub const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+
+/// Central model constant — change here when Voyage retires this model.
+pub const EMBEDDING_MODEL: &str = "voyage-3-large";
+
 /// Seeds deserve faster first scrapes; `compute_weight` takes over after first scrape.
 pub const COLD_START_SOURCE_WEIGHT: f64 = 0.5;
 

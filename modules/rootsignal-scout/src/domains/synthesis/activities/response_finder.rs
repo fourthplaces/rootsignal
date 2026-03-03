@@ -26,7 +26,7 @@ use crate::domains::synthesis::util::{
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
-use crate::core::extractor::ResourceTag;
+use crate::core::extractor::{deserialize_resource_tags, ResourceRole, ResourceTag};
 
 const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
 const MAX_RESPONSES_PER_TENSION: usize = 8;
@@ -68,7 +68,7 @@ pub struct DiscoveredResponse {
     #[serde(default)]
     pub is_recurring: bool,
     /// Resource capabilities this response requires, prefers, or offers.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_resource_tags")]
     pub resources: Vec<ResourceTag>,
 }
 
@@ -644,33 +644,20 @@ impl<'a> ResponseFinder<'a> {
             });
 
             let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
-            let (role, quantity, notes, capacity): (
-                &str,
-                Option<&str>,
-                Option<&str>,
-                Option<&str>,
-            ) = match tag.role.as_str() {
-                "requires" => ("requires", tag.context.as_deref(), None, None),
-                "prefers" => ("prefers", None, None, None),
-                "offers" => ("offers", None, None, tag.context.as_deref()),
-                other => {
-                    warn!(
-                        role = other,
-                        slug = tag.slug.as_str(),
-                        "Unknown resource role, skipping"
-                    );
-                    continue;
-                }
+            let (quantity, capacity) = match tag.role {
+                ResourceRole::Requires => (tag.context.clone(), None),
+                ResourceRole::Prefers => (None, None),
+                ResourceRole::Offers => (None, tag.context.clone()),
             };
 
             events.push(WorldEvent::ResourceLinked {
                 signal_id,
                 resource_slug: slug.clone(),
-                role: role.to_string(),
+                role: tag.role.to_string(),
                 confidence,
-                quantity: quantity.map(|s| s.to_string()),
-                notes: notes.map(|s| s.to_string()),
-                capacity: capacity.map(|s| s.to_string()),
+                quantity,
+                notes: None,
+                capacity,
             });
 
             info!(

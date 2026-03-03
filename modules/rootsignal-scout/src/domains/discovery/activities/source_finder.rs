@@ -12,9 +12,7 @@ use serde::{de, Deserialize};
 use tracing::{info, warn};
 use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 use crate::infra::embedder::TextEmbedder;
-
-
-const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+use crate::infra::util::HAIKU_MODEL;
 const MAX_CURIOSITY_QUERIES: usize = 12;
 const MAX_DISCOVERY_DEPTH: u32 = 2;
 

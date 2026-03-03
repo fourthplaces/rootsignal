@@ -2,6 +2,8 @@ use ai_client::openai::OpenAi;
 use ai_client::traits::EmbedAgent;
 use anyhow::Result;
 
+use crate::infra::util::EMBEDDING_MODEL;
+
 // TextEmbedder trait is now defined in rootsignal-common.
 pub use rootsignal_common::TextEmbedder;
 
@@ -13,9 +15,9 @@ pub struct Embedder {
 impl Embedder {
     /// Create a new embedder using Voyage AI's API.
     pub fn new(voyage_api_key: &str) -> Self {
-        let client = OpenAi::new(voyage_api_key, "voyage-3-large")
+        let client = OpenAi::new(voyage_api_key, EMBEDDING_MODEL)
             .with_base_url("https://api.voyageai.com/v1")
-            .with_embedding_model("voyage-3-large");
+            .with_embedding_model(EMBEDDING_MODEL);
         Self { client }
     }
 

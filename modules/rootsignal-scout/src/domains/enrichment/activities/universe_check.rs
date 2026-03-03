@@ -8,6 +8,7 @@ use tracing::{info, warn};
 
 use rootsignal_common::ScoutScope;
 
+use crate::infra::util::HAIKU_MODEL;
 use crate::traits::ContentFetcher;
 
 #[derive(Deserialize, JsonSchema)]
@@ -41,7 +42,7 @@ pub async fn check_in_universe(
     anthropic_api_key: &str,
     fetcher: &dyn ContentFetcher,
 ) -> bool {
-    let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
 
     // Phase 1: URL-only check
     let prompt = format!(

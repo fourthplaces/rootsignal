@@ -14,6 +14,7 @@ use tracing::{info, warn};
 
 use rootsignal_common::extract_domain;
 
+use crate::infra::util::HAIKU_MODEL;
 use crate::traits::SignalReader;
 
 #[derive(Deserialize, JsonSchema)]
@@ -111,7 +112,7 @@ pub async fn filter_domains_batch(
 
         let prompt = format!("Region: {region_name}\n\nDomains to evaluate:\n{domain_list}");
 
-        let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+        let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
 
         match claude
             .extract::<DomainFilterResponse>(DOMAIN_FILTER_SYSTEM, &prompt)

@@ -28,6 +28,7 @@ use crate::domains::{
     situation_weaving, supervisor, synthesis,
 };
 use crate::infra::embedder::TextEmbedder;
+use crate::infra::util::EMBEDDING_MODEL;
 use crate::core::extractor::SignalExtractor;
 use crate::traits::{ContentFetcher, SignalReader};
 
@@ -120,7 +121,7 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
             Arc::new(EmbeddingStore::new(
                 pool.clone(),
                 deps.embedder.clone(),
-                "voyage-3-large".to_string(),
+                EMBEDDING_MODEL.to_string(),
             )) as Arc<dyn EmbeddingLookup>
         });
     let graph_projector = deps.graph_client.as_ref().map(|gc| {
@@ -198,7 +199,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
             Arc::new(EmbeddingStore::new(
                 pool.clone(),
                 deps.embedder.clone(),
-                "voyage-3-large".to_string(),
+                EMBEDDING_MODEL.to_string(),
             )) as Arc<dyn EmbeddingLookup>
         });
     let graph_projector = deps.graph_client.as_ref().map(|gc| {
@@ -306,7 +307,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps) -> SeesawEngine {
             Arc::new(EmbeddingStore::new(
                 pool.clone(),
                 deps.embedder.clone(),
-                "voyage-3-large".to_string(),
+                EMBEDDING_MODEL.to_string(),
             )) as Arc<dyn EmbeddingLookup>
         });
     let graph_projector = deps.graph_client.as_ref().map(|gc| {

@@ -100,6 +100,13 @@ impl ScoutDeps {
         deps.pg_pool = Some(self.pg_pool.clone());
         deps.task_id = task_id.map(String::from);
         deps.completion_phase_status = completion_phase_status.map(String::from);
+
+        // Validate scrape-critical deps. build_engine_deps is the production
+        // entry point for both scrape and full engines — catch configuration
+        // errors here rather than panicking deep in the scrape phase.
+        assert!(deps.extractor.is_some(), "scrape engine requires extractor — set deps.extractor before calling build_engine()");
+        assert!(deps.fetcher.is_some(), "scrape engine requires fetcher — set deps.fetcher before calling build_engine()");
+
         deps
     }
 

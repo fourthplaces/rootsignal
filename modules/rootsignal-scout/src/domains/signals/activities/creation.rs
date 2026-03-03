@@ -16,6 +16,7 @@ use seesaw_core::{events, Events};
 use uuid::Uuid;
 
 use crate::core::engine::ScoutEngineDeps;
+use crate::core::extractor::ResourceRole;
 use crate::domains::signals::activities::dedup_utils::is_owned_source;
 use crate::domains::signals::events::SignalEvent;
 use crate::core::aggregate::PipelineState;
@@ -190,30 +191,20 @@ pub async fn wire_signal_edges(
         });
 
         let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
-        match tag.role.as_str() {
-            "requires" | "prefers" | "offers" => {
-                events = events.add(WorldEvent::ResourceLinked {
-                    signal_id: node_id,
-                    resource_slug: slug,
-                    role: tag.role.clone(),
-                    confidence,
-                    quantity: if tag.role == "requires" {
-                        tag.context.clone()
-                    } else {
-                        None
-                    },
-                    notes: None,
-                    capacity: if tag.role == "offers" {
-                        tag.context.clone()
-                    } else {
-                        None
-                    },
-                });
-            }
-            other => {
-                tracing::warn!(role = other, slug = slug.as_str(), "Unknown resource role");
-            }
-        }
+        let (quantity, capacity) = match tag.role {
+            ResourceRole::Requires => (tag.context.clone(), None),
+            ResourceRole::Prefers => (None, None),
+            ResourceRole::Offers => (None, tag.context.clone()),
+        };
+        events = events.add(WorldEvent::ResourceLinked {
+            signal_id: node_id,
+            resource_slug: slug,
+            role: tag.role.to_string(),
+            confidence,
+            quantity,
+            notes: None,
+            capacity,
+        });
     }
 
     // Signal tags via event

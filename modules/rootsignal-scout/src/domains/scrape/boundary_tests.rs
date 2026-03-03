@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::core::extractor::{ExtractionResult, ResourceTag};
+use crate::core::extractor::{ExtractionResult, ResourceRole, ResourceTag};
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::core::aggregate::PipelineState;
 use crate::domains::scrape::activities::{ScrapeOutput, Scraper};
@@ -1037,7 +1037,7 @@ async fn signal_with_resource_needs_gets_resource_edge() {
                 node_id,
                 vec![ResourceTag {
                     slug: "vehicle".to_string(),
-                    role: "requires".to_string(),
+                    role: ResourceRole::Requires,
                     confidence: 0.9,
                     context: Some("pickup truck".to_string()),
                 }],
@@ -3329,7 +3329,7 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
                 node_id,
                 vec![ResourceTag {
                     slug: "clothing".to_string(),
-                    role: "requires".to_string(),
+                    role: ResourceRole::Requires,
                     confidence: 0.2, // below 0.3 threshold
                     context: None,
                 }],
@@ -3384,19 +3384,19 @@ async fn resource_roles_wire_to_correct_edge_types() {
                 vec![
                     ResourceTag {
                         slug: "vehicle".to_string(),
-                        role: "requires".to_string(),
+                        role: ResourceRole::Requires,
                         confidence: 0.9,
                         context: Some("pickup truck".to_string()),
                     },
                     ResourceTag {
                         slug: "bilingual-spanish".to_string(),
-                        role: "prefers".to_string(),
+                        role: ResourceRole::Prefers,
                         confidence: 0.8,
                         context: None,
                     },
                     ResourceTag {
                         slug: "food".to_string(),
-                        role: "offers".to_string(),
+                        role: ResourceRole::Offers,
                         confidence: 0.7,
                         context: Some("hot meals".to_string()),
                     },
@@ -3449,19 +3449,19 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
                 vec![
                     ResourceTag {
                         slug: "clothing".to_string(),
-                        role: "requires".to_string(),
+                        role: ResourceRole::Requires,
                         confidence: 0.9,
                         context: Some("winter coats".to_string()),
                     },
                     ResourceTag {
                         slug: "storage-space".to_string(),
-                        role: "requires".to_string(),
+                        role: ResourceRole::Requires,
                         confidence: 0.8,
                         context: None,
                     },
                     ResourceTag {
                         slug: "vehicle".to_string(),
-                        role: "requires".to_string(),
+                        role: ResourceRole::Requires,
                         confidence: 0.7,
                         context: Some("for delivery".to_string()),
                     },

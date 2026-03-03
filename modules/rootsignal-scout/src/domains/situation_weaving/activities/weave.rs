@@ -11,6 +11,7 @@ use rootsignal_common::{DispatchType, ScoutScope, SensitivityLevel, SituationArc
 use rootsignal_graph::{GraphReader, WeaveCandidate, WeaveSignal};
 
 use crate::infra::embedder::TextEmbedder;
+use crate::infra::util::HAIKU_MODEL;
 
 use super::pure;
 use super::types::{SituationWeaverStats, WeavingResponse};
@@ -77,7 +78,7 @@ pub async fn weave_batch(
         scope,
     );
 
-    let claude = Claude::new(anthropic_api_key, "claude-haiku-4-5-20251001");
+    let claude = Claude::new(anthropic_api_key, HAIKU_MODEL);
     let response: WeavingResponse = claude.extract(pure::SYSTEM_PROMPT, &prompt).await?;
 
     // Process new situations first (so assignments can reference them)

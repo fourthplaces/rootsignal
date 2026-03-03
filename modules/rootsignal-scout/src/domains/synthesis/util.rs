@@ -14,7 +14,7 @@ use rootsignal_graph::GraphReader;
 use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
 use crate::infra::embedder::TextEmbedder;
 
-pub const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+pub use crate::infra::util::HAIKU_MODEL;
 pub const MAX_TOOL_TURNS: usize = 10;
 pub const MAX_FUTURE_QUERIES_PER_TENSION: usize = 3;
 
