@@ -18,6 +18,8 @@ use crate::core::events::PipelinePhase;
 use crate::domains::enrichment::events::{
     all_enrichment_roles, EnrichmentEvent, EnrichmentRole,
 };
+use rootsignal_common::telemetry_events::TelemetryEvent;
+
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_response_scrape_completed(e: &LifecycleEvent) -> bool {
@@ -59,9 +61,17 @@ pub mod handlers {
         let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
+                let mut skip = events![EnrichmentEvent::EnrichmentRoleCompleted {
                     role: EnrichmentRole::ActorExtraction,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped actor extraction: missing region or graph_client".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "enrichment:actor_extraction",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
 
@@ -118,9 +128,17 @@ pub mod handlers {
         let graph_client = match deps.graph_client.as_ref() {
             Some(g) => g,
             None => {
-                return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
+                let mut skip = events![EnrichmentEvent::EnrichmentRoleCompleted {
                     role: EnrichmentRole::Diversity,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped diversity metrics: missing graph_client".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "enrichment:diversity",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
 
@@ -144,9 +162,17 @@ pub mod handlers {
         let graph_client = match deps.graph_client.as_ref() {
             Some(g) => g,
             None => {
-                return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
+                let mut skip = events![EnrichmentEvent::EnrichmentRoleCompleted {
                     role: EnrichmentRole::ActorStats,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped actor stats: missing graph_client".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "enrichment:actor_stats",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
 
@@ -169,10 +195,18 @@ pub mod handlers {
 
         let actors = match deps.store.list_all_actors().await {
             Ok(a) => a,
-            Err(_) => {
-                return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
+            Err(e) => {
+                let mut skip = events![EnrichmentEvent::EnrichmentRoleCompleted {
                     role: EnrichmentRole::ActorLocation,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: format!("Skipped actor location: failed to list actors — {e}"),
+                    context: Some(serde_json::json!({
+                        "handler": "enrichment:actor_location",
+                        "reason": "list_actors_failed",
+                    })),
+                });
+                return Ok(skip);
             }
         };
 
@@ -227,7 +261,15 @@ pub mod handlers {
         let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                return Ok(events![LifecycleEvent::MetricsCompleted]);
+                let mut skip = events![LifecycleEvent::MetricsCompleted];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped source metrics: missing region or graph_client".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "enrichment:metrics",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
         let graph = GraphReader::new(graph_client.clone());

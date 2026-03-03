@@ -18,6 +18,8 @@ use uuid::Uuid;
 use rootsignal_common::events::SystemEvent;
 use rootsignal_graph::GraphReader;
 
+use rootsignal_common::telemetry_events::TelemetryEvent;
+
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
@@ -73,9 +75,23 @@ pub mod handlers {
             || deps.budget.is_none()
             || deps.archive.is_none()
         {
-            return Ok(events![LifecycleEvent::PhaseCompleted {
+            let mut skip = events![LifecycleEvent::PhaseCompleted {
                 phase: PipelinePhase::Synthesis,
-            }]);
+            }];
+            skip.push(TelemetryEvent::SystemLog {
+                message: "Skipped entire synthesis phase: missing deps".into(),
+                context: Some(serde_json::json!({
+                    "handler": "synthesis:trigger",
+                    "reason": "missing_deps",
+                    "missing": {
+                        "region": deps.region.is_none(),
+                        "graph_client": deps.graph_client.is_none(),
+                        "budget": deps.budget.is_none(),
+                        "archive": deps.archive.is_none(),
+                    },
+                })),
+            });
+            return Ok(skip);
         }
 
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
@@ -145,8 +161,14 @@ pub mod handlers {
                 Ok(rm_stats) => info!("{rm_stats}"),
                 Err(e) => warn!(error = %e, "Response mapping failed (non-fatal)"),
             }
-        } else if budget.is_active() {
-            info!("Skipping response mapping (budget exhausted)");
+        } else {
+            out.push(TelemetryEvent::SystemLog {
+                message: "Skipped response mapping: insufficient budget".into(),
+                context: Some(serde_json::json!({
+                    "handler": "synthesis:response_mapping",
+                    "reason": "budget_exhausted",
+                })),
+            });
         }
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
@@ -174,10 +196,18 @@ pub mod handlers {
         let archive = match deps.archive.as_ref() {
             Some(a) => a.clone(),
             None => {
-                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                let mut skip = events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ConcernLinker,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped concern linker: missing archive".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "synthesis:tension_linker",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
 
@@ -197,8 +227,14 @@ pub mod handlers {
             );
             let tl_stats = tl.run(&mut out).await;
             info!("{tl_stats}");
-        } else if budget.is_active() {
-            info!("Skipping tension linker (budget exhausted)");
+        } else {
+            out.push(TelemetryEvent::SystemLog {
+                message: "Skipped concern linker: insufficient budget".into(),
+                context: Some(serde_json::json!({
+                    "handler": "synthesis:tension_linker",
+                    "reason": "budget_exhausted",
+                })),
+            });
         }
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
@@ -226,10 +262,18 @@ pub mod handlers {
         let archive = match deps.archive.as_ref() {
             Some(a) => a.clone(),
             None => {
-                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                let mut skip = events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseFinder,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped response finder: missing archive".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "synthesis:response_finder",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
 
@@ -255,8 +299,14 @@ pub mod handlers {
                     discovered_by: "synthesis".into(),
                 });
             }
-        } else if budget.is_active() {
-            info!("Skipping response finder (budget exhausted)");
+        } else {
+            out.push(TelemetryEvent::SystemLog {
+                message: "Skipped response finder: insufficient budget".into(),
+                context: Some(serde_json::json!({
+                    "handler": "synthesis:response_finder",
+                    "reason": "budget_exhausted",
+                })),
+            });
         }
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
@@ -284,10 +334,18 @@ pub mod handlers {
         let archive = match deps.archive.as_ref() {
             Some(a) => a.clone(),
             None => {
-                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                let mut skip = events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::GatheringFinder,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped gathering finder: missing archive".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "synthesis:gathering_finder",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
 
@@ -314,8 +372,14 @@ pub mod handlers {
                     discovered_by: "synthesis".into(),
                 });
             }
-        } else if budget.is_active() {
-            info!("Skipping gathering finder (budget exhausted)");
+        } else {
+            out.push(TelemetryEvent::SystemLog {
+                message: "Skipped gathering finder: insufficient budget".into(),
+                context: Some(serde_json::json!({
+                    "handler": "synthesis:gathering_finder",
+                    "reason": "budget_exhausted",
+                })),
+            });
         }
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
@@ -343,10 +407,18 @@ pub mod handlers {
         let archive = match deps.archive.as_ref() {
             Some(a) => a.clone(),
             None => {
-                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                let mut skip = events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Investigation,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped investigation: missing archive".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "synthesis:investigation",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
 
@@ -364,8 +436,14 @@ pub mod handlers {
             );
             let inv_stats = investigator.run(&mut out).await;
             info!("{inv_stats}");
-        } else if budget.is_active() {
-            info!("Skipping investigation (budget exhausted)");
+        } else {
+            out.push(TelemetryEvent::SystemLog {
+                message: "Skipped investigation: insufficient budget".into(),
+                context: Some(serde_json::json!({
+                    "handler": "synthesis:investigation",
+                    "reason": "budget_exhausted",
+                })),
+            });
         }
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
@@ -413,7 +491,15 @@ pub mod handlers {
 
         let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
-            _ => return Ok(events![]),
+            _ => {
+                return Ok(events![TelemetryEvent::SystemLog {
+                    message: "Skipped severity inference: missing region or graph_client".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "synthesis:severity_inference",
+                        "reason": "missing_deps",
+                    })),
+                }]);
+            }
         };
 
         let graph = GraphReader::new(graph_client.clone());

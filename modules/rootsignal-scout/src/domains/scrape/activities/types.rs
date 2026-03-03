@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::core::extractor::ResourceTag;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use rootsignal_common::Node;
+use rootsignal_common::telemetry_events::TelemetryEvent;
 use seesaw_core::Events;
 
 pub(crate) use crate::core::embedding_cache::EmbeddingCache;
@@ -119,6 +120,7 @@ pub(crate) enum ScrapeOutcome {
         resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
         signal_tags: Vec<(Uuid, Vec<String>)>,
         author_actors: HashMap<Uuid, String>,
+        logs: Vec<TelemetryEvent>,
     },
     Unchanged,
     Failed,

@@ -882,6 +882,7 @@ impl SignalExtractor for MockExtractor {
                 schedules: result.schedules.clone(),
                 author_actors: result.author_actors.clone(),
                 categories: result.categories.clone(),
+                logs: vec![],
             });
         }
         if let Some(ref default) = self.default_result {
@@ -894,6 +895,7 @@ impl SignalExtractor for MockExtractor {
                 schedules: default.schedules.clone(),
                 author_actors: default.author_actors.clone(),
                 categories: default.categories.clone(),
+                logs: vec![],
             });
         }
         bail!("MockExtractor: no result registered for {source_url}")

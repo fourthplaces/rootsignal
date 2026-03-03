@@ -103,14 +103,8 @@ function formatPayload(raw: string): string {
 function FilterBar({
   layers,
   onToggleLayer,
-  eventTypeFilter,
-  onEventTypeFilterChange,
-  correlationId,
-  onCorrelationIdChange,
-  runId,
-  onRunIdChange,
-  payloadSearch,
-  onPayloadSearchChange,
+  search,
+  onSearchChange,
   timeFrom,
   onTimeFromChange,
   timeTo,
@@ -118,14 +112,8 @@ function FilterBar({
 }: {
   layers: Set<string>;
   onToggleLayer: (layer: string) => void;
-  eventTypeFilter: string;
-  onEventTypeFilterChange: (v: string) => void;
-  correlationId: string;
-  onCorrelationIdChange: (v: string) => void;
-  runId: string;
-  onRunIdChange: (v: string) => void;
-  payloadSearch: string;
-  onPayloadSearchChange: (v: string) => void;
+  search: string;
+  onSearchChange: (v: string) => void;
   timeFrom: string;
   onTimeFromChange: (v: string) => void;
   timeTo: string;
@@ -152,40 +140,13 @@ function FilterBar({
 
       <span className="w-px h-4 bg-border" />
 
-      {/* Payload search */}
+      {/* Universal search */}
       <input
         type="text"
-        placeholder="search payload..."
-        value={payloadSearch}
-        onChange={(e) => onPayloadSearchChange(e.target.value)}
-        className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground placeholder:text-muted-foreground w-48"
-      />
-
-      {/* Event type filter */}
-      <input
-        type="text"
-        placeholder="event_type"
-        value={eventTypeFilter}
-        onChange={(e) => onEventTypeFilterChange(e.target.value)}
-        className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground placeholder:text-muted-foreground w-36"
-      />
-
-      {/* Correlation ID */}
-      <input
-        type="text"
-        placeholder="correlation_id"
-        value={correlationId}
-        onChange={(e) => onCorrelationIdChange(e.target.value)}
-        className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground placeholder:text-muted-foreground w-48"
-      />
-
-      {/* Run ID */}
-      <input
-        type="text"
-        placeholder="run_id"
-        value={runId}
-        onChange={(e) => onRunIdChange(e.target.value)}
-        className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground placeholder:text-muted-foreground w-36"
+        placeholder="search events..."
+        value={search}
+        onChange={(e) => onSearchChange(e.target.value)}
+        className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground placeholder:text-muted-foreground w-64"
       />
 
       <span className="w-px h-4 bg-border" />
@@ -250,7 +211,7 @@ function EventRow({
             className="text-[10px] font-mono text-muted-foreground hover:text-foreground truncate text-left"
             title="Click to expand payload"
           >
-            {compactPayload(event.payload)}
+            {event.summary ?? compactPayload(event.payload)}
           </button>
         </div>
       </button>
@@ -399,7 +360,7 @@ function TreeNode({
           className="mt-0.5 ml-3 text-[10px] font-mono text-muted-foreground hover:text-foreground truncate text-left max-w-full block"
           title="Click to expand payload"
         >
-          {compactPayload(event.payload, 80)}
+          {event.summary ?? compactPayload(event.payload, 80)}
         </button>
         {payloadOpen && (
           <pre className="mt-1 ml-3 p-2 text-[10px] bg-background rounded border border-border overflow-x-auto max-h-48 whitespace-pre-wrap">
@@ -502,22 +463,12 @@ export function EventsPage() {
   const [layers, setLayers] = useState<Set<string>>(
     () => new Set(searchParams.get("layers")?.split(",").filter(Boolean) ?? LAYER_OPTIONS),
   );
-  const [eventTypeFilter, setEventTypeFilter] = useState(searchParams.get("type") ?? "");
-  const [correlationId, setCorrelationId] = useState(searchParams.get("corr") ?? "");
-  const [runId, setRunId] = useState(searchParams.get("run") ?? "");
+  const [search, setSearch] = useState(searchParams.get("q") ?? "");
   const [timeFrom, setTimeFrom] = useState(searchParams.get("from") ?? "");
   const [timeTo, setTimeTo] = useState(searchParams.get("to") ?? "");
-  const [payloadSearch, setPayloadSearch] = useState(searchParams.get("q") ?? "");
-  const [debouncedPayloadSearch, setDebouncedPayloadSearch] = useState(payloadSearch);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(
     searchParams.get("seq") ? Number(searchParams.get("seq")) : null,
   );
-
-  // Debounce payload search input (300ms)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedPayloadSearch(payloadSearch), 300);
-    return () => clearTimeout(timer);
-  }, [payloadSearch]);
 
   // Accumulated events for infinite scroll
   const [allEvents, setAllEvents] = useState<AdminEvent[]>([]);
@@ -530,10 +481,7 @@ export function EventsPage() {
     const params: Record<string, string> = {};
     const layersStr = [...layers].sort().join(",");
     if (layersStr !== "system,telemetry,world") params.layers = layersStr;
-    if (eventTypeFilter) params.type = eventTypeFilter;
-    if (correlationId) params.corr = correlationId;
-    if (runId) params.run = runId;
-    if (payloadSearch) params.q = payloadSearch;
+    if (search) params.q = search;
     if (timeFrom) params.from = timeFrom;
     if (timeTo) params.to = timeTo;
     if (selectedSeq != null) params.seq = String(selectedSeq);
@@ -542,28 +490,17 @@ export function EventsPage() {
       lastParamsRef.current = serialized;
       setSearchParams(params, { replace: true });
     }
-  }, [layers, eventTypeFilter, correlationId, runId, payloadSearch, timeFrom, timeTo, selectedSeq, setSearchParams]);
-
-  // Build event_types filter from text input (matches against codec name in event_type column)
-  const eventTypes = useMemo(() => {
-    if (eventTypeFilter.trim()) {
-      return eventTypeFilter.split(",").map((s) => s.trim()).filter(Boolean);
-    }
-    return undefined;
-  }, [eventTypeFilter]);
+  }, [layers, search, timeFrom, timeTo, selectedSeq, setSearchParams]);
 
   const queryVars = useMemo(
     () => ({
       limit: 50,
       cursor: cursor ?? undefined,
-      eventTypes,
-      runId: runId || undefined,
-      correlationId: correlationId || undefined,
+      search: search || undefined,
       from: timeFrom ? new Date(timeFrom).toISOString() : undefined,
       to: timeTo ? new Date(timeTo + "T23:59:59").toISOString() : undefined,
-      payloadSearch: debouncedPayloadSearch || undefined,
     }),
-    [cursor, eventTypes, runId, correlationId, timeFrom, timeTo, debouncedPayloadSearch],
+    [cursor, search, timeFrom, timeTo],
   );
 
   const { data, loading } = useQuery<{ adminEvents: AdminEventsPage }>(ADMIN_EVENTS, {
@@ -573,8 +510,8 @@ export function EventsPage() {
 
   // When filters change (but not cursor), reset accumulated events
   const filterKey = useMemo(
-    () => JSON.stringify({ eventTypes, runId, correlationId, timeFrom, timeTo, debouncedPayloadSearch }),
-    [eventTypes, runId, correlationId, timeFrom, timeTo, debouncedPayloadSearch],
+    () => JSON.stringify({ search, timeFrom, timeTo }),
+    [search, timeFrom, timeTo],
   );
   const prevFilterKeyRef = useRef(filterKey);
   useEffect(() => {
@@ -648,14 +585,8 @@ export function EventsPage() {
             <FilterBar
               layers={layers}
               onToggleLayer={toggleLayer}
-              eventTypeFilter={eventTypeFilter}
-              onEventTypeFilterChange={setEventTypeFilter}
-              correlationId={correlationId}
-              onCorrelationIdChange={setCorrelationId}
-              runId={runId}
-              onRunIdChange={setRunId}
-              payloadSearch={payloadSearch}
-              onPayloadSearchChange={setPayloadSearch}
+              search={search}
+              onSearchChange={setSearch}
               timeFrom={timeFrom}
               onTimeFromChange={setTimeFrom}
               timeTo={timeTo}

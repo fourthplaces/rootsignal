@@ -12,6 +12,8 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::expansion::activities::expansion::Expansion;
+use rootsignal_common::telemetry_events::TelemetryEvent;
+
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::Scraper;
 
@@ -39,9 +41,17 @@ pub mod handlers {
         ) {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
-                return Ok(events![LifecycleEvent::PhaseCompleted {
+                let mut skip = events![LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::SignalExpansion,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped signal expansion: missing region, graph_client, or budget".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "expansion:signal_expansion",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
         let graph = GraphReader::new(graph_client.clone());

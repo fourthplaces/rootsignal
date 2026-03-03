@@ -14,8 +14,11 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
+use crate::domains::enrichment::activities::domain_filter;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 use crate::domains::discovery::activities::{bootstrap, discover_expansion_sources};
+use rootsignal_common::telemetry_events::TelemetryEvent;
+
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_engine_started(e: &LifecycleEvent) -> bool {
@@ -64,7 +67,35 @@ pub mod handlers {
         if state.collected_links.is_empty() {
             return Ok(events![]);
         }
+        let deps = ctx.deps();
         let links = state.collected_links.clone();
+
+        // Filter out irrelevant domains (SaaS, e-commerce, SEO spam, etc.) via LLM.
+        // Fail-open: if api key or region is missing, skip filtering.
+        let links = match (deps.anthropic_api_key.as_deref(), deps.region.as_ref()) {
+            (Some(api_key), Some(region)) => {
+                let urls: Vec<String> = links.iter().map(|l| l.url.clone()).collect();
+                let accepted = domain_filter::filter_domains_batch(
+                    &urls,
+                    &region.name,
+                    api_key,
+                    &*deps.store,
+                )
+                .await;
+                let accepted_set: std::collections::HashSet<&str> =
+                    accepted.iter().map(|u| u.as_str()).collect();
+                let filtered: Vec<_> = links
+                    .into_iter()
+                    .filter(|l| accepted_set.contains(l.url.as_str()))
+                    .collect();
+                let rejected = urls.len() - filtered.len();
+                if rejected > 0 {
+                    info!(rejected, accepted = filtered.len(), "Domain filter applied to collected links");
+                }
+                filtered
+            }
+            _ => links,
+        };
 
         let promoted = link_promoter::promote_links(&links, &PromotionConfig::default());
         if promoted.is_empty() {
@@ -99,9 +130,17 @@ pub mod handlers {
         ) {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
-                return Ok(events![LifecycleEvent::PhaseCompleted {
+                let mut skip = events![LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::SourceExpansion,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped source expansion: missing region, graph_client, or budget".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "discovery:source_expansion",
+                        "reason": "missing_deps",
+                    })),
+                });
+                return Ok(skip);
             }
         };
         let graph = GraphReader::new(graph_client.clone());

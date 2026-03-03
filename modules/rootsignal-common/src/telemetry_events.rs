@@ -88,6 +88,12 @@ pub enum TelemetryEvent {
         created_task_ids: Vec<Uuid>,
         consumed_demand_ids: Vec<Uuid>,
     },
+
+    SystemLog {
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<serde_json::Value>,
+    },
 }
 
 impl Eventlike for TelemetryEvent {
@@ -106,6 +112,7 @@ impl Eventlike for TelemetryEvent {
             TelemetryEvent::AgentFutureQuery { .. } => "agent_future_query",
             TelemetryEvent::PinsRemoved { .. } => "pins_removed",
             TelemetryEvent::DemandAggregated { .. } => "demand_aggregated",
+            TelemetryEvent::SystemLog { .. } => "system_log",
         }
     }
 

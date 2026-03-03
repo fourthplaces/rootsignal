@@ -11,6 +11,7 @@ use rootsignal_common::{
     Node, NodeMeta, AnnouncementNode, ReviewStatus, ScheduleNode, SensitivityLevel, Severity,
     ConcernNode, Urgency,
 };
+use rootsignal_common::telemetry_events::TelemetryEvent;
 use serde::de;
 
 use crate::infra::util::HAIKU_MODEL;
@@ -228,6 +229,8 @@ pub struct ExtractionResult {
     /// Category classifications paired with the signal node UUID.
     /// Emitted as CategoryClassified system events by the caller.
     pub categories: Vec<(Uuid, String)>,
+    /// SystemLog breadcrumbs from the extraction process.
+    pub logs: Vec<TelemetryEvent>,
 }
 
 // --- SignalExtractor trait ---
@@ -294,12 +297,31 @@ impl Extractor {
             "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
         );
 
+        let original_len = content.len();
         let response: ExtractionResponse = self
             .claude
             .extract(&self.system_prompt, &user_prompt)
             .await?;
 
-        Ok(Self::convert_signals(response, source_url))
+        let mut result = Self::convert_signals(response, source_url);
+        result.logs.push(TelemetryEvent::SystemLog {
+            message: format!(
+                "LLM extraction: {} chars → {} signals, {} rejected from {}",
+                original_len,
+                result.nodes.len(),
+                result.rejected.len(),
+                source_url,
+            ),
+            context: Some(serde_json::json!({
+                "activity": "extractor",
+                "source_url": source_url,
+                "content_chars": original_len,
+                "signals_extracted": result.nodes.len(),
+                "signals_rejected": result.rejected.len(),
+                "implied_queries": result.implied_queries.len(),
+            })),
+        });
+        Ok(result)
     }
 
     /// Convert raw LLM extraction output into typed domain nodes.
@@ -659,6 +681,7 @@ impl Extractor {
             schedules,
             author_actors,
             categories,
+            logs: vec![],
         }
     }
 }
@@ -1189,6 +1212,7 @@ mod tests {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            logs: vec![],
         };
         assert_eq!(result.implied_queries.len(), 2);
     }

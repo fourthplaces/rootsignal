@@ -11,6 +11,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use rootsignal_common::system_events::SystemEvent;
+use rootsignal_common::telemetry_events::TelemetryEvent;
 use rootsignal_graph::GraphReader;
 
 use crate::infra::util::HAIKU_MODEL;
@@ -75,6 +76,8 @@ pub async fn map_responses(
             continue;
         };
 
+        let mut verified = 0u32;
+        let checked = candidates.len().min(5) as u32;
         for (candidate_id, candidate_similarity) in candidates.iter().take(5) {
             let candidate_info = graph.get_signal_info(*candidate_id).await?;
             let Some((candidate_title, candidate_summary)) = candidate_info else {
@@ -99,6 +102,7 @@ pub async fn map_responses(
                         source_url: None,
                     });
                     stats.edges_created += 1;
+                    verified += 1;
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -106,6 +110,19 @@ pub async fn map_responses(
                 }
             }
         }
+
+        events.push(TelemetryEvent::SystemLog {
+            message: format!(
+                "LLM response mapping: \"{}\" — {}/{} candidates matched",
+                tension_title, verified, checked,
+            ),
+            context: Some(serde_json::json!({
+                "activity": "response_mapper",
+                "concern_id": concern_id.to_string(),
+                "candidates_checked": checked,
+                "candidates_matched": verified,
+            })),
+        });
     }
 
     info!(

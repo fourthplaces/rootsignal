@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
+use rootsignal_common::telemetry_events::TelemetryEvent;
 use rootsignal_graph::GraphStore;
 
 use crate::core::engine::ScoutEngineDeps;
@@ -20,6 +21,19 @@ pub async fn scan_news(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
         (Some(a), Some(k), Some(g), Some(b)) => (a, k, g, b),
         _ => {
             warn!("News scan skipped: missing archive, api_key, graph_client, or budget");
+            events.push(TelemetryEvent::SystemLog {
+                message: "Skipped news scan: missing archive, api_key, graph_client, or budget".into(),
+                context: Some(serde_json::json!({
+                    "handler": "news_scanning:scan_news",
+                    "reason": "missing_deps",
+                    "missing": {
+                        "archive": deps.archive.is_none(),
+                        "api_key": deps.anthropic_api_key.is_none(),
+                        "graph_client": deps.graph_client.is_none(),
+                        "budget": deps.budget.is_none(),
+                    },
+                })),
+            });
             return;
         }
     };

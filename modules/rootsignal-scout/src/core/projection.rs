@@ -15,6 +15,7 @@ use rootsignal_graph::GraphProjector;
 use seesaw_core::{events, on_any, AnyEvent, Context, Events, Handler};
 
 use rootsignal_common::events::{Event, Eventlike, SystemEvent, WorldEvent};
+use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::discovery::events::DiscoveryEvent;
@@ -122,6 +123,23 @@ pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
                     _ => {}
                 }
 
+                Ok(events![])
+            }
+        })
+}
+
+/// Priority-2 handler: print SystemLog events to stdout via tracing.
+pub fn system_log_handler() -> Handler<ScoutEngineDeps> {
+    on_any()
+        .id("system_log_stdout")
+        .priority(2)
+        .then(move |event: AnyEvent, _ctx: Context<ScoutEngineDeps>| {
+            async move {
+                if let Some(TelemetryEvent::SystemLog { message, .. }) =
+                    event.downcast_ref::<TelemetryEvent>()
+                {
+                    tracing::info!(target: "system_log", "{}", message);
+                }
                 Ok(events![])
             }
         })

@@ -26,6 +26,8 @@ use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::Scraper;
 use crate::domains::scrape::activities::StatsDelta;
+use rootsignal_common::telemetry_events::TelemetryEvent;
+
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
 fn is_sources_scheduled(e: &LifecycleEvent) -> bool {
@@ -389,9 +391,21 @@ pub mod handlers {
         let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                return Ok(events![LifecycleEvent::PhaseCompleted {
+                let mut skip = events![LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::ResponseScrape,
-                }]);
+                }];
+                skip.push(TelemetryEvent::SystemLog {
+                    message: "Skipped response scrape resolve: missing region or graph_client".into(),
+                    context: Some(serde_json::json!({
+                        "handler": "scrape:resolve_response",
+                        "reason": "missing_deps",
+                        "missing": {
+                            "region": deps.region.is_none(),
+                            "graph_client": deps.graph_client.is_none(),
+                        },
+                    })),
+                });
+                return Ok(skip);
             }
         };
         let graph = GraphReader::new(graph_client.clone());

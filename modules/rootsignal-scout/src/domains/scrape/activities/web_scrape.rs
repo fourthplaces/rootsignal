@@ -141,6 +141,7 @@ impl Scraper {
                             resource_tags: result.resource_tags,
                             signal_tags: result.signal_tags,
                             author_actors: result.author_actors.into_iter().collect(),
+                            logs: result.logs,
                         },
                         page_links,
                     ),
@@ -178,6 +179,7 @@ impl Scraper {
                     resource_tags,
                     signal_tags,
                     author_actors,
+                    logs,
                 } => {
                     result.stats.urls_scraped += 1;
 
@@ -223,6 +225,9 @@ impl Scraper {
                         result.source_signal_counts.entry(ck).or_default();
                     }
                     result.events.extend(events);
+                    for log in logs {
+                        result.events.push(log);
+                    }
                 }
                 ScrapeOutcome::Unchanged => {
                     result.stats.urls_unchanged += 1;

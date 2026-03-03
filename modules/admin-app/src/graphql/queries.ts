@@ -740,22 +740,16 @@ export const ADMIN_EVENTS = gql`
   query AdminEvents(
     $limit: Int!
     $cursor: Int
-    $eventTypes: [String!]
-    $runId: String
-    $correlationId: String
+    $search: String
     $from: DateTime
     $to: DateTime
-    $payloadSearch: String
   ) {
     adminEvents(
       limit: $limit
       cursor: $cursor
-      eventTypes: $eventTypes
-      runId: $runId
-      correlationId: $correlationId
+      search: $search
       from: $from
       to: $to
-      payloadSearch: $payloadSearch
     ) {
       events {
         seq

@@ -164,6 +164,7 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
 
     // scout_runs table maintenance (INSERT on EngineStarted, UPDATE on RunCompleted)
     engine = engine.with_handler(projection::scout_runs_handler());
+    engine = engine.with_handler(projection::system_log_handler());
 
     if let Some(store) = snapshot_store {
         engine = engine.with_snapshot_store(store).snapshot_every(100);
@@ -245,6 +246,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
 
     // scout_runs table maintenance (INSERT on EngineStarted, UPDATE on RunCompleted)
     engine = engine.with_handler(projection::scout_runs_handler());
+    engine = engine.with_handler(projection::system_log_handler());
 
     if let Some(store) = snapshot_store {
         engine = engine.with_snapshot_store(store).snapshot_every(100);
@@ -286,6 +288,7 @@ pub fn build_infra_only_engine(pg_pool: PgPool, graph_client: GraphClient) -> Se
         }))
         .with_handler(projection::neo4j_projection_handler(projector))
         .with_handler(projection::scout_runs_handler())
+        .with_handler(projection::system_log_handler())
 }
 
 /// Build a news-scan engine: NewsScanRequested → scan RSS → BeaconDetected.
@@ -338,6 +341,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps) -> SeesawEngine {
 
     // scout_runs table maintenance (INSERT on EngineStarted, UPDATE on RunCompleted)
     engine = engine.with_handler(projection::scout_runs_handler());
+    engine = engine.with_handler(projection::system_log_handler());
 
     if let Some(store) = snapshot_store {
         engine = engine.with_snapshot_store(store).snapshot_every(100);

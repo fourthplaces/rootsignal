@@ -179,13 +179,10 @@ pub async fn list_events_by_node_id(
 /// Paginated reverse-chronological event listing with optional filters.
 pub async fn list_events_paginated(
     pool: &PgPool,
-    event_types: Option<&[String]>,
-    run_id: Option<&str>,
-    correlation_id: Option<Uuid>,
+    search: Option<&str>,
     cursor: Option<i64>,
     from: Option<DateTime<Utc>>,
     to: Option<DateTime<Utc>>,
-    payload_search: Option<&str>,
     limit: i64,
 ) -> Result<Vec<EventRowFull>> {
     let limit = limit.min(200);
@@ -195,24 +192,22 @@ pub async fn list_events_paginated(
         SELECT seq, ts, event_type, payload AS data, id, parent_id,
                run_id, correlation_id, parent_seq
         FROM events
-        WHERE ($1::text[] IS NULL OR event_type = ANY($1))
-          AND ($2::text IS NULL OR run_id = $2)
-          AND ($3::uuid IS NULL OR correlation_id = $3)
-          AND ($4::bigint IS NULL OR seq < $4)
-          AND ($5::timestamptz IS NULL OR ts >= $5)
-          AND ($6::timestamptz IS NULL OR ts <= $6)
-          AND ($7::text IS NULL OR payload::text ILIKE '%' || $7 || '%')
+        WHERE ($1::bigint IS NULL OR seq < $1)
+          AND ($2::timestamptz IS NULL OR ts >= $2)
+          AND ($3::timestamptz IS NULL OR ts <= $3)
+          AND ($4::text IS NULL
+               OR payload::text ILIKE '%' || $4 || '%'
+               OR event_type ILIKE '%' || $4 || '%'
+               OR run_id ILIKE '%' || $4 || '%'
+               OR correlation_id::text ILIKE '%' || $4 || '%')
         ORDER BY seq DESC
-        LIMIT $8
+        LIMIT $5
         "#,
     )
-    .bind(event_types)
-    .bind(run_id)
-    .bind(correlation_id)
     .bind(cursor)
     .bind(from)
     .bind(to)
-    .bind(payload_search)
+    .bind(search)
     .bind(limit)
     .fetch_all(pool)
     .await?;

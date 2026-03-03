@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_REGION_SOURCES } from "@/graphql/queries";
@@ -22,7 +22,7 @@ type Source = {
 type SortKey = keyof Source;
 type SortDir = "asc" | "desc";
 
-const PAGE_SIZES = [25, 50, 100] as const;
+const PAGE_SIZE_INCREMENT = 50;
 
 const formatDate = (d: string | null) => {
   if (!d) return "Never";
@@ -324,6 +324,7 @@ export function SourcesPage() {
 
   // Filter
   const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>("signalsProduced");
@@ -333,9 +334,9 @@ export function SourcesPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
 
-  // Pagination
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState<number>(50);
+  // Infinite scroll
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE_INCREMENT);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Dialogs
   const [dialog, setDialog] = useState<{
@@ -350,13 +351,22 @@ export function SourcesPage() {
       setSortKey(key);
       setSortDir("desc");
     }
-    setPage(0);
+    setVisibleCount(PAGE_SIZE_INCREMENT);
   };
 
   const filtered = useMemo(() => {
     let list = [...sources];
     if (activeFilter === "active") list = list.filter((s) => s.active);
     if (activeFilter === "inactive") list = list.filter((s) => !s.active);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((s) =>
+        s.canonicalValue.toLowerCase().includes(q) ||
+        s.url.toLowerCase().includes(q) ||
+        s.sourceLabel.toLowerCase().includes(q) ||
+        s.discoveryMethod.toLowerCase().includes(q),
+      );
+    }
     list.sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
@@ -375,30 +385,44 @@ export function SourcesPage() {
       return 0;
     });
     return list;
-  }, [sources, activeFilter, sortKey, sortDir]);
+  }, [sources, activeFilter, searchQuery, sortKey, sortDir]);
 
-  // Pagination derived
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePageIndex = Math.min(page, totalPages - 1);
-  const pageStart = safePageIndex * pageSize;
-  const pageSlice = filtered.slice(pageStart, pageStart + pageSize);
+  // Visible slice
+  const visibleSlice = filtered.slice(0, visibleCount);
+  const hasMore = visibleCount < filtered.length;
 
-  // IDs on current page (for select-all)
-  const pageIds = useMemo(() => new Set(pageSlice.map((s) => s.id)), [pageSlice]);
-  const allPageSelected = pageSlice.length > 0 && pageSlice.every((s) => selected.has(s.id));
-  const somePageSelected = pageSlice.some((s) => selected.has(s.id));
+  // IntersectionObserver for infinite scroll
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasMore) {
+          setVisibleCount((prev) => prev + PAGE_SIZE_INCREMENT);
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore]);
+
+  // IDs on visible rows (for select-all)
+  const visibleIds = useMemo(() => new Set(visibleSlice.map((s) => s.id)), [visibleSlice]);
+  const allPageSelected = visibleSlice.length > 0 && visibleSlice.every((s) => selected.has(s.id));
+  const somePageSelected = visibleSlice.some((s) => selected.has(s.id));
 
   const toggleSelectAll = useCallback(() => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (allPageSelected) {
-        pageIds.forEach((id) => next.delete(id));
+        visibleIds.forEach((id) => next.delete(id));
       } else {
-        pageIds.forEach((id) => next.add(id));
+        visibleIds.forEach((id) => next.add(id));
       }
       return next;
     });
-  }, [allPageSelected, pageIds]);
+  }, [allPageSelected, visibleIds]);
 
   const toggleSelect = useCallback((id: string, checked: boolean) => {
     setSelected((prev) => {
@@ -528,11 +552,19 @@ export function SourcesPage() {
       )}
 
       {/* Filter */}
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => { setSearchQuery(e.target.value); setVisibleCount(PAGE_SIZE_INCREMENT); }}
+          placeholder="Search sources..."
+          className="px-3 py-1.5 rounded-md border border-input bg-background text-sm w-64"
+        />
+        <div className="h-4 w-px bg-border" />
         {(["all", "active", "inactive"] as const).map((f) => (
           <button
             key={f}
-            onClick={() => { setActiveFilter(f); setPage(0); }}
+            onClick={() => { setActiveFilter(f); setVisibleCount(PAGE_SIZE_INCREMENT); }}
             className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
               activeFilter === f
                 ? "bg-accent text-accent-foreground"
@@ -596,7 +628,7 @@ export function SourcesPage() {
                 </tr>
               </thead>
               <tbody>
-                {pageSlice.map((s) => (
+                {visibleSlice.map((s) => (
                   <SourceRow
                     key={s.id}
                     source={s}
@@ -610,55 +642,11 @@ export function SourcesPage() {
             </table>
           </div>
 
-          {/* Pagination */}
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <span>
-                {pageStart + 1}–{Math.min(pageStart + pageSize, filtered.length)} of {filtered.length}
-              </span>
-              <select
-                value={pageSize}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
-                className="px-2 py-1 rounded border border-input bg-background text-sm"
-              >
-                {PAGE_SIZES.map((s) => (
-                  <option key={s} value={s}>{s} / page</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setPage(0)}
-                disabled={safePageIndex === 0}
-                className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-30"
-              >
-                First
-              </button>
-              <button
-                onClick={() => setPage(safePageIndex - 1)}
-                disabled={safePageIndex === 0}
-                className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-30"
-              >
-                Prev
-              </button>
-              <span className="px-2 text-muted-foreground">
-                Page {safePageIndex + 1} of {totalPages}
-              </span>
-              <button
-                onClick={() => setPage(safePageIndex + 1)}
-                disabled={safePageIndex >= totalPages - 1}
-                className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-30"
-              >
-                Next
-              </button>
-              <button
-                onClick={() => setPage(totalPages - 1)}
-                disabled={safePageIndex >= totalPages - 1}
-                className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-30"
-              >
-                Last
-              </button>
-            </div>
+          {/* Infinite scroll sentinel + count */}
+          <div ref={sentinelRef} className="flex items-center justify-center py-2 text-sm text-muted-foreground">
+            {hasMore
+              ? `Showing ${visibleSlice.length} of ${filtered.length}`
+              : `${filtered.length} sources`}
           </div>
         </>
       )}
