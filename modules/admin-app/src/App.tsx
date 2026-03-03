@@ -14,7 +14,7 @@ import { ArchivePage } from "@/pages/ArchivePage";
 import { SourcesPage } from "@/pages/SourcesPage";
 import { SourceDetailPage } from "@/pages/SourceDetailPage";
 import { GraphExplorerPage } from "@/pages/GraphExplorerPage";
-import { EventsPage } from "@/pages/EventsPage";
+import { EventsPage } from "@/pages/events/EventsPage";
 import { DanglingSignalsPage } from "@/pages/DanglingSignalsPage";
 
 export default function App() {
