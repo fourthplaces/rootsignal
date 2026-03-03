@@ -176,6 +176,23 @@ pub async fn list_events_by_node_id(
     Ok(rows.into_iter().map(row_to_event).collect())
 }
 
+/// Load a single event by its exact sequence number.
+pub async fn get_event_by_seq(pool: &PgPool, seq: i64) -> Result<Option<EventRowFull>> {
+    let row = sqlx::query(
+        r#"
+        SELECT seq, ts, event_type, payload AS data, id, parent_id,
+               run_id, correlation_id, parent_seq
+        FROM events
+        WHERE seq = $1
+        "#,
+    )
+    .bind(seq)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(row_to_event_full))
+}
+
 /// Paginated reverse-chronological event listing with optional filters.
 pub async fn list_events_paginated(
     pool: &PgPool,
@@ -245,6 +262,394 @@ pub async fn causal_tree(pool: &PgPool, seq: i64) -> Result<(Vec<EventRowFull>, 
 // ---------------------------------------------------------------------------
 // Internal
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// JSON helpers (shared by graphql::schema and investigate)
+// ---------------------------------------------------------------------------
+
+pub(crate) fn json_str(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|v| v.as_str()).map(String::from)
+}
+
+pub(crate) fn json_u32(v: &serde_json::Value, key: &str) -> Option<u32> {
+    v.get(key).and_then(|v| v.as_u64()).map(|n| n as u32)
+}
+
+pub(crate) fn json_u64(v: &serde_json::Value, key: &str) -> Option<u64> {
+    v.get(key).and_then(|v| v.as_u64())
+}
+
+pub(crate) fn json_f64(v: &serde_json::Value, key: &str) -> Option<f64> {
+    v.get(key).and_then(|v| v.as_f64())
+}
+
+/// Classify by the codec name stored in event_type (e.g. "WorldEvent", "ScrapeEvent").
+pub(crate) fn event_layer(event_type: &str) -> &'static str {
+    match event_type {
+        "WorldEvent" => "world",
+        "SystemEvent" | "EnrichmentEvent" | "SignalEvent"
+        | "SynthesisEvent" | "DiscoveryEvent" => "system",
+        _ => "telemetry",
+    }
+}
+
+pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Option<String> {
+    match variant_name {
+        // ── Telemetry ──────────────────────────────────────────────
+        "system_log" => json_str(data, "message"),
+        "url_scraped" => {
+            let url = json_str(data, "url")?;
+            let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            if success {
+                let bytes = json_u64(data, "content_bytes").unwrap_or(0);
+                Some(format!("\"{url}\" {bytes}B"))
+            } else {
+                Some(format!("FAIL \"{url}\""))
+            }
+        }
+        "feed_scraped" => {
+            let url = json_str(data, "url")?;
+            let items = json_u32(data, "items").unwrap_or(0);
+            Some(format!("\"{url}\" {items} items"))
+        }
+        "social_scraped" => {
+            let platform = json_str(data, "platform")?;
+            let id = json_str(data, "identifier").unwrap_or_default();
+            let count = json_u32(data, "post_count").unwrap_or(0);
+            Some(format!("{platform}:{id} {count} posts"))
+        }
+        "social_topics_searched" => {
+            let platform = json_str(data, "platform")?;
+            let found = json_u32(data, "posts_found").unwrap_or(0);
+            Some(format!("{platform} {found} posts"))
+        }
+        "search_performed" => {
+            let query = json_str(data, "query")?;
+            let count = json_u32(data, "result_count").unwrap_or(0);
+            let provider = json_str(data, "provider").unwrap_or_default();
+            Some(format!("\"{query}\" → {count} results ({provider})"))
+        }
+        "llm_extraction_completed" => {
+            let url = json_str(data, "source_url")?;
+            let n = json_u32(data, "entities_extracted").unwrap_or(0);
+            Some(format!("\"{url}\" {n} signals"))
+        }
+        "budget_checkpoint" => {
+            let spent = json_u64(data, "spent_cents").unwrap_or(0);
+            let remaining = json_u64(data, "remaining_cents").unwrap_or(0);
+            Some(format!("spent {spent}¢, {remaining}¢ left"))
+        }
+        "bootstrap_completed" => {
+            let n = json_u64(data, "sources_created").unwrap_or(0);
+            Some(format!("{n} sources created"))
+        }
+        "agent_web_searched" => {
+            let query = json_str(data, "query")?;
+            let count = json_u32(data, "result_count").unwrap_or(0);
+            Some(format!("\"{query}\" → {count} results"))
+        }
+        "agent_page_read" => {
+            let url = json_str(data, "url")?;
+            let chars = json_u64(data, "content_chars").unwrap_or(0);
+            Some(format!("\"{url}\" {chars} chars"))
+        }
+        "agent_future_query" => json_str(data, "query").map(|q| format!("\"{q}\"")),
+        "pins_removed" => {
+            let ids = data.get("pin_ids").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("{ids} pins"))
+        }
+        "demand_aggregated" => {
+            let tasks = data.get("created_task_ids").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("{tasks} tasks created"))
+        }
+
+        // ── Lifecycle ──────────────────────────────────────────────
+        "phase_started" | "phase_completed" => json_str(data, "phase"),
+        "engine_started" => json_str(data, "run_id").map(|id| format!("run {id}")),
+        "run_completed" => {
+            let stats = data.get("stats").unwrap_or(data);
+            let scraped = json_u32(stats, "urls_scraped").unwrap_or(0);
+            let stored = json_u32(stats, "signals_stored").unwrap_or(0);
+            let dedup = json_u32(stats, "signals_deduplicated").unwrap_or(0);
+            Some(format!("{scraped} scraped, {stored} stored, {dedup} deduped"))
+        }
+        "sources_scheduled" => {
+            let t = json_u32(data, "tension_count").unwrap_or(0);
+            let r = json_u32(data, "response_count").unwrap_or(0);
+            Some(format!("{t} tension, {r} response"))
+        }
+        "metrics_completed" | "news_scan_requested" => None,
+
+        // ── Scrape domain ──────────────────────────────────────────
+        "content_fetched" => json_str(data, "url").map(|u| format!("\"{u}\"")),
+        "content_unchanged" => json_str(data, "url").map(|u| format!("\"{u}\" (unchanged)")),
+        "content_fetch_failed" => {
+            let url = json_str(data, "url").unwrap_or_default();
+            let err = json_str(data, "error").unwrap_or_default();
+            Some(format!("FAIL \"{url}\": {err}"))
+        }
+        "extraction_failed" => {
+            let url = json_str(data, "url").unwrap_or_default();
+            let err = json_str(data, "error").unwrap_or_default();
+            Some(format!("FAIL \"{url}\": {err}"))
+        }
+        "social_posts_fetched" => {
+            let platform = json_str(data, "platform").unwrap_or_default();
+            let count = json_u32(data, "count").unwrap_or(0);
+            Some(format!("{platform} {count} posts"))
+        }
+        "web_urls_resolved" => {
+            let role = json_str(data, "role").unwrap_or_default();
+            let count = data.get("urls").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("{role}: {count} urls"))
+        }
+        "scrape_role_completed" => {
+            let role = json_str(data, "role").unwrap_or_default();
+            let scraped = json_u32(data, "urls_scraped").unwrap_or(0);
+            let unchanged = json_u32(data, "urls_unchanged").unwrap_or(0);
+            let failed = json_u32(data, "urls_failed").unwrap_or(0);
+            let signals = json_u32(data, "signals_extracted").unwrap_or(0);
+            Some(format!("{role}: {scraped} scraped, {unchanged} unchanged, {failed} failed, {signals} signals"))
+        }
+
+        // ── Signal domain ──────────────────────────────────────────
+        // Note: both ScrapeEvent::SignalsExtracted and SignalEvent::SignalsExtracted
+        // serialize as "signals_extracted" — same formatter works for both.
+        "signals_extracted" => {
+            let url = json_str(data, "url")?;
+            let count = json_u32(data, "count").unwrap_or(0);
+            Some(format!("\"{url}\" {count} signals"))
+        }
+        "new_signal_accepted" => {
+            let title = json_str(data, "title")?;
+            let nt = json_str(data, "node_type").unwrap_or_default();
+            Some(format!("\"{title}\" ({nt})"))
+        }
+        "cross_source_match_detected" | "same_source_reencountered" => {
+            let nt = json_str(data, "node_type").unwrap_or_default();
+            let sim = json_f64(data, "similarity").map(|s| format!("{:.0}%", s * 100.0)).unwrap_or_default();
+            Some(format!("{nt} ~{sim}"))
+        }
+        "dedup_completed" => json_str(data, "url").map(|u| format!("\"{u}\"")),
+        "signal_created" => {
+            let nt = json_str(data, "node_type").unwrap_or_default();
+            let key = json_str(data, "canonical_key").unwrap_or_default();
+            Some(format!("{nt} from {key}"))
+        }
+        "url_processed" => {
+            let url = json_str(data, "url")?;
+            let created = json_u32(data, "signals_created").unwrap_or(0);
+            let dedup = json_u32(data, "signals_deduplicated").unwrap_or(0);
+            Some(format!("\"{url}\" {created} created, {dedup} deduped"))
+        }
+
+        // ── Discovery domain ───────────────────────────────────────
+        "source_discovered" => {
+            let src = data.get("source");
+            let key = src.and_then(|s| s.get("canonical_key")).and_then(|v| v.as_str()).unwrap_or("?");
+            let url = src.and_then(|s| s.get("url")).and_then(|v| v.as_str());
+            let method = src.and_then(|s| s.get("discovery_method")).and_then(|v| v.as_str()).unwrap_or("");
+            let gap = src.and_then(|s| s.get("gap_context")).and_then(|v| v.as_str());
+            let link = url.unwrap_or(key);
+            match gap {
+                Some(g) => Some(format!("{link} via {method} ({g})")),
+                None => Some(format!("{link} via {method}")),
+            }
+        }
+        "links_promoted" => json_u32(data, "count").map(|n| format!("{n} links")),
+        "expansion_query_collected" => json_str(data, "query").map(|q| format!("\"{q}\"")),
+        "social_topic_collected" => json_str(data, "topic").map(|t| format!("\"{t}\"")),
+
+        // ── Enrichment domain ──────────────────────────────────────
+        "enrichment_role_completed" => json_str(data, "role"),
+
+        // ── World events (signal creation) ─────────────────────────
+        "gathering_announced" | "resource_offered" | "help_requested"
+        | "announcement_shared" | "concern_raised" | "condition_observed" => {
+            json_str(data, "title")
+        }
+        "citation_published" => {
+            let url = json_str(data, "url")?;
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            Some(format!("\"{url}\" for signal {sid}"))
+        }
+        "gathering_cancelled" | "resource_depleted" | "announcement_retracted" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("signal {sid}: {reason}"))
+        }
+        "citation_retracted" => {
+            let cid = json_str(data, "citation_id").unwrap_or_default();
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("citation {cid}: {reason}"))
+        }
+        "details_changed" => json_str(data, "signal_id").map(|sid| format!("signal {sid}")),
+        "resource_identified" => json_str(data, "name"),
+        "resource_linked" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let slug = json_str(data, "resource_slug").unwrap_or_default();
+            Some(format!("signal {sid} → {slug}"))
+        }
+
+        // ── System events ──────────────────────────────────────────
+        "duplicate_detected" => {
+            let title = json_str(data, "title")?;
+            let sim = json_f64(data, "similarity").map(|s| format!("~{:.0}%", s * 100.0)).unwrap_or_default();
+            let action = json_str(data, "action").unwrap_or_default();
+            Some(format!("\"{title}\" {sim} → {action}"))
+        }
+        "observation_rejected" => {
+            let title = json_str(data, "title")?;
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("\"{title}\" — {reason}"))
+        }
+        "observation_corroborated" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let url = json_str(data, "new_source_url").unwrap_or_default();
+            Some(format!("signal {sid} from {url}"))
+        }
+        "extraction_dropped_no_date" => json_str(data, "title").map(|t| format!("\"{t}\"")),
+        "actor_identified" => {
+            let name = json_str(data, "name")?;
+            let at = json_str(data, "actor_type").unwrap_or_default();
+            Some(format!("\"{name}\" ({at})"))
+        }
+        "actor_linked_to_signal" => {
+            let aid = json_str(data, "actor_id").unwrap_or_default();
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let role = json_str(data, "role").unwrap_or_default();
+            Some(format!("actor {aid} → signal {sid} ({role})"))
+        }
+        "actor_location_identified" => {
+            let aid = json_str(data, "actor_id").unwrap_or_default();
+            let loc = json_str(data, "location_name").unwrap_or_else(|| "unknown".to_string());
+            Some(format!("actor {aid}: {loc}"))
+        }
+        "source_registered" => {
+            let key = json_str(data, "canonical_key")?;
+            let method = json_str(data, "discovery_method").unwrap_or_default();
+            Some(format!("\"{key}\" via {method}"))
+        }
+        "source_changed" | "source_system_changed" => json_str(data, "canonical_key").map(|k| format!("\"{k}\"")),
+        "source_deactivated" => {
+            let ids = data.get("source_ids").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("{ids} sources: {reason}"))
+        }
+        "sensitivity_classified" | "tone_classified" | "severity_classified"
+        | "urgency_classified" | "category_classified" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let val = json_str(data, "level")
+                .or_else(|| json_str(data, "tone"))
+                .or_else(|| json_str(data, "severity"))
+                .or_else(|| json_str(data, "urgency"))
+                .or_else(|| json_str(data, "category"))
+                .unwrap_or_default();
+            Some(format!("signal {sid}: {val}"))
+        }
+        "confidence_scored" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let old = json_f64(data, "old_confidence").map(|v| format!("{v:.2}")).unwrap_or_default();
+            let new = json_f64(data, "new_confidence").map(|v| format!("{v:.2}")).unwrap_or_default();
+            Some(format!("signal {sid}: {old} → {new}"))
+        }
+        "corroboration_scored" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let count = json_u32(data, "new_corroboration_count").unwrap_or(0);
+            Some(format!("signal {sid}: {count} corroborations"))
+        }
+        "situation_identified" => json_str(data, "headline").map(|h| format!("\"{h}\"")),
+        "situation_changed" => json_str(data, "situation_id").map(|id| format!("situation {id}")),
+        "situation_promoted" => {
+            let ids = data.get("situation_ids").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("{ids} situations"))
+        }
+        "dispatch_created" => {
+            let dt = json_str(data, "dispatch_type").unwrap_or_default();
+            let sid = json_str(data, "situation_id").unwrap_or_default();
+            Some(format!("\"{dt}\" for situation {sid}"))
+        }
+        "dispatch_flagged_for_review" => json_str(data, "reason"),
+        "signal_assigned_to_situation" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let sit = json_str(data, "situation_id").unwrap_or_default();
+            Some(format!("signal {sid} → situation {sit}"))
+        }
+        "review_verdict_reached" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let old = json_str(data, "old_status").unwrap_or_default();
+            let new = json_str(data, "new_status").unwrap_or_default();
+            Some(format!("signal {sid}: {old} → {new}"))
+        }
+        "response_linked" | "concern_linked" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let cid = json_str(data, "concern_id").unwrap_or_default();
+            Some(format!("signal {sid} → concern {cid}"))
+        }
+        "gathering_corrected" | "resource_corrected" | "help_request_corrected"
+        | "announcement_corrected" | "concern_corrected" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("signal {sid}: {reason}"))
+        }
+        "implied_queries_extracted" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let n = data.get("queries").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("signal {sid}: {n} queries"))
+        }
+        "implied_queries_consumed" => {
+            let n = data.get("signal_ids").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("{n} signals"))
+        }
+        "entity_expired" | "entity_purged" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("signal {sid}: {reason}"))
+        }
+        "duplicate_actors_merged" => {
+            let n = data.get("merged_ids").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("{n} actors merged"))
+        }
+        "signal_tagged" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            Some(format!("signal {sid}"))
+        }
+        "situation_tags_aggregated" => json_str(data, "situation_id").map(|id| format!("situation {id}")),
+        "pin_created" => json_str(data, "source_id").map(|id| format!("source {id}")),
+        "demand_received" => json_str(data, "query").map(|q| format!("\"{q}\"")),
+        "submission_received" => json_str(data, "url").map(|u| format!("\"{u}\"")),
+        "scout_task_created" => json_str(data, "context"),
+        "scout_task_cancelled" => json_str(data, "task_id").map(|id| format!("task {id}")),
+        "curiosity_triggered" => json_str(data, "situation_id").map(|id| format!("situation {id}")),
+        "expansion_query_collected" => json_str(data, "query").map(|q| format!("\"{q}\"")),
+        "source_scraped" => {
+            let key = json_str(data, "canonical_key").unwrap_or_default();
+            let n = json_u32(data, "signals_produced").unwrap_or(0);
+            Some(format!("\"{key}\" {n} signals"))
+        }
+        "place_discovered" => json_str(data, "name"),
+        "beacon_detected" => Some("new task".to_string()),
+        "concern_linker_outcome_recorded" => {
+            let sid = json_str(data, "signal_id").unwrap_or_default();
+            let outcome = json_str(data, "outcome").unwrap_or_default();
+            Some(format!("signal {sid}: {outcome}"))
+        }
+
+        // ── Fallback: generic field sniffing ───────────────────────
+        _ => json_str(data, "message")
+            .or_else(|| json_str(data, "title"))
+            .or_else(|| json_str(data, "summary"))
+            .or_else(|| json_str(data, "headline"))
+            .or_else(|| json_str(data, "reason"))
+            .or_else(|| json_str(data, "canonical_key"))
+            .or_else(|| json_str(data, "url"))
+            .or_else(|| json_str(data, "query"))
+            .or_else(|| json_str(data, "source_url"))
+            .or_else(|| json_str(data, "signal_id").map(|id| format!("signal {id}")))
+            .or_else(|| json_str(data, "node_id").map(|id| format!("node {id}")))
+            .or_else(|| json_str(data, "phase")),
+    }
+}
 
 fn row_to_scout_run(
     r: (
