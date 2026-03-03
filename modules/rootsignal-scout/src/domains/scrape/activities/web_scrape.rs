@@ -17,7 +17,7 @@ use crate::infra::util::{content_hash, sanitize_url};
 
 use super::scraper::Scraper;
 use super::signal_events::{refresh_url_signals_events, store_signals_events};
-use super::types::{FetchExtractResult, FetchExtractStats, ScrapeOutcome};
+use super::types::{FetchExtractResult, FetchExtractStats, ScrapeOutcome, SingleUrlResult};
 #[cfg(test)]
 use super::types::ScrapeOutput;
 
@@ -246,6 +246,165 @@ impl Scraper {
                 }
             }
         }
+        result
+    }
+
+    /// Fetch and extract signals for a single URL.
+    /// Used by the per-URL fan-out handler.
+    pub async fn fetch_and_extract_single(
+        &self,
+        url: &str,
+        source_id: Option<Uuid>,
+        url_to_ck: &HashMap<String, String>,
+        actor_contexts: &HashMap<String, ActorContext>,
+        pub_dates: &HashMap<String, DateTime<Utc>>,
+    ) -> SingleUrlResult {
+        let mut result = SingleUrlResult {
+            events: Events::new(),
+            source_signal_counts: HashMap::new(),
+            collected_links: Vec::new(),
+            expansion_queries: Vec::new(),
+            scraped: false,
+            unchanged: false,
+            failed: false,
+            signals_extracted: 0,
+        };
+
+        let clean_url = sanitize_url(url);
+
+        let (content, page_links) = match self.fetcher.page(url).await {
+            Ok(p) if !p.markdown.is_empty() => (p.markdown, p.links),
+            Ok(p) => {
+                result.failed = true;
+                // Still collect links from failed pages
+                let discovered = link_promoter::extract_links(&p.links);
+                for link_url in discovered {
+                    result.collected_links.push(CollectedLink {
+                        url: link_url,
+                        discovered_on: clean_url.clone(),
+                    });
+                }
+                return result;
+            }
+            Err(e) => {
+                warn!(url, error = %e, "Scrape failed");
+                result.failed = true;
+                return result;
+            }
+        };
+
+        // Extract outbound links for promotion
+        let discovered = link_promoter::extract_links(&page_links);
+        for link_url in discovered {
+            result.collected_links.push(CollectedLink {
+                url: link_url,
+                discovered_on: clean_url.clone(),
+            });
+        }
+
+        let hash = format!("{:x}", content_hash(&content));
+        match self.store.content_already_processed(&hash, &clean_url).await {
+            Ok(true) => {
+                info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
+                result.unchanged = true;
+                let ck = url_to_ck
+                    .get(&clean_url)
+                    .cloned()
+                    .unwrap_or_else(|| clean_url.clone());
+                let now = Utc::now();
+                match refresh_url_signals_events(&*self.store, &clean_url, now).await {
+                    Ok(events) if !events.is_empty() => {
+                        info!(url = clean_url.as_str(), refreshed = events.len(), "Refreshed unchanged signals");
+                        result.events.extend(events);
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!(url = clean_url.as_str(), error = %e, "Failed to refresh signals"),
+                }
+                result.source_signal_counts.entry(ck).or_default();
+                return result;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                warn!(url = clean_url.as_str(), error = %e, "Hash check failed, proceeding with extraction");
+            }
+        }
+
+        // Prepend first-hand filter for web search/feed sources
+        let filtered_content = format!(
+            "FIRST-HAND FILTER (applies to this content):\n\
+            This content comes from web search results, which may contain \
+            political commentary from people not directly involved. Apply strict filtering:\n\n\
+            For each potential signal, assess: Is this person describing something happening \
+            to them, their family, their community, or their neighborhood? Or are they \
+            asking for help? If yes, mark is_firsthand: true. If this is political commentary \
+            from someone not personally affected — regardless of viewpoint — mark \
+            is_firsthand: false.\n\n\
+            Only extract signals where is_firsthand is true. Reject the rest.\n\n\
+            {content}"
+        );
+
+        match self.extractor.extract(&filtered_content, &clean_url).await {
+            Ok(extraction) => {
+                result.scraped = true;
+                let ck = url_to_ck
+                    .get(&clean_url)
+                    .cloned()
+                    .unwrap_or_else(|| clean_url.clone());
+
+                let mut nodes = extraction.nodes;
+
+                // Collect implied queries from Concern + HelpRequest nodes
+                for node in &nodes {
+                    if matches!(node.node_type(), NodeType::Concern | NodeType::HelpRequest) {
+                        if let Some(meta) = node.meta() {
+                            result.expansion_queries
+                                .extend(meta.implied_queries.iter().cloned());
+                        }
+                    }
+                }
+
+                result.signals_extracted = nodes.len() as u32;
+
+                // Apply RSS/Atom pub_date as fallback published_at
+                if let Some(pub_date) = pub_dates.get(url).or_else(|| pub_dates.get(&clean_url)) {
+                    for node in &mut nodes {
+                        if let Some(meta) = node.meta_mut() {
+                            if meta.published_at.is_none() {
+                                meta.published_at = Some(*pub_date);
+                            }
+                        }
+                    }
+                }
+
+                let source_keys: HashMap<String, Uuid> = source_id
+                    .map(|id| vec![(ck.clone(), id)].into_iter().collect())
+                    .unwrap_or_default();
+                let sid = source_keys.get(&ck).copied();
+                let events = store_signals_events(
+                    &clean_url,
+                    &content,
+                    nodes,
+                    extraction.resource_tags,
+                    extraction.signal_tags,
+                    &extraction.author_actors.into_iter().collect(),
+                    url_to_ck,
+                    actor_contexts,
+                    sid,
+                );
+                if !events.is_empty() {
+                    result.source_signal_counts.entry(ck).or_default();
+                }
+                result.events.extend(events);
+                for log in extraction.logs {
+                    result.events.push(log);
+                }
+            }
+            Err(e) => {
+                warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
+                result.failed = true;
+            }
+        }
+
         result
     }
 }

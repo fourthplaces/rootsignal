@@ -434,6 +434,30 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
             let count = data.get("urls").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
             Some(format!("{role}: {count} urls"))
         }
+        "url_fetch_requested" => json_str(data, "url").map(|u| format!("\"{u}\"")),
+        "url_scrape_completed" => {
+            let url = json_str(data, "url").unwrap_or_default();
+            let scraped = data.get("scraped").and_then(|v| v.as_bool()).unwrap_or(false);
+            let unchanged = data.get("unchanged").and_then(|v| v.as_bool()).unwrap_or(false);
+            let failed = data.get("failed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let signals = json_u32(data, "signals_extracted").unwrap_or(0);
+            let outcome = if scraped { format!("{signals} signals") }
+                else if unchanged { "unchanged".to_string() }
+                else if failed { "FAILED".to_string() }
+                else { "unknown".to_string() };
+            Some(format!("\"{url}\" {outcome}"))
+        }
+        "social_source_requested" => {
+            let platform = json_str(data, "platform").unwrap_or_default();
+            let id = json_str(data, "identifier").unwrap_or_default();
+            Some(format!("{platform}:{id}"))
+        }
+        "social_source_completed" => {
+            let ck = json_str(data, "canonical_key").unwrap_or_default();
+            let posts = json_u32(data, "posts_fetched").unwrap_or(0);
+            let signals = json_u32(data, "signals_extracted").unwrap_or(0);
+            Some(format!("{ck} {posts} posts, {signals} signals"))
+        }
         "scrape_role_completed" => {
             let role = json_str(data, "role").unwrap_or_default();
             let scraped = json_u32(data, "urls_scraped").unwrap_or(0);

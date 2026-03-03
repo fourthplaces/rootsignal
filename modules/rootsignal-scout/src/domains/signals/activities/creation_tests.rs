@@ -26,12 +26,18 @@ fn extract_events(events: Events) -> (Vec<WorldEvent>, Vec<SystemEvent>, Vec<Sig
     let mut system = Vec::new();
     let mut signal = Vec::new();
     for output in events.into_outputs() {
-        if let Some(e) = output.value.downcast_ref::<WorldEvent>() {
-            world.push(e.clone());
-        } else if let Some(e) = output.value.downcast_ref::<SystemEvent>() {
-            system.push(e.clone());
-        } else if let Some(e) = output.value.downcast_ref::<SignalEvent>() {
-            signal.push(e.clone());
+        if output.type_id == std::any::TypeId::of::<WorldEvent>() {
+            if let Ok(e) = serde_json::from_value::<WorldEvent>(output.payload) {
+                world.push(e);
+            }
+        } else if output.type_id == std::any::TypeId::of::<SystemEvent>() {
+            if let Ok(e) = serde_json::from_value::<SystemEvent>(output.payload) {
+                system.push(e);
+            }
+        } else if output.type_id == std::any::TypeId::of::<SignalEvent>() {
+            if let Ok(e) = serde_json::from_value::<SignalEvent>(output.payload) {
+                signal.push(e);
+            }
         }
     }
     (world, system, signal)

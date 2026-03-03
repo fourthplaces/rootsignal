@@ -207,9 +207,11 @@ pub async fn enrich_actor_locations(
     let events = triangulate_actor_location_events(store, actors).await;
     let mut updated = 0u32;
     for output in events.into_outputs() {
-        if let Some(e) = output.value.downcast_ref::<SystemEvent>() {
-            if engine.emit(e.clone()).settled().await.is_ok() {
-                updated += 1;
+        if output.type_id == std::any::TypeId::of::<SystemEvent>() {
+            if let Ok(e) = serde_json::from_value::<SystemEvent>(output.payload) {
+                if engine.emit(e).settled().await.is_ok() {
+                    updated += 1;
+                }
             }
         }
     }

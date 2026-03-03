@@ -88,6 +88,41 @@ pub enum ScrapeEvent {
     TopicDiscoveryTriggered {
         run_id: Uuid,
     },
+    /// Individual URL dispatched for fetch+extract. Emitted by fan-out handler.
+    UrlFetchRequested {
+        run_id: Uuid,
+        role: ScrapeRole,
+        url: String,
+        canonical_key: String,
+        source_id: Option<Uuid>,
+    },
+    /// Individual URL completed (success, unchanged, or failed).
+    UrlScrapeCompleted {
+        run_id: Uuid,
+        role: ScrapeRole,
+        url: String,
+        scraped: bool,
+        unchanged: bool,
+        failed: bool,
+        signals_extracted: u32,
+    },
+    /// Individual social source dispatched for fetch+extract.
+    SocialSourceRequested {
+        run_id: Uuid,
+        role: ScrapeRole,
+        canonical_key: String,
+        source_url: String,
+        platform: String,
+        identifier: String,
+    },
+    /// Individual social source completed.
+    SocialSourceCompleted {
+        run_id: Uuid,
+        role: ScrapeRole,
+        canonical_key: String,
+        posts_fetched: u32,
+        signals_extracted: u32,
+    },
     /// A scrape sub-phase completed fetch+extract.
     ScrapeRoleCompleted {
         run_id: Uuid,
@@ -113,6 +148,10 @@ impl ScrapeEvent {
             | Self::WebUrlsResolved { run_id, .. }
             | Self::SocialScrapeTriggered { run_id, .. }
             | Self::TopicDiscoveryTriggered { run_id, .. }
+            | Self::UrlFetchRequested { run_id, .. }
+            | Self::UrlScrapeCompleted { run_id, .. }
+            | Self::SocialSourceRequested { run_id, .. }
+            | Self::SocialSourceCompleted { run_id, .. }
             | Self::ScrapeRoleCompleted { run_id, .. } => *run_id,
         }
     }

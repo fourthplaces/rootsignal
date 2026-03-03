@@ -113,6 +113,29 @@ pub struct FetchExtractStats {
     pub signals_extracted: u32,
 }
 
+/// Result from fetching and extracting a single URL.
+pub struct SingleUrlResult {
+    pub events: Events,
+    pub source_signal_counts: HashMap<String, u32>,
+    pub collected_links: Vec<CollectedLink>,
+    pub expansion_queries: Vec<String>,
+    pub scraped: bool,
+    pub unchanged: bool,
+    pub failed: bool,
+    pub signals_extracted: u32,
+}
+
+/// Result from scraping a single social source.
+pub struct SingleSocialResult {
+    pub events: Events,
+    pub source_signal_counts: HashMap<String, u32>,
+    pub collected_links: Vec<CollectedLink>,
+    pub expansion_queries: Vec<String>,
+    pub posts_fetched: u32,
+    pub signals_extracted: u32,
+    pub stats_delta: StatsDelta,
+}
+
 pub(crate) enum ScrapeOutcome {
     New {
         content: String,

@@ -46,12 +46,28 @@ fn is_web_urls_resolved(e: &ScrapeEvent) -> bool {
     matches!(e, ScrapeEvent::WebUrlsResolved { .. })
 }
 
+fn is_url_fetch_requested(e: &ScrapeEvent) -> bool {
+    matches!(e, ScrapeEvent::UrlFetchRequested { .. })
+}
+
 fn is_social_scrape_triggered(e: &ScrapeEvent) -> bool {
     matches!(e, ScrapeEvent::SocialScrapeTriggered { .. })
 }
 
+fn is_social_source_requested(e: &ScrapeEvent) -> bool {
+    matches!(e, ScrapeEvent::SocialSourceRequested { .. })
+}
+
 fn is_topic_discovery_triggered(e: &ScrapeEvent) -> bool {
     matches!(e, ScrapeEvent::TopicDiscoveryTriggered { .. })
+}
+
+fn is_url_scrape_completed(e: &ScrapeEvent) -> bool {
+    matches!(e, ScrapeEvent::UrlScrapeCompleted { .. })
+}
+
+fn is_social_source_completed(e: &ScrapeEvent) -> bool {
+    matches!(e, ScrapeEvent::SocialSourceCompleted { .. })
 }
 
 fn is_scrape_role_completed(e: &ScrapeEvent) -> bool {
@@ -146,9 +162,9 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// WebUrlsResolved → fetch + extract signals for web URLs.
-    #[handle(on = ScrapeEvent, id = "scrape:fetch_extract", filter = is_web_urls_resolved)]
-    async fn fetch_extract(
+    /// WebUrlsResolved → fan out individual UrlFetchRequested per URL.
+    #[handle(on = ScrapeEvent, id = "scrape:fan_out_urls", filter = is_web_urls_resolved)]
+    async fn fan_out_urls(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -157,10 +173,56 @@ pub mod handlers {
             _ => unreachable!("filter guarantees WebUrlsResolved"),
         };
 
-        info!(?role, url_count = urls.len(), "Fetch+extract for web scrape role");
+        info!(?role, url_count = urls.len(), "Fan-out URLs for web scrape role");
+
+        if urls.is_empty() {
+            return Ok(events![ScrapeEvent::ScrapeRoleCompleted {
+                run_id,
+                role,
+                urls_scraped: 0,
+                urls_unchanged: 0,
+                urls_failed: 0,
+                signals_extracted: 0,
+            }]);
+        }
+
+        let (_, state) = ctx.singleton::<PipelineState>();
+
+        let mut all_events = Events::new();
+        for url in urls {
+            let clean_url = crate::infra::util::sanitize_url(&url);
+            let ck = state.url_to_canonical_key
+                .get(&clean_url)
+                .cloned()
+                .unwrap_or_else(|| clean_url.clone());
+            let source_id = source_keys.get(&ck).copied();
+            all_events.push(ScrapeEvent::UrlFetchRequested {
+                run_id,
+                role,
+                url,
+                canonical_key: ck,
+                source_id,
+            });
+        }
+
+        Ok(all_events)
+    }
+
+    /// UrlFetchRequested → fetch + extract signals for a single URL.
+    #[handle(on = ScrapeEvent, id = "scrape:fetch_single_url", filter = is_url_fetch_requested)]
+    async fn fetch_single_url(
+        event: ScrapeEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let (run_id, role, url, _canonical_key, source_id) = match event {
+            ScrapeEvent::UrlFetchRequested { run_id, role, url, canonical_key, source_id } => {
+                (run_id, role, url, canonical_key, source_id)
+            }
+            _ => unreachable!("filter guarantees UrlFetchRequested"),
+        };
 
         let deps = ctx.deps();
-        let phase = Scraper::new(
+        let scraper = Scraper::new(
             deps.store.clone(),
             deps.extractor.as_ref().expect("extractor set").clone(),
             deps.fetcher.as_ref().expect("fetcher set").clone(),
@@ -168,9 +230,9 @@ pub mod handlers {
 
         let (_, state) = ctx.singleton::<PipelineState>();
 
-        let fetch_result = phase.fetch_and_extract(
-            &urls,
-            &source_keys,
+        let single = scraper.fetch_and_extract_single(
+            &url,
+            source_id,
             &state.url_to_canonical_key,
             &state.actor_contexts,
             &state.url_to_pub_date,
@@ -178,27 +240,28 @@ pub mod handlers {
 
         let mut all_events = Events::new();
         all_events.push(PipelineEvent::ScrapeResultAccumulated {
-            source_signal_counts: fetch_result.source_signal_counts,
-            collected_links: fetch_result.collected_links,
-            expansion_queries: fetch_result.expansion_queries,
+            source_signal_counts: single.source_signal_counts,
+            collected_links: single.collected_links,
+            expansion_queries: single.expansion_queries,
             stats_delta: StatsDelta::default(),
         });
-        all_events.extend(fetch_result.events);
-        all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+        all_events.extend(single.events);
+        all_events.push(ScrapeEvent::UrlScrapeCompleted {
             run_id,
             role,
-            urls_scraped: fetch_result.stats.urls_scraped,
-            urls_unchanged: fetch_result.stats.urls_unchanged,
-            urls_failed: fetch_result.stats.urls_failed,
-            signals_extracted: fetch_result.stats.signals_extracted,
+            url,
+            scraped: single.scraped,
+            unchanged: single.unchanged,
+            failed: single.failed,
+            signals_extracted: single.signals_extracted,
         });
 
         Ok(all_events)
     }
 
-    /// SocialScrapeTriggered → scrape social sources.
-    #[handle(on = ScrapeEvent, id = "scrape:fetch_social", filter = is_social_scrape_triggered)]
-    async fn fetch_social(
+    /// SocialScrapeTriggered → fan out individual SocialSourceRequested per source.
+    #[handle(on = ScrapeEvent, id = "scrape:fan_out_social", filter = is_social_scrape_triggered)]
+    async fn fan_out_social(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -207,19 +270,12 @@ pub mod handlers {
             _ => unreachable!("filter guarantees SocialScrapeTriggered"),
         };
 
-        info!(?role, "Fetch social sources for scrape role");
-
-        let deps = ctx.deps();
-        let phase = Scraper::new(
-            deps.store.clone(),
-            deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.fetcher.as_ref().expect("fetcher set").clone(),
-        );
+        info!(?role, "Fan-out social sources for scrape role");
 
         let (_, state) = ctx.singleton::<PipelineState>();
         let scheduled = state.scheduled.as_ref().expect("scheduled data stashed");
 
-        let social_sources: Vec<rootsignal_common::SourceNode> = if matches!(role, ScrapeRole::TensionSocial) {
+        let social_sources: Vec<&rootsignal_common::SourceNode> = if matches!(role, ScrapeRole::TensionSocial) {
             scheduled.scheduled_sources
                 .iter()
                 .filter(|s| {
@@ -228,7 +284,6 @@ pub mod handlers {
                         rootsignal_common::ScrapingStrategy::Social(_)
                     ) && scheduled.tension_phase_keys.contains(&s.canonical_key)
                 })
-                .cloned()
                 .collect()
         } else {
             scheduled.scheduled_sources
@@ -239,46 +294,145 @@ pub mod handlers {
                         rootsignal_common::ScrapingStrategy::Social(_)
                     ) && scheduled.response_phase_keys.contains(&s.canonical_key)
                 })
-                .cloned()
                 .collect()
         };
 
-        let mut all_events = Events::new();
-
         if social_sources.is_empty() {
-            all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+            return Ok(events![ScrapeEvent::ScrapeRoleCompleted {
                 run_id,
                 role,
                 urls_scraped: 0,
                 urls_unchanged: 0,
                 urls_failed: 0,
                 signals_extracted: 0,
-            });
-        } else {
-            let social_refs: Vec<&rootsignal_common::SourceNode> = social_sources.iter().collect();
-            let mut social_output = phase.scrape_social_sources(
-                &social_refs,
-                &state.url_to_canonical_key,
-                &state.actor_contexts,
-            ).await;
+            }]);
+        }
 
-            let events = social_output.take_events();
-            all_events.push(PipelineEvent::ScrapeResultAccumulated {
-                source_signal_counts: social_output.source_signal_counts,
-                collected_links: social_output.collected_links,
-                expansion_queries: social_output.expansion_queries,
-                stats_delta: social_output.stats_delta,
-            });
-            all_events.extend(events);
-            all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+        let mut all_events = Events::new();
+        for source in social_sources {
+            let common_platform = match rootsignal_common::scraping_strategy(source.value()) {
+                rootsignal_common::ScrapingStrategy::Social(p) => p,
+                _ => continue,
+            };
+            let (platform_str, identifier) = match common_platform {
+                rootsignal_common::SocialPlatform::Instagram => (
+                    "instagram".to_string(),
+                    source.url.as_deref().unwrap_or(&source.canonical_value).to_string(),
+                ),
+                rootsignal_common::SocialPlatform::Facebook => {
+                    let url = source.url.as_deref().filter(|u| !u.is_empty()).unwrap_or(&source.canonical_value);
+                    ("facebook".to_string(), url.to_string())
+                }
+                rootsignal_common::SocialPlatform::Reddit => {
+                    let url = source.url.as_deref().filter(|u| !u.is_empty()).unwrap_or(&source.canonical_value);
+                    let identifier = if !url.starts_with("http") {
+                        let name = url.trim_start_matches("r/");
+                        format!("https://www.reddit.com/r/{}/", name)
+                    } else {
+                        url.to_string()
+                    };
+                    ("reddit".to_string(), identifier)
+                }
+                rootsignal_common::SocialPlatform::Twitter => (
+                    "twitter".to_string(),
+                    source.url.as_deref().unwrap_or(&source.canonical_value).to_string(),
+                ),
+                rootsignal_common::SocialPlatform::TikTok => (
+                    "tiktok".to_string(),
+                    source.url.as_deref().unwrap_or(&source.canonical_value).to_string(),
+                ),
+                rootsignal_common::SocialPlatform::Bluesky => continue,
+            };
+            let source_url = source.url.as_deref().filter(|u| !u.is_empty()).unwrap_or(&source.canonical_value).to_string();
+            all_events.push(ScrapeEvent::SocialSourceRequested {
                 run_id,
                 role,
-                urls_scraped: 0,
-                urls_unchanged: 0,
-                urls_failed: 0,
-                signals_extracted: 0,
+                canonical_key: source.canonical_key.clone(),
+                source_url,
+                platform: platform_str,
+                identifier,
             });
         }
+
+        // If all sources were skipped (e.g. all Bluesky), complete immediately
+        if all_events.is_empty() {
+            return Ok(events![ScrapeEvent::ScrapeRoleCompleted {
+                run_id,
+                role,
+                urls_scraped: 0,
+                urls_unchanged: 0,
+                urls_failed: 0,
+                signals_extracted: 0,
+            }]);
+        }
+
+        Ok(all_events)
+    }
+
+    /// SocialSourceRequested → fetch + extract signals for a single social source.
+    #[handle(on = ScrapeEvent, id = "scrape:fetch_single_social", filter = is_social_source_requested)]
+    async fn fetch_single_social(
+        event: ScrapeEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let (run_id, role, canonical_key, source_url, platform_str, identifier) = match event {
+            ScrapeEvent::SocialSourceRequested {
+                run_id, role, canonical_key, source_url, platform, identifier,
+            } => (run_id, role, canonical_key, source_url, platform, identifier),
+            _ => unreachable!("filter guarantees SocialSourceRequested"),
+        };
+
+        let platform = match platform_str.as_str() {
+            "instagram" => rootsignal_common::SocialPlatform::Instagram,
+            "facebook" => rootsignal_common::SocialPlatform::Facebook,
+            "reddit" => rootsignal_common::SocialPlatform::Reddit,
+            "twitter" => rootsignal_common::SocialPlatform::Twitter,
+            "tiktok" => rootsignal_common::SocialPlatform::TikTok,
+            _ => rootsignal_common::SocialPlatform::Instagram, // fallback
+        };
+
+        let deps = ctx.deps();
+        let scraper = Scraper::new(
+            deps.store.clone(),
+            deps.extractor.as_ref().expect("extractor set").clone(),
+            deps.fetcher.as_ref().expect("fetcher set").clone(),
+        );
+
+        let (_, state) = ctx.singleton::<PipelineState>();
+
+        // Look up source_id from scheduled data
+        let source_id = state.scheduled.as_ref().and_then(|sched| {
+            sched.scheduled_sources
+                .iter()
+                .find(|s| s.canonical_key == canonical_key)
+                .map(|s| s.id)
+        });
+
+        let single = scraper.scrape_single_social_source(
+            &canonical_key,
+            &source_url,
+            platform,
+            &identifier,
+            source_id,
+            &state.url_to_canonical_key,
+            &state.actor_contexts,
+        ).await;
+
+        let mut all_events = Events::new();
+        all_events.push(PipelineEvent::ScrapeResultAccumulated {
+            source_signal_counts: single.source_signal_counts,
+            collected_links: single.collected_links,
+            expansion_queries: single.expansion_queries,
+            stats_delta: single.stats_delta,
+        });
+        all_events.extend(single.events);
+        all_events.push(ScrapeEvent::SocialSourceCompleted {
+            run_id,
+            role,
+            canonical_key,
+            posts_fetched: single.posts_fetched,
+            signals_extracted: single.signals_extracted,
+        });
 
         Ok(all_events)
     }
@@ -346,6 +500,70 @@ pub mod handlers {
         }
 
         Ok(all_events)
+    }
+
+    /// UrlScrapeCompleted → check if all URLs for role are done, emit ScrapeRoleCompleted.
+    #[handle(on = ScrapeEvent, id = "scrape:check_url_role_complete", filter = is_url_scrape_completed)]
+    async fn check_url_role_complete(
+        event: ScrapeEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let (run_id, role) = match &event {
+            ScrapeEvent::UrlScrapeCompleted { run_id, role, .. } => (*run_id, *role),
+            _ => unreachable!("filter guarantees UrlScrapeCompleted"),
+        };
+
+        let (_, state) = ctx.singleton::<PipelineState>();
+
+        let total = state.role_url_totals.get(&role).copied().unwrap_or(0);
+        let completed = state.role_urls_completed.get(&role).copied().unwrap_or(0);
+
+        if total > 0 && completed >= total {
+            let stats = state.role_stats.get(&role).cloned().unwrap_or_default();
+            info!(?role, total, completed, "All URLs complete, emitting ScrapeRoleCompleted");
+            Ok(events![ScrapeEvent::ScrapeRoleCompleted {
+                run_id,
+                role,
+                urls_scraped: stats.urls_scraped,
+                urls_unchanged: stats.urls_unchanged,
+                urls_failed: stats.urls_failed,
+                signals_extracted: stats.signals_extracted,
+            }])
+        } else {
+            Ok(Events::new())
+        }
+    }
+
+    /// SocialSourceCompleted → check if all social sources for role are done, emit ScrapeRoleCompleted.
+    #[handle(on = ScrapeEvent, id = "scrape:check_social_role_complete", filter = is_social_source_completed)]
+    async fn check_social_role_complete(
+        event: ScrapeEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let (run_id, role) = match &event {
+            ScrapeEvent::SocialSourceCompleted { run_id, role, .. } => (*run_id, *role),
+            _ => unreachable!("filter guarantees SocialSourceCompleted"),
+        };
+
+        let (_, state) = ctx.singleton::<PipelineState>();
+
+        let total = state.role_url_totals.get(&role).copied().unwrap_or(0);
+        let completed = state.role_urls_completed.get(&role).copied().unwrap_or(0);
+
+        if total > 0 && completed >= total {
+            let stats = state.role_stats.get(&role).cloned().unwrap_or_default();
+            info!(?role, total, completed, "All social sources complete, emitting ScrapeRoleCompleted");
+            Ok(events![ScrapeEvent::ScrapeRoleCompleted {
+                run_id,
+                role,
+                urls_scraped: stats.urls_scraped,
+                urls_unchanged: stats.urls_unchanged,
+                urls_failed: stats.urls_failed,
+                signals_extracted: stats.signals_extracted,
+            }])
+        } else {
+            Ok(Events::new())
+        }
     }
 
     /// ScrapeRoleCompleted → check if all roles for current phase are done, emit PhaseCompleted.

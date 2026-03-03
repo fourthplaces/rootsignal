@@ -26,6 +26,15 @@ use crate::domains::signals::events::SignalEvent;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
 use crate::core::extractor::ResourceTag;
+/// Per-role accumulated stats for ScrapeRoleCompleted emission.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct RoleStats {
+    pub urls_scraped: u32,
+    pub urls_unchanged: u32,
+    pub urls_failed: u32,
+    pub signals_extracted: u32,
+}
+
 /// Scheduling data passed between schedule_handler and scrape handlers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledData {
@@ -96,6 +105,18 @@ pub struct PipelineState {
     #[serde(default)]
     pub completed_scrape_roles: HashSet<ScrapeRole>,
 
+    /// Per-role total URL count (set by fan-out handlers).
+    #[serde(default)]
+    pub role_url_totals: HashMap<ScrapeRole, u32>,
+
+    /// Per-role completed URL count (incremented by UrlScrapeCompleted / SocialSourceCompleted).
+    #[serde(default)]
+    pub role_urls_completed: HashMap<ScrapeRole, u32>,
+
+    /// Per-role accumulated stats for ScrapeRoleCompleted emission.
+    #[serde(default)]
+    pub role_stats: HashMap<ScrapeRole, RoleStats>,
+
     /// Synthesis roles completed, for phase-completion tracking.
     #[serde(default)]
     pub completed_synthesis_roles: HashSet<SynthesisRole>,
@@ -155,6 +176,9 @@ impl PipelineState {
             scheduled: None,
             social_topics: Vec::new(),
             completed_scrape_roles: HashSet::new(),
+            role_url_totals: HashMap::new(),
+            role_urls_completed: HashMap::new(),
+            role_stats: HashMap::new(),
             completed_synthesis_roles: HashSet::new(),
             completed_enrichment_roles: HashSet::new(),
         }
@@ -219,9 +243,41 @@ impl PipelineState {
                 });
             }
             ScrapeEvent::ExtractionFailed { .. } => {}
-            ScrapeEvent::WebUrlsResolved { .. } => {}
+            ScrapeEvent::WebUrlsResolved { role, urls, .. } => {
+                self.role_url_totals.insert(*role, urls.len() as u32);
+            }
             ScrapeEvent::SocialScrapeTriggered { .. } => {}
             ScrapeEvent::TopicDiscoveryTriggered { .. } => {}
+            ScrapeEvent::UrlFetchRequested { .. } => {}
+            ScrapeEvent::UrlScrapeCompleted {
+                role,
+                scraped,
+                unchanged,
+                failed,
+                signals_extracted,
+                ..
+            } => {
+                *self.role_urls_completed.entry(*role).or_default() += 1;
+                let stats = self.role_stats.entry(*role).or_default();
+                if *scraped { stats.urls_scraped += 1; }
+                if *unchanged { stats.urls_unchanged += 1; }
+                if *failed { stats.urls_failed += 1; }
+                stats.signals_extracted += signals_extracted;
+            }
+            ScrapeEvent::SocialSourceRequested { role, .. } => {
+                // Increment total for social sources (each request adds 1)
+                *self.role_url_totals.entry(*role).or_default() += 1;
+            }
+            ScrapeEvent::SocialSourceCompleted {
+                role,
+                signals_extracted,
+                ..
+            } => {
+                *self.role_urls_completed.entry(*role).or_default() += 1;
+                let stats = self.role_stats.entry(*role).or_default();
+                stats.urls_scraped += 1;
+                stats.signals_extracted += signals_extracted;
+            }
             ScrapeEvent::ScrapeRoleCompleted { role, .. } => {
                 self.completed_scrape_roles.insert(*role);
             }

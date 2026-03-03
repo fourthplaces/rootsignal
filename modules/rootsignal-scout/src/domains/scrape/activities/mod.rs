@@ -15,5 +15,6 @@ mod web_scrape;
 pub(crate) use scraper::Scraper;
 pub(crate) use signal_events::register_sources_events;
 pub(crate) use types::{
-    FetchExtractResult, FetchExtractStats, ScrapeOutput, StatsDelta, UrlResolution,
+    FetchExtractResult, FetchExtractStats, ScrapeOutput, SingleSocialResult, SingleUrlResult,
+    StatsDelta, UrlResolution,
 };

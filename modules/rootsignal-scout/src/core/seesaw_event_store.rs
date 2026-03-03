@@ -88,6 +88,17 @@ impl seesaw_core::event_store::EventStore for SeesawEventStoreAdapter {
             Ok(events.into_iter().map(stored_to_persisted).collect())
         })
     }
+
+    fn load_global_from(
+        &self,
+        after_position: u64,
+        limit: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<PersistedEvent>>> + Send + '_>> {
+        Box::pin(async move {
+            let events = self.inner.read_from(after_position as i64, limit).await?;
+            Ok(events.into_iter().map(stored_to_persisted).collect())
+        })
+    }
 }
 
 fn stored_to_persisted(e: StoredEvent) -> PersistedEvent {
