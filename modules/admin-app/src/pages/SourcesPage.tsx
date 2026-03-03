@@ -115,7 +115,7 @@ function SourceRow({
           className="rounded border-border"
         />
       </td>
-      <td className="px-4 py-2 max-w-[260px] truncate" title={s.canonicalValue}>
+      <td className="px-4 py-2 truncate" title={s.canonicalValue}>
         <span className="inline-flex items-center gap-1.5">
           <Link
             to={`/sources/${s.id}`}
@@ -501,14 +501,41 @@ export function SourcesPage() {
   const sortIndicator = (key: SortKey) =>
     sortKey === key ? (sortDir === "asc" ? " \u2191" : " \u2193") : "";
 
-  const SortHeader = ({ k, label, className = "" }: { k: SortKey; label: string; className?: string }) => (
-    <th
-      className={`px-4 py-2 font-medium cursor-pointer select-none hover:text-foreground ${className}`}
-      onClick={() => handleSort(k)}
-    >
-      {label}{sortIndicator(k)}
-    </th>
-  );
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+
+  const SortHeader = ({ k, label, className = "", defaultWidth }: { k: SortKey; label: string; className?: string; defaultWidth: number }) => {
+    const width = colWidths[k] ?? defaultWidth;
+
+    const handleResizeStart = (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = width;
+      const onMove = (me: MouseEvent) => {
+        setColWidths((prev) => ({ ...prev, [k]: Math.max(40, startWidth + me.clientX - startX) }));
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    };
+
+    return (
+      <th
+        className={`px-4 py-2 font-medium cursor-pointer select-none hover:text-foreground overflow-hidden relative group/th ${className}`}
+        style={{ width }}
+        onClick={() => handleSort(k)}
+      >
+        {label}{sortIndicator(k)}
+        <div
+          onMouseDown={handleResizeStart}
+          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize opacity-0 group-hover/th:opacity-100 bg-border hover:bg-blue-500 transition-opacity"
+        />
+      </th>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -607,7 +634,7 @@ export function SourcesPage() {
       ) : (
         <>
           <div className="rounded-lg border border-border overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm table-fixed">
               <thead>
                 <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
                   <th className="px-4 py-2 w-8">
@@ -621,17 +648,17 @@ export function SourcesPage() {
                       className="rounded border-border"
                     />
                   </th>
-                  <SortHeader k="canonicalValue" label="Source" />
-                  <SortHeader k="sourceLabel" label="Type" />
-                  <SortHeader k="active" label="Status" />
-                  <SortHeader k="weight" label="Weight" />
-                  <SortHeader k="qualityPenalty" label="Penalty" />
-                  <SortHeader k="effectiveWeight" label="Eff. Wt" />
-                  <SortHeader k="signalsProduced" label="Signals" className="text-right" />
-                  <SortHeader k="cadenceHours" label="Cadence" />
-                  <SortHeader k="lastScraped" label="Last Scraped" />
-                  <SortHeader k="discoveryMethod" label="Discovery" />
-                  <th className="px-4 py-2 font-medium text-right">Actions</th>
+                  <SortHeader k="canonicalValue" label="Source" defaultWidth={260} />
+                  <SortHeader k="sourceLabel" label="Type" defaultWidth={80} />
+                  <SortHeader k="active" label="Status" defaultWidth={80} />
+                  <SortHeader k="weight" label="Weight" defaultWidth={70} />
+                  <SortHeader k="qualityPenalty" label="Penalty" defaultWidth={70} />
+                  <SortHeader k="effectiveWeight" label="Eff. Wt" defaultWidth={70} />
+                  <SortHeader k="signalsProduced" label="Signals" className="text-right" defaultWidth={70} />
+                  <SortHeader k="cadenceHours" label="Cadence" defaultWidth={80} />
+                  <SortHeader k="lastScraped" label="Last Scraped" defaultWidth={120} />
+                  <SortHeader k="discoveryMethod" label="Discovery" defaultWidth={100} />
+                  <th className="px-4 py-2 font-medium text-right overflow-hidden" style={{ width: 120 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>

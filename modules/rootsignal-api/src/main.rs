@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use async_graphql::http::GraphiQLSource;
-use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
 use axum::{
     extract::State,
     http::{header, HeaderValue, Method},
@@ -42,6 +42,7 @@ use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflo
 
 
 mod db;
+mod event_broadcast;
 mod graphql;
 mod investigate;
 mod investigate_tools;
@@ -61,6 +62,7 @@ pub struct AppState {
     pub rate_limiter: Mutex<HashMap<IpAddr, Vec<Instant>>>,
     pub jwt_service: JwtService,
     pub pg_pool: Option<sqlx::PgPool>,
+    pub event_broadcast: Option<event_broadcast::EventBroadcast>,
 }
 
 async fn graphql_handler(
@@ -108,9 +110,46 @@ async fn graphql_handler(
     response
 }
 
+async fn graphql_ws_handler(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    protocol: GraphQLProtocol,
+    ws: axum::extract::WebSocketUpgrade,
+) -> axum::response::Response {
+    // Extract JWT from cookie at WS upgrade time (primary auth gate)
+    let cookie_header = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let claims = jwt::parse_auth_cookie(cookie_header)
+        .and_then(|token| state.jwt_service.verify_token(token).ok());
+
+    let auth_context = AuthContext(claims);
+
+    let schema = state.schema.clone();
+
+    ws.protocols(["graphql-transport-ws", "graphql-ws"])
+        .on_upgrade(move |stream| {
+            GraphQLWebSocket::new(stream, schema, protocol)
+                .on_connection_init(move |_params| async move {
+                    let mut data = async_graphql::Data::default();
+                    data.insert(auth_context);
+                    Ok(data)
+                })
+                .serve()
+        })
+}
+
 async fn graphiql() -> impl IntoResponse {
     if cfg!(debug_assertions) {
-        Html(GraphiQLSource::build().endpoint("/graphql").finish()).into_response()
+        Html(
+            GraphiQLSource::build()
+                .endpoint("/graphql")
+                .subscription_endpoint("/graphql/ws")
+                .finish(),
+        )
+        .into_response()
     } else {
         axum::http::StatusCode::NOT_FOUND.into_response()
     }
@@ -215,6 +254,11 @@ async fn main() -> Result<()> {
         info!("Restate ingress configured — runScout will dispatch via Restate");
     }
 
+    // Spawn live event broadcast (PgListener → broadcast channel)
+    let event_broadcast = pg_pool
+        .as_ref()
+        .map(|pool| event_broadcast::EventBroadcast::spawn(pool.clone()));
+
     let store_factory = pg_pool
         .clone()
         .map(|_pool| rootsignal_scout::store::SignalReaderFactory::new(client.clone()));
@@ -241,6 +285,7 @@ async fn main() -> Result<()> {
         cache_store.clone(),
         restate_client,
         pg_pool.clone(),
+        event_broadcast.clone(),
     );
 
     // ========== Restate endpoint ==========
@@ -330,6 +375,7 @@ async fn main() -> Result<()> {
         rate_limiter: Mutex::new(HashMap::new()),
         jwt_service: jwt_service.clone(),
         pg_pool: pg_pool.clone(),
+        event_broadcast: event_broadcast.clone(),
     });
 
     let link_preview_cache = Arc::new(link_preview::LinkPreviewCache::new());
@@ -337,6 +383,11 @@ async fn main() -> Result<()> {
     let app = Router::new()
         // GraphQL
         .route("/graphql", get(graphiql).post(graphql_handler))
+        // GraphQL WebSocket subscriptions
+        .route(
+            "/graphql/ws",
+            get(graphql_ws_handler),
+        )
         // AI investigation (SSE streaming)
         .route("/api/investigate", post(investigate::investigate_handler))
         // Health check

@@ -56,7 +56,8 @@ async-graphql = { version = "7", features = ["chrono", "uuid", "dataloader"] }
 async-graphql-axum = "7"
 
 # Web framework
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+async-stream = "0.3"
 tower-http = { version = "0.6", features = ["trace", "compression-gzip", "set-header", "cors"] }
 tower = "0.5"
 

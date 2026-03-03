@@ -790,6 +790,24 @@ export const ADMIN_CAUSAL_TREE = gql`
   }
 `;
 
+export const EVENTS_SUBSCRIPTION = gql`
+  subscription Events($lastSeq: Int) {
+    events(lastSeq: $lastSeq) {
+      seq
+      ts
+      type
+      name
+      layer
+      id
+      parentId
+      correlationId
+      runId
+      summary
+      payload
+    }
+  }
+`;
+
 export const SITUATION_DETAIL = gql`
   query SituationDetail($id: UUID!) {
     situation(id: $id) {

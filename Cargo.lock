@@ -3545,6 +3545,7 @@ dependencies = [
  "anyhow",
  "async-graphql",
  "async-graphql-axum",
+ "async-stream",
  "async-trait",
  "axum",
  "bytes",

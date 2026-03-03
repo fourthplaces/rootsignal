@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router";
-import { useQuery, useLazyQuery } from "@apollo/client";
-import { ADMIN_EVENTS, ADMIN_CAUSAL_TREE } from "@/graphql/queries";
+import { useQuery, useLazyQuery, useSubscription } from "@apollo/client";
+import { ADMIN_EVENTS, ADMIN_CAUSAL_TREE, EVENTS_SUBSCRIPTION } from "@/graphql/queries";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,6 +56,9 @@ type EventsPaneContextValue = {
   hasMore: boolean;
   loadMore: () => void;
   loadingMore: boolean;
+
+  // Live subscription
+  live: boolean;
 
   // Selection
   selectedSeq: number | null;
@@ -170,6 +173,38 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     }
   }, [data, cursor]);
 
+  // ── Live subscription ──
+  // Capture the highest seq from the initial query (set once) to use as
+  // the catch-up cursor so the subscription replays any events missed
+  // between the initial HTTP query and the WebSocket connect.
+  const [lastSeq, setLastSeq] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (data?.adminEvents?.events?.length && lastSeq === undefined) {
+      setLastSeq(data.adminEvents.events[0].seq);
+    }
+  }, [data, lastSeq]);
+
+  // Only subscribe when no filters are active (live view of all events)
+  const hasFilters = !!(search || runId || timeFrom || timeTo);
+  const subscriptionVars = useMemo(() => ({ lastSeq }), [lastSeq]);
+
+  const { data: subData } = useSubscription<{ events: AdminEvent }>(EVENTS_SUBSCRIPTION, {
+    variables: subscriptionVars,
+    skip: hasFilters,
+  });
+
+  // Prepend live events
+  useEffect(() => {
+    if (!subData?.events) return;
+    const event = subData.events;
+    setAllEvents((prev) => {
+      if (prev.some((e) => e.seq === event.seq)) return prev;
+      return [event, ...prev];
+    });
+  }, [subData]);
+
+  const live = !hasFilters && !!subData;
+
   // Filter by active layers client-side
   const filteredEvents = useMemo(
     () => allEvents.filter((e) => layers.has(e.layer)),
@@ -226,6 +261,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       hasMore,
       loadMore,
       loadingMore: loading && allEvents.length > 0,
+      live,
       selectedSeq,
       selectSeq,
       treeData: treeData?.adminCausalTree ?? null,
@@ -236,7 +272,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     [
       layers, toggleLayer, search, runId, timeFrom, timeTo,
       filteredEvents, loading, hasMore, loadMore, allEvents.length,
-      selectedSeq, selectSeq, treeData, treeLoading,
+      live, selectedSeq, selectSeq, treeData, treeLoading,
       investigateEvent,
     ],
   );

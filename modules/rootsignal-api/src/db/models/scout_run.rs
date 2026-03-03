@@ -193,6 +193,34 @@ pub async fn get_event_by_seq(pool: &PgPool, seq: i64) -> Result<Option<EventRow
     Ok(row.map(row_to_event_full))
 }
 
+/// Fetch events starting from a given sequence number (inclusive), ordered ascending.
+/// Used for subscription catch-up: replay events the client missed between initial
+/// query and subscription connect.
+pub async fn get_events_from_seq(
+    pool: &PgPool,
+    start_seq: i64,
+    limit: i64,
+) -> Result<Vec<EventRowFull>> {
+    let limit = limit.min(500);
+
+    let rows = sqlx::query(
+        r#"
+        SELECT seq, ts, event_type, payload AS data, id, parent_id,
+               run_id, correlation_id, parent_seq
+        FROM events
+        WHERE seq >= $1
+        ORDER BY seq ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(start_seq)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(row_to_event_full).collect())
+}
+
 /// Paginated reverse-chronological event listing with optional filters.
 pub async fn list_events_paginated(
     pool: &PgPool,

@@ -155,7 +155,7 @@ function EventRow({
         isSelected ? "bg-accent/50 ring-1 ring-blue-500/50" : ""
       }`}
     >
-      <button onClick={onClick} className="w-full text-left">
+      <div onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }} className="w-full text-left cursor-pointer">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[10px] font-mono text-muted-foreground w-12 shrink-0 text-right">
             {event.seq}
@@ -193,7 +193,7 @@ function EventRow({
             <Search className="w-3.5 h-3.5 text-muted-foreground" />
           </button>
         </div>
-      </button>
+      </div>
       {payloadOpen && (
         <pre className="mt-1 ml-14 p-2 text-[10px] bg-background rounded border border-border overflow-x-auto max-h-64 whitespace-pre-wrap">
           {formatPayload(event.payload)}

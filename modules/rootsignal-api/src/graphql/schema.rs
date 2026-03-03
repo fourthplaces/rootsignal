@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use async_graphql::dataloader::DataLoader;
-use async_graphql::{Context, EmptySubscription, Object, Result, Schema, SimpleObject};
+use async_graphql::{Context, Object, Result, Schema, SimpleObject, Subscription};
+use futures::Stream;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -23,7 +24,7 @@ use crate::db::scout_run::{
 use crate::jwt::JwtService;
 use rootsignal_common::Config;
 
-pub type ApiSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+pub type ApiSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
 pub struct QueryRoot;
 
@@ -1406,8 +1407,8 @@ impl From<EventRow> for ScoutRunEvent {
 
 // ========== Event Browser types ==========
 
-#[derive(SimpleObject)]
-struct AdminEvent {
+#[derive(Clone, SimpleObject)]
+pub struct AdminEvent {
     seq: i64,
     ts: DateTime<Utc>,
     /// The event_type column — codec name like "DiscoveryEvent".
@@ -1460,6 +1461,83 @@ impl From<EventRowFull> for AdminEvent {
     }
 }
 
+// ========== Subscriptions ==========
+
+pub struct SubscriptionRoot;
+
+#[Subscription]
+impl SubscriptionRoot {
+    /// Stream live events. If `last_seq` is provided, replays missed events first
+    /// (catch-up phase), then switches to live broadcast.
+    async fn events(
+        &self,
+        ctx: &Context<'_>,
+        last_seq: Option<i64>,
+    ) -> Result<impl Stream<Item = AdminEvent>> {
+        // Defense-in-depth: verify admin auth (primary check is at WS connect)
+        let auth = ctx.data::<AuthContext>()?;
+        match &auth.0 {
+            Some(claims) if claims.is_admin => {}
+            _ => return Err(async_graphql::Error::new("Unauthorized")),
+        }
+
+        let pool = ctx
+            .data::<Option<sqlx::PgPool>>()?
+            .clone()
+            .ok_or_else(|| async_graphql::Error::new("Database not available"))?;
+
+        let broadcast = ctx
+            .data::<Option<crate::event_broadcast::EventBroadcast>>()?
+            .clone()
+            .ok_or_else(|| async_graphql::Error::new("Event broadcast not available"))?;
+        let mut rx = broadcast.subscribe();
+
+        Ok(async_stream::stream! {
+            let mut high_water: i64 = 0;
+
+            // ── Catch-up phase ──
+            if let Some(start) = last_seq {
+                // Fetch events from start_seq + 1 onward
+                let catch_up_start = start + 1;
+                match crate::db::scout_run::get_events_from_seq(&pool, catch_up_start, 500).await {
+                    Ok(rows) => {
+                        for row in rows {
+                            let event = AdminEvent::from(row);
+                            if event.seq > high_water {
+                                high_water = event.seq;
+                            }
+                            yield event;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Subscription catch-up query failed");
+                    }
+                }
+            }
+
+            // ── Live phase ──
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if event.seq > high_water {
+                            high_water = event.seq;
+                            yield event;
+                        }
+                        // else: already sent during catch-up, skip
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "Subscription receiver lagged");
+                        // Continue — we'll pick up the next event
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        })
+    }
+}
+
 // ========== Helpers ==========
 
 fn source_label_from_value(value: &str) -> String {
@@ -1488,6 +1566,7 @@ pub fn build_schema(
     cache_store: Arc<rootsignal_graph::CacheStore>,
     restate_client: Option<RestateClient>,
     pg_pool: Option<sqlx::PgPool>,
+    event_broadcast: Option<crate::event_broadcast::EventBroadcast>,
 ) -> ApiSchema {
     let citation_loader = DataLoader::new(
         CitationBySignalLoader {
@@ -1529,7 +1608,7 @@ pub fn build_schema(
         Arc::new(rootsignal_scout::infra::embedder::Embedder::new(voyage_key))
     };
 
-    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+    Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(reader)
         .data(store_factory)
         .data(engine_factory)
@@ -1548,6 +1627,7 @@ pub fn build_schema(
         .data(embedder)
         .data(restate_client)
         .data(pg_pool)
+        .data(event_broadcast)
         .finish()
 }
 
