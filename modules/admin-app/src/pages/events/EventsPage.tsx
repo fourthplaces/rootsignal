@@ -23,8 +23,17 @@ const PANE_REGISTRY: PaneType[] = [
 // ---------------------------------------------------------------------------
 
 function EventsPageInner() {
-  const { investigateEvent, setInvestigateEvent } = useEventsPaneContext();
+  const { selectedSeq, investigateEvent, setInvestigateEvent } = useEventsPaneContext();
   const paneManagerRef = useRef<PaneManagerHandle>(null);
+
+  // Auto-open causal tree tab when an event is selected
+  useEffect(() => {
+    if (selectedSeq == null || !paneManagerRef.current) return;
+    const pm = paneManagerRef.current;
+    if (!pm.hasTab("causal-tree")) {
+      pm.addTab("causal-tree", "Causal Tree");
+    }
+  }, [selectedSeq]);
 
   // Auto-open investigate tab when investigateEvent is set
   useEffect(() => {
@@ -65,6 +74,7 @@ function EventsPageInner() {
         ref={paneManagerRef}
         defaultLayout={DEFAULT_EVENTS_LAYOUT as any}
         paneRegistry={PANE_REGISTRY}
+        storageKey="events-pane-layout"
         onModelChange={handleModelChange}
         onResetLayout={handleResetLayout}
       />

@@ -200,6 +200,7 @@ pub async fn list_events_paginated(
     cursor: Option<i64>,
     from: Option<DateTime<Utc>>,
     to: Option<DateTime<Utc>>,
+    run_id: Option<&str>,
     limit: i64,
 ) -> Result<Vec<EventRowFull>> {
     let limit = limit.min(200);
@@ -217,6 +218,7 @@ pub async fn list_events_paginated(
                OR event_type ILIKE '%' || $4 || '%'
                OR run_id ILIKE '%' || $4 || '%'
                OR correlation_id::text ILIKE '%' || $4 || '%')
+          AND ($6::text IS NULL OR run_id = $6)
         ORDER BY seq DESC
         LIMIT $5
         "#,
@@ -226,6 +228,7 @@ pub async fn list_events_paginated(
     .bind(to)
     .bind(search)
     .bind(limit)
+    .bind(run_id)
     .fetch_all(pool)
     .await?;
 

@@ -12,6 +12,7 @@ export type PaneType = {
 export type PaneManagerProps = {
   defaultLayout: Record<string, unknown>;
   paneRegistry: PaneType[];
+  storageKey?: string;
   onModelChange?: (model: Model, action: Action) => void;
   onResetLayout?: () => void;
 };
@@ -24,9 +25,17 @@ export type PaneManagerHandle = {
 };
 
 export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
-  function PaneManager({ defaultLayout, paneRegistry, onModelChange, onResetLayout }, ref) {
+  function PaneManager({ defaultLayout, paneRegistry, storageKey, onModelChange, onResetLayout }, ref) {
     const layoutRef = useRef<Layout>(null);
-    const [model, setModel] = useState(() => Model.fromJson(defaultLayout as any));
+    const [model, setModel] = useState(() => {
+      if (storageKey) {
+        try {
+          const saved = localStorage.getItem(storageKey);
+          if (saved) return Model.fromJson(JSON.parse(saved));
+        } catch { /* fall through to default */ }
+      }
+      return Model.fromJson(defaultLayout as any);
+    });
     const [pickerTabsetId, setPickerTabsetId] = useState<string | null>(null);
 
     // Find a tab by component name
@@ -100,9 +109,12 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
 
     const handleModelChange = useCallback(
       (m: Model, action: Action) => {
+        if (storageKey) {
+          try { localStorage.setItem(storageKey, JSON.stringify(m.toJson())); } catch { /* quota exceeded */ }
+        }
         onModelChange?.(m, action);
       },
-      [onModelChange],
+      [storageKey, onModelChange],
     );
 
     const handleRenderTabSet = useCallback(
@@ -139,10 +151,11 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
     );
 
     const handleResetLayout = useCallback(() => {
+      if (storageKey) localStorage.removeItem(storageKey);
       setModel(Model.fromJson(defaultLayout as any));
       setPickerTabsetId(null);
       onResetLayout?.();
-    }, [defaultLayout, onResetLayout]);
+    }, [storageKey, defaultLayout, onResetLayout]);
 
     // Close picker on click outside
     useEffect(() => {

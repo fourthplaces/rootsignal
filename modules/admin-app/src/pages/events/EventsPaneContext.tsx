@@ -128,10 +128,11 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       limit: 50,
       cursor: cursor ?? undefined,
       search: search || undefined,
+      runId: runId || undefined,
       from: timeFrom ? new Date(timeFrom).toISOString() : undefined,
       to: timeTo ? new Date(timeTo + "T23:59:59").toISOString() : undefined,
     }),
-    [cursor, search, timeFrom, timeTo],
+    [cursor, search, runId, timeFrom, timeTo],
   );
 
   const { data, loading } = useQuery<{ adminEvents: AdminEventsPage }>(ADMIN_EVENTS, {
@@ -141,8 +142,8 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
 
   // When filters change (but not cursor), reset
   const filterKey = useMemo(
-    () => JSON.stringify({ search, timeFrom, timeTo }),
-    [search, timeFrom, timeTo],
+    () => JSON.stringify({ search, runId, timeFrom, timeTo }),
+    [search, runId, timeFrom, timeTo],
   );
   const prevFilterKeyRef = useRef(filterKey);
   useEffect(() => {
@@ -191,9 +192,12 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
   const selectSeq = useCallback(
     (seq: number) => {
       setSelectedSeq(seq);
+      // Skip re-fetch if this seq is already within the loaded causal tree
+      const currentTree = treeData?.adminCausalTree;
+      if (currentTree?.events.some((e) => e.seq === seq)) return;
       fetchTree({ variables: { seq } });
     },
-    [fetchTree],
+    [fetchTree, treeData],
   );
 
   const toggleLayer = useCallback((layer: string) => {
@@ -211,6 +215,8 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       toggleLayer,
       search,
       setSearch,
+      runId,
+      setRunId,
       timeFrom,
       setTimeFrom,
       timeTo,
@@ -228,7 +234,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       setInvestigateEvent,
     }),
     [
-      layers, toggleLayer, search, timeFrom, timeTo,
+      layers, toggleLayer, search, runId, timeFrom, timeTo,
       filteredEvents, loading, hasMore, loadMore, allEvents.length,
       selectedSeq, selectSeq, treeData, treeLoading,
       investigateEvent,

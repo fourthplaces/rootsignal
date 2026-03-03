@@ -40,6 +40,41 @@ const SKIP_EXTENSIONS: &[&str] = &[
     ".mp3", ".mp4",
 ];
 
+/// URL path segments that indicate legal/infrastructure pages with no community value.
+const SKIP_PATH_SEGMENTS: &[&str] = &[
+    "/privacy", "/legal", "/terms", "/policy", "/tos",
+    "/cookie", "/consent", "/gdpr", "/compliance",
+    "/account", "/signin", "/login", "/signup",
+];
+
+/// Domains that host tech infrastructure, not community content.
+/// Checked against the host portion of the URL (suffix match).
+const BLOCKED_DOMAINS: &[&str] = &[
+    "google.com",
+    "googleapis.com",
+    "gstatic.com",
+    "youtube.com",
+    "youtu.be",
+    "googlesyndication.com",
+    "googletagmanager.com",
+    "google-analytics.com",
+    "doubleclick.net",
+    "facebook.com",
+    "apple.com",
+    "microsoft.com",
+    "amazon.com",
+    "cloudflare.com",
+];
+
+
+/// Extract the host from a lowercased URL, stripping `www.` prefix.
+fn extract_host(url_lower: &str) -> Option<&str> {
+    let after_scheme = url_lower.strip_prefix("https://")
+        .or_else(|| url_lower.strip_prefix("http://"))?;
+    let host = after_scheme.split('/').next()?;
+    let host = host.split(':').next()?; // strip port
+    Some(host.strip_prefix("www.").unwrap_or(host))
+}
 
 /// Extract all content-worthy URLs from a list of page links.
 ///
@@ -65,6 +100,18 @@ pub fn extract_links(page_links: &[String]) -> Vec<String> {
         // Skip non-content file extensions
         let path_lower = trimmed.split('?').next().unwrap_or(trimmed).to_lowercase();
         if SKIP_EXTENSIONS.iter().any(|ext| path_lower.ends_with(ext)) {
+            continue;
+        }
+
+        // Skip blocked infrastructure domains
+        if let Some(host) = extract_host(&path_lower) {
+            if BLOCKED_DOMAINS.iter().any(|d| host == *d || host.ends_with(&format!(".{d}"))) {
+                continue;
+            }
+        }
+
+        // Skip legal/privacy/infrastructure path patterns
+        if SKIP_PATH_SEGMENTS.iter().any(|seg| path_lower.contains(seg)) {
             continue;
         }
 
@@ -362,20 +409,59 @@ mod tests {
     }
 
     #[test]
+    fn privacy_and_legal_urls_are_blocked() {
+        let links = vec![
+            "https://example.com/privacy".to_string(),
+            "https://example.com/privacy-policy".to_string(),
+            "https://example.com/legal/terms".to_string(),
+            "https://example.com/tos".to_string(),
+            "https://example.com/cookie-policy".to_string(),
+            "https://example.com/gdpr".to_string(),
+            "https://example.com/real-content".to_string(),
+        ];
+        let results = extract_links(&links);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].contains("real-content"));
+    }
+
+    #[test]
+    fn blocked_domains_are_filtered() {
+        let links = vec![
+            "https://www.google.com/policies/privacy/".to_string(),
+            "https://kids.youtube.com/privacynotice".to_string(),
+            "https://accounts.google.com/signin".to_string(),
+            "https://fonts.googleapis.com/css".to_string(),
+            "https://www.facebook.com/settings".to_string(),
+            "https://cloudflare.com/cdn-cgi/something".to_string(),
+            "https://localcommunity.org/events".to_string(),
+        ];
+        let results = extract_links(&links);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].contains("localcommunity.org"));
+    }
+
+    #[test]
+    fn extract_host_strips_www_and_port() {
+        assert_eq!(extract_host("https://www.google.com/path"), Some("google.com"));
+        assert_eq!(extract_host("http://example.com:8080/path"), Some("example.com"));
+        assert_eq!(extract_host("https://sub.google.com/"), Some("sub.google.com"));
+    }
+
+    #[test]
     fn test_mixed_linktree_page() {
         let links = vec![
             "https://instagram.com/mutual_aid_mpls".to_string(),
             "https://x.com/mpls_aid".to_string(),
-            "https://docs.google.com/document/d/1abc/edit".to_string(),
+            "https://docs.google.com/document/d/1abc/edit".to_string(), // blocked: google.com
             "https://gofundme.com/f/help-my-family".to_string(),
             "https://www.eventbrite.com/e/community-dinner-123".to_string(),
             "https://anotherorg.org/resources".to_string(),
             "https://example.com/flyer.pdf".to_string(),
-            "mailto:contact@org.com".to_string(),
+            "mailto:contact@org.com".to_string(), // blocked: mailto
         ];
         let results = extract_links(&links);
-        // All http(s) links except mailto should be extracted (including .pdf — not in SKIP_EXTENSIONS)
-        assert_eq!(results.len(), 7);
+        // google.com blocked by domain filter, mailto blocked by scheme filter
+        assert_eq!(results.len(), 6);
     }
 
     #[test]

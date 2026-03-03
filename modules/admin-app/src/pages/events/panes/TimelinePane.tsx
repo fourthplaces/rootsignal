@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
 
 // ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ function formatPayload(raw: string): string {
 // ---------------------------------------------------------------------------
 
 function FilterBar() {
-  const { layers, toggleLayer, search, setSearch, timeFrom, setTimeFrom, timeTo, setTimeTo } =
+  const { layers, toggleLayer, search, setSearch, runId, setRunId, timeFrom, setTimeFrom, timeTo, setTimeTo } =
     useEventsPaneContext();
 
   return (
@@ -113,6 +113,18 @@ function FilterBar() {
         onChange={(e) => setTimeTo(e.target.value)}
         className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground w-32"
       />
+
+      {runId && (
+        <>
+          <span className="w-px h-4 bg-border" />
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px] font-mono">
+            run: {runId.slice(0, 8)}…
+            <button onClick={() => setRunId("")} className="hover:text-foreground">
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        </>
+      )}
     </div>
   );
 }
@@ -126,11 +138,13 @@ function EventRow({
   isSelected,
   onClick,
   onInvestigate,
+  onFilterRun,
 }: {
   event: AdminEvent;
   isSelected: boolean;
   onClick: () => void;
   onInvestigate: () => void;
+  onFilterRun: (runId: string) => void;
 }) {
   const [payloadOpen, setPayloadOpen] = useState(false);
   const layerColor = LAYER_COLORS[event.layer] ?? "bg-zinc-500/20 text-zinc-400";
@@ -152,6 +166,15 @@ function EventRow({
           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${layerColor}`}>
             {event.layer}
           </span>
+          {event.runId && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onFilterRun(event.runId!); }}
+              className="px-1 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 shrink-0 transition-colors"
+              title={`Filter by run ${event.runId}`}
+            >
+              {event.runId.slice(0, 8)}
+            </button>
+          )}
           <span className="text-xs font-mono text-foreground shrink-0">
             {event.name}
           </span>
@@ -220,6 +243,7 @@ export function TimelinePane() {
     loadingMore,
     selectedSeq,
     selectSeq,
+    setRunId,
     setInvestigateEvent,
   } = useEventsPaneContext();
 
@@ -251,6 +275,7 @@ export function TimelinePane() {
               isSelected={event.seq === selectedSeq}
               onClick={() => selectSeq(event.seq)}
               onInvestigate={() => handleInvestigate(event)}
+              onFilterRun={setRunId}
             />
           ))}
           {hasMore && (

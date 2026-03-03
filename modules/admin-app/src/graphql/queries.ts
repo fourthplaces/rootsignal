@@ -743,6 +743,7 @@ export const ADMIN_EVENTS = gql`
     $search: String
     $from: DateTime
     $to: DateTime
+    $runId: String
   ) {
     adminEvents(
       limit: $limit
@@ -750,6 +751,7 @@ export const ADMIN_EVENTS = gql`
       search: $search
       from: $from
       to: $to
+      runId: $runId
     ) {
       events {
         seq

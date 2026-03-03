@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { Components } from "react-markdown";
-import { X, Send, Loader2, Wand, Check } from "lucide-react";
+import { X, Send, Loader2, Wand, Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -64,21 +64,27 @@ type ChatMsg = {
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
-const SYNTHESIS_PROMPT = `Based on our investigation, generate a fix prompt I can paste directly into Claude Code.
+const SYNTHESIS_PROMPT = `Based on our investigation, generate a detailed problem report I can hand to a developer (Claude Code) who has full access to the codebase but has NOT seen any of these events.
 
-Output ONLY the fix prompt below — no preamble, no explanation, no "here's your prompt" wrapper.
+Output ONLY the report below — no preamble, no explanation, no wrapper.
 
 Format:
-## Fix: [short description]
+## Problem: [short description of what went wrong]
 
-### Evidence
-[key event data — seq numbers, relevant payload fields, signal IDs]
+### What Was Observed
+[Describe the symptoms in plain language — what happened that shouldn't have, or what didn't happen that should have. Be specific and vivid.]
+
+### Evidence Trail
+[Key event data — seq numbers, timestamps, relevant payload fields, signal IDs. Walk through the causal chain so the developer can trace it. Quote exact values from payloads where they matter.]
 
 ### Diagnosis
-[what went wrong and at which layer — scraper, extraction, classification, enrichment, etc.]
+[What went wrong and at which layer — scraper, extraction, classification, enrichment, projection, etc. Explain the root cause as you understand it from the event data. Be specific about WHERE in the pipeline the problem occurred and WHY you believe that.]
 
-### Recommended Fix
-[specific action — e.g. "add domain X to blocklist in file Y", "update classification prompt to handle Z", "fix scraper redirect logic"]`;
+### Timeline
+[When was this content extracted? When was it published? Include extracted_at, published_at, and event timestamps so the developer can tell whether this is a recent regression or a long-standing issue. If the content is old, say so — a fix may already be in place.]
+
+### Impact
+[What downstream effects did this cause? Were signals misclassified, duplicated, dropped, corrupted? What is the blast radius?]`;
 
 async function streamInvestigation(
   seq: number,
@@ -170,6 +176,8 @@ export function InvestigateDrawer({
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "loading" | "copied">("idle");
+  const [toast, setToast] = useState<string | null>(null);
+  const [fallbackReport, setFallbackReport] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const synthAbortRef = useRef<AbortController | null>(null);
@@ -255,7 +263,7 @@ export function InvestigateDrawer({
     }
   };
 
-  const copyFix = useCallback(async () => {
+  const copyIssue = useCallback(async () => {
     if (copyState !== "idle" || streaming) return;
     setCopyState("loading");
 
@@ -276,8 +284,10 @@ export function InvestigateDrawer({
         async () => {
           try {
             await navigator.clipboard.writeText(result);
+            setToast("Copied to clipboard");
+            setTimeout(() => setToast(null), 2500);
           } catch {
-            window.prompt("Copy this fix prompt:", result);
+            setFallbackReport(result);
           }
           setCopyState("copied");
           setTimeout(() => setCopyState("idle"), 2000);
@@ -294,7 +304,7 @@ export function InvestigateDrawer({
   }, [copyState, streaming, messages, event.seq]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="relative flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
         <div className="min-w-0">
@@ -308,9 +318,9 @@ export function InvestigateDrawer({
         <div className="flex items-center gap-1 shrink-0">
           {messages.some((m) => m.role === "assistant" && m.content) && (
             <button
-              onClick={copyFix}
+              onClick={copyIssue}
               disabled={copyState !== "idle" || streaming}
-              title="Generate fix prompt for Claude Code"
+              title="Copy problem report for Claude Code"
               className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {copyState === "loading" ? (
@@ -385,6 +395,55 @@ export function InvestigateDrawer({
           </button>
         </div>
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-foreground text-background text-xs font-medium px-3 py-1.5 rounded-full shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200">
+          {toast}
+        </div>
+      )}
+
+      {/* Fallback modal — shown when clipboard API is unavailable */}
+      {fallbackReport && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-background border border-border rounded-lg shadow-xl w-[90%] max-h-[80%] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+              <h3 className="text-sm font-semibold text-foreground">Problem Report</h3>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(fallbackReport);
+                      setToast("Copied to clipboard");
+                      setTimeout(() => setToast(null), 2500);
+                      setFallbackReport(null);
+                    } catch {
+                      // clipboard still blocked — user can manually select
+                    }
+                  }}
+                  className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                  title="Copy to clipboard"
+                >
+                  <Copy className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setFallbackReport(null)}
+                  className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="max-w-none">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {fallbackReport}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

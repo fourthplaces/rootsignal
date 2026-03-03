@@ -595,6 +595,7 @@ impl QueryRoot {
         search: Option<String>,
         from: Option<DateTime<Utc>>,
         to: Option<DateTime<Utc>>,
+        run_id: Option<String>,
     ) -> Result<AdminEventsPage> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
         let pool = pool
@@ -609,6 +610,7 @@ impl QueryRoot {
             cursor,
             from,
             to,
+            run_id.as_deref(),
             lim,
         )
         .await

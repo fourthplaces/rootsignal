@@ -173,7 +173,7 @@ impl Tool for SearchEventsTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let limit = args.limit.min(50);
-        let rows = scout_run::list_events_paginated(&self.pool, Some(&args.query), None, None, None, limit)
+        let rows = scout_run::list_events_paginated(&self.pool, Some(&args.query), None, None, None, None, limit)
             .await
             .map_err(|e| ToolError(format!("Search failed: {e}")))?;
 
@@ -265,6 +265,12 @@ pub(crate) struct SignalOutput {
     location_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     review_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extracted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_confirmed_active: Option<String>,
 }
 
 fn node_to_signal_output(node: &Node) -> SignalOutput {
@@ -279,17 +285,14 @@ fn node_to_signal_output(node: &Node) -> SignalOutput {
             source_url: Some(meta.source_url.clone()),
             location_name: meta.about_location_name.clone(),
             review_status: Some(format!("{:?}", meta.review_status)),
+            extracted_at: Some(meta.extracted_at.to_rfc3339()),
+            published_at: meta.published_at.map(|t| t.to_rfc3339()),
+            last_confirmed_active: Some(meta.last_confirmed_active.to_rfc3339()),
         },
         None => SignalOutput {
             found: true,
             signal_type: Some(format!("{:?}", node.node_type())),
-            title: None,
-            summary: None,
-            confidence: None,
-            category: None,
-            source_url: None,
-            location_name: None,
-            review_status: None,
+            ..Default::default()
         },
     }
 }
@@ -304,7 +307,7 @@ impl Tool for GetSignalTool {
     async fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Load a signal node from the graph by its UUID. Returns the signal type, title, summary, confidence, category, source URL, and location.".to_string(),
+            description: "Load a signal node from the graph by its UUID. Returns the signal type, title, summary, confidence, category, source URL, location, and temporal metadata (extracted_at, published_at, last_confirmed_active).".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
