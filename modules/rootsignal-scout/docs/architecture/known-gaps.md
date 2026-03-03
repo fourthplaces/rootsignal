@@ -54,8 +54,12 @@ These should be unified into a single normalization pipeline.
 
 Identified but not yet cleaned up:
 - `PipelinePhase::SocialScrape` and `SocialDiscovery` — unused phase variants
-- `RunContext` alias in scrape_phase.rs — vestige of pre-seesaw architecture
 - `platform_prefix` — dead code path
+
+## Observability
+
+### Run Log Uses JSONB
+`run_log.rs` stores `EventKind` as a single `data JSONB` column with a denormalized `event_type` string for filtering. This replaced the previous 39-column approach. GraphQL API queries extract fields from JSONB at read time. Historical events before the JSONB migration will not have `data` populated.
 
 ## Future Work
 

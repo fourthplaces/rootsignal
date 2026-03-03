@@ -16,7 +16,6 @@ Things that happened in reality. Intended to be public and portable (future `roo
 | `AnnouncementShared` | An official notice or advisory was discovered |
 | `ConcernRaised` | A systemic tension or conflict was discovered |
 | `ConditionObserved` | An environmental or infrastructure condition was observed |
-| `IncidentReported` | A one-time incident was reported |
 
 ### Citations and Resources
 
@@ -51,6 +50,7 @@ Decisions the system makes about world facts. Editorial judgments, classificatio
 | `ToneClassified` | Tone assessment assigned to a signal |
 | `SeverityClassified` | Severity level assigned to a notice/tension |
 | `UrgencyClassified` | Urgency level assigned to a signal |
+| `CategoryClassified` | Signal category assigned (universal metadata on NodeMeta) |
 
 ### Signal Lifecycle
 
@@ -91,8 +91,8 @@ Corrections are events, not mutations — they layer on top of the archival reco
 
 | Event | Description |
 |-------|-------------|
-| `ResponseLinked` | Aid/Gathering linked as responding to Need/Tension |
-| `TensionLinked` | Signal linked to an existing tension |
+| `ResponseLinked` | Resource/Gathering linked as responding to HelpRequest/Concern |
+| `ConcernLinked` | Signal linked to an existing concern |
 | `ObservationCorroborated` | Signal confirmed by additional source |
 
 ### Situations
@@ -175,6 +175,8 @@ These drive the signal processing sub-chain and scrape telemetry. They are persi
 
 **EnrichmentEvent**: `ActorEnrichmentCompleted`
 
+**SynthesisEvent**: `SynthesisTriggered`, `SynthesisRoleCompleted` (carries `SynthesisRole` — one of: Similarity, ResponseMapping, ConcernLinker, ResponseFinder, GatheringFinder, Investigation)
+
 ## Persistence and Projection Matrix
 
 | Event Category | Persisted (Postgres) | Projected (Neo4j) | Folded (Aggregate) |
@@ -187,3 +189,4 @@ These drive the signal processing sub-chain and scrape telemetry. They are persi
 | ScrapeEvent | Yes | No | Yes |
 | DiscoveryEvent | Yes | `SourceDiscovered` only | Yes |
 | EnrichmentEvent | Yes | No | No |
+| SynthesisEvent | Yes | No | Yes |

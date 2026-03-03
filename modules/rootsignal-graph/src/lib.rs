@@ -8,7 +8,7 @@ pub mod enrich;
 pub mod migrate;
 pub mod pipeline;
 pub mod reader;
-pub mod reducer;
+pub mod projector;
 pub mod severity_inference;
 pub mod similarity;
 pub mod situation_temperature;
@@ -26,7 +26,7 @@ pub use pipeline::{BBox, Pipeline, PipelineStats};
 pub use reader::{
     PublicGraphReader, ResourceGap, ResourceMatch, ValidationIssueRow, ValidationIssueSummary,
 };
-pub use reducer::{ApplyResult, GraphProjector};
+pub use projector::{ApplyResult, GraphProjector};
 pub use writer::{
 ConsolidationStats, DiscoveryTreeNode, DuplicateMatch, EvidenceSummary, ExtractionYield,
 FieldCorrection, GapTypeStats, GatheringFinderTarget, GraphReader, GraphStore,

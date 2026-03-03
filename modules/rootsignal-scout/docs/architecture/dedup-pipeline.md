@@ -2,25 +2,34 @@
 
 Deduplication is the most critical quality gate. It prevents signal flooding while ensuring corroboration is tracked across sources. The pipeline runs inside the `signals:dedup` handler for each extracted batch.
 
-## 4-Layer Architecture
+## Layer Architecture
 
 ```
 Signal extracted from page
     │
-    ├─ Layer 1: Title match (exact)
-    │  Title + type HashSet — catches duplicates within the same scrape batch
+    ├─ Layer 1: Batch title dedup (pre-stash)
+    │  (title, type) HashSet — drops duplicates within the same extraction batch
+    │  Applied by the caller before the dedup handler runs
     │
-    ├─ Layer 2: Embedding cache (in-memory cosine similarity)
+    ├─ Layer 2: URL-scoped title dedup
+    │  Queries existing titles for the current URL
+    │  Drops signals whose normalized title already exists at this URL
+    │
+    ├─ Layer 2.5: Global exact title+type match
+    │  Graph query for (normalized_title, node_type) across all sources
+    │  Same URL → Refresh, different URL → Corroborate (similarity = 1.0)
+    │
+    ├─ Layer 3a: Embedding cache (in-memory cosine similarity)
     │  EmbeddingCache — cross-batch within-run dedup
-    │  Thresholds: 0.85 (same source) / 0.92 (cross-source)
+    │  Thresholds: ≥0.85 entry, ≥0.92 cross-source
+    │  Same URL → Refresh, different URL + above threshold → Corroborate
     │
-    ├─ Layer 3: Graph vector index (persistent cosine similarity)
+    ├─ Layer 3b: Graph vector index (persistent cosine similarity)
     │  Neo4j vector index query — cross-run dedup
-    │  Same thresholds as Layer 2
+    │  Same thresholds as Layer 3a
     │
-    └─ Layer 4: Same-source refresh
-       URL-scoped query — detects re-encounters from the same source
-       Lower threshold (0.80) since provenance is known
+    └─ Layer 4: No match → Create
+       Signal passed all layers — emit NewSignalAccepted
 ```
 
 ## Verdicts
@@ -49,18 +58,23 @@ The `dedup` handler calls `deps.embed_cache.add()` after processing each signal,
 
 | Threshold | Context | Rationale |
 |-----------|---------|-----------|
-| 0.92 | Cross-source | High bar — different sources may describe the same event differently. Only very similar content should merge. |
-| 0.85 | Same source | Lower bar — same source re-scraping likely produces minor wording variations of the same signal. |
-| 0.80 | Same-source refresh | Lowest bar — re-encounter from known provenance. Focus is on confirming the signal is still active. |
+| 1.0 | Global exact match (Layer 2.5) | Exact title + type — no ambiguity, always acts |
+| 0.92 | Cross-source vector (Layer 3a/3b) | High bar — different sources may describe the same event differently. Only very similar content should merge. |
+| 0.85 | Same-source vector entry (Layer 3a/3b) | Lower bar — same source re-scraping likely produces minor wording variations of the same signal. |
 
 ## Data Flow Through the Sub-Chain
 
 ```
-dedup handler
+batch_title_dedup (Layer 1, pre-handler)
     │
-    ├─ Reads: ctx.singleton::<PipelineState>() for url_to_canonical_key, pending_nodes
-    ├─ Reads: deps.embed_cache for in-memory vector matches
-    ├─ Reads: deps.store (SignalReader) for graph vector + title matches
+    └─ Filters batch by (normalized_title, node_type) HashSet
+
+dedup handler (Layers 2–4)
+    │
+    ├─ Reads: deps.store.existing_titles_for_url() → Layer 2 URL-scoped dedup
+    ├─ Reads: deps.store.find_by_titles_and_types() → Layer 2.5 global exact match
+    ├─ Reads: deps.embed_cache → Layer 3a in-memory vector match
+    ├─ Reads: deps.store.find_duplicate() → Layer 3b graph vector match
     │
     ├─ Emits: NewSignalAccepted { node_id, node_type, pending_node }
     │         → aggregator stashes PendingNode in state.pending_nodes

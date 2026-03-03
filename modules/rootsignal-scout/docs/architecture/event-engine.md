@@ -38,7 +38,7 @@ let engine = seesaw_core::Engine::new(deps)
     .with_handlers(discovery::handlers::handlers())         // bootstrap, link promotion
     .with_handlers(enrichment::handlers::handlers())        // actors, metrics
     .with_handlers(expansion::handlers::handlers())         // signal expansion
-    .with_handlers(synthesis::handlers::handlers());        // finders, similarity
+    .with_handlers(synthesis::handlers::handlers());        // trigger, 6 parallel roles, completion
 ```
 
 The full engine adds `situation_weaving` and `supervisor` handlers.

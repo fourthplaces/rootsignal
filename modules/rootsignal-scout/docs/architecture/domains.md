@@ -115,23 +115,35 @@ Social scraping runs in parallel via Apify (Instagram, Facebook, Reddit).
 
 ## Synthesis
 
-**Purpose**: Cross-signal relationship discovery via parallel analysis tasks.
+**Purpose**: Cross-signal relationship discovery via 6 parallel seesaw handlers.
+
+**Architecture**: The synthesis phase uses a trigger → fan-out → completion pattern. A single trigger handler emits `SynthesisTriggered`, which fires 6 independent role handlers in parallel. Each role handler emits `SynthesisRoleCompleted` when done. A completion handler checks whether all 6 roles are finished (via `completed_synthesis_roles` in `PipelineState`) and emits `PhaseCompleted(Synthesis)`.
 
 **Handlers**:
 
 | ID | Trigger | Emits |
 |----|---------|-------|
-| `synthesis:run` | `PhaseCompleted(SignalExpansion)` | `SystemEvent::ResponseLinked/TensionLinked`, `WorldEvent::ResourceLinked`, `PhaseCompleted(Synthesis)` |
+| `synthesis:trigger` | `PhaseCompleted(SignalExpansion)` | `SynthesisTriggered` |
+| `synthesis:similarity` | `SynthesisTriggered` | `SystemEvent::SimilarityEdgesRebuilt`, `SynthesisRoleCompleted(Similarity)` |
+| `synthesis:response_mapping` | `SynthesisTriggered` | `SystemEvent::ResponseLinked`, `SynthesisRoleCompleted(ResponseMapping)` |
+| `synthesis:tension_linker` | `SynthesisTriggered` | `SystemEvent::ConcernLinked`, `SynthesisRoleCompleted(ConcernLinker)` |
+| `synthesis:response_finder` | `SynthesisTriggered` | `WorldEvent::ResourceLinked`, `DiscoveryEvent::SourceDiscovered`, `SynthesisRoleCompleted(ResponseFinder)` |
+| `synthesis:gathering_finder` | `SynthesisTriggered` | `WorldEvent::GatheringAnnounced`, `DiscoveryEvent::SourceDiscovered`, `SynthesisRoleCompleted(GatheringFinder)` |
+| `synthesis:investigation` | `SynthesisTriggered` | `SystemEvent::ObservationCorroborated`, `SynthesisRoleCompleted(Investigation)` |
+| `synthesis:phase_complete` | `SynthesisRoleCompleted` | `PhaseCompleted(Synthesis)` (when all 6 complete) |
 | `synthesis:severity_inference` | `PhaseCompleted(Synthesis)` | `SystemEvent::SeverityClassified` |
 
-**Activities** (run concurrently via `tokio::join!`):
-- **Response Mapper**: LLM determines which Aid/Gathering signals address Need/Tension signals → `RESPONDS_TO` edges
-- **Tension Linker**: Agentic search linking orphaned signals to existing tensions
-- **Response Finder**: Agentic investigation discovering ecosystem responses to top tensions
-- **Gathering Finder**: Agentic investigation discovering physical gathering places around tensions
+**Roles**:
+- **Similarity**: Rebuilds cosine-similarity edges between signals in the graph
+- **Response Mapping**: LLM determines which Resource/Gathering signals address HelpRequest/Concern signals → `RESPONDS_TO` edges
+- **Concern Linker**: Agentic search linking orphaned signals to existing concerns
+- **Response Finder**: Agentic investigation discovering ecosystem responses to top concerns
+- **Gathering Finder**: Agentic investigation discovering physical gathering places around concerns
 - **Investigator**: Web search corroboration for low-confidence signals
 
-All synthesis stages are budget-gated — they check `has_budget()` before running.
+**Shared utilities** (`synthesis/util.rs`): Region bounding box computation, future query `SourceNode` builder, `NodeMeta` construction, best-tension-match via embedding similarity. These are shared by response_finder and gathering_finder to avoid duplication.
+
+All synthesis roles are budget-gated — they check `has_budget()` before running. If deps are missing (region, graph, budget, archive), the trigger handler skips synthesis entirely.
 
 ---
 
@@ -159,7 +171,7 @@ All synthesis stages are budget-gated — they check `has_budget()` before runni
 
 | ID | Trigger | Emits |
 |----|---------|-------|
-| `supervisor:run` | `PhaseCompleted(SituationWeaving)` | `SystemEvent::DuplicateTensionMerged`, `DuplicateActorsMerged`, `PhaseCompleted(Supervisor)` |
+| `supervisor:run` | `PhaseCompleted(SituationWeaving)` | `SystemEvent::DuplicateConcernMerged`, `DuplicateActorsMerged`, `PhaseCompleted(Supervisor)` |
 
 **Activities**: `supervise()` detects and merges duplicate tensions, merges duplicate actors, computes cause heat (cross-situation attention spillover), and identifies beacon signals (high-impact outliers).
 

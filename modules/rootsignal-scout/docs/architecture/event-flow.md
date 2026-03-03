@@ -91,9 +91,37 @@ PhaseCompleted(ReapExpired)
                             │
                             ├─[discovery:link_promotion]
                             │
-                            └─[synthesis:run]
-                                └─ SystemEvent::ResponseLinked / TensionLinked
-                                └─ WorldEvent::ResourceLinked
+                            └─[synthesis:trigger]
+                                └─ SynthesisEvent::SynthesisTriggered
+                                │
+                                ├─[synthesis:similarity]
+                                │   └─ SystemEvent::SimilarityEdgesRebuilt
+                                │   └─ SynthesisRoleCompleted(Similarity)
+                                │
+                                ├─[synthesis:response_mapping]
+                                │   └─ SystemEvent::ResponseLinked
+                                │   └─ SynthesisRoleCompleted(ResponseMapping)
+                                │
+                                ├─[synthesis:tension_linker]
+                                │   └─ SystemEvent::ConcernLinked
+                                │   └─ SynthesisRoleCompleted(ConcernLinker)
+                                │
+                                ├─[synthesis:response_finder]
+                                │   └─ WorldEvent::ResourceLinked
+                                │   └─ DiscoveryEvent::SourceDiscovered
+                                │   └─ SynthesisRoleCompleted(ResponseFinder)
+                                │
+                                ├─[synthesis:gathering_finder]
+                                │   └─ WorldEvent::GatheringAnnounced
+                                │   └─ DiscoveryEvent::SourceDiscovered
+                                │   └─ SynthesisRoleCompleted(GatheringFinder)
+                                │
+                                └─[synthesis:investigation]
+                                    └─ SystemEvent::ObservationCorroborated
+                                    └─ SynthesisRoleCompleted(Investigation)
+                                │
+                                ▼ (all 6 roles completed)
+                                [synthesis:phase_complete]
                                 └─ PhaseCompleted(Synthesis)
                                 │
                                 ▼
@@ -112,7 +140,7 @@ PhaseCompleted(ReapExpired)
                                 │   PhaseCompleted(SituationWeaving)
                                 │   │
                                 │   └─[supervisor:run]
-                                │       └─ SystemEvent::DuplicateTensionMerged
+                                │       └─ SystemEvent::DuplicateConcernMerged
                                 │       └─ SystemEvent::DuplicateActorsMerged
                                 │       └─ PhaseCompleted(Supervisor)
                                 │       │
@@ -181,7 +209,7 @@ Phases are sequenced by `PhaseCompleted` events, not by explicit orchestration. 
 | ActorEnrichment | `PhaseCompleted(ResponseScrape)` | `enrichment:actor_location`, `enrichment:post_scrape` |
 | Metrics | `PhaseCompleted(ActorEnrichment)` | `enrichment:metrics` |
 | SignalExpansion | `MetricsCompleted` | `expansion:signal_expansion` |
-| Synthesis | `PhaseCompleted(SignalExpansion)` | `synthesis:run` |
+| Synthesis | `PhaseCompleted(SignalExpansion)` | `synthesis:trigger` → 6 parallel role handlers → `synthesis:phase_complete` |
 | SituationWeaving | `PhaseCompleted(Synthesis)` | `situation_weaving:run` |
 | Supervisor | `PhaseCompleted(SituationWeaving)` | `supervisor:run` |
 | Finalize | `PhaseCompleted(Synthesis)` or `PhaseCompleted(Supervisor)` | `lifecycle:finalize` |

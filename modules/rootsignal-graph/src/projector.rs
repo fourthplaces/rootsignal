@@ -85,8 +85,10 @@ impl GraphProjector {
 
     /// Project a single fact to the graph. Idempotent.
     pub async fn project(&self, event: &StoredEvent) -> Result<ApplyResult> {
-        // Pipeline events: only source_discovered needs projection.
-        if event.event_type.starts_with("pipeline:") {
+        // Pipeline/discovery events: only source_discovered needs projection.
+        if event.event_type.starts_with("pipeline:")
+            || event.event_type.starts_with("discovery:")
+        {
             return self.project_pipeline(event).await;
         }
 
@@ -121,7 +123,7 @@ impl GraphProjector {
 
     async fn project_pipeline(&self, event: &StoredEvent) -> Result<ApplyResult> {
         match event.event_type.as_str() {
-            "pipeline:source_discovered" => {
+            "pipeline:source_discovered" | "discovery:source_discovered" => {
                 #[derive(serde::Deserialize)]
                 struct Payload {
                     source: SourceNode,

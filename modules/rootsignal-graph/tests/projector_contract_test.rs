@@ -1,6 +1,6 @@
-//! Reducer contract tests.
+//! Projector contract tests.
 //!
-//! These verify the reducer's classification of events (no-op vs applied)
+//! These verify the projector's classification of events (no-op vs applied)
 //! and its structural guarantees without requiring a Neo4j instance.
 //! Integration tests with Neo4j would live in a separate file using testcontainers.
 
@@ -162,7 +162,7 @@ fn every_event_type_is_classified_as_noop_or_applied() {
 
         assert!(
             is_noop || is_applied,
-            "Event type '{}' is not classified as noop or applied in reducer tests",
+            "Event type '{}' is not classified as noop or applied in projector tests",
             event_type
         );
         assert!(
@@ -210,7 +210,7 @@ fn noop_plus_applied_covers_all_event_types() {
 
 #[test]
 fn discovery_cypher_uses_merge_not_create() {
-    let source = include_str!("../src/reducer.rs");
+    let source = include_str!("../src/projector.rs");
 
     assert!(
         source.contains("MERGE (n:{label} {{id: $id}})"),
@@ -219,56 +219,56 @@ fn discovery_cypher_uses_merge_not_create() {
 }
 
 #[test]
-fn reducer_source_has_no_utc_now() {
-    let source = include_str!("../src/reducer.rs");
+fn projector_source_has_no_utc_now() {
+    let source = include_str!("../src/projector.rs");
 
     assert!(
         !source.contains("Utc::now()"),
-        "Reducer must not use Utc::now() — all timestamps come from event payloads"
+        "Projector must not use Utc::now() — all timestamps come from event payloads"
     );
 }
 
 #[test]
-fn reducer_source_has_no_uuid_new() {
-    let source = include_str!("../src/reducer.rs");
+fn projector_source_has_no_uuid_new() {
+    let source = include_str!("../src/projector.rs");
 
     assert!(
         !source.contains("Uuid::new_v4()"),
-        "Reducer must not generate UUIDs — all IDs come from event payloads"
+        "Projector must not generate UUIDs — all IDs come from event payloads"
     );
 }
 
 #[test]
-fn reducer_source_has_no_embedding_writes() {
-    let source = include_str!("../src/reducer.rs");
+fn projector_source_has_no_embedding_writes() {
+    let source = include_str!("../src/projector.rs");
 
     assert!(
         !source.contains("n.embedding =") && !source.contains("embedding: $embedding"),
-        "Reducer must not write embeddings — that's an enrichment pass"
+        "Projector must not write embeddings — that's an enrichment pass"
     );
 }
 
 #[test]
-fn reducer_source_has_no_diversity_writes() {
-    let source = include_str!("../src/reducer.rs");
+fn projector_source_has_no_diversity_writes() {
+    let source = include_str!("../src/projector.rs");
 
     assert!(
         !source.contains("n.source_diversity =")
             && !source.contains("n.channel_diversity =")
             && !source.contains("n.external_ratio ="),
-        "Reducer must not write diversity metrics — those are enrichment pass values"
+        "Projector must not write diversity metrics — those are enrichment pass values"
     );
 }
 
-// cause_heat is now event-sourced via CauseHeatComputed — the reducer legitimately writes it.
+// cause_heat is now event-sourced via CauseHeatComputed — the projector legitimately writes it.
 
 #[test]
-fn reducer_source_has_no_freshness_score_writes() {
-    let source = include_str!("../src/reducer.rs");
+fn projector_source_has_no_freshness_score_writes() {
+    let source = include_str!("../src/projector.rs");
 
     assert!(
         !source.contains("n.freshness_score =") && !source.contains("freshness_score: $"),
-        "Reducer must not write freshness_score — that's a derived metric"
+        "Projector must not write freshness_score — that's a derived metric"
     );
 }
 

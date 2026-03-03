@@ -13,7 +13,7 @@ use tracing::info;
 
 use rootsignal_events::{EventStore, StoredEvent};
 
-use crate::reducer::{ApplyResult, GraphProjector};
+use crate::projector::{ApplyResult, GraphProjector};
 use crate::GraphClient;
 
 /// Stats from a full pipeline run.

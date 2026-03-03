@@ -13,4 +13,5 @@ Scout is the automated signal collection engine for Root Signal. It discovers, e
 | [Domains](domains.md) | Each domain's handlers, events, activities, and responsibilities |
 | [Dedup Pipeline](dedup-pipeline.md) | 4-layer signal deduplication |
 | [Testing](testing.md) | Test philosophy, levels, patterns |
+| [Event-Sourcing Exceptions](event-sourcing-exceptions.md) | Components that bypass the event-sourced chain |
 | [Known Gaps](known-gaps.md) | Architectural gaps and future work |

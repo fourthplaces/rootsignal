@@ -6,17 +6,16 @@ A single scout run discovers, extracts, deduplicates, and graphs signals for a g
 
 ## Data Model
 
-Scout operates on seven node types sharing a common `NodeMeta`:
+Scout operates on six signal node types sharing a common `NodeMeta`:
 
 | Type | Description | Expiry |
 |------|-------------|--------|
 | **Gathering** | Time-bound events — protests, cleanups, workshops, meetings | 30 days past `ends_at` |
-| **Aid** | Available resources — food shelves, free clinics, tool libraries | 60 days without re-confirmation |
-| **Need** | Community requests — volunteer calls, donation drives | 60 days |
-| **Notice** | Official advisories — policy changes, shelter openings | 90 days |
-| **Tension** | Systemic conflicts — housing crises, environmental harm | Never (persistent) |
+| **Resource** | Available resources — food shelves, free clinics, tool libraries | 60 days without re-confirmation |
+| **HelpRequest** | Community requests — volunteer calls, donation drives | 60 days |
+| **Announcement** | Official advisories — policy changes, shelter openings | 90 days |
+| **Concern** | Systemic conflicts — housing crises, environmental harm | Never (persistent) |
 | **Condition** | Environmental/infrastructure state — road closures, air quality | 30 days |
-| **Incident** | One-time events — fires, accidents, spills | 30 days |
 
 Supporting nodes: `Citation` (source evidence), `Actor` (organizations/people), `Source` (data feeds), `Resource` (links/documents), `Tag` (categorization).
 
@@ -41,15 +40,17 @@ src/
     discovery/         Bootstrap, link promotion, mid-run source discovery
     enrichment/        Actor extraction, location triangulation, source metrics
     expansion/         Signal expansion from implied queries
-    synthesis/         Similarity edges, response mapping, agentic finders
+    synthesis/         Similarity edges, response mapping, agentic finders (6 parallel roles)
+      util.rs          Shared finder utilities: region bounds, node builders, tension matching
     situation_weaving/ Leiden clustering, narrative generation, curiosity triggers
     supervisor/        Issue detection, duplicate merging, cause heat, beacons
     scheduling/        Budget tracking, source scheduling (utility, no handlers)
 
   infra/
     embedder.rs        TextEmbedder trait + Voyage AI implementation
-    run_log.rs         RunLogger — operational observability (separate from event store)
+    run_log.rs         RunLogger — JSONB-based operational observability (separate from event store)
     util.rs            URL sanitization, cosine similarity, constants
+    agent_tools.rs     Claude API tool schemas for agentic synthesis
 
   store/
     event_sourced.rs   EventSourcedReader — SignalReader backed by Neo4j graph
@@ -86,12 +87,12 @@ Both share the same `ScoutEngineDeps`, infrastructure handlers, and `PipelineSta
 ```
 Nodes                          Relationships
 ─────                          ─────────────
-Gathering, Aid, Need,          Signal ──SOURCED_FROM──▶ Citation
-Notice, Tension, Condition,    Actor  ──ACTED_IN──▶ Signal
-Incident, Citation,            Signal ──RESPONDS_TO──▶ Tension
-Situation, Actor, Source,      Situation ──CONTAINS──▶ Signal
-City, Resource, Tag            Situation ──EVOLVED_FROM──▶ Situation
-                               Signal ──SIMILAR_TO──▶ Signal
+Gathering, Resource,           Signal ──SOURCED_FROM──▶ Citation
+HelpRequest, Announcement,     Actor  ──ACTED_IN──▶ Signal
+Concern, Condition,            Signal ──RESPONDS_TO──▶ Concern
+Citation, Situation,           Situation ──CONTAINS──▶ Signal
+Actor, Source, City,           Situation ──EVOLVED_FROM──▶ Situation
+Resource, Tag                  Signal ──SIMILAR_TO──▶ Signal
                                Signal ──TAGGED──▶ Tag
                                Signal ──HAS_RESOURCE──▶ Resource
                                Source ──DISCOVERED──▶ Source
