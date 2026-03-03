@@ -169,7 +169,13 @@ function SourceRow({
       <td className="px-4 py-2 text-muted-foreground tabular-nums">{s.cadenceHours}h</td>
       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{formatDate(s.lastScraped)}</td>
       <td className="px-4 py-2 text-muted-foreground text-xs">{s.discoveryMethod}</td>
-      <td className="px-4 py-2 text-right">
+      <td className="px-4 py-2 text-right space-x-2">
+        <Link
+          to={`/events?q=${encodeURIComponent(s.canonicalValue)}`}
+          className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+        >
+          Events
+        </Link>
         <button
           onClick={() => onDelete(s.id)}
           className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10"

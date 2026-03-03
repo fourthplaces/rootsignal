@@ -238,6 +238,12 @@ export function SourceDetailPage() {
               </svg>
             </a>
           )}
+          <Link
+            to={`/events?q=${encodeURIComponent(source.canonicalValue)}`}
+            className="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+          >
+            View Events
+          </Link>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
