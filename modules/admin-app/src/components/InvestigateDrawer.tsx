@@ -53,6 +53,10 @@ type AdminEvent = {
   payload: string;
 };
 
+export type InvestigateMode =
+  | { mode: "event"; event: AdminEvent }
+  | { mode: "sources"; sourceIds: string[]; sourceLabel: string };
+
 type ChatMsg = {
   role: "user" | "assistant";
   content: string;
@@ -94,8 +98,18 @@ GraphQL endpoint: \`${API_BASE}/graphql\` (POST, Content-Type: application/json)
 - Include full field selections so the query is copy-pasteable as-is
 - Use the admin query names: adminCausalTree, adminEvents, adminScoutRunEvents, adminNodeEvents, signal, adminScoutRuns, supervisorFindings, adminRegionSources, etc.]`;
 
+function buildRequestBody(
+  investigation: InvestigateMode,
+  messages: ChatMsg[],
+): Record<string, unknown> {
+  if (investigation.mode === "event") {
+    return { mode: "event", seq: investigation.event.seq, messages };
+  }
+  return { mode: "sources", source_ids: investigation.sourceIds, messages };
+}
+
 async function streamInvestigation(
-  seq: number,
+  investigation: InvestigateMode,
   messages: ChatMsg[],
   onDelta: (text: string) => void,
   onDone: () => void,
@@ -106,7 +120,7 @@ async function streamInvestigation(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ seq, messages }),
+    body: JSON.stringify(buildRequestBody(investigation, messages)),
     signal,
   });
 
@@ -170,14 +184,40 @@ async function streamInvestigation(
 }
 
 // ---------------------------------------------------------------------------
+// Mode helpers
+// ---------------------------------------------------------------------------
+
+function getTitle(investigation: InvestigateMode): string {
+  if (investigation.mode === "event") {
+    return `Investigate: ${investigation.event.name}`;
+  }
+  return `Auditing ${investigation.sourceLabel}`;
+}
+
+function getSubtitle(investigation: InvestigateMode): string {
+  if (investigation.mode === "event") {
+    const e = investigation.event;
+    return `seq=${e.seq} · ${e.layer}`;
+  }
+  return `${investigation.sourceIds.length} source${investigation.sourceIds.length === 1 ? "" : "s"} selected`;
+}
+
+function getAutoMessage(investigation: InvestigateMode): string {
+  if (investigation.mode === "event") {
+    return "Investigate this event.";
+  }
+  return "Audit these sources. Give me a quick assessment of which ones look productive and which look like garbage.";
+}
+
+// ---------------------------------------------------------------------------
 // InvestigateDrawer
 // ---------------------------------------------------------------------------
 
 export function InvestigateDrawer({
-  event,
+  investigation,
   onClose,
 }: {
-  event: AdminEvent;
+  investigation: InvestigateMode;
   onClose: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -211,7 +251,7 @@ export function InvestigateDrawer({
       abortRef.current = controller;
 
       streamInvestigation(
-        event.seq,
+        investigation,
         newMessages,
         (text) => {
           setMessages((prev) => {
@@ -244,12 +284,12 @@ export function InvestigateDrawer({
         controller.signal,
       );
     },
-    [event.seq],
+    [investigation],
   );
 
   // Auto-send on mount
   useEffect(() => {
-    sendMessage("Investigate this event.", []);
+    sendMessage(getAutoMessage(investigation), []);
     return () => {
       abortRef.current?.abort();
       synthAbortRef.current?.abort();
@@ -271,8 +311,10 @@ export function InvestigateDrawer({
     }
   };
 
+  const showSynthesis = investigation.mode === "event";
+
   const copyIssue = useCallback(async () => {
-    if (copyState !== "idle" || streaming) return;
+    if (copyState !== "idle" || streaming || !showSynthesis) return;
     setCopyState("loading");
 
     const synthMessages: ChatMsg[] = [
@@ -286,7 +328,7 @@ export function InvestigateDrawer({
     try {
       let result = "";
       await streamInvestigation(
-        event.seq,
+        investigation,
         synthMessages,
         (text) => { result += text; },
         async () => {
@@ -309,7 +351,7 @@ export function InvestigateDrawer({
     } catch {
       setCopyState("idle");
     }
-  }, [copyState, streaming, messages, event.seq]);
+  }, [copyState, streaming, messages, investigation, showSynthesis]);
 
   return (
     <div className="relative flex flex-col h-full">
@@ -317,14 +359,14 @@ export function InvestigateDrawer({
       <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-foreground truncate">
-            Investigate: {event.name}
+            {getTitle(investigation)}
           </h2>
           <p className="text-[10px] text-muted-foreground">
-            seq={event.seq} &middot; {event.layer}
+            {getSubtitle(investigation)}
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {messages.some((m) => m.role === "assistant" && m.content) && (
+          {showSynthesis && messages.some((m) => m.role === "assistant" && m.content) && (
             <button
               onClick={copyIssue}
               disabled={copyState !== "idle" || streaming}
@@ -373,7 +415,9 @@ export function InvestigateDrawer({
               ) : (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span className="text-xs">Investigating...</span>
+                  <span className="text-xs">
+                    {investigation.mode === "event" ? "Investigating..." : "Auditing sources..."}
+                  </span>
                 </div>
               )
             ) : (

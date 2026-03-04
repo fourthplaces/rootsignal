@@ -1,6 +1,7 @@
 ## Rules
 
-- NEVER write, edit, or delete code unless the user explicitly gives consent. Always explain what you would change first and wait for approval before touching any files.
+- NEVER write, edit, or delete code unless the user explicitly gives consent. Always explain what you would change first and wait for approval before touching any files. This includes diagnostic exploration — always say what you're about to do and why before doing it.
+- When presenting a diagnosis or proposed fix, explain the FULL reasoning and get explicit "yes" before touching any file. No exceptions.
 - Tests MUST follow the pattern: MOCK → FUNCTION → OUTPUT. Set up mocks, call the real function/organ under test, assert the output. Do NOT take code out of context by manually calling internal functions step-by-step — that tests your understanding of the code, not the code itself. The organ does the wiring; tests only check what came out. If code cannot be tested this way (e.g. it takes concrete types instead of traits), refactor the code to make it testable — the testing constraint drives the architecture, not the other way around.
 - Test names MUST describe behavior, not implementation. A reader should understand what the system does from the name alone. Good: `blank_author_name_does_not_create_actor`. Bad: `whitespace_only_author_actor_not_created`. Tell a story about the system's behavior, not its plumbing.
 - Handlers MUST always emit at least one event. No silent empty returns. If a handler has nothing to do, emit `PipelineEvent::HandlerSkipped { handler_id, reason }`. If there is an actual error, emit a domain-specific error event (e.g. `ScrapeEvent::SocialScrapeFailed`) — errors are part of the domain language, not pipeline plumbing.

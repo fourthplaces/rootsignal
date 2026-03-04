@@ -83,7 +83,7 @@ impl ScoutRunner {
 
             if let Err(e) = result {
                 warn!(task_id = task_id.as_str(), error = %e, "Full scout run failed");
-                emit_idle_status(&deps, &task_id).await;
+                emit_error_status(&deps, &task_id, &run_id).await;
             } else {
                 info!(task_id = task_id.as_str(), "Full scout run completed");
             }
@@ -112,7 +112,7 @@ impl ScoutRunner {
 
             if let Err(e) = result {
                 warn!(task_id = task_id.as_str(), phase = ?phase, error = %e, "Scout phase failed");
-                emit_idle_status(&deps, &task_id).await;
+                emit_error_status(&deps, &task_id, &run_id).await;
             } else {
                 info!(task_id = task_id.as_str(), phase = ?phase, "Scout phase completed");
             }
@@ -413,8 +413,8 @@ async fn post_settle_cleanup(deps: &ScoutDeps, run_id_uuid: uuid::Uuid, task_id:
             .unwrap_or(false);
 
             if !completed_normally {
-                info!(task_id = tid, "Run was cancelled, resetting task to idle");
-                emit_idle_status(deps, tid).await;
+                info!(task_id = tid, "Run was cancelled");
+                emit_cancelled_status(deps, tid).await;
             }
         }
     }
@@ -454,7 +454,7 @@ async fn cleanup_old_cancellations(pool: &sqlx::PgPool) {
 async fn emit_running_status(deps: &ScoutDeps, task_id: &str, phase: ScoutPhase) {
     use rootsignal_common::events::SystemEvent;
 
-    let engine = build_infra_only_engine(deps.pg_pool.clone(), deps.graph_client.clone());
+    let engine = build_infra_only_engine(deps.pg_pool.clone(), deps.graph_client.clone(), None);
     if let Err(e) = engine
         .emit(SystemEvent::TaskPhaseTransitioned {
             task_id: task_id.to_string(),
@@ -468,21 +468,44 @@ async fn emit_running_status(deps: &ScoutDeps, task_id: &str, phase: ScoutPhase)
     }
 }
 
-/// Emit an idle status via a minimal infra-only engine so the task doesn't
-/// appear stuck after a failure.
-async fn emit_idle_status(deps: &ScoutDeps, task_id: &str) {
+/// Emit a cancelled status so the UI shows the task was deliberately stopped.
+async fn emit_cancelled_status(deps: &ScoutDeps, task_id: &str) {
     use rootsignal_common::events::SystemEvent;
 
-    let engine = build_infra_only_engine(deps.pg_pool.clone(), deps.graph_client.clone());
+    let engine = build_infra_only_engine(deps.pg_pool.clone(), deps.graph_client.clone(), None);
     if let Err(e) = engine
         .emit(SystemEvent::TaskPhaseTransitioned {
             task_id: task_id.to_string(),
             phase: String::new(),
-            status: "idle".to_string(),
+            status: "cancelled".to_string(),
         })
         .settled()
         .await
     {
-        warn!(task_id, error = %e, "Failed to emit idle status after failure");
+        warn!(task_id, error = %e, "Failed to emit cancelled status");
+    }
+}
+
+/// Emit an error status so the UI shows the task failed.
+///
+/// Takes the actual `run_id` so the event lands in the failed run's event
+/// stream (visible in the run detail page), not under a throwaway infra run.
+async fn emit_error_status(deps: &ScoutDeps, task_id: &str, run_id: &str) {
+    use rootsignal_common::events::SystemEvent;
+
+    let run_uuid = uuid::Uuid::parse_str(run_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+    let engine = build_infra_only_engine(deps.pg_pool.clone(), deps.graph_client.clone(), Some(run_id));
+
+    if let Err(e) = engine
+        .emit(SystemEvent::TaskPhaseTransitioned {
+            task_id: task_id.to_string(),
+            phase: String::new(),
+            status: "error".to_string(),
+        })
+        .correlation_id(run_uuid)
+        .settled()
+        .await
+    {
+        warn!(task_id, error = %e, "Failed to emit error status");
     }
 }

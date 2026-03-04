@@ -134,6 +134,17 @@ impl ClaudePromptBuilder {
                             Err(e) => format!("Error: {}", e),
                         };
 
+                        // Cap tool results to avoid blowing token limits in multi-turn loops
+                        const MAX_TOOL_RESULT_CHARS: usize = 30_000;
+                        let result = if result.len() > MAX_TOOL_RESULT_CHARS {
+                            let boundary = result[..MAX_TOOL_RESULT_CHARS]
+                                .rfind('\n')
+                                .unwrap_or(MAX_TOOL_RESULT_CHARS);
+                            format!("{}…\n(result truncated)", &result[..boundary])
+                        } else {
+                            result
+                        };
+
                         results.push(ContentBlock::ToolResult {
                             tool_use_id: id.clone(),
                             content: result,

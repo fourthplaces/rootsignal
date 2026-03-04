@@ -386,6 +386,12 @@ pub enum SystemEvent {
         reason: String,
     },
 
+    /// Admin-initiated source deletion — removes the source and all edges.
+    SourceDeleted {
+        source_id: Uuid,
+        canonical_key: String,
+    },
+
     // -----------------------------------------------------------------------
     // App user actions
     // -----------------------------------------------------------------------
@@ -632,6 +638,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::SourceRegistered { .. } => "source_registered",
             SystemEvent::SourceChanged { .. } => "source_changed",
             SystemEvent::SourceDeactivated { .. } => "source_deactivated",
+            SystemEvent::SourceDeleted { .. } => "source_deleted",
             SystemEvent::PinCreated { .. } => "pin_created",
             SystemEvent::PinsConsumed { .. } => "pins_consumed",
             SystemEvent::DemandReceived { .. } => "demand_received",

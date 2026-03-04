@@ -488,11 +488,13 @@ impl Store for PostgresStore {
                     "SELECT seq, id, parent_id, correlation_id, event_type, payload, ts, \
                             aggregate_type, aggregate_id, run_id, schema_v, handler_id \
                      FROM events \
-                     WHERE aggregate_type = $1 AND aggregate_id = $2 AND seq > $3 \
+                     WHERE aggregate_type = $1 AND aggregate_id = $2 \
+                       AND correlation_id = $3 AND seq > $4 \
                      ORDER BY seq ASC",
                 )
                 .bind(aggregate_type)
                 .bind(aggregate_id)
+                .bind(self.correlation_id)
                 .bind(pos as i64)
                 .fetch_all(&self.pool)
                 .await?
@@ -503,10 +505,12 @@ impl Store for PostgresStore {
                             aggregate_type, aggregate_id, run_id, schema_v, handler_id \
                      FROM events \
                      WHERE aggregate_type = $1 AND aggregate_id = $2 \
+                       AND correlation_id = $3 \
                      ORDER BY seq ASC",
                 )
                 .bind(aggregate_type)
                 .bind(aggregate_id)
+                .bind(self.correlation_id)
                 .fetch_all(&self.pool)
                 .await?
             }

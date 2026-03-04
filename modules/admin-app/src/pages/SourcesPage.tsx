@@ -1,9 +1,10 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_REGION_SOURCES } from "@/graphql/queries";
 import { ADD_SOURCE, UPDATE_SOURCE, DELETE_SOURCE } from "@/graphql/mutations";
 import { DataTable, type Column } from "@/components/DataTable";
+import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 
 type Source = {
   id: string;
@@ -92,6 +93,7 @@ function BatchToolbar({
   onSetWeight,
   onSetPenalty,
   onDelete,
+  onInvestigate,
   onClear,
   busy,
 }: {
@@ -101,6 +103,7 @@ function BatchToolbar({
   onSetWeight: () => void;
   onSetPenalty: () => void;
   onDelete: () => void;
+  onInvestigate: () => void;
   onClear: () => void;
   busy: boolean;
 }) {
@@ -142,6 +145,13 @@ function BatchToolbar({
         className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-50"
       >
         Delete
+      </button>
+      <div className="h-4 w-px bg-border" />
+      <button
+        onClick={onInvestigate}
+        className="text-xs px-2 py-1 rounded border border-amber-500/30 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
+      >
+        Investigate
       </button>
       <div className="flex-1" />
       <button
@@ -212,7 +222,15 @@ function PromptDialog({
   );
 }
 
+const ACTIVE_FILTERS = ["all", "active", "inactive"] as const;
+type ActiveFilter = (typeof ACTIVE_FILTERS)[number];
+
 export function SourcesPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawFilter = searchParams.get("filter");
+  const activeFilter: ActiveFilter = ACTIVE_FILTERS.includes(rawFilter as ActiveFilter) ? (rawFilter as ActiveFilter) : "all";
+  const setActiveFilter = (f: ActiveFilter) => setSearchParams((prev) => { prev.set("filter", f); return prev; }, { replace: true });
+
   // Search with debounce
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -237,9 +255,6 @@ export function SourcesPage() {
   const [sourceReason, setSourceReason] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
-  // Filter
-  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
-
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>("signalsProduced");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -247,10 +262,14 @@ export function SourcesPage() {
   // Selection
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
+  const lastSelectedIndexRef = useRef<number | null>(null);
 
   // Infinite scroll
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE_INCREMENT);
   const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Investigation drawer
+  const [investigateIds, setInvestigateIds] = useState<string[] | null>(null);
 
   // Dialogs
   const [dialog, setDialog] = useState<{
@@ -330,14 +349,28 @@ export function SourcesPage() {
     });
   }, [allPageSelected, visibleIds]);
 
-  const toggleSelect = useCallback((id: string, checked: boolean) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, []);
+  const toggleSelect = useCallback((id: string, checked: boolean, shiftKey: boolean) => {
+    const clickedIndex = visibleSlice.findIndex((s) => s.id === id);
+    if (shiftKey && lastSelectedIndexRef.current != null && clickedIndex !== -1) {
+      const from = Math.min(lastSelectedIndexRef.current, clickedIndex);
+      const to = Math.max(lastSelectedIndexRef.current, clickedIndex);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (let i = from; i <= to; i++) {
+          next.add(visibleSlice[i].id);
+        }
+        return next;
+      });
+    } else {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (checked) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    }
+    if (clickedIndex !== -1) lastSelectedIndexRef.current = clickedIndex;
+  }, [visibleSlice]);
 
   const clearSelection = useCallback(() => setSelected(new Set()), []);
 
@@ -591,6 +624,7 @@ export function SourcesPage() {
           onSetWeight={() => setDialog({ type: "set-weight" })}
           onSetPenalty={() => setDialog({ type: "set-penalty" })}
           onDelete={() => setDialog({ type: "delete-batch" })}
+          onInvestigate={() => setInvestigateIds([...selected])}
           onClear={clearSelection}
         />
       )}
@@ -623,7 +657,11 @@ export function SourcesPage() {
             <input
               type="checkbox"
               checked={selected.has(s.id)}
-              onChange={(e) => toggleSelect(s.id, e.target.checked)}
+              onClick={(e) => {
+                const target = e.target as HTMLInputElement;
+                toggleSelect(s.id, target.checked, e.shiftKey);
+              }}
+              readOnly
               className="rounded border-border"
             />
           </td>
@@ -708,6 +746,30 @@ export function SourcesPage() {
             }
           }}
         />
+      )}
+
+      {/* Investigation drawer */}
+      {investigateIds && (
+        <div className="fixed inset-0 z-50 flex">
+          <div
+            className="flex-1 bg-black/40"
+            onClick={() => setInvestigateIds(null)}
+          />
+          <div className="w-[520px] bg-card border-l border-border flex flex-col">
+            <InvestigateDrawer
+              key={investigateIds.join(",")}
+              investigation={{
+                mode: "sources",
+                sourceIds: investigateIds,
+                sourceLabel: `${investigateIds.length} source${investigateIds.length === 1 ? "" : "s"}`,
+              }}
+              onClose={() => {
+                setInvestigateIds(null);
+                refetch();
+              }}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import {
@@ -58,6 +58,8 @@ const SEVERITY_COLORS: Record<string, string> = {
 function phaseStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     idle: "Idle",
+    error: "Error",
+    cancelled: "Cancelled",
     running_bootstrap: "Bootstrap",
     bootstrap_complete: "Bootstrap Done",
     running_scrape: "Scrape",
@@ -182,9 +184,13 @@ function TaskRow({
                 ? "bg-amber-500/10 text-amber-400"
                 : t.phaseStatus === "complete"
                   ? "bg-green-500/10 text-green-400"
-                  : t.status === "cancelled"
+                  : t.phaseStatus === "error"
                     ? "bg-red-500/10 text-red-400"
-                    : "bg-secondary text-muted-foreground"
+                    : t.phaseStatus === "cancelled"
+                      ? "bg-orange-500/10 text-orange-400"
+                      : t.status === "cancelled"
+                        ? "bg-red-500/10 text-red-400"
+                        : "bg-secondary text-muted-foreground"
             }`}
           >
             {t.phaseStatus === "complete" ? "Complete" : phaseStatusLabel(t.phaseStatus) || t.status}
@@ -297,11 +303,15 @@ export function ScoutPage() {
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: false });
 
   // --- Tasks ---
-  const { data: tasksData, loading: tasksLoading, refetch: refetchTasks } = useQuery(
+  const { data: tasksData, loading: tasksLoading, refetch: refetchTasks, startPolling, stopPolling } = useQuery(
     ADMIN_SCOUT_TASKS,
     { variables: { limit: 50 }, skip: tab !== "tasks" },
   );
   const tasks: ScoutTask[] = tasksData?.adminScoutTasks ?? [];
+  const hasRunningTask = tasks.some((t) => t.phaseStatus.startsWith("running_"));
+  useEffect(() => {
+    if (hasRunningTask) { startPolling(3000); } else { stopPolling(); }
+  }, [hasRunningTask, startPolling, stopPolling]);
   const [createTask] = useMutation(CREATE_SCOUT_TASK);
   const [cancelTask] = useMutation(CANCEL_SCOUT_TASK);
   const [taskLocation, setTaskLocation] = useState("");

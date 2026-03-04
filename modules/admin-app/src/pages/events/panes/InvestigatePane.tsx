@@ -15,7 +15,7 @@ export function InvestigatePane() {
   return (
     <InvestigateDrawer
       key={investigateEvent.seq}
-      event={investigateEvent}
+      investigation={{ mode: "event", event: investigateEvent }}
       onClose={() => {
         // Tab close (X) is the primary close mechanism.
         // This onClose is kept for the internal close button which

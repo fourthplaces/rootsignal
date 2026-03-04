@@ -8,6 +8,7 @@ use sqlx::PgPool;
 
 use rootsignal_common::Node;
 use rootsignal_graph::{GraphStore, PublicGraphReader};
+use uuid::Uuid;
 
 use crate::db::scout_run::{self, EventRow, EventRowFull, json_str, event_layer, event_summary};
 
@@ -815,5 +816,74 @@ impl Tool for GetSourceInfoTool {
                 active: None, gap_context: None,
             }),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 11. DeactivateSourcesTool
+// ---------------------------------------------------------------------------
+
+pub(crate) struct DeactivateSourcesTool {
+    pub(crate) writer: GraphStore,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DeactivateSourcesArgs {
+    source_ids: Vec<String>,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct DeactivateSourcesOutput {
+    deactivated: u32,
+}
+
+#[async_trait]
+impl Tool for DeactivateSourcesTool {
+    const NAME: &'static str = "deactivate_sources";
+    type Error = ToolError;
+    type Args = DeactivateSourcesArgs;
+    type Output = DeactivateSourcesOutput;
+
+    async fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Deactivate sources by their UUIDs. This sets active=false so they will no longer be scraped. Only call this after the user has explicitly confirmed which sources to deactivate.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "source_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "UUIDs of the sources to deactivate"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why these sources are being deactivated (logged for audit)"
+                    }
+                },
+                "required": ["source_ids", "reason"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let ids: Vec<Uuid> = args.source_ids.iter()
+            .map(|s| Uuid::parse_str(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| ToolError(format!("Invalid UUID: {e}")))?;
+
+        tracing::info!(
+            count = ids.len(),
+            reason = %args.reason,
+            "Deactivating sources via investigation tool"
+        );
+
+        let deactivated = self.writer
+            .deactivate_sources_by_id(&ids)
+            .await
+            .map_err(|e| ToolError(format!("Failed to deactivate sources: {e}")))?;
+
+        Ok(DeactivateSourcesOutput { deactivated })
     }
 }

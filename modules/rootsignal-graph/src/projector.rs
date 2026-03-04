@@ -1998,6 +1998,16 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
+            SystemEvent::SourceDeleted { canonical_key, .. } => {
+                let q = query(
+                    "MATCH (s:Source {canonical_key: $key})
+                     DETACH DELETE s",
+                )
+                .param("key", canonical_key.as_str());
+
+                self.client.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
 
             // ---------------------------------------------------------
             // App user actions

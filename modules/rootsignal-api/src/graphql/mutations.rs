@@ -598,6 +598,119 @@ impl MutationRoot {
         Ok(true)
     }
 
+    /// Update source properties (active, weight, quality_penalty). Flows through events.
+    #[graphql(guard = "AdminGuard")]
+    async fn update_source(
+        &self,
+        ctx: &Context<'_>,
+        id: Uuid,
+        active: Option<bool>,
+        weight: Option<f64>,
+        quality_penalty: Option<f64>,
+    ) -> Result<ScoutResult> {
+        use rootsignal_common::events::{SourceChange, SystemSourceChange};
+        use rootsignal_common::events::SystemEvent;
+
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let sources = writer
+            .get_sources_by_ids(&[id])
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load source: {e}")))?;
+        let source = sources
+            .into_iter()
+            .next()
+            .ok_or_else(|| async_graphql::Error::new(format!("Source {id} not found")))?;
+
+        let engine = require_engine(ctx)?;
+
+        if let Some(new_active) = active {
+            if new_active != source.active {
+                engine
+                    .emit(SystemEvent::SourceChanged {
+                        source_id: source.id,
+                        canonical_key: source.canonical_key.clone(),
+                        change: SourceChange::Active {
+                            old: source.active,
+                            new: new_active,
+                        },
+                    })
+                    .settled()
+                    .await
+                    .map_err(|e| async_graphql::Error::new(format!("Failed to update active: {e}")))?;
+            }
+        }
+
+        if let Some(new_weight) = weight {
+            if (new_weight - source.weight).abs() > f64::EPSILON {
+                engine
+                    .emit(SystemEvent::SourceChanged {
+                        source_id: source.id,
+                        canonical_key: source.canonical_key.clone(),
+                        change: SourceChange::Weight {
+                            old: source.weight,
+                            new: new_weight,
+                        },
+                    })
+                    .settled()
+                    .await
+                    .map_err(|e| async_graphql::Error::new(format!("Failed to update weight: {e}")))?;
+            }
+        }
+
+        if let Some(new_qp) = quality_penalty {
+            if (new_qp - source.quality_penalty).abs() > f64::EPSILON {
+                engine
+                    .emit(SystemEvent::SourceSystemChanged {
+                        source_id: source.id,
+                        canonical_key: source.canonical_key.clone(),
+                        change: SystemSourceChange::QualityPenalty {
+                            old: source.quality_penalty,
+                            new: new_qp,
+                        },
+                    })
+                    .settled()
+                    .await
+                    .map_err(|e| async_graphql::Error::new(format!("Failed to update quality_penalty: {e}")))?;
+            }
+        }
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Source {} updated", source.canonical_key)),
+        })
+    }
+
+    /// Delete a source and all its edges. Flows through events.
+    #[graphql(guard = "AdminGuard")]
+    async fn delete_source(&self, ctx: &Context<'_>, id: Uuid) -> Result<ScoutResult> {
+        use rootsignal_common::events::SystemEvent;
+
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let sources = writer
+            .get_sources_by_ids(&[id])
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load source: {e}")))?;
+        let source = sources
+            .into_iter()
+            .next()
+            .ok_or_else(|| async_graphql::Error::new(format!("Source {id} not found")))?;
+
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::SourceDeleted {
+                source_id: source.id,
+                canonical_key: source.canonical_key.clone(),
+            })
+            .settled()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to delete source: {e}")))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Source {} deleted", source.canonical_key)),
+        })
+    }
+
     /// Record a demand signal from a user search (public, rate-limited).
     async fn record_demand(
         &self,

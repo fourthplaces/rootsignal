@@ -254,9 +254,21 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
 /// No domain handlers, no aggregators, no production deps — used for emitting
 /// system events (e.g. TaskPhaseTransitioned) from error paths where the main
 /// engine is dead. Takes only the two infrastructure handles it actually needs.
-pub fn build_infra_only_engine(pg_pool: PgPool, graph_client: GraphClient) -> SeesawEngine {
-    let run_id = format!("infra-{}", uuid::Uuid::new_v4());
-    let run_uuid = uuid::Uuid::new_v4();
+pub fn build_infra_only_engine(
+    pg_pool: PgPool,
+    graph_client: GraphClient,
+    run_id: Option<&str>,
+) -> SeesawEngine {
+    let (run_id, run_uuid) = match run_id {
+        Some(id) => {
+            let uuid = uuid::Uuid::parse_str(id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+            (id.to_string(), uuid)
+        }
+        None => {
+            let uuid = uuid::Uuid::new_v4();
+            (format!("infra-{uuid}"), uuid)
+        }
+    };
 
     let store = Arc::new(PostgresStore::new(pg_pool.clone(), run_uuid))
         as Arc<dyn seesaw_core::Store>;

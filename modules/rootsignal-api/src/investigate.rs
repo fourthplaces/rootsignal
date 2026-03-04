@@ -11,22 +11,37 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use uuid::Uuid;
 
 use ai_client::{Agent, Claude, Message, PromptBuilder};
+use rootsignal_common::SourceNode;
 
 use crate::db::scout_run::{self, event_layer, event_summary, json_str};
 use crate::investigate_tools::{
-    CreateGitHubIssueTool, FetchUrlTool, FindEventsForNodeTool, GetEventTool,
-    GetFindingsForNodeTool, GetRunInfoTool, GetSignalTool, GetSourceInfoTool,
+    CreateGitHubIssueTool, DeactivateSourcesTool, FetchUrlTool, FindEventsForNodeTool,
+    GetEventTool, GetFindingsForNodeTool, GetRunInfoTool, GetSignalTool, GetSourceInfoTool,
     LoadCausalTreeTool, SearchEventsTool,
 };
 use crate::jwt;
 use crate::AppState;
 
+// ---------------------------------------------------------------------------
+// Request types
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Deserialize)]
-pub struct InvestigateRequest {
-    seq: i64,
-    messages: Vec<ChatMessage>,
+#[serde(tag = "mode")]
+pub enum InvestigateRequest {
+    #[serde(rename = "event")]
+    Event {
+        seq: i64,
+        messages: Vec<ChatMessage>,
+    },
+    #[serde(rename = "sources")]
+    Sources {
+        source_ids: Vec<Uuid>,
+        messages: Vec<ChatMessage>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,7 +50,11 @@ pub struct ChatMessage {
     content: String,
 }
 
-const SYSTEM_PROMPT: &str = r#"You are an event investigation assistant for RootSignal, an event-sourced community intelligence platform. Your job is to help operators understand what happened and why by analyzing events and their causal chains.
+// ---------------------------------------------------------------------------
+// Event mode — system prompt + context builder
+// ---------------------------------------------------------------------------
+
+const EVENT_SYSTEM_PROMPT: &str = r#"You are an event investigation assistant for RootSignal, an event-sourced community intelligence platform. Your job is to help operators understand what happened and why by analyzing events and their causal chains.
 
 ## Event Architecture
 
@@ -84,11 +103,31 @@ Keep it concise. If something is interesting or unusual, say so. If the user wan
 If you spot something that looks like a bug or warrants a ticket, say so and offer to file a GitHub issue. Only call the `create_github_issue` tool after the user explicitly confirms — never create issues unprompted.
 "#;
 
-fn build_context(event: &scout_run::EventRowFull, tree: &[scout_run::EventRowFull]) -> String {
+/// Cap the selected event payload so the context fits within token budgets.
+const MAX_PAYLOAD_CHARS: usize = 10_000;
+
+fn truncate_payload(json: &str) -> String {
+    if json.len() <= MAX_PAYLOAD_CHARS {
+        json.to_string()
+    } else {
+        format!(
+            "{}…\n\n(payload truncated — use get_event tool to see the full payload)",
+            &json[..json[..MAX_PAYLOAD_CHARS]
+                .rfind('\n')
+                .unwrap_or(MAX_PAYLOAD_CHARS)]
+        )
+    }
+}
+
+fn build_event_context(
+    event: &scout_run::EventRowFull,
+    tree: &[scout_run::EventRowFull],
+) -> String {
     let name = json_str(&event.data, "type").unwrap_or_else(|| event.event_type.clone());
     let summary = event_summary(&name, &event.data);
     let layer = event_layer(&event.event_type);
     let payload = serde_json::to_string_pretty(&event.data).unwrap_or_default();
+    let payload = truncate_payload(&payload);
 
     let mut ctx = format!(
         "## Selected Event\n\nseq={} | {} | {} | {}\n",
@@ -121,6 +160,95 @@ fn build_context(event: &scout_run::EventRowFull, tree: &[scout_run::EventRowFul
     ctx
 }
 
+// ---------------------------------------------------------------------------
+// Sources mode — system prompt + context builder
+// ---------------------------------------------------------------------------
+
+const SOURCES_SYSTEM_PROMPT: &str = r#"You are a source quality auditor for RootSignal, a community intelligence platform that scrapes web sources to extract signals about local communities.
+
+## What You're Looking At
+
+You've been given a selection of sources that an operator wants to evaluate. The context includes a table with key stats for each source.
+
+## Key Metrics Explained
+
+- **weight** (0.0–1.0): Operator-assigned importance. Higher = scraped more often and results prioritized. Default 0.5.
+- **quality_penalty** (0.0–1.0): System-assigned penalty for low-quality output. Default 1.0 (no penalty). Lower = worse quality history.
+- **effective_weight**: `weight × quality_penalty` — the actual priority used for scheduling. Low effective weight means the source gets scraped less.
+- **signals_produced**: Total signals (gatherings, resources, concerns, etc.) ever extracted from this source.
+- **scrape_count**: Total number of times this source has been scraped.
+- **consecutive_empty_runs**: How many recent scrapes in a row produced zero signals. High numbers suggest the source has gone stale or was never productive.
+- **sources_discovered**: How many child sources were found via link promotion from this source. A source that discovers other sources has value even with low direct signal production.
+- **discovery_method**: How the source was found — curated (manually added), link_promotion (discovered from another source's content), web_query (found via search), human_submission (user-submitted).
+
+## Deactivation Criteria
+
+A source is likely unproductive if:
+- It has many consecutive empty runs (5+ is a red flag)
+- It has zero or very few signals produced relative to its scrape count
+- It has discovered zero child sources
+- Its quality penalty is very low (system already flagged it)
+
+But be cautious about:
+- **Curated** or **human_submission** sources — these were deliberately added and may have strategic value
+- Sources that discover other sources — even with low direct signal production, they're valuable as seed sources
+- Recently created sources that haven't had enough scrapes yet
+
+## Your Tools
+
+- `get_source_info` — look up detailed info for a single source by URL
+- `fetch_url` — peek at what a source page actually contains right now
+- `get_findings_for_node` — check if the supervisor already flagged quality issues
+- `search_events` — find events mentioning a source
+- `deactivate_sources` — deactivate sources by their UUIDs (only after user confirms)
+
+## How to Respond
+
+Be conversational and direct. When assessing sources:
+1. Start with a quick overview of the selection — how many look healthy vs. unproductive
+2. Call out the worst offenders specifically and explain why
+3. Note any sources worth keeping despite poor numbers (e.g. seed sources, curated)
+4. When asked to deactivate, list which sources and why, then ask for confirmation before calling the tool
+
+Don't build giant tables unless asked. Talk like a colleague reviewing these together.
+"#;
+
+fn build_sources_context(sources: &[SourceNode]) -> String {
+    let mut ctx = format!("## Selected Sources ({})\n\n", sources.len());
+    ctx.push_str("| # | canonical_value | discovery | weight | penalty | eff_wt | signals | scrapes | empty_runs | sources_disc | active |\n");
+    ctx.push_str("|---|----------------|-----------|--------|---------|--------|---------|---------|------------|--------------|--------|\n");
+
+    for (i, s) in sources.iter().enumerate() {
+        let eff = s.weight * s.quality_penalty;
+        ctx.push_str(&format!(
+            "| {} | {} | {:?} | {:.2} | {:.2} | {:.2} | {} | {} | {} | {} | {} |\n",
+            i + 1,
+            s.canonical_value,
+            s.discovery_method,
+            s.weight,
+            s.quality_penalty,
+            eff,
+            s.signals_produced,
+            s.scrape_count,
+            s.consecutive_empty_runs,
+            s.sources_discovered,
+            if s.active { "yes" } else { "no" },
+        ));
+    }
+
+    // Add UUIDs in a separate reference block so the AI can use them for tool calls
+    ctx.push_str("\n### Source IDs\n\n");
+    for s in sources {
+        ctx.push_str(&format!("- `{}` — {}\n", s.id, s.canonical_value));
+    }
+
+    ctx
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
+
 pub async fn investigate_handler(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -147,7 +275,7 @@ pub async fn investigate_handler(
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
-    let api_key = &state.config.anthropic_api_key;
+    let api_key = state.config.anthropic_api_key.clone();
     if api_key.is_empty() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
@@ -160,23 +288,45 @@ pub async fn investigate_handler(
         }
     };
 
+    // Dispatch based on mode
+    match body {
+        InvestigateRequest::Event { seq, messages } => {
+            handle_event_mode(state, pool, &api_key, seq, messages).await
+        }
+        InvestigateRequest::Sources {
+            source_ids,
+            messages,
+        } => handle_sources_mode(state, pool, &api_key, source_ids, messages).await,
+    }
+}
+
+async fn handle_event_mode(
+    state: Arc<AppState>,
+    pool: Arc<sqlx::PgPool>,
+    api_key: &str,
+    seq: i64,
+    chat_messages: Vec<ChatMessage>,
+) -> axum::response::Response {
     // Load the selected event and its causal tree from the database
-    let (tree_rows, _root_seq) = match scout_run::causal_tree(&pool, body.seq).await {
+    let (tree_rows, _root_seq) = match scout_run::causal_tree(&pool, seq).await {
         Ok(t) => t,
         Err(e) => {
-            tracing::error!(error = %e, seq = body.seq, "Failed to load causal tree");
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load event: {e}")).into_response();
+            tracing::error!(error = %e, seq, "Failed to load causal tree");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load event: {e}"),
+            )
+                .into_response();
         }
     };
 
     // Find the selected event in the tree, or load it separately
-    let selected_event = tree_rows.iter().find(|r| r.seq == body.seq);
+    let selected_event = tree_rows.iter().find(|r| r.seq == seq);
     let standalone;
     let event_ref = match selected_event {
         Some(e) => e,
         None => {
-            // Event not in a causal tree (no correlation_id) — load directly
-            match scout_run::get_event_by_seq(&pool, body.seq).await {
+            match scout_run::get_event_by_seq(&pool, seq).await {
                 Ok(row) => {
                     standalone = row;
                     match &standalone {
@@ -187,25 +337,35 @@ pub async fn investigate_handler(
                     }
                 }
                 Err(e) => {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load event: {e}")).into_response();
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to load event: {e}"),
+                    )
+                        .into_response();
                 }
             }
         }
     };
 
-    let context = build_context(event_ref, &tree_rows);
+    let context = build_event_context(event_ref, &tree_rows);
 
-    // Build Claude agent with investigation tools
+    // Build Claude agent with event investigation tools
     let mut claude = Claude::new(api_key, "claude-sonnet-4-20250514")
         .tool(LoadCausalTreeTool { pool: pool.clone() })
         .tool(SearchEventsTool { pool: pool.clone() })
         .tool(GetEventTool { pool: pool.clone() })
-        .tool(GetSignalTool { reader: state.reader.clone() })
+        .tool(GetSignalTool {
+            reader: state.reader.clone(),
+        })
         .tool(FindEventsForNodeTool { pool: pool.clone() })
         .tool(GetRunInfoTool { pool })
         .tool(FetchUrlTool)
-        .tool(GetFindingsForNodeTool { reader: state.reader.clone() })
-        .tool(GetSourceInfoTool { writer: state.writer.clone() });
+        .tool(GetFindingsForNodeTool {
+            reader: state.reader.clone(),
+        })
+        .tool(GetSourceInfoTool {
+            writer: state.writer.clone(),
+        });
 
     if let (Some(token), Some(repo)) = (&state.config.github_token, &state.config.github_repo) {
         claude = claude.tool(CreateGitHubIssueTool {
@@ -214,10 +374,75 @@ pub async fn investigate_handler(
         });
     }
 
-    // Build message history, prepending event context to the first user message
+    tracing::info!(
+        message_count = chat_messages.len(),
+        event_seq = seq,
+        tree_size = tree_rows.len(),
+        "Starting event investigation"
+    );
+
+    run_agent(claude, EVENT_SYSTEM_PROMPT, &context, &chat_messages).await
+}
+
+async fn handle_sources_mode(
+    state: Arc<AppState>,
+    pool: Arc<sqlx::PgPool>,
+    api_key: &str,
+    source_ids: Vec<Uuid>,
+    chat_messages: Vec<ChatMessage>,
+) -> axum::response::Response {
+    // Load sources from the graph
+    let sources = match state.writer.get_sources_by_ids(&source_ids).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to load sources for investigation");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load sources: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    if sources.is_empty() {
+        return (StatusCode::NOT_FOUND, "No matching sources found").into_response();
+    }
+
+    let context = build_sources_context(&sources);
+
+    // Build Claude agent with source audit tools
+    let claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+        .tool(GetSourceInfoTool {
+            writer: state.writer.clone(),
+        })
+        .tool(FetchUrlTool)
+        .tool(GetFindingsForNodeTool {
+            reader: state.reader.clone(),
+        })
+        .tool(SearchEventsTool { pool })
+        .tool(DeactivateSourcesTool {
+            writer: state.writer.clone(),
+        });
+
+    tracing::info!(
+        message_count = chat_messages.len(),
+        source_count = sources.len(),
+        "Starting source audit investigation"
+    );
+
+    run_agent(claude, SOURCES_SYSTEM_PROMPT, &context, &chat_messages).await
+}
+
+async fn run_agent(
+    claude: Claude,
+    system_prompt: &str,
+    context: &str,
+    chat_messages: &[ChatMessage],
+) -> axum::response::Response {
+    // Build message history, prepending context to the first user message
     let mut messages: Vec<Message> = Vec::new();
     let mut context_prepended = false;
-    for msg in &body.messages {
+    for msg in chat_messages {
         match msg.role.as_str() {
             "user" => {
                 if !context_prepended {
@@ -232,17 +457,9 @@ pub async fn investigate_handler(
         }
     }
 
-    tracing::info!(
-        message_count = messages.len(),
-        event_seq = body.seq,
-        tree_size = tree_rows.len(),
-        "Starting agentic investigation"
-    );
-
-    // Use send() with multi_turn for agentic tool use
     let result = claude
         .prompt("")
-        .preamble(SYSTEM_PROMPT)
+        .preamble(system_prompt)
         .messages(messages)
         .temperature(0.3)
         .multi_turn(15)
@@ -251,7 +468,6 @@ pub async fn investigate_handler(
 
     match result {
         Ok(text) => {
-            // Return as a single SSE frame to keep frontend SSE parsing working
             let sse_stream = futures::stream::once(async move {
                 Ok::<_, Infallible>(Event::default().data(text))
             });

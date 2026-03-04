@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, GitBranch, X, Copy, Check } from "lucide-react";
+import { Search, X, Copy, Check } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
 import { eventTextColor } from "../eventColor";
 
@@ -182,14 +182,12 @@ function EventRow({
   onClick,
   onInvestigate,
   onFilterRun,
-  onViewFlow,
 }: {
   event: AdminEvent;
   isSelected: boolean;
   onClick: () => void;
   onInvestigate: () => void;
   onFilterRun: (runId: string) => void;
-  onViewFlow: (event: AdminEvent) => void;
 }) {
   const [payloadOpen, setPayloadOpen] = useState(false);
   const layerColor = LAYER_COLORS[event.layer] ?? "bg-zinc-500/20 text-zinc-400";
@@ -230,18 +228,9 @@ function EventRow({
           >
             {event.summary ?? compactPayload(event.payload)}
           </button>
-          {event.runId && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onViewFlow(event); }}
-              className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto p-1 rounded hover:bg-accent shrink-0"
-              title="View causal flow"
-            >
-              <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-          )}
           <button
             onClick={(e) => { e.stopPropagation(); onInvestigate(); }}
-            className={`opacity-0 group-hover:opacity-100 transition-opacity ${event.runId ? "" : "ml-auto"} p-1 rounded hover:bg-accent shrink-0`}
+            className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto p-1 rounded hover:bg-accent shrink-0"
             title="Investigate with AI"
           >
             <Search className="w-3.5 h-3.5 text-muted-foreground" />
@@ -335,10 +324,9 @@ export function TimelinePane() {
               key={event.seq}
               event={event}
               isSelected={event.seq === selectedSeq}
-              onClick={() => selectSeq(event.seq, event.runId ?? undefined)}
+              onClick={() => { selectSeq(event.seq, event.runId ?? undefined); if (event.runId) openFlow(event.runId, { kind: "event-type", handlerId: event.handlerId, name: event.name }); }}
               onInvestigate={() => handleInvestigate(event)}
               onFilterRun={setRunId}
-              onViewFlow={(evt) => { selectSeq(evt.seq, evt.runId ?? undefined); if (evt.runId) openFlow(evt.runId, { kind: "event-type", handlerId: evt.handlerId, name: evt.name }); }}
             />
           ))}
           {hasMore && (

@@ -494,10 +494,47 @@ impl GraphReader {
         self.search_sources(None).await
     }
 
+    /// Get sources by their UUIDs (active or inactive).
+    pub async fn get_sources_by_ids(&self, ids: &[Uuid]) -> Result<Vec<SourceNode>, neo4rs::Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let id_strings: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let q = query(
+            "UNWIND $ids AS sid
+             MATCH (s:Source {id: sid})
+             RETURN s.id AS id, s.canonical_key AS canonical_key,
+                    s.canonical_value AS canonical_value, s.url AS url,
+                    s.discovery_method AS discovery_method,
+                    s.created_at AS created_at, s.last_scraped AS last_scraped,
+                    s.last_produced_signal AS last_produced_signal,
+                    s.signals_produced AS signals_produced,
+                    s.signals_corroborated AS signals_corroborated,
+                    s.consecutive_empty_runs AS consecutive_empty_runs,
+                    s.active AS active, s.gap_context AS gap_context,
+                    s.weight AS weight, s.cadence_hours AS cadence_hours,
+                    s.avg_signals_per_scrape AS avg_signals_per_scrape,
+                    s.quality_penalty AS quality_penalty,
+                    s.source_role AS source_role,
+                    s.scrape_count AS scrape_count,
+                    s.sources_discovered AS sources_discovered",
+        )
+        .param("ids", id_strings);
+
+        let mut sources = Vec::new();
+        let mut stream = self.client().execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(source) = row_to_source_node(&row) {
+                sources.push(source);
+            }
+        }
+        Ok(sources)
+    }
+
     /// Search sources with optional text filter on canonical_value, url, and source_role.
     pub async fn search_sources(&self, search: Option<&str>) -> Result<Vec<SourceNode>, neo4rs::Error> {
         let cypher = match search {
-            Some(_) => "MATCH (s:Source {active: true})
+            Some(_) => "MATCH (s:Source)
                 WHERE toLower(s.canonical_value) CONTAINS toLower($search)
                    OR (s.url IS NOT NULL AND toLower(s.url) CONTAINS toLower($search))
                    OR toLower(s.source_role) CONTAINS toLower($search)
@@ -516,7 +553,7 @@ impl GraphReader {
                        s.source_role AS source_role,
                        s.scrape_count AS scrape_count,
                        s.sources_discovered AS sources_discovered",
-            None => "MATCH (s:Source {active: true})
+            None => "MATCH (s:Source)
                 RETURN s.id AS id, s.canonical_key AS canonical_key,
                        s.canonical_value AS canonical_value, s.url AS url,
                        s.discovery_method AS discovery_method,
@@ -3431,6 +3468,28 @@ impl GraphStore {
         .param("cadence", cadence_hours as i64);
         self.client().run(q).await?;
         Ok(())
+    }
+
+    /// Deactivate specific sources by their UUIDs (operator-initiated).
+    pub async fn deactivate_sources_by_id(&self, ids: &[Uuid]) -> Result<u32, neo4rs::Error> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let id_strings: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let q = query(
+            "UNWIND $ids AS sid
+             MATCH (s:Source {id: sid, active: true})
+             SET s.active = false
+             RETURN count(s) AS deactivated",
+        )
+        .param("ids", id_strings);
+
+        let mut stream = self.client().execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("deactivated").unwrap_or(0) as u32)
+        } else {
+            Ok(0)
+        }
     }
 
     /// Deactivate sources that have had too many consecutive empty runs.

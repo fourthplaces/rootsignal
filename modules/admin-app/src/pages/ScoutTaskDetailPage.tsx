@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_SCOUT_TASKS, ADMIN_SCOUT_RUNS, SIGNALS_NEAR, SITUATIONS_IN_BOUNDS, ACTORS_IN_BOUNDS } from "@/graphql/queries";
@@ -66,6 +66,8 @@ type ScoutTask = {
 function phaseStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     idle: "Idle",
+    error: "Error",
+    cancelled: "Cancelled",
     running_bootstrap: "Bootstrap",
     running_scrape: "Scrape",
     running_synthesis: "Synthesis",
@@ -166,12 +168,16 @@ export function ScoutTaskDetailPage() {
   const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "map") as Tab;
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: false });
   // Fetch all tasks, find the one matching our ID
-  const { data: tasksData, loading: taskLoading, refetch: refetchTasks } = useQuery(ADMIN_SCOUT_TASKS, {
+  const { data: tasksData, loading: taskLoading, refetch: refetchTasks, startPolling, stopPolling } = useQuery(ADMIN_SCOUT_TASKS, {
     variables: { limit: 200 },
   });
   const task: ScoutTask | undefined = (tasksData?.adminScoutTasks ?? []).find(
     (t: ScoutTask) => t.id === id,
   );
+  const isRunning = task?.phaseStatus.startsWith("running_") ?? false;
+  useEffect(() => {
+    if (isRunning) { startPolling(3000); } else { stopPolling(); }
+  }, [isRunning, startPolling, stopPolling]);
 
   const [runScout] = useMutation(RUN_SCOUT);
   const [stopScout] = useMutation(STOP_SCOUT);
@@ -293,6 +299,10 @@ export function ScoutTaskDetailPage() {
             <span className={`text-xs px-2 py-0.5 rounded-full ${
               task.phaseStatus === "complete"
                 ? "bg-green-500/10 text-green-400"
+                : task.phaseStatus === "error"
+                ? "bg-red-500/10 text-red-400"
+                : task.phaseStatus === "cancelled"
+                ? "bg-orange-500/10 text-orange-400"
                 : statusColor
             }`}>
               {task.phaseStatus === "complete" ? "Complete" : phaseStatusLabel(task.phaseStatus) || task.status}
