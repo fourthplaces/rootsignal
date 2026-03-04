@@ -76,43 +76,33 @@ function phaseStatusLabel(status: string): string {
   return labels[status] || status;
 }
 
-const PHASE_STEPS = [
-  { key: "bootstrap", label: "Bootstrap" },
-  { key: "scrape", label: "Scrape" },
-  { key: "situation_weaver", label: "Weaving" },
-  { key: "supervisor", label: "Supervisor" },
-] as const;
-
-function activeStepIndex(phaseStatus: string): number {
-  if (phaseStatus === "running_bootstrap") return 0;
-  if (phaseStatus === "running_scrape" || phaseStatus === "running_synthesis") return 1;
-  if (phaseStatus === "running_situation_weaver") return 2;
-  if (phaseStatus === "running_supervisor") return 3;
-  return -1;
+function phasePercent(phaseStatus: string): number {
+  switch (phaseStatus) {
+    case "running_bootstrap": return 10;
+    case "running_scrape":
+    case "running_synthesis": return 30;
+    case "running_situation_weaver": return 55;
+    case "running_supervisor": return 75;
+    case "complete": return 100;
+    default: return 0;
+  }
 }
 
 function PhaseProgress({ phaseStatus }: { phaseStatus: string }) {
-  const idx = activeStepIndex(phaseStatus);
-  if (idx < 0) return null;
+  const pct = phasePercent(phaseStatus);
+  if (pct === 0) return null;
 
   return (
-    <div className="flex items-center gap-1.5 text-xs">
-      {PHASE_STEPS.map((step, i) => (
-        <span key={step.key} className="flex items-center gap-1.5">
-          {i > 0 && <span className="text-muted-foreground/40">&rarr;</span>}
-          <span
-            className={
-              i < idx
-                ? "text-muted-foreground line-through"
-                : i === idx
-                  ? "text-green-400 font-medium"
-                  : "text-muted-foreground/40"
-            }
-          >
-            {step.label}
-          </span>
-        </span>
-      ))}
+    <div className="flex items-center gap-2 min-w-[180px]">
+      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+        <div
+          className="h-full rounded-full bg-green-500 transition-all duration-700 ease-out"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-xs text-muted-foreground whitespace-nowrap">
+        {phaseStatusLabel(phaseStatus)}
+      </span>
     </div>
   );
 }
