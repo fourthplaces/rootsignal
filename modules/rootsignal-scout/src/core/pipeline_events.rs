@@ -43,6 +43,11 @@ pub enum PipelineEvent {
         pub_dates: HashMap<String, DateTime<Utc>>,
         query_api_errors: HashSet<String>,
     },
+    /// Handler saw an event but chose not to act — pipeline bookkeeping.
+    HandlerSkipped {
+        handler_id: String,
+        reason: String,
+    },
     /// Fetch+extract state — signal counts, links, expansion queries, stats.
     ScrapeResultAccumulated {
         source_signal_counts: HashMap<String, u32>,
@@ -59,6 +64,7 @@ impl PipelineEvent {
             Self::ExpansionAccumulated { .. } => "expansion_accumulated",
             Self::SocialTopicsCollected { .. } => "social_topics_collected",
             Self::SocialTopicsConsumed => "social_topics_consumed",
+            Self::HandlerSkipped { .. } => "handler_skipped",
             Self::UrlsResolvedAccumulated { .. } => "urls_resolved_accumulated",
             Self::ScrapeResultAccumulated { .. } => "scrape_result_accumulated",
         };

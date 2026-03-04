@@ -23,6 +23,7 @@ use rootsignal_common::telemetry_events::TelemetryEvent;
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scheduling::activities::budget::OperationCost;
@@ -406,7 +407,10 @@ pub mod handlers {
                 role: SynthesisRole::ConcernLinker,
             }])
         } else {
-            Ok(Events::new())
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "synthesis:check_concern_linker_complete".into(),
+                reason: format!("waiting for ConcernLinker: {completed}/{total} targets complete"),
+            }])
         }
     }
 
@@ -626,7 +630,10 @@ pub mod handlers {
                 role: SynthesisRole::ResponseFinder,
             }])
         } else {
-            Ok(Events::new())
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "synthesis:check_response_finder_complete".into(),
+                reason: format!("waiting for ResponseFinder: {completed}/{total} targets complete"),
+            }])
         }
     }
 
@@ -820,7 +827,10 @@ pub mod handlers {
                 role: SynthesisRole::GatheringFinder,
             }])
         } else {
-            Ok(Events::new())
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "synthesis:check_gathering_finder_complete".into(),
+                reason: format!("waiting for GatheringFinder: {completed}/{total} targets complete"),
+            }])
         }
     }
 
@@ -1007,7 +1017,10 @@ pub mod handlers {
                 role: SynthesisRole::Investigation,
             }])
         } else {
-            Ok(Events::new())
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "synthesis:check_investigation_complete".into(),
+                reason: format!("waiting for Investigation: {completed}/{total} targets complete"),
+            }])
         }
     }
 
@@ -1166,7 +1179,10 @@ pub mod handlers {
                 role: SynthesisRole::ResponseMapping,
             }])
         } else {
-            Ok(Events::new())
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "synthesis:check_response_mapping_complete".into(),
+                reason: format!("waiting for ResponseMapping: {completed}/{total} targets complete"),
+            }])
         }
     }
 
@@ -1190,7 +1206,12 @@ pub mod handlers {
                 phase: PipelinePhase::Synthesis,
             }])
         } else {
-            Ok(Events::new())
+            let completed: Vec<_> = state.completed_synthesis_roles.iter().collect();
+            let expected: Vec<_> = all_synthesis_roles().into_iter().collect();
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "synthesis:phase_complete".into(),
+                reason: format!("waiting for Synthesis: completed {completed:?}, need {expected:?}"),
+            }])
         }
     }
 
@@ -1240,7 +1261,13 @@ pub mod handlers {
             }
             Err(e) => {
                 warn!(error = %e, "Severity inference failed (non-fatal)");
-                Ok(events![])
+                Ok(events![TelemetryEvent::SystemLog {
+                    message: format!("Severity inference failed: {e}"),
+                    context: Some(serde_json::json!({
+                        "handler": "synthesis:severity_inference",
+                        "error": e.to_string(),
+                    })),
+                }])
             }
         }
     }

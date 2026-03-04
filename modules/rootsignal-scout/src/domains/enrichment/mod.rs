@@ -15,6 +15,7 @@ use rootsignal_graph::GraphReader;
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::enrichment::events::{
     all_enrichment_roles, EnrichmentEvent, EnrichmentRole,
 };
@@ -241,7 +242,12 @@ pub mod handlers {
                 phase: PipelinePhase::ActorEnrichment,
             }])
         } else {
-            Ok(Events::new())
+            let completed: Vec<_> = state.completed_enrichment_roles.iter().collect();
+            let expected: Vec<_> = all_enrichment_roles().into_iter().collect();
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "enrichment:phase_complete".into(),
+                reason: format!("waiting for ActorEnrichment: completed {completed:?}, need {expected:?}"),
+            }])
         }
     }
 

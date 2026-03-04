@@ -32,6 +32,38 @@ export type CausalTreeResult = {
   rootSeq: number;
 };
 
+export type FlowSelection =
+  | { kind: "event-type"; handlerId: string | null; name: string }
+  | { kind: "handler"; handlerId: string }
+  | null;
+
+function parseFlowSelection(params: URLSearchParams): FlowSelection {
+  const kind = params.get("fsk");
+  if (kind === "event-type") {
+    const name = params.get("fsn");
+    if (!name) return null;
+    const handlerId = params.get("fsh"); // null when absent = root
+    return { kind: "event-type", handlerId, name };
+  }
+  if (kind === "handler") {
+    const handlerId = params.get("fsh");
+    if (!handlerId) return null;
+    return { kind: "handler", handlerId };
+  }
+  return null;
+}
+
+function serializeFlowSelection(sel: FlowSelection, params: Record<string, string>) {
+  if (!sel) return;
+  params.fsk = sel.kind;
+  if (sel.kind === "event-type") {
+    params.fsn = sel.name;
+    if (sel.handlerId != null) params.fsh = sel.handlerId;
+  } else {
+    params.fsh = sel.handlerId;
+  }
+}
+
 const LAYER_OPTIONS = ["world", "system", "telemetry"] as const;
 
 // ---------------------------------------------------------------------------
@@ -75,9 +107,13 @@ type EventsPaneContextValue = {
 
   // Causal flow
   flowRunId: string | null;
-  setFlowRunId: (runId: string | null) => void;
+  openFlow: (runId: string | null, initialSelection?: FlowSelection) => void;
   flowData: AdminEvent[] | null;
   flowLoading: boolean;
+
+  // Flow → Tree highlighting
+  flowSelection: FlowSelection;
+  setFlowSelection: (sel: FlowSelection) => void;
 };
 
 const EventsPaneContext = createContext<EventsPaneContextValue | null>(null);
@@ -115,7 +151,8 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
   const [investigateEvent, setInvestigateEvent] = useState<AdminEvent | null>(null);
 
   // Causal flow
-  const [flowRunId, setFlowRunId] = useState<string | null>(null);
+  const [flowSelection, setFlowSelection] = useState<FlowSelection>(() => parseFlowSelection(searchParams));
+  const [flowRunId, setFlowRunId] = useState<string | null>(searchParams.get("flow"));
   const [fetchFlow, { data: flowQueryData, loading: flowLoading }] = useLazyQuery<{
     adminCausalFlow: { events: AdminEvent[] };
   }>(ADMIN_CAUSAL_FLOW);
@@ -125,6 +162,13 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       fetchFlow({ variables: { runId: flowRunId } });
     }
   }, [flowRunId, fetchFlow]);
+
+  // Atomic open: sets run + optional initial selection together.
+  // Passing null closes the flow and clears selection.
+  const openFlow = useCallback((runId: string | null, initialSelection?: FlowSelection) => {
+    setFlowRunId(runId);
+    setFlowSelection(initialSelection ?? null);
+  }, []);
 
   // Sync URL params
   const lastParamsRef = useRef("");
@@ -137,12 +181,14 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     if (timeFrom) params.from = timeFrom;
     if (timeTo) params.to = timeTo;
     if (selectedSeq != null) params.seq = String(selectedSeq);
+    if (flowRunId) params.flow = flowRunId;
+    serializeFlowSelection(flowSelection, params);
     const serialized = JSON.stringify(params);
     if (serialized !== lastParamsRef.current) {
       lastParamsRef.current = serialized;
       setSearchParams(params, { replace: true });
     }
-  }, [layers, search, runId, timeFrom, timeTo, selectedSeq, setSearchParams]);
+  }, [layers, search, runId, timeFrom, timeTo, selectedSeq, flowRunId, flowSelection, setSearchParams]);
 
   // Query
   const queryVars = useMemo(
@@ -254,6 +300,15 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     [fetchTree, treeData],
   );
 
+  // Hydrate tree on mount when selectedSeq comes from URL
+  const didHydrateTree = useRef(false);
+  useEffect(() => {
+    if (!didHydrateTree.current && selectedSeq != null) {
+      didHydrateTree.current = true;
+      fetchTree({ variables: { seq: selectedSeq } });
+    }
+  }, [selectedSeq, fetchTree]);
+
   const toggleLayer = useCallback((layer: string) => {
     setLayers((prev) => {
       const next = new Set(prev);
@@ -288,16 +343,19 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       investigateEvent,
       setInvestigateEvent,
       flowRunId,
-      setFlowRunId,
+      openFlow,
       flowData: flowQueryData?.adminCausalFlow?.events ?? null,
       flowLoading,
+      flowSelection,
+      setFlowSelection,
     }),
     [
       layers, toggleLayer, search, runId, timeFrom, timeTo,
       filteredEvents, loading, hasMore, loadMore, allEvents.length,
       live, selectedSeq, selectSeq, treeData, treeLoading,
       investigateEvent,
-      flowRunId, flowQueryData, flowLoading,
+      flowRunId, openFlow, flowQueryData, flowLoading,
+      flowSelection,
     ],
   );
 

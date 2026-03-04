@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { Search } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
+import { eventTextColor } from "../eventColor";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -115,7 +116,7 @@ function TreeNode({
             <span className={`px-1 py-0.5 rounded text-[10px] font-medium shrink-0 ${layerColor}`}>
               {event.layer}
             </span>
-            <span className="text-[10px] font-mono text-foreground shrink-0">
+            <span className="text-[10px] font-mono shrink-0" style={{ color: eventTextColor(event.name) }}>
               {event.name}
             </span>
             {collapsed && hasChildren && (
@@ -166,7 +167,7 @@ function TreeNode({
 // ---------------------------------------------------------------------------
 
 export function CausalTreePane() {
-  const { treeData, treeLoading } = useEventsPaneContext();
+  const { treeData, treeLoading, flowSelection, setFlowSelection } = useEventsPaneContext();
 
   const { root, childrenMap } = useMemo(() => {
     if (!treeData) return { root: null, childrenMap: new Map<string, AdminEvent[]>() };
@@ -233,6 +234,21 @@ export function CausalTreePane() {
 
   return (
     <div className="h-full overflow-y-auto p-3">
+      {flowSelection && (
+        <div className="flex items-center gap-2 mb-2 px-2 py-1 rounded bg-blue-500/10 text-xs text-blue-400">
+          <span>
+            {flowSelection.kind === "event-type"
+              ? `${flowSelection.name} from ${flowSelection.handlerId ?? "root"}`
+              : `outputs of ${flowSelection.handlerId}`}
+          </span>
+          <button
+            onClick={() => setFlowSelection(null)}
+            className="ml-auto hover:text-foreground"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
         Causal Tree ({treeData.events.length} events)
       </h3>

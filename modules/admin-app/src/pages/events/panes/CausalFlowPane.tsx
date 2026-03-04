@@ -1,24 +1,17 @@
 import { useMemo, useCallback } from "react";
-import { ReactFlow, Background, Controls, type Node, type Edge, Position } from "@xyflow/react";
+import { ReactFlow, Background, Controls, type Node, type Edge, type NodeChange, Position } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
+import { eventBg, eventBorder } from "../eventColor";
 
 // ---------------------------------------------------------------------------
-// Constants
+// Flow node data (discriminated union for structured identity)
 // ---------------------------------------------------------------------------
 
-const LAYER_BG: Record<string, string> = {
-  world: "#3b82f620",
-  system: "#f59e0b20",
-  telemetry: "#71717a20",
-};
-
-const LAYER_BORDER: Record<string, string> = {
-  world: "#3b82f6",
-  system: "#f59e0b",
-  telemetry: "#71717a",
-};
+type FlowNodeData =
+  | { nodeKind: "event-type"; handlerId: string | null; eventName: string; label: string }
+  | { nodeKind: "handler"; handlerId: string; label: string };
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 50;
@@ -90,10 +83,13 @@ function buildFlowGraph(events: AdminEvent[]): FlowGraph {
       position: { x: 0, y: 0 },
       data: {
         label: `${group.name} (${group.count})`,
+        nodeKind: "event-type" as const,
+        handlerId: group.events[0]?.handlerId ?? null,
+        eventName: group.name,
       },
       style: {
-        background: LAYER_BG[group.layer] ?? LAYER_BG.telemetry,
-        border: `1px solid ${LAYER_BORDER[group.layer] ?? LAYER_BORDER.telemetry}`,
+        background: eventBg(group.name),
+        border: `1px solid ${eventBorder(group.name)}`,
         borderRadius: 6,
         fontSize: 11,
         padding: "6px 10px",
@@ -111,7 +107,7 @@ function buildFlowGraph(events: AdminEvent[]): FlowGraph {
       id: `hdl:${handlerId}`,
       type: "default",
       position: { x: 0, y: 0 },
-      data: { label: handlerId },
+      data: { label: handlerId, nodeKind: "handler" as const, handlerId },
       style: {
         background: "#27272a",
         border: "1px solid #52525b",
@@ -226,14 +222,66 @@ function layoutGraph(nodes: Node[], edges: Edge[]): FlowGraph {
 // ---------------------------------------------------------------------------
 
 export function CausalFlowPane() {
-  const { flowRunId, setFlowRunId, flowData, flowLoading } = useEventsPaneContext();
+  const { flowRunId, openFlow, flowData, flowLoading, flowSelection, setFlowSelection, selectSeq } = useEventsPaneContext();
 
-  const { nodes, edges } = useMemo(() => {
+  const { nodes: rawNodes, edges } = useMemo(() => {
     if (!flowData || flowData.length === 0) return { nodes: [], edges: [] };
     return buildFlowGraph(flowData);
   }, [flowData]);
 
-  const handleClose = useCallback(() => setFlowRunId(null), [setFlowRunId]);
+  // Derive selected node ID from flowSelection
+  const selectedNodeId = useMemo(() => {
+    if (!flowSelection) return null;
+    if (flowSelection.kind === "handler") return `hdl:${flowSelection.handlerId}`;
+    const handler = flowSelection.handlerId ?? "__root__";
+    return `evt:${handler}::${flowSelection.name}`;
+  }, [flowSelection]);
+
+  // Apply selected state to matching node
+  const nodes = useMemo(
+    () => rawNodes.map(n => ({ ...n, selected: n.id === selectedNodeId })),
+    [rawNodes, selectedNodeId],
+  );
+
+  const handleClose = useCallback(() => openFlow(null), [openFlow]);
+
+  // Find a representative event in flowData to load the right causal tree
+  const syncTree = useCallback((d: FlowNodeData) => {
+    if (!flowData) return;
+    const match = d.nodeKind === "event-type"
+      ? flowData.find(e => e.handlerId === d.handlerId && e.name === d.eventName)
+      : flowData.find(e => e.handlerId === d.handlerId);
+    if (match) selectSeq(match.seq);
+  }, [flowData, selectSeq]);
+
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+    const d = node.data as FlowNodeData;
+
+    if (d.nodeKind === "event-type") {
+      if (
+        flowSelection?.kind === "event-type" &&
+        flowSelection.handlerId === d.handlerId &&
+        flowSelection.name === d.eventName
+      ) {
+        setFlowSelection(null);
+      } else {
+        setFlowSelection({ kind: "event-type", handlerId: d.handlerId, name: d.eventName });
+        syncTree(d);
+      }
+    } else if (d.nodeKind === "handler") {
+      if (flowSelection?.kind === "handler" && flowSelection.handlerId === d.handlerId) {
+        setFlowSelection(null);
+      } else {
+        setFlowSelection({ kind: "handler", handlerId: d.handlerId });
+        syncTree(d);
+      }
+    }
+  }, [flowSelection, setFlowSelection, syncTree]);
+
+  const onPaneClick = useCallback(() => setFlowSelection(null), [setFlowSelection]);
+
+  // No-op: we manage node state ourselves, but React Flow needs this in controlled mode
+  const onNodesChange = useCallback((_changes: NodeChange[]) => {}, []);
 
   if (!flowRunId) {
     return (
@@ -245,8 +293,34 @@ export function CausalFlowPane() {
 
   if (flowLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-sm text-muted-foreground animate-pulse">Loading flow...</div>
+      <div className="h-full flex flex-col">
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border shrink-0">
+          <div className="h-3 w-10 bg-muted rounded animate-pulse" />
+          <div className="h-3 w-48 bg-muted rounded animate-pulse" />
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-pulse flex flex-col items-center gap-3">
+            {/* Root node */}
+            <div className="h-8 w-40 bg-muted rounded-md" />
+            {/* Connector */}
+            <div className="h-6 w-px bg-muted" />
+            {/* Handler */}
+            <div className="h-6 w-28 bg-muted rounded-full" />
+            {/* Fork */}
+            <div className="flex items-start gap-8">
+              <div className="flex flex-col items-center gap-3">
+                <div className="h-6 w-px bg-muted" />
+                <div className="h-8 w-36 bg-muted rounded-md" />
+                <div className="h-6 w-px bg-muted" />
+                <div className="h-6 w-24 bg-muted rounded-full" />
+              </div>
+              <div className="flex flex-col items-center gap-3">
+                <div className="h-6 w-px bg-muted" />
+                <div className="h-8 w-36 bg-muted rounded-md" />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -272,6 +346,9 @@ export function CausalFlowPane() {
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onNodesChange={onNodesChange}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
           fitView
           proOptions={{ hideAttribution: true }}
           nodesDraggable={false}

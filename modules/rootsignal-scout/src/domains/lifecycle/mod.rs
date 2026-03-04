@@ -61,7 +61,10 @@ pub mod handlers {
         // Requires graph_client + region — skip in tests
         let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
-            _ => return Ok(events![]),
+            _ => return Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "lifecycle:schedule".into(),
+                reason: "missing region or graph_client (test environment)".into(),
+            }]),
         };
         let graph = GraphReader::new(graph_client.clone());
 

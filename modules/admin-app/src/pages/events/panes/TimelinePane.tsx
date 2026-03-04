@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Search, GitBranch, X } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
+import { eventTextColor } from "../eventColor";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -146,7 +147,7 @@ function EventRow({
   onClick: () => void;
   onInvestigate: () => void;
   onFilterRun: (runId: string) => void;
-  onViewFlow: (runId: string) => void;
+  onViewFlow: (event: AdminEvent) => void;
 }) {
   const [payloadOpen, setPayloadOpen] = useState(false);
   const layerColor = LAYER_COLORS[event.layer] ?? "bg-zinc-500/20 text-zinc-400";
@@ -177,7 +178,7 @@ function EventRow({
               {event.runId.slice(0, 8)}
             </button>
           )}
-          <span className="text-xs font-mono text-foreground shrink-0">
+          <span className="text-xs font-mono shrink-0" style={{ color: eventTextColor(event.name) }}>
             {event.name}
           </span>
           <button
@@ -189,7 +190,7 @@ function EventRow({
           </button>
           {event.runId && (
             <button
-              onClick={(e) => { e.stopPropagation(); onViewFlow(event.runId!); }}
+              onClick={(e) => { e.stopPropagation(); onViewFlow(event); }}
               className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto p-1 rounded hover:bg-accent shrink-0"
               title="View causal flow"
             >
@@ -257,7 +258,7 @@ export function TimelinePane() {
     selectSeq,
     setRunId,
     setInvestigateEvent,
-    setFlowRunId,
+    openFlow,
   } = useEventsPaneContext();
 
   const handleInvestigate = useCallback(
@@ -307,7 +308,7 @@ export function TimelinePane() {
               onClick={() => selectSeq(event.seq)}
               onInvestigate={() => handleInvestigate(event)}
               onFilterRun={setRunId}
-              onViewFlow={setFlowRunId}
+              onViewFlow={(evt) => { selectSeq(evt.seq); openFlow(evt.runId!, { kind: "event-type", handlerId: evt.handlerId, name: evt.name }); }}
             />
           ))}
           {hasMore && (

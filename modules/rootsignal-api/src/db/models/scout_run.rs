@@ -768,6 +768,13 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
             Some(format!("{edges} edges created"))
         }
 
+        // ── Pipeline bookkeeping ─────────────────────────────────
+        "handler_skipped" => {
+            let handler = json_str(data, "handler_id").unwrap_or_default();
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("{handler}: {reason}"))
+        }
+
         // ── Fallback: generic field sniffing ───────────────────────
         _ => json_str(data, "message")
             .or_else(|| json_str(data, "title"))

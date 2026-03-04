@@ -65,7 +65,10 @@ pub mod handlers {
     ) -> Result<Events> {
         let (_, state) = ctx.singleton::<PipelineState>();
         if state.collected_links.is_empty() {
-            return Ok(events![]);
+            return Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "discovery:link_promotion".into(),
+                reason: "no collected links to promote".into(),
+            }]);
         }
         let deps = ctx.deps();
         let links = state.collected_links.clone();

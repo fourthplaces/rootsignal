@@ -530,7 +530,10 @@ pub mod handlers {
                 signals_extracted: stats.signals_extracted,
             }])
         } else {
-            Ok(Events::new())
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "scrape:check_url_role_complete".into(),
+                reason: format!("waiting for {role:?}: {completed}/{total} URLs complete"),
+            }])
         }
     }
 
@@ -562,7 +565,10 @@ pub mod handlers {
                 signals_extracted: stats.signals_extracted,
             }])
         } else {
-            Ok(Events::new())
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "scrape:check_social_role_complete".into(),
+                reason: format!("waiting for {role:?}: {completed}/{total} social sources complete"),
+            }])
         }
     }
 
@@ -594,7 +600,12 @@ pub mod handlers {
             info!(?phase, "All scrape roles complete, emitting PhaseCompleted");
             Ok(events![LifecycleEvent::PhaseCompleted { phase }])
         } else {
-            Ok(Events::new())
+            let completed: Vec<_> = state.completed_scrape_roles.iter().collect();
+            let expected: Vec<_> = expected_roles.iter().collect();
+            Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "scrape:phase_complete".into(),
+                reason: format!("waiting for {phase:?}: completed {completed:?}, need {expected:?}"),
+            }])
         }
     }
 
