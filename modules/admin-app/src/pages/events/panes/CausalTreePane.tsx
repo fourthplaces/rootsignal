@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { Search } from "lucide-react";
-import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
+import { useEventsPaneContext, type AdminEvent, type FlowSelection } from "../EventsPaneContext";
 import { eventTextColor } from "../eventColor";
 
 // ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ function TreeNode({
 
   const handleInvestigate = useCallback(() => {
     setInvestigateEvent(event);
-    selectSeq(event.seq);
+    selectSeq(event.seq, event.runId ?? undefined);
   }, [event, setInvestigateEvent, selectSeq]);
 
   return (
@@ -101,7 +101,7 @@ function TreeNode({
           isSelected ? "bg-accent/50 ring-1 ring-blue-500/50" : ""
         }`}
       >
-        <button onClick={() => selectSeq(event.seq)} className="w-full text-left">
+        <button onClick={() => selectSeq(event.seq, event.runId ?? undefined)} className="w-full text-left">
           <div className="flex items-center gap-1.5 min-w-0">
             {hasChildren ? (
               <button
@@ -166,26 +166,45 @@ function TreeNode({
 // CausalTreePane
 // ---------------------------------------------------------------------------
 
+function matchesFlowSelection(event: AdminEvent, sel: FlowSelection): boolean {
+  if (!sel) return true;
+  if (sel.kind === "event-type")
+    return event.handlerId === sel.handlerId && event.name === sel.name;
+  return event.handlerId === sel.handlerId;
+}
+
 export function CausalTreePane() {
-  const { treeData, treeLoading, flowSelection, setFlowSelection } = useEventsPaneContext();
+  const { treeEvents, treeLoading, flowSelection, setFlowSelection, flowRunId } = useEventsPaneContext();
 
-  const { root, childrenMap } = useMemo(() => {
-    if (!treeData) return { root: null, childrenMap: new Map<string, AdminEvent[]>() };
+  const { roots, childrenMap, totalCount, filteredCount } = useMemo(() => {
+    if (!treeEvents || treeEvents.length === 0)
+      return { roots: [] as AdminEvent[], childrenMap: new Map<string, AdminEvent[]>(), totalCount: 0, filteredCount: 0 };
 
-    const bySeq = new Map<number, AdminEvent>();
+    const total = treeEvents.length;
+
+    // Only apply flowSelection filter when flow is active
+    const events = (flowRunId && flowSelection)
+      ? treeEvents.filter(e => matchesFlowSelection(e, flowSelection))
+      : treeEvents;
+
+    const idSet = new Set(events.map(e => e.id).filter(Boolean));
     const cMap = new Map<string, AdminEvent[]>();
+    const rootList: AdminEvent[] = [];
 
-    for (const evt of treeData.events) {
-      bySeq.set(evt.seq, evt);
-      if (evt.parentId != null) {
+    for (const evt of events) {
+      if (evt.parentId == null || !idSet.has(evt.parentId)) {
+        rootList.push(evt);
+      } else {
         const siblings = cMap.get(evt.parentId) ?? [];
         siblings.push(evt);
         cMap.set(evt.parentId, siblings);
       }
     }
 
-    return { root: bySeq.get(treeData.rootSeq) ?? null, childrenMap: cMap };
-  }, [treeData]);
+    rootList.sort((a, b) => a.seq - b.seq);
+    const filtered = rootList.length + [...cMap.values()].reduce((s, a) => s + a.length, 0);
+    return { roots: rootList, childrenMap: cMap, totalCount: total, filteredCount: filtered };
+  }, [treeEvents, flowRunId, flowSelection]);
 
   if (treeLoading) {
     return (
@@ -224,10 +243,33 @@ export function CausalTreePane() {
     );
   }
 
-  if (!treeData || !root) {
+  if (!treeEvents) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
         Select an event to view its causal tree
+      </div>
+    );
+  }
+
+  if (roots.length === 0 && flowSelection) {
+    return (
+      <div className="h-full overflow-y-auto p-3">
+        <div className="flex items-center gap-2 mb-2 px-2 py-1 rounded bg-blue-500/10 text-xs text-blue-400">
+          <span>
+            {flowSelection.kind === "event-type"
+              ? `${flowSelection.name} from ${flowSelection.handlerId ?? "root"}`
+              : `outputs of ${flowSelection.handlerId}`}
+          </span>
+          <button
+            onClick={() => setFlowSelection(null)}
+            className="ml-auto hover:text-foreground"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
+          No events match the current filter
+        </div>
       </div>
     );
   }
@@ -250,13 +292,16 @@ export function CausalTreePane() {
         </div>
       )}
       <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
-        Causal Tree ({treeData.events.length} events)
+        Causal Tree ({flowSelection ? `${filteredCount} of ${totalCount}` : totalCount} events)
       </h3>
-      <TreeNode
-        event={root}
-        childrenMap={childrenMap}
-        depth={0}
-      />
+      {roots.map(root => (
+        <TreeNode
+          key={root.seq}
+          event={root}
+          childrenMap={childrenMap}
+          depth={0}
+        />
+      ))}
     </div>
   );
 }

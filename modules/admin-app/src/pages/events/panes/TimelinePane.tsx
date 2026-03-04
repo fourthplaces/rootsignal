@@ -264,7 +264,7 @@ export function TimelinePane() {
   const handleInvestigate = useCallback(
     (event: AdminEvent) => {
       setInvestigateEvent(event);
-      selectSeq(event.seq);
+      selectSeq(event.seq, event.runId ?? undefined);
     },
     [setInvestigateEvent, selectSeq],
   );
@@ -305,10 +305,10 @@ export function TimelinePane() {
               key={event.seq}
               event={event}
               isSelected={event.seq === selectedSeq}
-              onClick={() => selectSeq(event.seq)}
+              onClick={() => selectSeq(event.seq, event.runId ?? undefined)}
               onInvestigate={() => handleInvestigate(event)}
               onFilterRun={setRunId}
-              onViewFlow={(evt) => { selectSeq(evt.seq); openFlow(evt.runId!, { kind: "event-type", handlerId: evt.handlerId, name: evt.name }); }}
+              onViewFlow={(evt) => { selectSeq(evt.seq, evt.runId ?? undefined); if (evt.runId) openFlow(evt.runId, { kind: "event-type", handlerId: evt.handlerId, name: evt.name }); }}
             />
           ))}
           {hasMore && (

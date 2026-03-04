@@ -27,7 +27,8 @@ type AdminEventsPage = {
   nextCursor: number | null;
 };
 
-export type CausalTreeResult = {
+// CausalTreeResult kept for the GraphQL query shape (rootSeq comes from server)
+type CausalTreeResult = {
   events: AdminEvent[];
   rootSeq: number;
 };
@@ -95,10 +96,10 @@ type EventsPaneContextValue = {
 
   // Selection
   selectedSeq: number | null;
-  selectSeq: (seq: number) => void;
+  selectSeq: (seq: number, runId?: string) => void;
 
-  // Causal tree
-  treeData: CausalTreeResult | null;
+  // Causal tree (smart source — flow data when flow is open for same run, else tree query)
+  treeEvents: AdminEvent[] | null;
   treeLoading: boolean;
 
   // Investigate
@@ -107,7 +108,8 @@ type EventsPaneContextValue = {
 
   // Causal flow
   flowRunId: string | null;
-  openFlow: (runId: string | null, initialSelection?: FlowSelection) => void;
+  openFlow: (runId: string, initialSelection?: FlowSelection) => void;
+  closeFlow: () => void;
   flowData: AdminEvent[] | null;
   flowLoading: boolean;
 
@@ -163,9 +165,11 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     }
   }, [flowRunId, fetchFlow]);
 
+  // Selected run ID — tracks which run the user last clicked on
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+
   // Atomic open: sets run + optional initial selection together.
-  // Passing null closes the flow and clears selection.
-  const openFlow = useCallback((runId: string | null, initialSelection?: FlowSelection) => {
+  const openFlow = useCallback((runId: string, initialSelection?: FlowSelection) => {
     setFlowRunId(runId);
     setFlowSelection(initialSelection ?? null);
   }, []);
@@ -289,15 +293,38 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     adminCausalTree: CausalTreeResult;
   }>(ADMIN_CAUSAL_TREE);
 
+  // Refs for stable callbacks (avoid cascade re-renders from data deps)
+  const selectedSeqRef = useRef(selectedSeq);
+  selectedSeqRef.current = selectedSeq;
+  const treeDataRef = useRef(treeData);
+  treeDataRef.current = treeData;
+  const flowQueryDataRef = useRef(flowQueryData);
+  flowQueryDataRef.current = flowQueryData;
+
+  const closeFlow = useCallback(() => {
+    setFlowRunId(null);
+    setFlowSelection(null);
+    // Re-fetch tree for current selectedSeq since treeData may be stale
+    const currentSeq = selectedSeqRef.current;
+    if (currentSeq != null) {
+      const inTree = treeDataRef.current?.adminCausalTree?.events.some((e) => e.seq === currentSeq);
+      if (!inTree) fetchTree({ variables: { seq: currentSeq } });
+    }
+  }, [fetchTree]);
+
   const selectSeq = useCallback(
-    (seq: number) => {
+    (seq: number, evtRunId?: string) => {
       setSelectedSeq(seq);
-      // Skip re-fetch if this seq is already within the loaded causal tree
-      const currentTree = treeData?.adminCausalTree;
-      if (currentTree?.events.some((e) => e.seq === seq)) return;
-      fetchTree({ variables: { seq } });
+      if (evtRunId) setSelectedRunId(evtRunId);
+
+      const inTree = treeDataRef.current?.adminCausalTree?.events.some((e) => e.seq === seq);
+      const inFlow = flowRunId && evtRunId === flowRunId &&
+        flowQueryDataRef.current?.adminCausalFlow?.events.some((e) => e.seq === seq);
+      if (!inTree && !inFlow) {
+        fetchTree({ variables: { seq } });
+      }
     },
-    [fetchTree, treeData],
+    [fetchTree, flowRunId],
   );
 
   // Hydrate tree on mount when selectedSeq comes from URL
@@ -317,6 +344,22 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       return next;
     });
   }, []);
+
+  // Smart tree source: use flow data when flow is open for the same run
+  const effectiveTreeSource = useMemo(() => {
+    const flowEvents = flowQueryData?.adminCausalFlow?.events ?? null;
+    // Use selectedRunId ?? flowRunId to handle mount hydration
+    // (when ?flow=abc&seq=42 is in URL, selectedRunId is null until first click)
+    const effectiveRunId = selectedRunId ?? flowRunId;
+    if (flowRunId && flowEvents && effectiveRunId === flowRunId) {
+      return { events: flowEvents, source: "flow" as const };
+    }
+    const tree = treeData?.adminCausalTree;
+    if (tree) {
+      return { events: tree.events, source: "tree" as const };
+    }
+    return null;
+  }, [flowRunId, flowQueryData, selectedRunId, treeData]);
 
   const value = useMemo<EventsPaneContextValue>(
     () => ({
@@ -338,12 +381,13 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       live,
       selectedSeq,
       selectSeq,
-      treeData: treeData?.adminCausalTree ?? null,
-      treeLoading,
+      treeEvents: effectiveTreeSource?.events ?? null,
+      treeLoading: effectiveTreeSource?.source === "flow" ? flowLoading : treeLoading,
       investigateEvent,
       setInvestigateEvent,
       flowRunId,
       openFlow,
+      closeFlow,
       flowData: flowQueryData?.adminCausalFlow?.events ?? null,
       flowLoading,
       flowSelection,
@@ -352,9 +396,9 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     [
       layers, toggleLayer, search, runId, timeFrom, timeTo,
       filteredEvents, loading, hasMore, loadMore, allEvents.length,
-      live, selectedSeq, selectSeq, treeData, treeLoading,
+      live, selectedSeq, selectSeq, effectiveTreeSource, treeLoading, flowLoading,
       investigateEvent,
-      flowRunId, openFlow, flowQueryData, flowLoading,
+      flowRunId, openFlow, closeFlow, flowQueryData,
       flowSelection,
     ],
   );

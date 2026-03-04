@@ -222,7 +222,7 @@ function layoutGraph(nodes: Node[], edges: Edge[]): FlowGraph {
 // ---------------------------------------------------------------------------
 
 export function CausalFlowPane() {
-  const { flowRunId, openFlow, flowData, flowLoading, flowSelection, setFlowSelection, selectSeq } = useEventsPaneContext();
+  const { flowRunId, closeFlow, flowData, flowLoading, flowSelection, setFlowSelection, selectSeq } = useEventsPaneContext();
 
   const { nodes: rawNodes, edges } = useMemo(() => {
     if (!flowData || flowData.length === 0) return { nodes: [], edges: [] };
@@ -243,7 +243,7 @@ export function CausalFlowPane() {
     [rawNodes, selectedNodeId],
   );
 
-  const handleClose = useCallback(() => openFlow(null), [openFlow]);
+  const handleClose = useCallback(() => closeFlow(), [closeFlow]);
 
   // Find a representative event in flowData to load the right causal tree
   const syncTree = useCallback((d: FlowNodeData) => {
@@ -251,7 +251,7 @@ export function CausalFlowPane() {
     const match = d.nodeKind === "event-type"
       ? flowData.find(e => e.handlerId === d.handlerId && e.name === d.eventName)
       : flowData.find(e => e.handlerId === d.handlerId);
-    if (match) selectSeq(match.seq);
+    if (match) selectSeq(match.seq, match.runId ?? undefined);
   }, [flowData, selectSeq]);
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
