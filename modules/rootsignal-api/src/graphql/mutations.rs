@@ -14,7 +14,7 @@ use rootsignal_common::{
 use rootsignal_graph::GraphStore;
 use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
 use crate::jwt::{self, JwtService};
-use crate::restate_client::RestateClient;
+use crate::scout_runner::{ScoutRunner, ScoutPhase};
 use super::context::AdminGuard;
 
 
@@ -238,7 +238,7 @@ impl MutationRoot {
         })
     }
 
-    /// Run scout for a task. Loads task by ID, derives scope, dispatches via Restate.
+    /// Run scout for a task. Loads task by ID, derives scope, spawns seesaw engine.
     #[graphql(guard = "AdminGuard")]
     async fn run_scout(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
         let config = ctx.data_unchecked::<Arc<Config>>();
@@ -255,7 +255,7 @@ impl MutationRoot {
         }
 
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let restate = require_restate(ctx)?;
+        let runner = require_runner(ctx)?;
 
         // Load the task
         let task = writer
@@ -280,14 +280,11 @@ impl MutationRoot {
 
         let scope = ScoutScope::from(&task);
 
-        restate
-            .run_scout(&task_id, &scope)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        runner.run_scout(&task_id, &scope).await;
 
         Ok(ScoutResult {
             success: true,
-            message: Some(format!("Scout started via Restate for {}", task.context)),
+            message: Some(format!("Scout started for {}", task.context)),
         })
     }
 
@@ -312,8 +309,15 @@ impl MutationRoot {
         }
 
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let restate = require_restate(ctx)?;
-        let restate_phase: crate::restate_client::ScoutPhase = phase.into();
+        let runner = require_runner(ctx)?;
+
+        let runner_phase: ScoutPhase = match phase {
+            super::types::ScoutPhase::Bootstrap => ScoutPhase::Bootstrap,
+            super::types::ScoutPhase::Scrape => ScoutPhase::Scrape,
+            super::types::ScoutPhase::Synthesis => ScoutPhase::Synthesis,
+            super::types::ScoutPhase::SituationWeaver => ScoutPhase::SituationWeaver,
+            super::types::ScoutPhase::Supervisor => ScoutPhase::Supervisor,
+        };
 
         // Load the task
         let task = writer
@@ -338,41 +342,32 @@ impl MutationRoot {
 
         let scope = ScoutScope::from(&task);
 
-        restate
-            .run_phase(restate_phase, &task_id, &scope)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        runner.run_phase(runner_phase, &task_id, &scope).await;
 
         Ok(ScoutResult {
             success: true,
             message: Some(format!(
-                "{:?} started via Restate for {}",
+                "{:?} started for {}",
                 phase, task.context
             )),
         })
     }
 
-    /// Stop a running scout workflow via Restate cancellation.
+    /// Stop a running scout by setting its cancellation flag.
     #[graphql(guard = "AdminGuard")]
     async fn stop_scout(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
-        let restate = require_restate(ctx)?;
+        let runner = require_runner(ctx)?;
 
-        match restate
-            .cancel_workflow("FullScoutRunWorkflow", &task_id)
-            .await
-        {
-            Ok(()) => Ok(ScoutResult {
+        if runner.cancel(&task_id).await {
+            Ok(ScoutResult {
                 success: true,
                 message: Some(format!("Cancel signal sent for task {task_id}")),
-            }),
-            Err(crate::restate_client::RestateError::Ingress { status, body }) => {
-                warn!(status, body = %body, "Restate cancel failed");
-                Ok(ScoutResult {
-                    success: false,
-                    message: Some(format!("Cancel failed (HTTP {status}): {body}")),
-                })
-            }
-            Err(e) => Err(async_graphql::Error::new(e.to_string())),
+            })
+        } else {
+            Ok(ScoutResult {
+                success: false,
+                message: Some(format!("No running task found for {task_id}")),
+            })
         }
     }
 
@@ -659,15 +654,12 @@ impl MutationRoot {
             });
         }
 
-        let restate = require_restate(ctx)?;
-        restate
-            .run_news_scan()
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to dispatch news scan: {e}")))?;
+        let runner = require_runner(ctx)?;
+        runner.run_news_scan().await;
 
         Ok(ScoutResult {
             success: true,
-            message: Some("News scan dispatched via Restate".into()),
+            message: Some("News scan dispatched".into()),
         })
     }
 }
@@ -709,12 +701,12 @@ fn require_engine(ctx: &Context<'_>) -> Result<rootsignal_scout::core::engine::S
         .map(|f| f.create())
 }
 
-/// Extract the Restate client from GraphQL context, returning a clear error if not configured.
-fn require_restate<'a>(ctx: &'a Context<'_>) -> Result<&'a RestateClient> {
-    ctx.data_unchecked::<Option<RestateClient>>()
+/// Extract the scout runner from GraphQL context.
+fn require_runner<'a>(ctx: &'a Context<'_>) -> Result<&'a ScoutRunner> {
+    ctx.data_unchecked::<Option<ScoutRunner>>()
         .as_ref()
         .ok_or_else(|| {
-            async_graphql::Error::new("Restate ingress not configured (set RESTATE_INGRESS_URL)")
+            async_graphql::Error::new("Scout runner not configured (Postgres required)")
         })
 }
 

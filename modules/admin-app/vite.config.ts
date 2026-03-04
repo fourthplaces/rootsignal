@@ -16,7 +16,10 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
-      "/graphql": apiTarget,
+      "/graphql": {
+        target: apiTarget,
+        ws: true,
+      },
       "/api": apiTarget,
     },
   },

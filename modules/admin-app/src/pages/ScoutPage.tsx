@@ -51,7 +51,6 @@ type ScoutTask = {
   source: string;
   status: string;
   phaseStatus: string;
-  restateStatus: string | null;
   createdAt: string;
   completedAt: string | null;
 };

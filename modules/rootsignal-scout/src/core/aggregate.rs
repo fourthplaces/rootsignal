@@ -474,7 +474,7 @@ impl PipelineState {
             PipelineEvent::SocialTopicsConsumed => {
                 self.social_topics.clear();
             }
-            PipelineEvent::HandlerSkipped { .. } => {}  // bookkeeping only, no state mutation
+            PipelineEvent::HandlerSkipped { .. } | PipelineEvent::HandlerFailed { .. } => {}  // bookkeeping only, no state mutation
             PipelineEvent::UrlsResolvedAccumulated {
                 url_mappings,
                 pub_dates,

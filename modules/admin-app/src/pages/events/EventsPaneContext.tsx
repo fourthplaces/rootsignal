@@ -138,12 +138,19 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     () => new Set(searchParams.get("layers")?.split(",").filter(Boolean) ?? LAYER_OPTIONS),
   );
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [runId, setRunId] = useState(searchParams.get("runId") ?? "");
   const [timeFrom, setTimeFrom] = useState(searchParams.get("from") ?? "");
   const [timeTo, setTimeTo] = useState(searchParams.get("to") ?? "");
   const [selectedSeq, setSelectedSeq] = useState<number | null>(
     searchParams.get("seq") ? Number(searchParams.get("seq")) : null,
   );
+
+  // Debounce search → debouncedSearch (300ms)
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(id);
+  }, [search]);
 
   // Infinite scroll state
   const [allEvents, setAllEvents] = useState<AdminEvent[]>([]);
@@ -199,12 +206,12 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     () => ({
       limit: 50,
       cursor: cursor ?? undefined,
-      search: search || undefined,
+      search: debouncedSearch || undefined,
       runId: runId || undefined,
       from: timeFrom ? new Date(timeFrom).toISOString() : undefined,
       to: timeTo ? new Date(timeTo + "T23:59:59").toISOString() : undefined,
     }),
-    [cursor, search, runId, timeFrom, timeTo],
+    [cursor, debouncedSearch, runId, timeFrom, timeTo],
   );
 
   const { data, loading } = useQuery<{ adminEvents: AdminEventsPage }>(ADMIN_EVENTS, {
@@ -214,8 +221,8 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
 
   // When filters change (but not cursor), reset
   const filterKey = useMemo(
-    () => JSON.stringify({ search, runId, timeFrom, timeTo }),
-    [search, runId, timeFrom, timeTo],
+    () => JSON.stringify({ search: debouncedSearch, runId, timeFrom, timeTo }),
+    [debouncedSearch, runId, timeFrom, timeTo],
   );
   const prevFilterKeyRef = useRef(filterKey);
   useEffect(() => {
@@ -254,7 +261,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
   }, [data, lastSeq]);
 
   // Only subscribe when no filters are active (live view of all events)
-  const hasFilters = !!(search || runId || timeFrom || timeTo);
+  const hasFilters = !!(debouncedSearch || runId || timeFrom || timeTo);
   const subscriptionVars = useMemo(() => ({ lastSeq }), [lastSeq]);
 
   const { data: subData } = useSubscription<{ events: AdminEvent }>(EVENTS_SUBSCRIPTION, {

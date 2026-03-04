@@ -29,18 +29,6 @@ pub enum ScoutPhase {
     Supervisor,
 }
 
-impl From<ScoutPhase> for crate::restate_client::ScoutPhase {
-    fn from(gql: ScoutPhase) -> Self {
-        match gql {
-            ScoutPhase::Bootstrap => Self::Bootstrap,
-            ScoutPhase::Scrape => Self::Scrape,
-            ScoutPhase::Synthesis => Self::Synthesis,
-            ScoutPhase::SituationWeaver => Self::SituationWeaver,
-            ScoutPhase::Supervisor => Self::Supervisor,
-        }
-    }
-}
-
 #[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SignalType {
     Gathering,
@@ -1325,8 +1313,6 @@ pub struct GqlScoutTask {
     pub completed_at: Option<String>,
     /// Current workflow phase status for this task's region (e.g. "complete", "idle", "running_scrape").
     pub phase_status: String,
-    /// Live Restate invocation status (e.g. "running", "suspended", "completed"). None if idle or unavailable.
-    pub restate_status: Option<String>,
 }
 
 // --- Graph Explorer types ---
@@ -1371,7 +1357,6 @@ impl GqlScoutTask {
             created_at: t.created_at.to_rfc3339(),
             completed_at: t.completed_at.map(|dt| dt.to_rfc3339()),
             phase_status: t.phase_status,
-            restate_status: None,
         }
     }
 }

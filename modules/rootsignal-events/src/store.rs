@@ -431,10 +431,11 @@ impl EventHandle {
         let caused_by = self.caused_by;
 
         tokio::spawn(async move {
-            let result = sqlx::query(
+            let result = sqlx::query_as::<_, (i64,)>(
                 r#"
                 INSERT INTO events (event_type, parent_seq, caused_by_seq, run_id, actor, payload, schema_v, id, parent_id, correlation_id, aggregate_type, aggregate_id, handler_id)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                RETURNING seq
                 "#,
             )
             .bind(&event_with_context.event_type)
@@ -450,11 +451,12 @@ impl EventHandle {
             .bind(&event_with_context.aggregate_type)
             .bind(event_with_context.aggregate_id)
             .bind(&event_with_context.handler_id)
-            .execute(&pool)
+            .fetch_one(&pool)
             .await;
 
-            if let Err(e) = result {
-                warn!(error = %e, "Failed to log fire-and-forget event");
+            match result {
+                Ok(row) => notify_new_event(&pool, row.0).await,
+                Err(e) => warn!(error = %e, "Failed to log fire-and-forget event"),
             }
         });
     }

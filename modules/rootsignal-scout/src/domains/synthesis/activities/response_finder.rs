@@ -484,7 +484,7 @@ impl<'a> ResponseFinder<'a> {
 
         // Validate URLs: only keep responses whose URLs were actually visited
         // Clone the set and drop the MutexGuard before the async boundary so the
-        // future remains Send (required by tokio::spawn / Restate workflows).
+        // future remains Send (required by tokio::spawn).
         let visited: HashSet<String> = {
             let guard = visited_urls.lock().unwrap_or_else(|e| e.into_inner());
             guard.clone()

@@ -16,7 +16,7 @@ use super::loaders::{
 };
 use super::mutations::MutationRoot;
 use super::types::*;
-use crate::restate_client::RestateClient;
+use crate::scout_runner::ScoutRunner;
 use crate::db::scout_run::{
     EventRow, EventRowFull, ScoutRunRow, StatsJson,
     event_layer, event_summary, json_str, json_u32, json_u64, json_f64,
@@ -659,6 +659,7 @@ impl QueryRoot {
     }
 
     /// Browse the full event stream with filters and cursor pagination.
+    /// Tries in-memory cache first, falls through to Postgres on miss.
     #[graphql(guard = "AdminGuard")]
     async fn admin_events(
         &self,
@@ -670,12 +671,28 @@ impl QueryRoot {
         to: Option<DateTime<Utc>>,
         run_id: Option<String>,
     ) -> Result<AdminEventsPage> {
+        let lim = (limit.unwrap_or(50) as usize).min(200);
+
+        // Try cache first
+        if let Some(Some(cache)) = ctx.data_opt::<Option<crate::event_cache::SharedEventCache>>() {
+            let cache = cache.read().await;
+            let (events, next_cursor) = cache.search(
+                search.as_deref(),
+                cursor,
+                from,
+                to,
+                run_id.as_deref(),
+                lim,
+            );
+            let events: Vec<AdminEvent> = events.into_iter().map(|e| (*e).clone()).collect();
+            return Ok(AdminEventsPage { events, next_cursor });
+        }
+
+        // Fall through to Postgres
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
         let pool = pool
             .as_ref()
             .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
-
-        let lim = (limit.unwrap_or(50) as i64).min(200);
 
         let rows = crate::db::scout_run::list_events_paginated(
             pool,
@@ -684,12 +701,12 @@ impl QueryRoot {
             from,
             to,
             run_id.as_deref(),
-            lim,
+            lim as i64,
         )
         .await
         .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
 
-        let next_cursor = if rows.len() as i64 == lim {
+        let next_cursor = if rows.len() == lim {
             rows.last().map(|r| r.seq)
         } else {
             None
@@ -703,8 +720,19 @@ impl QueryRoot {
     }
 
     /// Walk the causal tree for an event (ancestors + descendants).
+    /// Tries in-memory cache first, falls through to Postgres on miss.
     #[graphql(guard = "AdminGuard")]
     async fn admin_causal_tree(&self, ctx: &Context<'_>, seq: i64) -> Result<AdminCausalTree> {
+        // Try cache first
+        if let Some(Some(cache)) = ctx.data_opt::<Option<crate::event_cache::SharedEventCache>>() {
+            let cache = cache.read().await;
+            if let Some((events, root_seq)) = cache.causal_tree(seq) {
+                let events: Vec<AdminEvent> = events.into_iter().map(|e| (*e).clone()).collect();
+                return Ok(AdminCausalTree { events, root_seq });
+            }
+        }
+
+        // Fall through to Postgres
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
         let pool = pool
             .as_ref()
@@ -719,12 +747,23 @@ impl QueryRoot {
     }
 
     /// Fetch all events for a run, with handler_id, for the causal flow DAG viewer.
+    /// Tries in-memory cache first, falls through to Postgres on miss.
     #[graphql(guard = "AdminGuard")]
     async fn admin_causal_flow(
         &self,
         ctx: &Context<'_>,
         run_id: String,
     ) -> Result<AdminCausalFlow> {
+        // Try cache first
+        if let Some(Some(cache)) = ctx.data_opt::<Option<crate::event_cache::SharedEventCache>>() {
+            let cache = cache.read().await;
+            if let Some(events) = cache.causal_flow(&run_id) {
+                let events: Vec<AdminEvent> = events.into_iter().map(|e| (*e).clone()).collect();
+                return Ok(AdminCausalFlow { events });
+            }
+        }
+
+        // Fall through to Postgres
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
         let pool = pool
             .as_ref()
@@ -1575,23 +1614,23 @@ impl From<EventRow> for ScoutRunEvent {
 
 #[derive(Clone, SimpleObject)]
 pub struct AdminEvent {
-    seq: i64,
-    ts: DateTime<Utc>,
+    pub seq: i64,
+    pub ts: DateTime<Utc>,
     /// The event_type column — codec name like "DiscoveryEvent".
     #[graphql(name = "type")]
-    event_type: String,
+    pub event_type: String,
     /// Human-readable variant name (e.g. "source_discovered") from payload "type" tag.
-    name: String,
-    layer: String,
+    pub name: String,
+    pub layer: String,
     /// Seesaw event UUID — this event's identity.
-    id: Option<String>,
+    pub id: Option<String>,
     /// Seesaw parent event UUID — which event caused this one.
-    parent_id: Option<String>,
-    correlation_id: Option<String>,
-    run_id: Option<String>,
-    handler_id: Option<String>,
-    summary: Option<String>,
-    payload: String,
+    pub parent_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub run_id: Option<String>,
+    pub handler_id: Option<String>,
+    pub summary: Option<String>,
+    pub payload: String,
 }
 
 #[derive(SimpleObject)]
@@ -1737,9 +1776,10 @@ pub fn build_schema(
     rate_limiter: super::mutations::RateLimiter,
     graph_client: Arc<rootsignal_graph::GraphClient>,
     cache_store: Arc<rootsignal_graph::CacheStore>,
-    restate_client: Option<RestateClient>,
+    scout_runner: Option<ScoutRunner>,
     pg_pool: Option<sqlx::PgPool>,
     event_broadcast: Option<crate::event_broadcast::EventBroadcast>,
+    event_cache: Option<crate::event_cache::SharedEventCache>,
 ) -> ApiSchema {
     let citation_loader = DataLoader::new(
         CitationBySignalLoader {
@@ -1798,9 +1838,10 @@ pub fn build_schema(
         .data(schedule_loader)
         .data(situation_tags_loader)
         .data(embedder)
-        .data(restate_client)
+        .data(scout_runner)
         .data(pg_pool)
         .data(event_broadcast)
+        .data(event_cache)
         .finish()
 }
 

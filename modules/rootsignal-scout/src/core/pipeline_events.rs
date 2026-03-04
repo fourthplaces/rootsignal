@@ -48,6 +48,13 @@ pub enum PipelineEvent {
         handler_id: String,
         reason: String,
     },
+    /// Handler exhausted retries and was dead-lettered.
+    HandlerFailed {
+        handler_id: String,
+        source_event_type: String,
+        error: String,
+        attempts: i32,
+    },
     /// Fetch+extract state — signal counts, links, expansion queries, stats.
     ScrapeResultAccumulated {
         source_signal_counts: HashMap<String, u32>,
@@ -65,6 +72,7 @@ impl PipelineEvent {
             Self::SocialTopicsCollected { .. } => "social_topics_collected",
             Self::SocialTopicsConsumed => "social_topics_consumed",
             Self::HandlerSkipped { .. } => "handler_skipped",
+            Self::HandlerFailed { .. } => "handler_failed",
             Self::UrlsResolvedAccumulated { .. } => "urls_resolved_accumulated",
             Self::ScrapeResultAccumulated { .. } => "scrape_result_accumulated",
         };

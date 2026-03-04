@@ -774,6 +774,12 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
             let reason = json_str(data, "reason").unwrap_or_default();
             Some(format!("{handler}: {reason}"))
         }
+        "handler_failed" => {
+            let handler = json_str(data, "handler_id").unwrap_or_default();
+            let error = json_str(data, "error").unwrap_or_default();
+            let attempts = data.get("attempts").and_then(|v| v.as_i64()).unwrap_or(0);
+            Some(format!("{handler} failed after {attempts} attempts: {error}"))
+        }
 
         // ── Fallback: generic field sniffing ───────────────────────
         _ => json_str(data, "message")

@@ -145,7 +145,6 @@ export const ADMIN_SCOUT_TASKS = gql`
       source
       status
       phaseStatus
-      restateStatus
       createdAt
       completedAt
     }

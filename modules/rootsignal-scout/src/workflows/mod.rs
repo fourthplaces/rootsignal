@@ -1,25 +1,11 @@
-//! Restate durable workflows for the scout pipeline.
+//! Scout pipeline configuration and engine builders.
 //!
-//! Each pipeline phase is an independently invocable workflow. A thin orchestrator
-//! (`FullScoutRunWorkflow`) composes them for a full scout run.
-//!
-//! Follows the same single-binary pattern as mntogether: each workflow impl holds
-//! `Arc<ScoutDeps>` and constructs per-invocation resources from the shared deps.
-
-pub mod bootstrap;
-pub mod full_run;
-pub mod news_scanner;
-pub mod restate_runtime;
-pub mod scrape;
-pub mod situation_weaver;
-pub mod supervisor;
-pub mod synthesis;
-pub mod types;
+//! `ScoutDeps` holds shared deps. Engine builder methods construct seesaw
+//! engines for each pipeline variant (scrape, full, news).
 
 use std::sync::Arc;
 
-use restate_sdk::prelude::*;
-use rootsignal_archive::{Archive, ArchiveConfig, PageBackend, RestateDispatcher};
+use rootsignal_archive::{Archive, ArchiveConfig, PageBackend, SpawnDispatcher};
 use rootsignal_graph::GraphClient;
 use sqlx::PgPool;
 use typed_builder::TypedBuilder;
@@ -51,8 +37,6 @@ pub struct ScoutDeps {
     pub browserless_token: Option<String>,
     #[builder(default = 50)]
     pub max_web_queries_per_run: usize,
-    #[builder(default)]
-    pub restate_ingress_url: Option<String>,
 }
 
 impl ScoutDeps {
@@ -194,11 +178,6 @@ impl ScoutDeps {
             .browserless_url(config.browserless_url.clone())
             .browserless_token(config.browserless_token.clone())
             .max_web_queries_per_run(config.max_web_queries_per_run)
-            .restate_ingress_url(
-                std::env::var("RESTATE_INGRESS_URL")
-                    .ok()
-                    .filter(|s| !s.is_empty()),
-            )
             .build()
     }
 }
@@ -223,10 +202,16 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
         },
     };
 
-    let dispatcher = deps.restate_ingress_url.as_ref().map(|url| {
-        Arc::new(RestateDispatcher::new(url.clone()))
-            as Arc<dyn rootsignal_archive::WorkflowDispatcher>
-    });
+    let dispatcher: Option<Arc<dyn rootsignal_archive::WorkflowDispatcher>> =
+        if !deps.anthropic_api_key.is_empty() {
+            Some(Arc::new(SpawnDispatcher::new(
+                deps.pg_pool.clone(),
+                deps.anthropic_api_key.clone(),
+                std::env::var("OPENAI_API_KEY").unwrap_or_default(),
+            )))
+        } else {
+            None
+        };
 
     Arc::new(Archive::new(
         deps.pg_pool.clone(),
@@ -235,93 +220,3 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Workflow helpers — shared across all workflows
-// ---------------------------------------------------------------------------
-
-/// Standard retry policy for durable workflow side-effects.
-pub fn phase_retry_policy() -> RunRetryPolicy {
-    RunRetryPolicy::new()
-        .initial_delay(std::time::Duration::from_secs(5))
-        .exponentiation_factor(2.0)
-        .max_attempts(3)
-}
-
-/// Emit a TaskPhaseTransitioned event through a fresh infra engine inside `ctx.run()`.
-///
-/// Used by error paths where the main engine is dead. Takes only the two
-/// infrastructure handles needed — no full `ScoutDeps` clone.
-/// Running inside `ctx.run()` ensures replay safety (Restate journals the side-effect).
-pub async fn journaled_emit_task_phase_status(
-    ctx: &WorkflowContext<'_>,
-    pg_pool: PgPool,
-    graph_client: GraphClient,
-    task_id: &str,
-    status: &str,
-) -> Result<(), HandlerError> {
-    let tid = task_id.to_string();
-    let st = status.to_string();
-    ctx.run::<_, _, ()>(|| async move {
-        use rootsignal_common::events::SystemEvent;
-
-        let engine = engine::build_infra_only_engine(pg_pool, graph_client);
-        engine
-            .emit(SystemEvent::TaskPhaseTransitioned {
-                task_id: tid,
-                phase: String::new(),
-                status: st,
-            })
-            .settled()
-            .await
-            .map_err(|e| TerminalError::new(e.to_string()))?;
-        Ok(())
-    })
-    .await?;
-    Ok(())
-}
-
-/// Read the `"status"` key from Restate workflow state. Returns `"pending"` if unset.
-///
-/// Every workflow exposes a `get_status` shared handler with identical logic;
-/// this extracts the common body so each handler is a one-liner.
-pub async fn read_workflow_status(ctx: &SharedWorkflowContext<'_>) -> Result<String, HandlerError> {
-    Ok(ctx
-        .get::<String>("status")
-        .await?
-        .unwrap_or_else(|| "pending".to_string()))
-}
-
-// ---------------------------------------------------------------------------
-// Restate serde bridge macros (from mntogether)
-// ---------------------------------------------------------------------------
-
-/// Implement Restate SDK serialization traits for types that already have serde derives.
-///
-/// Bridges `serde::{Serialize, Deserialize}` to Restate's custom serialization traits
-/// without needing the `Json<>` wrapper.
-#[macro_export]
-macro_rules! impl_restate_serde {
-    ($type:ty) => {
-        impl restate_sdk::serde::Serialize for $type {
-            type Error = serde_json::Error;
-
-            fn serialize(&self) -> Result<bytes::Bytes, Self::Error> {
-                serde_json::to_vec(self).map(bytes::Bytes::from)
-            }
-        }
-
-        impl restate_sdk::serde::Deserialize for $type {
-            type Error = serde_json::Error;
-
-            fn deserialize(bytes: &mut bytes::Bytes) -> Result<Self, Self::Error> {
-                serde_json::from_slice(bytes)
-            }
-        }
-
-        impl restate_sdk::serde::WithContentType for $type {
-            fn content_type() -> &'static str {
-                "application/json"
-            }
-        }
-    };
-}

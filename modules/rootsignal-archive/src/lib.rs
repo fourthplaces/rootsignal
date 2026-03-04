@@ -9,10 +9,8 @@ mod services;
 mod source_handle;
 mod store;
 pub mod text_extract;
-pub mod workflows;
-
 pub use archive::{Archive, ArchiveConfig, PageBackend};
-pub use enrichment::{EnrichmentJob, MockDispatcher, RestateDispatcher, WorkflowDispatcher};
+pub use enrichment::{EnrichmentJob, MockDispatcher, SpawnDispatcher, WorkflowDispatcher};
 pub use error::{ArchiveError, Result};
 pub use fetch_request::FetchRequest;
 pub use links::extract_links_by_pattern;

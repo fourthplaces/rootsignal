@@ -24,31 +24,18 @@ use graphql::context::AuthContext;
 use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
 use graphql::{build_schema, ApiSchema};
 use jwt::JwtService;
-use restate_client::RestateClient;
-use rootsignal_archive::workflows::enrichment::{
-EnrichmentWorkflow, EnrichmentWorkflowImpl,
-};
-use rootsignal_scout::workflows::bootstrap::{BootstrapWorkflow, BootstrapWorkflowImpl};
-use rootsignal_scout::workflows::full_run::{
-FullScoutRunWorkflow, FullScoutRunWorkflowImpl,
-};
-use rootsignal_scout::workflows::news_scanner::{NewsScanWorkflow, NewsScanWorkflowImpl};
-use rootsignal_scout::workflows::scrape::{ScrapeWorkflow, ScrapeWorkflowImpl};
-use rootsignal_scout::workflows::situation_weaver::{
-SituationWeaverWorkflow, SituationWeaverWorkflowImpl,
-};
-use rootsignal_scout::workflows::supervisor::{SupervisorWorkflow, SupervisorWorkflowImpl};
-use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflowImpl};
+use scout_runner::ScoutRunner;
 
 
 mod db;
 mod event_broadcast;
+mod event_cache;
 mod graphql;
 mod investigate;
 mod investigate_tools;
 mod jwt;
 mod link_preview;
-mod restate_client;
+mod scout_runner;
 
 
 pub struct AppState {
@@ -213,7 +200,6 @@ async fn main() -> Result<()> {
     };
 
     // ========== Postgres ==========
-    // Connect to Postgres for the web archive, scout runs, and Restate workflows.
     let pg_pool = match std::env::var("DATABASE_URL") {
         Ok(database_url) => {
             match sqlx::postgres::PgPoolOptions::new()
@@ -223,13 +209,13 @@ async fn main() -> Result<()> {
             {
                 Ok(pool) => Some(pool),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to connect to Postgres — Restate workflows disabled");
+                    tracing::warn!(error = %e, "Failed to connect to Postgres — scout workflows disabled");
                     None
                 }
             }
         }
         Err(_) => {
-            tracing::warn!("DATABASE_URL not set — Restate workflows disabled");
+            tracing::warn!("DATABASE_URL not set — scout workflows disabled");
             None
         }
     };
@@ -243,21 +229,30 @@ async fn main() -> Result<()> {
         info!("Postgres migrations applied");
     }
 
-    let restate_admin_url = std::env::var("RESTATE_ADMIN_URL")
-        .ok()
-        .filter(|s| !s.is_empty());
-    let restate_client = std::env::var("RESTATE_INGRESS_URL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(|ingress| RestateClient::new(ingress, restate_admin_url.clone()));
-    if restate_client.is_some() {
-        info!("Restate ingress configured — runScout will dispatch via Restate");
-    }
-
     // Spawn live event broadcast (PgListener → broadcast channel)
     let event_broadcast = pg_pool
         .as_ref()
         .map(|pool| event_broadcast::EventBroadcast::spawn(pool.clone()));
+
+    // Hydrate in-memory event cache (most recent 500K events)
+    let event_cache = if let Some(ref pool) = pg_pool {
+        match event_cache::EventCache::hydrate(pool, 500_000).await {
+            Ok(cache) => {
+                let shared = std::sync::Arc::new(tokio::sync::RwLock::new(cache));
+                // Spawn live update listener
+                if let Some(ref broadcast) = event_broadcast {
+                    event_cache::spawn_cache_listener(shared.clone(), broadcast);
+                }
+                Some(shared)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to hydrate event cache — admin queries will use Postgres directly");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let store_factory = pg_pool
         .clone()
@@ -272,6 +267,17 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Build ScoutRunner for spawning seesaw engines directly
+    let scout_runner = pg_pool.as_ref().map(|pool| {
+        let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::from_config(
+            client.clone(),
+            pool.clone(),
+            &config,
+        ));
+        info!("ScoutRunner configured — runScout will spawn seesaw engines directly");
+        ScoutRunner::new(scout_deps)
+    });
+
     let schema = build_schema(
         reader.clone(),
         writer.clone(),
@@ -283,86 +289,11 @@ async fn main() -> Result<()> {
         RateLimiter(Mutex::new(HashMap::new())),
         Arc::new(client.clone()),
         cache_store.clone(),
-        restate_client,
+        scout_runner.clone(),
         pg_pool.clone(),
         event_broadcast.clone(),
+        event_cache.clone(),
     );
-
-    // ========== Restate endpoint ==========
-    // Runs on a separate port alongside the Axum GraphQL server.
-    // Workflows will be bound here as they are implemented (Phase 2+).
-    let restate_port: u16 = std::env::var("RESTATE_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(9080);
-
-    if let Some(ref pool) = pg_pool {
-        let pool = pool.clone();
-        let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::from_config(
-            client.clone(),
-            pool,
-            &config,
-        ));
-
-        let mut builder = restate_sdk::endpoint::Endpoint::builder();
-
-        // Configure Restate request identity verification
-        if let Ok(identity_key) = std::env::var("RESTATE_IDENTITY_KEY") {
-            info!("Restate identity key configured");
-            builder = builder
-                .identity_key(&identity_key)
-                .expect("Invalid Restate identity key");
-        }
-
-
-        let archive_deps = Arc::new(rootsignal_archive::workflows::ArchiveDeps {
-            pg_pool: scout_deps.pg_pool.clone(),
-            anthropic_api_key: scout_deps.anthropic_api_key.clone(),
-            openai_api_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(),
-        });
-
-        let endpoint = builder
-            .bind(BootstrapWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(ScrapeWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(SynthesisWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(SituationWeaverWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(SupervisorWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(FullScoutRunWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(NewsScanWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(EnrichmentWorkflowImpl::with_deps(archive_deps).serve())
-            .build();
-
-        let restate_addr = format!("0.0.0.0:{restate_port}");
-        info!("Restate endpoint starting on {restate_addr}");
-
-        // Auto-register with Restate runtime if RESTATE_ADMIN_URL is set
-        if let Ok(admin_url) = std::env::var("RESTATE_ADMIN_URL") {
-            let self_url = std::env::var("RESTATE_SELF_URL")
-                .unwrap_or_else(|_| format!("http://localhost:{restate_port}"));
-            let auth_token = std::env::var("RESTATE_AUTH_TOKEN").ok();
-            tokio::spawn(register_with_restate(admin_url, self_url, auth_token));
-        }
-
-        tokio::spawn(async move {
-            let addr: std::net::SocketAddr = restate_addr.parse().expect("Invalid Restate address");
-            let listener = loop {
-                match tokio::net::TcpListener::bind(addr).await {
-                    Ok(l) => break l,
-                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                        tracing::warn!("Restate port {addr} in use, retrying in 3s");
-                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    }
-                    Err(e) => {
-                        tracing::error!("Restate endpoint failed to bind {addr}: {e}");
-                        return;
-                    }
-                }
-            };
-            restate_sdk::http_server::HttpServer::new(endpoint)
-                .serve(listener)
-                .await;
-        });
-    }
 
     let state = Arc::new(AppState {
         schema,
@@ -479,36 +410,4 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Register this deployment with the Restate admin API after a brief delay.
-async fn register_with_restate(admin_url: String, self_url: String, auth_token: Option<String>) {
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    info!(
-        admin_url = %admin_url,
-        self_url = %self_url,
-        "Auto-registering with Restate"
-    );
-    let client = reqwest::Client::new();
-    let mut request = client
-        .post(format!("{}/deployments", admin_url))
-        .json(&serde_json::json!({
-            "uri": self_url,
-            "force": true
-        }));
-    if let Some(token) = &auth_token {
-        request = request.bearer_auth(token);
-    }
-    match request.send().await {
-        Ok(resp) if resp.status().is_success() => {
-            info!("Restate registration successful");
-        }
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            tracing::warn!(status = %status, body = %body, "Restate registration failed");
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to connect to Restate admin");
-        }
-    }
-}
 
