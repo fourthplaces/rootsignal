@@ -546,10 +546,11 @@ impl Store for PostgresStore {
         let row = sqlx::query_as::<_, SnapshotRow>(
             "SELECT aggregate_type, aggregate_id, version, state, created_at \
              FROM aggregate_snapshots \
-             WHERE aggregate_type = $1 AND aggregate_id = $2",
+             WHERE aggregate_type = $1 AND aggregate_id = $2 AND correlation_id = $3",
         )
         .bind(aggregate_type)
         .bind(aggregate_id)
+        .bind(self.correlation_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -564,13 +565,14 @@ impl Store for PostgresStore {
 
     async fn save_snapshot(&self, snapshot: Snapshot) -> Result<()> {
         sqlx::query(
-            "INSERT INTO aggregate_snapshots (aggregate_type, aggregate_id, version, state, created_at) \
-             VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (aggregate_type, aggregate_id) \
+            "INSERT INTO aggregate_snapshots (aggregate_type, aggregate_id, correlation_id, version, state, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (aggregate_type, aggregate_id, correlation_id) \
              DO UPDATE SET version = EXCLUDED.version, state = EXCLUDED.state, created_at = EXCLUDED.created_at",
         )
         .bind(&snapshot.aggregate_type)
         .bind(snapshot.aggregate_id)
+        .bind(self.correlation_id)
         .bind(snapshot.version as i64)
         .bind(&snapshot.state)
         .bind(snapshot.created_at)
