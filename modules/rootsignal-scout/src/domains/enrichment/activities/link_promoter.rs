@@ -45,25 +45,74 @@ const SKIP_PATH_SEGMENTS: &[&str] = &[
     "/privacy", "/legal", "/terms", "/policy", "/tos",
     "/cookie", "/consent", "/gdpr", "/compliance",
     "/account", "/signin", "/login", "/signup",
+    "/feed/", "/rss/", "/atom/", "/xmlrpc", "/wp-json", "/wp-admin",
+    "/wp-content/plugins", "/wp-includes", "/cgi-bin/", "/embed/", "/oembed",
 ];
 
-/// Domains that host tech infrastructure, not community content.
-/// Checked against the host portion of the URL (suffix match).
-const BLOCKED_DOMAINS: &[&str] = &[
-    "google.com",
+/// Pure infrastructure domains — blocked even in permissive mode.
+/// Never contain community content.
+const ALWAYS_BLOCKED_DOMAINS: &[&str] = &[
+    // CDN / analytics
     "googleapis.com",
     "gstatic.com",
-    "youtube.com",
-    "youtu.be",
     "googlesyndication.com",
     "googletagmanager.com",
     "google-analytics.com",
     "doubleclick.net",
+    "cloudflare.com",
+    // Web standards / specs
+    "ietf.org",
+    "w3.org",
+    "iana.org",
+    // Ontologies / metadata
+    "purl.org",
+    "dublincore.org",
+    "schema.org",
+    "ogp.me",
+    "xmlns.com",
+    "rdfs.org",
+    // Licenses
+    "creativecommons.org",
+    "opensource.org",
+    // Library / archive standards
+    "loc.gov",
+    "getty.edu",
+    // Identity infrastructure
+    "openid.net",
+    "myopenid.com",
+    // HTML head boilerplate blogs
+    "meyerweb.com",
+    "tantek.com",
+    "photomatt.net",
+    // CDN / hosting
+    "cdn.jsdelivr.net",
+    "unpkg.com",
+    "bootstrapcdn.com",
+    "maxcdn.bootstrapcdn.com",
+    "fontawesome.com",
+    "fonts.google.com",
+    "gravatar.com",
+    "wp.com",
+    "wordpress.org",
+    // Monitoring
+    "segment.com",
+    "hotjar.com",
+    "newrelic.com",
+    "sentry.io",
+];
+
+/// Major platforms — blocked in strict mode, allowed in permissive mode.
+/// Could be legit links on known-good pages.
+const STRICT_ONLY_BLOCKED_DOMAINS: &[&str] = &[
+    "google.com",
+    "youtube.com",
+    "youtu.be",
     "facebook.com",
     "apple.com",
     "microsoft.com",
     "amazon.com",
-    "cloudflare.com",
+    "wordpress.com",
+    "wikipedia.org",
 ];
 
 
@@ -80,7 +129,10 @@ fn extract_host(url_lower: &str) -> Option<&str> {
 ///
 /// Filters out non-content URLs by scheme prefix and file extension,
 /// strips tracking parameters, and deduplicates by `canonical_value()`.
-pub fn extract_links(page_links: &[String]) -> Vec<String> {
+///
+/// - `permissive: false` (strict) — applies both domain tiers + all path segments.
+/// - `permissive: true` — applies only `ALWAYS_BLOCKED_DOMAINS` + all path segments.
+pub fn extract_links(page_links: &[String], permissive: bool) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut results = Vec::new();
 
@@ -105,8 +157,19 @@ pub fn extract_links(page_links: &[String]) -> Vec<String> {
 
         // Skip blocked infrastructure domains
         if let Some(host) = extract_host(&path_lower) {
-            if BLOCKED_DOMAINS.iter().any(|d| host == *d || host.ends_with(&format!(".{d}"))) {
+            let is_always_blocked = ALWAYS_BLOCKED_DOMAINS
+                .iter()
+                .any(|d| host == *d || host.ends_with(&format!(".{d}")));
+            if is_always_blocked {
                 continue;
+            }
+            if !permissive {
+                let is_strict_blocked = STRICT_ONLY_BLOCKED_DOMAINS
+                    .iter()
+                    .any(|d| host == *d || host.ends_with(&format!(".{d}")));
+                if is_strict_blocked {
+                    continue;
+                }
             }
         }
 
@@ -370,7 +433,7 @@ mod tests {
             "https://example.com/font.woff2".to_string(),
             "https://example.com/real-page".to_string(),
         ];
-        let results = extract_links(&links);
+        let results = extract_links(&links, false);
         assert_eq!(results.len(), 1);
         assert!(results[0].contains("real-page"));
     }
@@ -382,7 +445,7 @@ mod tests {
             "https://example.com/page?utm_source=ig&utm_medium=social&fbclid=abc123&important=yes"
                 .to_string(),
         ];
-        let results = extract_links(&links);
+        let results = extract_links(&links, false);
         assert_eq!(results.len(), 1);
         assert!(results[0].contains("important=yes"));
         assert!(!results[0].contains("utm_source"));
@@ -392,7 +455,7 @@ mod tests {
     #[test]
     fn test_tracking_params_all_removed() {
         let links = vec!["https://example.com/page?utm_source=ig&fbclid=abc".to_string()];
-        let results = extract_links(&links);
+        let results = extract_links(&links, false);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], "https://example.com/page");
     }
@@ -404,7 +467,7 @@ mod tests {
             "https://example.com/page?utm_source=twitter".to_string(),
             "https://example.com/page".to_string(),
         ];
-        let results = extract_links(&links);
+        let results = extract_links(&links, false);
         assert_eq!(results.len(), 1);
     }
 
@@ -419,7 +482,7 @@ mod tests {
             "https://example.com/gdpr".to_string(),
             "https://example.com/real-content".to_string(),
         ];
-        let results = extract_links(&links);
+        let results = extract_links(&links, false);
         assert_eq!(results.len(), 1);
         assert!(results[0].contains("real-content"));
     }
@@ -435,7 +498,7 @@ mod tests {
             "https://cloudflare.com/cdn-cgi/something".to_string(),
             "https://localcommunity.org/events".to_string(),
         ];
-        let results = extract_links(&links);
+        let results = extract_links(&links, false);
         assert_eq!(results.len(), 1);
         assert!(results[0].contains("localcommunity.org"));
     }
@@ -459,7 +522,7 @@ mod tests {
             "https://example.com/flyer.pdf".to_string(),
             "mailto:contact@org.com".to_string(), // blocked: mailto
         ];
-        let results = extract_links(&links);
+        let results = extract_links(&links, false);
         // google.com blocked by domain filter, mailto blocked by scheme filter
         assert_eq!(results.len(), 6);
     }
@@ -472,7 +535,7 @@ mod tests {
             "#section-2".to_string(),
             "ftp://files.example.com/doc".to_string(),
         ];
-        let results = extract_links(&links);
+        let results = extract_links(&links, false);
         assert!(results.is_empty());
     }
 
@@ -485,6 +548,57 @@ mod tests {
     // sanitize_url (scout::infra::util) — the single URL cleaner for scout.
     //   Strips tracking params (utm_*, fbclid, gclid, si, source, etc.).
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn web_standards_boilerplate_urls_are_blocked() {
+        let links = vec![
+            "https://www.ietf.org/rfc/rfc2396.txt".to_string(),
+            "https://purl.org/dc/elements/1.1/".to_string(),
+            "https://dublincore.org/specifications/".to_string(),
+            "https://creativecommons.org/licenses/by/4.0/".to_string(),
+            "https://www.w3.org/TR/html5/".to_string(),
+            "https://schema.org/Organization".to_string(),
+            "https://ogp.me/ns#".to_string(),
+            "https://xmlns.com/foaf/0.1/".to_string(),
+            "https://loc.gov/standards/mods/".to_string(),
+            "https://openid.net/specs/".to_string(),
+            "https://meyerweb.com/eric/tools/css/reset/".to_string(),
+            "https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css".to_string(),
+            "https://fonts.google.com/specimen/Roboto".to_string(),
+            "https://sentry.io/for/javascript/".to_string(),
+            "https://localcommunity.org/events".to_string(),
+        ];
+        let results = extract_links(&links, false);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].contains("localcommunity.org"));
+    }
+
+    #[test]
+    fn permissive_mode_allows_major_platforms() {
+        let links = vec![
+            "https://www.google.com/maps/place/Community+Center".to_string(),
+            "https://youtube.com/watch?v=abc123".to_string(),
+            "https://facebook.com/localgroup".to_string(),
+            "https://wikipedia.org/wiki/My_Town".to_string(),
+            "https://wordpress.com/my-community-blog".to_string(),
+        ];
+        let results = extract_links(&links, true);
+        assert_eq!(results.len(), 5, "Permissive mode should allow major platforms");
+    }
+
+    #[test]
+    fn strict_mode_blocks_major_platforms() {
+        let links = vec![
+            "https://www.google.com/maps/place/Community+Center".to_string(),
+            "https://youtube.com/watch?v=abc123".to_string(),
+            "https://facebook.com/localgroup".to_string(),
+            "https://wikipedia.org/wiki/My_Town".to_string(),
+            "https://localcommunity.org/events".to_string(),
+        ];
+        let results = extract_links(&links, false);
+        assert_eq!(results.len(), 1, "Strict mode should block major platforms");
+        assert!(results[0].contains("localcommunity.org"));
+    }
 
     #[test]
     fn canonical_value_preserves_tracking_params_sanitize_url_strips_them() {

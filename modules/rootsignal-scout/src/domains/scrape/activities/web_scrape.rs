@@ -160,7 +160,7 @@ impl Scraper {
         let now = Utc::now();
         for (url, outcome, page_links) in pipeline_results {
             // Extract outbound links for promotion as new sources
-            let discovered = link_promoter::extract_links(&page_links);
+            let discovered = link_promoter::extract_links(&page_links, false);
             for link_url in discovered {
                 result.collected_links.push(CollectedLink {
                     url: link_url,
@@ -277,7 +277,7 @@ impl Scraper {
             Ok(p) => {
                 result.failed = true;
                 // Still collect links from failed pages
-                let discovered = link_promoter::extract_links(&p.links);
+                let discovered = link_promoter::extract_links(&p.links, false);
                 for link_url in discovered {
                     result.collected_links.push(CollectedLink {
                         url: link_url,
@@ -294,7 +294,7 @@ impl Scraper {
         };
 
         // Extract outbound links for promotion
-        let discovered = link_promoter::extract_links(&page_links);
+        let discovered = link_promoter::extract_links(&page_links, false);
         for link_url in discovered {
             result.collected_links.push(CollectedLink {
                 url: link_url,

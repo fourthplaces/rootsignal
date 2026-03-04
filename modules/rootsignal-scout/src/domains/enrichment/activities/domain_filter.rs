@@ -48,7 +48,8 @@ REJECT domains that are:\n\
 - National/international aggregators with no local desk\n\
 - E-commerce platforms, SaaS marketing, developer docs\n\
 - Content farms, SEO spam, coupon/deal sites\n\n\
-When unsure, ACCEPT \u{2014} false positives cost less than missed signals.\n\
+When unsure, REJECT \u{2014} extract_links already filters infrastructure junk, \
+so false negatives here are recoverable.\n\
 Return a verdict for every domain submitted.";
 
 /// Normalize a domain for dedup: lowercase + strip leading `www.`.
@@ -128,11 +129,11 @@ pub async fn filter_domains_batch(
                         }
                     }
                 }
-                // Any domains the LLM didn't return a verdict for — accept (fail-open)
+                // Any domains the LLM didn't return a verdict for — reject (default-closed)
                 for d in &unchecked {
                     if !verdicts.contains_key(d.as_str()) {
-                        verdicts.insert(d.clone(), true);
-                        new_verdicts.push((d.clone(), true));
+                        verdicts.insert(d.clone(), false);
+                        new_verdicts.push((d.clone(), false));
                     }
                 }
                 // TODO: Cache new verdicts once SignalReader trait has cache_domain_verdicts
@@ -196,10 +197,10 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_mentions_archive_and_accept_guidance() {
+    fn system_prompt_mentions_archive_and_reject_guidance() {
         assert!(DOMAIN_FILTER_SYSTEM.contains("archive.org"));
         assert!(DOMAIN_FILTER_SYSTEM.contains("ACCEPT"));
         assert!(DOMAIN_FILTER_SYSTEM.contains("REJECT"));
-        assert!(DOMAIN_FILTER_SYSTEM.contains("When unsure, ACCEPT"));
+        assert!(DOMAIN_FILTER_SYSTEM.contains("When unsure, REJECT"));
     }
 }
