@@ -6,8 +6,8 @@ pub mod engine;
 pub mod events;
 pub mod extractor;
 pub mod pipeline_events;
+pub mod postgres_store;
 pub mod projection;
-pub mod seesaw_event_store;
 pub mod stats;
 
 #[cfg(test)]
@@ -25,7 +25,7 @@ mod engine_tests {
             Arc::new(crate::infra::embedder::NoOpEmbedder),
             "test",
         );
-        let engine = build_engine(deps);
+        let engine = build_engine(deps, None);
 
         let event = ScrapeEvent::ContentFetched {
             run_id: uuid::Uuid::new_v4(),

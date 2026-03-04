@@ -1454,6 +1454,7 @@ pub fn test_engine_for_store_with_embedder(
 ) -> Arc<ScoutEngine> {
     Arc::new(build_engine(
         ScoutEngineDeps::new(store, embedder, "test-run"),
+        None,
     ))
 }
 
@@ -1484,7 +1485,7 @@ pub fn test_engine_with_capture_for_store(
     );
     deps.region = region;
     deps.captured_events = Some(captured.clone());
-    let engine = Arc::new(build_engine(deps));
+    let engine = Arc::new(build_engine(deps, None));
     (engine, captured)
 }
 

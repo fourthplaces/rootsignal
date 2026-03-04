@@ -155,7 +155,7 @@ mod tests {
         deps.task_id = task_id.map(String::from);
         deps.completion_phase_status = completion_phase_status.map(String::from);
         deps.captured_events = Some(sink.clone());
-        let engine = build_engine(deps);
+        let engine = build_engine(deps, None);
         (engine, sink)
     }
 

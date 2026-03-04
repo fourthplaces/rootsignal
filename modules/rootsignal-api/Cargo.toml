@@ -44,6 +44,7 @@ spider_transformations = { workspace = true }
 rrule = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
+seesaw_core = { workspace = true }
 
 [dev-dependencies]
 rootsignal-scout = { path = "../rootsignal-scout", features = ["test-support"] }

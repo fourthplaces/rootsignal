@@ -4,6 +4,9 @@
 //!
 //! On failure the spawned task emits `TaskPhaseTransitioned { status: "idle" }`
 //! so the UI doesn't show a permanently-stuck task.
+//!
+//! On startup, `resume_incomplete_runs` queries for runs that crashed mid-flight,
+//! reclaims their stale queue entries, and calls `settle()` to finish them.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,7 +16,8 @@ use rootsignal_common::ScoutScope;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use rootsignal_scout::core::engine::build_infra_only_engine;
+use rootsignal_scout::core::engine::{self, build_infra_only_engine};
+use rootsignal_scout::core::postgres_store::PostgresStore;
 use rootsignal_scout::domains::lifecycle::events::LifecycleEvent;
 use rootsignal_scout::workflows::ScoutDeps;
 
@@ -76,8 +80,10 @@ impl ScoutRunner {
                 cancellations.lock().await.insert(task_id.clone(), flag.clone());
             }
 
+            let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
             let result = engine
                 .emit(LifecycleEvent::EngineStarted { run_id: run_id.clone() })
+                .correlation_id(run_id_uuid)
                 .settled()
                 .await;
 
@@ -126,8 +132,10 @@ impl ScoutRunner {
         tokio::spawn(async move {
             let engine = deps.build_news_engine(&run_id);
 
+            let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
             if let Err(e) = engine
                 .emit(LifecycleEvent::NewsScanRequested)
+                .correlation_id(run_id_uuid)
                 .settled()
                 .await
             {
@@ -149,6 +157,105 @@ impl ScoutRunner {
             false
         }
     }
+
+    /// Resume runs that were in-flight when the server crashed.
+    ///
+    /// Queries `scout_runs` for rows without `finished_at`, reclaims stale
+    /// queue entries, rebuilds engines, and calls `settle()` to finish them.
+    pub async fn resume_incomplete_runs(&self) {
+        let rows = match sqlx::query_as::<_, IncompleteRun>(
+            "SELECT run_id, task_id, scope FROM scout_runs WHERE finished_at IS NULL",
+        )
+        .fetch_all(&self.deps.pg_pool)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "Failed to query incomplete runs");
+                return;
+            }
+        };
+
+        if rows.is_empty() {
+            info!("No incomplete runs to resume");
+            return;
+        }
+
+        info!(count = rows.len(), "Found incomplete runs to resume");
+
+        for run in rows {
+            let run_uuid = match uuid::Uuid::parse_str(&run.run_id) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+
+            let store = PostgresStore::new(self.deps.pg_pool.clone(), run_uuid);
+
+            if let Err(e) = store.reclaim_stale_events().await {
+                warn!(run_id = %run.run_id, error = %e, "Failed to reclaim stale events");
+                continue;
+            }
+            if let Err(e) = store.reclaim_stale_effects().await {
+                warn!(run_id = %run.run_id, error = %e, "Failed to reclaim stale effects");
+                continue;
+            }
+
+            match store.has_pending_work().await {
+                Ok(false) => {
+                    info!(run_id = %run.run_id, "No pending work, skipping resume");
+                    continue;
+                }
+                Err(e) => {
+                    warn!(run_id = %run.run_id, error = %e, "Failed to check pending work");
+                    continue;
+                }
+                Ok(true) => {}
+            }
+
+            let scope: ScoutScope = match run.scope {
+                Some(v) => match serde_json::from_value(v) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!(run_id = %run.run_id, error = %e, "Failed to deserialize scope");
+                        continue;
+                    }
+                },
+                None => {
+                    warn!(run_id = %run.run_id, "No scope stored, cannot resume");
+                    continue;
+                }
+            };
+
+            let store_arc = Arc::new(store) as Arc<dyn seesaw_core::Store>;
+            let deps = self.deps.clone();
+            let run_id = run.run_id.clone();
+            let task_id = run.task_id.clone();
+
+            info!(run_id = %run_id, "Resuming incomplete run");
+
+            tokio::spawn(async move {
+                let engine_deps = deps.build_engine_deps_for_resume(
+                    &scope,
+                    &run_id,
+                    task_id.as_deref(),
+                );
+                let engine = engine::build_full_engine(engine_deps, Some(store_arc));
+
+                if let Err(e) = engine.settle().await {
+                    warn!(run_id = %run_id, error = %e, "Resume settle failed");
+                } else {
+                    info!(run_id = %run_id, "Resumed run completed");
+                }
+            });
+        }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct IncompleteRun {
+    run_id: String,
+    task_id: Option<String>,
+    scope: Option<serde_json::Value>,
 }
 
 /// Run a specific phase. Builds the right engine variant, registers its
@@ -165,35 +272,43 @@ async fn run_phase_inner(
 
     emit_running_status(deps, task_id, phase).await;
 
+    let run_id_uuid = uuid::Uuid::parse_str(run_id)
+        .map_err(|e| anyhow::anyhow!("invalid run_id: {e}"))?;
+
     match phase {
         ScoutPhase::Bootstrap => {
             let engine = deps.build_scrape_engine(scope, run_id, Some(task_id), Some("bootstrap_complete"));
             register_cancel_flag(cancellations, task_id, &engine).await;
             engine.emit(LifecycleEvent::EngineStarted { run_id: run_id.to_string() })
+                .correlation_id(run_id_uuid)
                 .settled().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         ScoutPhase::Scrape => {
             let engine = deps.build_scrape_engine(scope, run_id, Some(task_id), Some("scrape_complete"));
             register_cancel_flag(cancellations, task_id, &engine).await;
             engine.emit(LifecycleEvent::EngineStarted { run_id: run_id.to_string() })
+                .correlation_id(run_id_uuid)
                 .settled().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         ScoutPhase::Synthesis => {
             let engine = deps.build_full_engine(scope, run_id, 0, Some(task_id), Some("synthesis_complete"));
             register_cancel_flag(cancellations, task_id, &engine).await;
             engine.emit(LifecycleEvent::PhaseCompleted { phase: PipelinePhase::SignalExpansion })
+                .correlation_id(run_id_uuid)
                 .settled().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         ScoutPhase::SituationWeaver => {
             let engine = deps.build_full_engine(scope, run_id, 0, Some(task_id), Some("situation_weaver_complete"));
             register_cancel_flag(cancellations, task_id, &engine).await;
             engine.emit(LifecycleEvent::PhaseCompleted { phase: PipelinePhase::Synthesis })
+                .correlation_id(run_id_uuid)
                 .settled().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         ScoutPhase::Supervisor => {
             let engine = deps.build_full_engine(scope, run_id, 0, Some(task_id), Some("complete"));
             register_cancel_flag(cancellations, task_id, &engine).await;
             engine.emit(LifecycleEvent::PhaseCompleted { phase: PipelinePhase::SituationWeaving })
+                .correlation_id(run_id_uuid)
                 .settled().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         }
     }

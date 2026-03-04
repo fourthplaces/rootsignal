@@ -60,14 +60,17 @@ impl EngineFactory {
     pub fn new(graph_client: GraphClient, pg_pool: PgPool) -> Self {
         Self {
             create_fn: Box::new(move || {
-                let run_id = format!("api-{}", uuid::Uuid::new_v4());
-                let store =
+                let run_uuid = uuid::Uuid::new_v4();
+                let run_id = run_uuid.to_string();
+                let signal_reader =
                     Arc::new(build_signal_reader(graph_client.clone())) as Arc<dyn SignalReader>;
                 let embedder = Arc::new(NoOpEmbedder) as Arc<dyn TextEmbedder>;
-                let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
+                let mut deps = ScoutEngineDeps::new(signal_reader, embedder, run_id);
                 deps.graph_client = Some(graph_client.clone());
                 deps.pg_pool = Some(pg_pool.clone());
-                build_engine(deps)
+                let store = Arc::new(crate::core::postgres_store::PostgresStore::new(pg_pool.clone(), run_uuid))
+                    as Arc<dyn seesaw_core::Store>;
+                build_engine(deps, Some(store))
             }),
         }
     }
@@ -78,7 +81,7 @@ impl EngineFactory {
             create_fn: Box::new(move || {
                 let run_id = format!("test-{}", uuid::Uuid::new_v4());
                 let embedder = Arc::new(NoOpEmbedder) as Arc<dyn TextEmbedder>;
-                build_engine(ScoutEngineDeps::new(store.clone(), embedder, run_id))
+                build_engine(ScoutEngineDeps::new(store.clone(), embedder, run_id), None)
             }),
         }
     }

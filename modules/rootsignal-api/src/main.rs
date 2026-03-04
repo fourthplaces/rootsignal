@@ -275,7 +275,13 @@ async fn main() -> Result<()> {
             &config,
         ));
         info!("ScoutRunner configured — runScout will spawn seesaw engines directly");
-        ScoutRunner::new(scout_deps)
+        let runner = ScoutRunner::new(scout_deps);
+        // Resume any runs that were in-flight when the server last crashed
+        let resume_runner = runner.clone();
+        tokio::spawn(async move {
+            resume_runner.resume_incomplete_runs().await;
+        });
+        runner
     });
 
     let schema = build_schema(

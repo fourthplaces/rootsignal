@@ -23,8 +23,8 @@ use sqlx::PgPool;
 use crate::core::aggregate::pipeline_aggregators;
 use crate::core::embedding_cache::EmbeddingCache;
 use crate::core::pipeline_events::PipelineEvent;
+use crate::core::postgres_store::PostgresStore;
 use crate::core::projection;
-use crate::core::seesaw_event_store::SeesawEventStoreAdapter;
 use crate::domains::{
     discovery, enrichment, expansion, lifecycle, news_scanning, scrape, signals,
     situation_weaving, supervisor, synthesis,
@@ -109,19 +109,11 @@ pub type ScoutEngine = SeesawEngine;
 ///
 /// Finalize triggers on PhaseCompleted(Synthesis). Does NOT include
 /// situation_weaving or supervisor handlers.
-pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
+///
+/// When `seesaw_store` is provided, it replaces the default in-memory store
+/// for durable crash recovery. Pass `None` for tests.
+pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
-    let snapshot_store = deps.pg_pool.as_ref().map(|pool| {
-        Arc::new(rootsignal_events::PostgresSnapshotStore::new(pool.clone()))
-            as Arc<dyn seesaw_core::SnapshotStore>
-    });
-
-    // Construct infrastructure from deps — not stored on ScoutEngineDeps
-    let event_store_adapter = deps.pg_pool.as_ref().map(|pool| {
-        Arc::new(SeesawEventStoreAdapter::new(
-            rootsignal_events::EventStore::new(pool.clone()),
-        )) as Arc<dyn seesaw_core::event_store::EventStore>
-    });
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
             Arc::new(EmbeddingStore::new(
@@ -160,14 +152,14 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
             attempts: info.attempts,
         });
 
-    // Wire seesaw's built-in event persistence
-    if let Some(store) = event_store_adapter {
+    if let Some(s) = seesaw_store {
         engine = engine
-            .with_event_store(store)
+            .with_store(s)
             .with_event_metadata(serde_json::json!({
                 "run_id": run_id,
                 "schema_v": 1
-            }));
+            }))
+            .snapshot_every(100);
     }
 
     // Neo4j projection — captured via closure, not on deps
@@ -178,10 +170,6 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     // scout_runs table maintenance (INSERT on EngineStarted, UPDATE on RunCompleted)
     engine = engine.with_handler(projection::scout_runs_handler());
     engine = engine.with_handler(projection::system_log_handler());
-
-    if let Some(store) = snapshot_store {
-        engine = engine.with_snapshot_store(store).snapshot_every(100);
-    }
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -195,19 +183,8 @@ pub fn build_engine(deps: ScoutEngineDeps) -> SeesawEngine {
 /// supervisor → finalize.
 ///
 /// Finalize triggers on PhaseCompleted(Supervisor).
-pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
+pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
-    let snapshot_store = deps.pg_pool.as_ref().map(|pool| {
-        Arc::new(rootsignal_events::PostgresSnapshotStore::new(pool.clone()))
-            as Arc<dyn seesaw_core::SnapshotStore>
-    });
-
-    // Construct infrastructure from deps — not stored on ScoutEngineDeps
-    let event_store_adapter = deps.pg_pool.as_ref().map(|pool| {
-        Arc::new(SeesawEventStoreAdapter::new(
-            rootsignal_events::EventStore::new(pool.clone()),
-        )) as Arc<dyn seesaw_core::event_store::EventStore>
-    });
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
             Arc::new(EmbeddingStore::new(
@@ -249,14 +226,14 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
             attempts: info.attempts,
         });
 
-    // Wire seesaw's built-in event persistence
-    if let Some(store) = event_store_adapter {
+    if let Some(s) = seesaw_store {
         engine = engine
-            .with_event_store(store)
+            .with_store(s)
             .with_event_metadata(serde_json::json!({
                 "run_id": run_id,
                 "schema_v": 1
-            }));
+            }))
+            .snapshot_every(100);
     }
 
     // Neo4j projection — captured via closure, not on deps
@@ -268,10 +245,6 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     engine = engine.with_handler(projection::scout_runs_handler());
     engine = engine.with_handler(projection::system_log_handler());
 
-    if let Some(store) = snapshot_store {
-        engine = engine.with_snapshot_store(store).snapshot_every(100);
-    }
-
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
         engine = engine.with_handler(projection::capture_handler(sink));
@@ -280,17 +253,17 @@ pub fn build_full_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     engine
 }
 
-/// Build an infrastructure-only engine: event store + Neo4j projector.
+/// Build an infrastructure-only engine: event persistence + Neo4j projector.
 ///
 /// No domain handlers, no aggregators, no production deps — used for emitting
 /// system events (e.g. TaskPhaseTransitioned) from error paths where the main
 /// engine is dead. Takes only the two infrastructure handles it actually needs.
 pub fn build_infra_only_engine(pg_pool: PgPool, graph_client: GraphClient) -> SeesawEngine {
     let run_id = format!("infra-{}", uuid::Uuid::new_v4());
+    let run_uuid = uuid::Uuid::new_v4();
 
-    let event_store_adapter = Arc::new(SeesawEventStoreAdapter::new(
-        rootsignal_events::EventStore::new(pg_pool.clone()),
-    )) as Arc<dyn seesaw_core::event_store::EventStore>;
+    let store = Arc::new(PostgresStore::new(pg_pool.clone(), run_uuid))
+        as Arc<dyn seesaw_core::Store>;
 
     let projector = GraphProjector::new(graph_client.clone());
 
@@ -301,7 +274,7 @@ pub fn build_infra_only_engine(pg_pool: PgPool, graph_client: GraphClient) -> Se
     );
 
     seesaw_core::Engine::new(deps)
-        .with_event_store(event_store_adapter)
+        .with_store(store)
         .with_event_metadata(serde_json::json!({
             "run_id": run_id,
             "schema_v": 1
@@ -314,17 +287,8 @@ pub fn build_infra_only_engine(pg_pool: PgPool, graph_client: GraphClient) -> Se
 /// Build a news-scan engine: NewsScanRequested → scan RSS → BeaconDetected.
 ///
 /// Minimal handler set — only news scanning domain + infrastructure.
-pub fn build_news_engine(deps: ScoutEngineDeps) -> SeesawEngine {
+pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
-    let snapshot_store = deps.pg_pool.as_ref().map(|pool| {
-        Arc::new(rootsignal_events::PostgresSnapshotStore::new(pool.clone()))
-            as Arc<dyn seesaw_core::SnapshotStore>
-    });
-    let event_store_adapter = deps.pg_pool.as_ref().map(|pool| {
-        Arc::new(SeesawEventStoreAdapter::new(
-            rootsignal_events::EventStore::new(pool.clone()),
-        )) as Arc<dyn seesaw_core::event_store::EventStore>
-    });
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
             Arc::new(EmbeddingStore::new(
@@ -346,13 +310,14 @@ pub fn build_news_engine(deps: ScoutEngineDeps) -> SeesawEngine {
         .with_aggregators(news_scanning::aggregate::news_aggregators::aggregators())
         .with_handlers(news_scanning::handlers::handlers());
 
-    if let Some(store) = event_store_adapter {
+    if let Some(s) = seesaw_store {
         engine = engine
-            .with_event_store(store)
+            .with_store(s)
             .with_event_metadata(serde_json::json!({
                 "run_id": run_id,
                 "schema_v": 1
-            }));
+            }))
+            .snapshot_every(100);
     }
 
     if let Some(projector) = graph_projector {
@@ -362,10 +327,6 @@ pub fn build_news_engine(deps: ScoutEngineDeps) -> SeesawEngine {
     // scout_runs table maintenance (INSERT on EngineStarted, UPDATE on RunCompleted)
     engine = engine.with_handler(projection::scout_runs_handler());
     engine = engine.with_handler(projection::system_log_handler());
-
-    if let Some(store) = snapshot_store {
-        engine = engine.with_snapshot_store(store).snapshot_every(100);
-    }
 
     if let Some(sink) = capture_sink {
         engine = engine.with_handler(projection::capture_handler(sink));

@@ -1,7 +1,7 @@
 //! Infrastructure handlers: project events to Neo4j, maintain scout_runs table.
 //!
-//! Persistence is handled by seesaw's built-in `persist_and_hydrate` via
-//! the `SeesawEventStoreAdapter`. Aggregator state is handled by seesaw's
+//! Persistence is handled by seesaw's unified `Store` trait via
+//! `PostgresStore`. Aggregator state is handled by seesaw's
 //! registered aggregators (priority 1).
 //!
 //! Priority-2 handlers here:
@@ -21,7 +21,7 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-// Priority-0: event persistence — handled by seesaw's persist_and_hydrate + SeesawEventStoreAdapter.
+// Priority-0: event persistence — handled by seesaw's unified Store (PostgresStore in production).
 // Priority-1: aggregate state — handled by seesaw aggregators.
 
 /// Priority-2 handler: project events to Neo4j graph.
@@ -100,13 +100,19 @@ pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
                             .as_ref()
                             .map(|r| r.name.as_str())
                             .unwrap_or("unknown");
+                        let scope_json = deps
+                            .region
+                            .as_ref()
+                            .and_then(|r| serde_json::to_value(r).ok());
                         sqlx::query(
-                            "INSERT INTO scout_runs (run_id, region, started_at) \
-                             VALUES ($1, $2, now()) \
+                            "INSERT INTO scout_runs (run_id, region, task_id, scope, started_at) \
+                             VALUES ($1, $2, $3, $4, now()) \
                              ON CONFLICT (run_id) DO NOTHING",
                         )
                         .bind(run_id)
                         .bind(region)
+                        .bind(deps.task_id.as_deref())
+                        .bind(&scope_json)
                         .execute(pool)
                         .await?;
                     }

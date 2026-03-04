@@ -9,9 +9,11 @@ use rootsignal_archive::{Archive, ArchiveConfig, PageBackend, SpawnDispatcher};
 use rootsignal_graph::GraphClient;
 use sqlx::PgPool;
 use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use ai_client::Claude;
 use crate::core::engine::{self, ScoutEngine, ScoutEngineDeps};
+use crate::core::postgres_store::PostgresStore;
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::util::HAIKU_MODEL;
 use crate::traits::{ContentFetcher, SignalReader};
@@ -113,7 +115,8 @@ impl ScoutDeps {
         completion_phase_status: Option<&str>,
     ) -> ScoutEngine {
         let deps = self.build_engine_deps(scope, run_id, 0, task_id, completion_phase_status);
-        engine::build_engine(deps)
+        let store = self.make_store(run_id);
+        engine::build_engine(deps, store)
     }
 
     /// Build a news-scan engine: NewsScanRequested → BeaconDetected.
@@ -141,7 +144,8 @@ impl ScoutDeps {
         deps.archive = Some(archive);
         deps.budget = Some(budget);
         deps.pg_pool = Some(self.pg_pool.clone());
-        engine::build_news_engine(deps)
+        let store = self.make_store(run_id);
+        engine::build_news_engine(deps, store)
     }
 
     /// Build a full-chain engine: extends the scrape chain with
@@ -158,7 +162,26 @@ impl ScoutDeps {
         completion_phase_status: Option<&str>,
     ) -> ScoutEngine {
         let deps = self.build_engine_deps(scope, run_id, spent_cents, task_id, completion_phase_status);
-        engine::build_full_engine(deps)
+        let store = self.make_store(run_id);
+        engine::build_full_engine(deps, store)
+    }
+
+    /// Build engine deps for resuming a crashed run. Same as `build_engine_deps`
+    /// but public and without the extractor/fetcher assertions (the engine already
+    /// has its handlers registered; we just need deps for the settle loop).
+    pub fn build_engine_deps_for_resume(
+        &self,
+        scope: &rootsignal_common::ScoutScope,
+        run_id: &str,
+        task_id: Option<&str>,
+    ) -> ScoutEngineDeps {
+        self.build_engine_deps(scope, run_id, 0, task_id, None)
+    }
+
+    /// Create a PostgresStore scoped to a run_id (used as correlation_id).
+    fn make_store(&self, run_id: &str) -> Option<Arc<dyn seesaw_core::Store>> {
+        let run_uuid = Uuid::parse_str(run_id).unwrap_or_else(|_| Uuid::new_v4());
+        Some(Arc::new(PostgresStore::new(self.pg_pool.clone(), run_uuid)) as Arc<dyn seesaw_core::Store>)
     }
 
     /// Convenience constructor from Config — keeps API-side construction clean.

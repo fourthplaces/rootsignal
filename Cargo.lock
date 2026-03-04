@@ -3368,6 +3368,7 @@ dependencies = [
  "rootsignal-scout-supervisor",
  "rrule",
  "schemars 0.8.22",
+ "seesaw_core",
  "serde",
  "serde_json",
  "sha2",
@@ -3440,7 +3441,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures",
- "seesaw_core",
  "serde",
  "serde_json",
  "sqlx",
@@ -3814,9 +3814,9 @@ dependencies = [
 
 [[package]]
 name = "seesaw_core"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da164de164087152efbf8410df4847dd145fa261b1584d70ea67aac89cb5100e"
+checksum = "3a24df096b02c8915c65353aa8ef05797dadc0447dc837cd7d053fa28e93dcea"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3835,9 +3835,9 @@ dependencies = [
 
 [[package]]
 name = "seesaw_core_macros"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af2ba13a0fba3cd871c4f2607309163f14614d7e31d8fa268402c2cf6d6214db"
+checksum = "89a2a0b7e834f58b6fdcd2ddc1c141b8a13a5f97035260fa0455e861994381e4"
 dependencies = [
  "proc-macro2",
  "quote",
