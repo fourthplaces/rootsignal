@@ -162,15 +162,26 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
   // Causal flow
   const [flowSelection, setFlowSelection] = useState<FlowSelection>(() => parseFlowSelection(searchParams));
   const [flowRunId, setFlowRunId] = useState<string | null>(searchParams.get("flow"));
+  const [flowEvents, setFlowEvents] = useState<AdminEvent[] | null>(null);
   const [fetchFlow, { data: flowQueryData, loading: flowLoading }] = useLazyQuery<{
     adminCausalFlow: { events: AdminEvent[] };
   }>(ADMIN_CAUSAL_FLOW);
 
   useEffect(() => {
     if (flowRunId) {
+      setFlowEvents(null); // reset on new flow
       fetchFlow({ variables: { runId: flowRunId } });
+    } else {
+      setFlowEvents(null);
     }
   }, [flowRunId, fetchFlow]);
+
+  // Seed local flow events from query result
+  useEffect(() => {
+    if (flowQueryData?.adminCausalFlow?.events) {
+      setFlowEvents(flowQueryData.adminCausalFlow.events);
+    }
+  }, [flowQueryData]);
 
   // Selected run ID — tracks which run the user last clicked on
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -279,6 +290,19 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     });
   }, [subData]);
 
+  // Append live events to flow when they belong to the open flow's run
+  useEffect(() => {
+    if (!subData?.events || !flowRunId) return;
+    const event = subData.events;
+    if (event.runId === flowRunId) {
+      setFlowEvents((prev) => {
+        if (!prev) return [event];
+        if (prev.some((e) => e.seq === event.seq)) return prev;
+        return [...prev, event];
+      });
+    }
+  }, [subData, flowRunId]);
+
   const live = !hasFilters && !!subData;
 
   // Filter by active layers client-side
@@ -305,8 +329,8 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
   selectedSeqRef.current = selectedSeq;
   const treeDataRef = useRef(treeData);
   treeDataRef.current = treeData;
-  const flowQueryDataRef = useRef(flowQueryData);
-  flowQueryDataRef.current = flowQueryData;
+  const flowEventsRef = useRef(flowEvents);
+  flowEventsRef.current = flowEvents;
 
   const closeFlow = useCallback(() => {
     setFlowRunId(null);
@@ -326,7 +350,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
 
       const inTree = treeDataRef.current?.adminCausalTree?.events.some((e) => e.seq === seq);
       const inFlow = flowRunId && evtRunId === flowRunId &&
-        flowQueryDataRef.current?.adminCausalFlow?.events.some((e) => e.seq === seq);
+        flowEventsRef.current?.some((e) => e.seq === seq);
       if (!inTree && !inFlow) {
         fetchTree({ variables: { seq } });
       }
@@ -354,7 +378,6 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
 
   // Smart tree source: use flow data when flow is open for the same run
   const effectiveTreeSource = useMemo(() => {
-    const flowEvents = flowQueryData?.adminCausalFlow?.events ?? null;
     // Use selectedRunId ?? flowRunId to handle mount hydration
     // (when ?flow=abc&seq=42 is in URL, selectedRunId is null until first click)
     const effectiveRunId = selectedRunId ?? flowRunId;
@@ -366,7 +389,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       return { events: tree.events, source: "tree" as const };
     }
     return null;
-  }, [flowRunId, flowQueryData, selectedRunId, treeData]);
+  }, [flowRunId, flowEvents, selectedRunId, treeData]);
 
   const value = useMemo<EventsPaneContextValue>(
     () => ({
@@ -395,7 +418,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       flowRunId,
       openFlow,
       closeFlow,
-      flowData: flowQueryData?.adminCausalFlow?.events ?? null,
+      flowData: flowEvents,
       flowLoading,
       flowSelection,
       setFlowSelection,
@@ -405,7 +428,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       filteredEvents, loading, hasMore, loadMore, allEvents.length,
       live, selectedSeq, selectSeq, effectiveTreeSource, treeLoading, flowLoading,
       investigateEvent,
-      flowRunId, openFlow, closeFlow, flowQueryData,
+      flowRunId, openFlow, closeFlow, flowEvents,
       flowSelection,
     ],
   );

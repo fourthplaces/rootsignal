@@ -18,6 +18,7 @@ use rootsignal_common::events::{Event, Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::core::engine::ScoutEngineDeps;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
@@ -46,7 +47,13 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                             return Ok(events![]);
                         }
                         (e.event_type_str(), e.to_persist_payload())
+                    } else if let Some(e) = event.downcast_ref::<PipelineEvent>() {
+                        if !e.is_projectable() {
+                            return Ok(events![]);
+                        }
+                        ("PipelineEvent".to_string(), e.to_persist_payload())
                     } else {
+                        tracing::debug!("neo4j_projection: skipping unhandled event type");
                         return Ok(events![]);
                     };
 

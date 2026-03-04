@@ -1481,6 +1481,7 @@ struct ScoutRunStats {
     social_media_posts: u32,
     expansion_queries_collected: u32,
     expansion_sources_created: u32,
+    handler_failures: u32,
 }
 
 #[derive(SimpleObject)]
@@ -1550,6 +1551,7 @@ impl From<&StatsJson> for ScoutRunStats {
             social_media_posts: s.social_media_posts.unwrap_or(0),
             expansion_queries_collected: s.expansion_queries_collected.unwrap_or(0),
             expansion_sources_created: s.expansion_sources_created.unwrap_or(0),
+            handler_failures: s.handler_failures.unwrap_or(0),
         }
     }
 }

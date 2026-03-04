@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { Search } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent, type FlowSelection } from "../EventsPaneContext";
 import { eventTextColor } from "../eventColor";
+import { CopyablePayload } from "./TimelinePane";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -144,9 +145,7 @@ function TreeNode({
           {event.summary ?? compactPayload(event.payload)}
         </button>
         {payloadOpen && (
-          <pre className="mt-1 ml-3 p-2 text-[10px] bg-background rounded border border-border overflow-x-auto max-h-48 whitespace-pre-wrap">
-            {formatPayload(event.payload)}
-          </pre>
+          <CopyablePayload payload={event.payload} className="mt-1 ml-3 max-h-48" />
         )}
       </div>
 

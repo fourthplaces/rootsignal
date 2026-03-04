@@ -301,6 +301,7 @@ export const ADMIN_SCOUT_RUNS = gql`
         socialMediaPosts
         expansionQueriesCollected
         expansionSourcesCreated
+        handlerFailures
       }
     }
   }
@@ -323,6 +324,7 @@ export const ADMIN_SCOUT_RUN = gql`
         socialMediaPosts
         expansionQueriesCollected
         expansionSourcesCreated
+        handlerFailures
       }
     }
   }

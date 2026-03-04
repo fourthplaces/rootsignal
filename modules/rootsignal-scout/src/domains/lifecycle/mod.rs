@@ -279,6 +279,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handler_failure_counted_in_run_completed_stats() {
+        use crate::core::pipeline_events::PipelineEvent;
+
+        let (engine, sink) = build_test_engine(Some("task-1"), Some("scrape_complete"));
+
+        // Simulate two handler failures (e.g. a timeout and a panic)
+        engine
+            .emit(PipelineEvent::HandlerFailed {
+                handler_id: "scrape:fetch".to_string(),
+                source_event_type: "ScrapeEvent".to_string(),
+                error: "connection timeout".to_string(),
+                attempts: 3,
+            })
+            .settled()
+            .await
+            .unwrap();
+
+        engine
+            .emit(PipelineEvent::HandlerFailed {
+                handler_id: "synthesis:linker".to_string(),
+                source_event_type: "SynthesisEvent".to_string(),
+                error: "panicked at 'index out of bounds'".to_string(),
+                attempts: 1,
+            })
+            .settled()
+            .await
+            .unwrap();
+
+        // Trigger finalize
+        engine
+            .emit(LifecycleEvent::PhaseCompleted {
+                phase: PipelinePhase::Synthesis,
+            })
+            .settled()
+            .await
+            .unwrap();
+
+        let events = sink.lock().unwrap();
+        let stats = events
+            .iter()
+            .filter_map(|e| e.downcast_ref::<LifecycleEvent>())
+            .find_map(|le| match le {
+                LifecycleEvent::RunCompleted { stats } => Some(stats),
+                _ => None,
+            })
+            .expect("should emit RunCompleted");
+
+        assert_eq!(stats.handler_failures, 2, "RunCompleted stats should carry accumulated handler failure count");
+    }
+
+    #[tokio::test]
     async fn phase_boundary_skipped_without_task_id() {
         let (engine, sink) = build_test_engine(None, None);
 

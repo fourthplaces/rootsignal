@@ -315,10 +315,13 @@ export function ScoutRunDetailPage() {
           { label: "Signals Stored", value: run.stats.signalsStored },
           { label: "Deduplicated", value: run.stats.signalsDeduplicated },
           { label: "Events", value: eventsLoading ? "..." : events.length },
+          ...(run.stats.handlerFailures > 0
+            ? [{ label: "Handler Failures", value: run.stats.handlerFailures, warn: true }]
+            : []),
         ].map((stat) => (
-          <div key={stat.label} className="rounded-lg border border-border p-4">
+          <div key={stat.label} className={`rounded-lg border p-4 ${"warn" in stat && stat.warn ? "border-yellow-500/50 bg-yellow-500/5" : "border-border"}`}>
             <p className="text-xs text-muted-foreground">{stat.label}</p>
-            <p className="text-lg font-semibold mt-1">{stat.value}</p>
+            <p className={`text-lg font-semibold mt-1 ${"warn" in stat && stat.warn ? "text-yellow-400" : ""}`}>{stat.value}</p>
           </div>
         ))}
       </div>

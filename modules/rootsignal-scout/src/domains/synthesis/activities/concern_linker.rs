@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ai_client::{ai_extract, Agent, DynTool, ToolWrapper};
@@ -195,7 +194,6 @@ pub struct ConcernLinker<'a> {
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-    cancelled: Arc<AtomicBool>,
     run_id: String,
 }
 
@@ -206,7 +204,6 @@ impl<'a> ConcernLinker<'a> {
         embedder: &'a dyn TextEmbedder,
         ai: &'a dyn Agent,
         region: ScoutScope,
-        cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
         let tools: Vec<Arc<dyn DynTool>> = vec![
@@ -237,7 +234,6 @@ impl<'a> ConcernLinker<'a> {
             min_lng: region.center_lng - lng_delta,
             max_lng: region.center_lng + lng_delta,
             region,
-            cancelled,
             run_id,
         }
     }
@@ -310,11 +306,6 @@ impl<'a> ConcernLinker<'a> {
         };
 
         for target in &targets {
-            if self.cancelled.load(Ordering::Relaxed) {
-                info!("Tension linker cancelled");
-                break;
-            }
-
             let (target_events, target_stats) = self
                 .process_single_target(target, &tension_landscape, &situation_landscape)
                 .await;

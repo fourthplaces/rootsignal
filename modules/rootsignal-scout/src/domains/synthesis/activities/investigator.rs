@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ai_client::{ai_extract, Agent};
@@ -30,7 +29,6 @@ pub struct Investigator<'a> {
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-    cancelled: Arc<AtomicBool>,
 }
 
 /// Per-target stats (returned by investigate_single_signal).
@@ -126,7 +124,6 @@ impl<'a> Investigator<'a> {
         archive: Arc<Archive>,
         ai: &'a dyn Agent,
         region: &ScoutScope,
-        cancelled: Arc<AtomicBool>,
     ) -> Self {
         let lat_delta = region.radius_km / 111.0;
         let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
@@ -139,7 +136,6 @@ impl<'a> Investigator<'a> {
             max_lat: region.center_lat + lat_delta,
             min_lng: region.center_lng - lng_delta,
             max_lng: region.center_lng + lng_delta,
-            cancelled,
         }
     }
 
@@ -171,10 +167,6 @@ impl<'a> Investigator<'a> {
         info!(count = targets.len(), "Investigation targets selected");
 
         for target in &targets {
-            if self.cancelled.load(Ordering::Relaxed) {
-                info!("Investigation cancelled");
-                break;
-            }
             if stats.search_queries_used >= MAX_SEARCH_QUERIES_PER_RUN as u32 {
                 info!("Search query budget exhausted, stopping investigation");
                 break;

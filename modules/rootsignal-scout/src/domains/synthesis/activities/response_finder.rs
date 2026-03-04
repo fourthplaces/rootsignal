@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ai_client::{ai_extract, Agent, DynTool, ToolWrapper};
@@ -292,7 +291,6 @@ pub struct ResponseFinder<'a> {
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-    cancelled: Arc<AtomicBool>,
     run_id: String,
 }
 
@@ -303,7 +301,6 @@ impl<'a> ResponseFinder<'a> {
         embedder: &'a dyn TextEmbedder,
         ai: &'a dyn Agent,
         region: ScoutScope,
-        cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
         let (min_lat, max_lat, min_lng, max_lng) = region_bounds(&region);
@@ -319,7 +316,6 @@ impl<'a> ResponseFinder<'a> {
             max_lng,
             region,
             _region_slug: region_slug,
-            cancelled,
             run_id,
         }
     }
@@ -383,11 +379,6 @@ impl<'a> ResponseFinder<'a> {
         };
 
         for target in &targets {
-            if self.cancelled.load(Ordering::Relaxed) {
-                info!("Response finder cancelled");
-                break;
-            }
-
             let (target_events, target_sources, _target_stats) = self
                 .process_single_target(target, &situation_context)
                 .await;

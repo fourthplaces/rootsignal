@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Stats from a scout run.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ScoutStats {
     pub urls_scraped: u32,
     pub urls_unchanged: u32,
@@ -25,6 +26,7 @@ pub struct ScoutStats {
     pub expansion_social_topics_queued: u32,
     pub sources_discovered: u32,
     pub link_failures: u32,
+    pub handler_failures: u32,
 }
 
 impl ScoutStats {
@@ -52,6 +54,7 @@ impl ScoutStats {
             expansion_social_topics_queued,
             sources_discovered,
             link_failures,
+            handler_failures,
         } = *other;
 
         self.urls_scraped += urls_scraped;
@@ -75,6 +78,7 @@ impl ScoutStats {
         self.expansion_social_topics_queued += expansion_social_topics_queued;
         self.sources_discovered += sources_discovered;
         self.link_failures += link_failures;
+        self.handler_failures += handler_failures;
     }
 }
 
@@ -101,6 +105,7 @@ impl std::fmt::Display for ScoutStats {
             expansion_social_topics_queued,
             sources_discovered,
             link_failures,
+            handler_failures,
         } = *self;
 
         writeln!(f, "\n=== Scout Run Complete ===")?;
@@ -143,6 +148,9 @@ impl std::fmt::Display for ScoutStats {
         }
         if link_failures > 0 {
             writeln!(f, "Link failures:      {link_failures}")?;
+        }
+        if handler_failures > 0 {
+            writeln!(f, "Handler failures:   {handler_failures}")?;
         }
         if expansion_queries_collected > 0 {
             writeln!(f, "\nSignal expansion:")?;

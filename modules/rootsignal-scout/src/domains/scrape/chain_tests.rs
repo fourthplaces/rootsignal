@@ -182,7 +182,7 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
             "Free legal clinic every Tuesday at Sabathani Center...",
         );
         page.links = vec![
-            "https://facebook.com/localorg".to_string(),
+            "https://communitypartners.org/localorg".to_string(),
             "https://sabathani.org/events".to_string(),
         ];
         page
@@ -228,7 +228,7 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
     let collected_urls: Vec<&str> = ctx.collected_links.iter().map(|l| l.url.as_str()).collect();
     assert!(collected_urls
         .iter()
-        .any(|u| u.contains("facebook.com/localorg")));
+        .any(|u| u.contains("communitypartners.org/localorg")));
     assert!(collected_urls
         .iter()
         .any(|u| u.contains("sabathani.org/events")));
@@ -659,7 +659,7 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
     let page = {
         let mut p = archived_page(url, content);
         p.links = vec![
-            "https://facebook.com/localorg".to_string(),
+            "https://communitypartners.org/localorg".to_string(),
             "https://newpartner.org".to_string(),
         ];
         p
@@ -744,7 +744,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
                     "https://localorg.org/resources",
                     "Free groceries every Saturday at MLK Park...",
                 );
-                page.links = vec!["https://facebook.com/localorg".to_string()];
+                page.links = vec!["https://communitypartners.org/localorg".to_string()];
                 page
             }),
     );
@@ -846,8 +846,8 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
         ctx_b
             .collected_links
             .iter()
-            .any(|l| l.url.contains("facebook.com/localorg")),
-        "facebook link should be collected in Phase B"
+            .any(|l| l.url.contains("communitypartners.org/localorg")),
+        "community partner link should be collected in Phase B"
     );
 }
 

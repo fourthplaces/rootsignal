@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ai_client::{ai_extract, Agent, DynTool, ToolWrapper};
@@ -291,7 +290,6 @@ pub struct GatheringFinderDeps<'a> {
     pub max_lat: f64,
     pub min_lng: f64,
     pub max_lng: f64,
-    pub cancelled: Arc<AtomicBool>,
     pub run_id: String,
 }
 
@@ -302,7 +300,6 @@ impl<'a> GatheringFinderDeps<'a> {
         embedder: &'a dyn TextEmbedder,
         ai: &'a dyn Agent,
         region: ScoutScope,
-        cancelled: Arc<AtomicBool>,
         run_id: String,
     ) -> Self {
         let tools: Vec<Arc<dyn DynTool>> = vec![
@@ -331,7 +328,6 @@ impl<'a> GatheringFinderDeps<'a> {
             min_lng,
             max_lng,
             region,
-            cancelled,
             run_id,
         }
     }
@@ -371,11 +367,6 @@ pub async fn find_gatherings(
     info!(count = targets.len(), "Gathering finder targets selected");
 
     for target in &targets {
-        if deps.cancelled.load(Ordering::Relaxed) {
-            info!("Gathering finder cancelled");
-            break;
-        }
-
         let (target_events, target_sources, _target_stats) =
             investigate_single_target(deps, target).await;
 

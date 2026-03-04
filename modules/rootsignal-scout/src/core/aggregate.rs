@@ -474,7 +474,10 @@ impl PipelineState {
             PipelineEvent::SocialTopicsConsumed => {
                 self.social_topics.clear();
             }
-            PipelineEvent::HandlerSkipped { .. } | PipelineEvent::HandlerFailed { .. } => {}  // bookkeeping only, no state mutation
+            PipelineEvent::HandlerSkipped { .. } => {}
+            PipelineEvent::HandlerFailed { .. } => {
+                self.stats.handler_failures += 1;
+            }
             PipelineEvent::UrlsResolvedAccumulated {
                 url_mappings,
                 pub_dates,
@@ -539,6 +542,66 @@ pub mod pipeline_aggregators {
 
     fn on_enrichment(state: &mut PipelineState, event: EnrichmentEvent) {
         state.apply_enrichment(&event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn handler_failed(handler_id: &str, error: &str) -> PipelineEvent {
+        PipelineEvent::HandlerFailed {
+            handler_id: handler_id.to_string(),
+            source_event_type: "ScrapeEvent".to_string(),
+            error: error.to_string(),
+            attempts: 3,
+        }
+    }
+
+    #[test]
+    fn handler_failure_increments_stats() {
+        let mut state = PipelineState::default();
+        assert_eq!(state.stats.handler_failures, 0);
+
+        state.apply_pipeline(&handler_failed("scrape:fetch", "connection timeout"));
+        assert_eq!(state.stats.handler_failures, 1);
+    }
+
+    #[test]
+    fn multiple_handler_failures_accumulate() {
+        let mut state = PipelineState::default();
+
+        state.apply_pipeline(&handler_failed("scrape:fetch", "connection timeout"));
+        state.apply_pipeline(&handler_failed("synthesis:linker", "LLM rate limit"));
+        state.apply_pipeline(&handler_failed("enrichment:link_promoter", "DB error"));
+
+        assert_eq!(state.stats.handler_failures, 3);
+    }
+
+    #[test]
+    fn panic_in_handler_counted_as_failure() {
+        let mut state = PipelineState::default();
+
+        state.apply_pipeline(&PipelineEvent::HandlerFailed {
+            handler_id: "scrape:extract".to_string(),
+            source_event_type: "ScrapeEvent".to_string(),
+            error: "panicked at 'index out of bounds: the len is 0 but the index is 5'".to_string(),
+            attempts: 1,
+        });
+
+        assert_eq!(state.stats.handler_failures, 1);
+    }
+
+    #[test]
+    fn handler_skipped_does_not_increment_failures() {
+        let mut state = PipelineState::default();
+
+        state.apply_pipeline(&PipelineEvent::HandlerSkipped {
+            handler_id: "scrape:fetch".to_string(),
+            reason: "no sources scheduled".to_string(),
+        });
+
+        assert_eq!(state.stats.handler_failures, 0);
     }
 }
 

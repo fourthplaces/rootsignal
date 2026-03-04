@@ -65,6 +65,11 @@ pub enum PipelineEvent {
 }
 
 impl PipelineEvent {
+    /// Only bookkeeping events worth surfacing in the event log.
+    pub fn is_projectable(&self) -> bool {
+        matches!(self, Self::HandlerFailed { .. } | Self::HandlerSkipped { .. })
+    }
+
     pub fn event_type_str(&self) -> String {
         let variant = match self {
             Self::ScheduleResolved { .. } => "schedule_resolved",

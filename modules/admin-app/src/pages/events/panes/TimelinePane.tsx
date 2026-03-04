@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, GitBranch, X } from "lucide-react";
+import { Search, GitBranch, X, Copy, Check } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
 import { eventTextColor } from "../eventColor";
 
@@ -60,6 +60,48 @@ function formatPayload(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+// ---------------------------------------------------------------------------
+// CopyablePayload — shared expandable payload block with copy button
+// ---------------------------------------------------------------------------
+
+export function CopyablePayload({ payload, className = "" }: { payload: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const formatted = formatPayload(payload);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(formatted);
+    } catch {
+      // Fallback for non-secure contexts
+      const ta = document.createElement("textarea");
+      ta.value = formatted;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className={`relative ${className}`}>
+      <pre className="p-2 text-[10px] bg-background rounded border border-border overflow-auto whitespace-pre-wrap max-h-[inherit]">
+        {formatted}
+      </pre>
+      <button
+        onClick={(e) => { e.stopPropagation(); handleCopy(); }}
+        className="absolute top-1.5 right-1.5 z-10 p-1 rounded bg-background/80 border border-border hover:bg-accent transition-colors"
+        title="Copy payload"
+      >
+        {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+      </button>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -207,9 +249,7 @@ function EventRow({
         </div>
       </div>
       {payloadOpen && (
-        <pre className="mt-1 ml-14 p-2 text-[10px] bg-background rounded border border-border overflow-x-auto max-h-64 whitespace-pre-wrap">
-          {formatPayload(event.payload)}
-        </pre>
+        <CopyablePayload payload={event.payload} className="mt-1 ml-14 max-h-64" />
       )}
     </div>
   );
@@ -253,7 +293,6 @@ export function TimelinePane() {
     hasMore,
     loadMore,
     loadingMore,
-    live,
     selectedSeq,
     selectSeq,
     setRunId,
@@ -272,15 +311,6 @@ export function TimelinePane() {
   return (
     <div className="flex flex-col h-full">
       <FilterBar />
-      {live && (
-        <div className="flex items-center gap-1.5 px-3 py-1 border-b border-border text-[10px] text-emerald-400">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-          </span>
-          Live
-        </div>
-      )}
       {loading && filteredEvents.length === 0 ? (
         <div className="animate-pulse">
           {Array.from({ length: 12 }).map((_, i) => (

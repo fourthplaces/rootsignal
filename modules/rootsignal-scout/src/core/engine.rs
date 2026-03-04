@@ -12,7 +12,6 @@
 //! - **News engine** (`build_news_engine`): NewsScanRequested → scan RSS → BeaconDetected.
 //!   Used by the news scanner workflow.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use ai_client::Agent;
@@ -57,8 +56,6 @@ pub struct ScoutEngineDeps {
     pub captured_events: Option<Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>>,
     /// Budget tracker for LLM/API cost tracking.
     pub budget: Option<Arc<crate::domains::scheduling::activities::budget::BudgetTracker>>,
-    /// Cancellation flag — checked by handlers between phases.
-    pub cancelled: Option<Arc<AtomicBool>>,
     /// Postgres connection pool — used by finalize handler to save run stats.
     pub pg_pool: Option<PgPool>,
     /// Archive for web search/page reading in synthesis finders.
@@ -89,7 +86,6 @@ impl ScoutEngineDeps {
             run_id: run_id.into(),
             captured_events: None,
             budget: None,
-            cancelled: None,
             pg_pool: None,
             archive: None,
             task_id: None,

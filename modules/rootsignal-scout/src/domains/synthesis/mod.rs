@@ -7,9 +7,6 @@ pub mod util;
 #[cfg(test)]
 mod completion_tests;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::{info, warn};
@@ -279,18 +276,6 @@ pub mod handlers {
         };
 
         let deps = ctx.deps();
-        let cancelled = deps.cancelled.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-
-        // Check cancellation
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(events![SynthesisEvent::ConcernLinkerTargetCompleted {
-                run_id,
-                signal_id,
-                outcome: "cancelled".to_string(),
-                tensions_discovered: 0,
-                edges_created: 0,
-            }]);
-        }
 
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
@@ -304,7 +289,6 @@ pub mod handlers {
             &*deps.embedder,
             ai.as_ref(),
             region.clone(),
-            cancelled,
             deps.run_id.clone(),
         );
 
@@ -519,16 +503,6 @@ pub mod handlers {
         };
 
         let deps = ctx.deps();
-        let cancelled = deps.cancelled.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(events![SynthesisEvent::ResponseFinderTargetCompleted {
-                run_id,
-                concern_id,
-                responses_discovered: 0,
-                edges_created: 0,
-            }]);
-        }
 
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
@@ -542,7 +516,6 @@ pub mod handlers {
             &*deps.embedder,
             ai.as_ref(),
             region.clone(),
-            cancelled,
             deps.run_id.clone(),
         );
 
@@ -742,17 +715,6 @@ pub mod handlers {
         };
 
         let deps = ctx.deps();
-        let cancelled = deps.cancelled.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(events![SynthesisEvent::GatheringFinderTargetCompleted {
-                run_id,
-                concern_id,
-                gatherings_discovered: 0,
-                no_gravity: false,
-                edges_created: 0,
-            }]);
-        }
 
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
@@ -766,7 +728,6 @@ pub mod handlers {
             &*deps.embedder,
             ai.as_ref(),
             region.clone(),
-            cancelled,
             deps.run_id.clone(),
         );
 
@@ -942,16 +903,6 @@ pub mod handlers {
         };
 
         let deps = ctx.deps();
-        let cancelled = deps.cancelled.clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(events![SynthesisEvent::InvestigationTargetCompleted {
-                run_id,
-                signal_id,
-                evidence_created: 0,
-                confidence_adjusted: false,
-            }]);
-        }
 
         let region = deps.region.as_ref().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
@@ -964,7 +915,6 @@ pub mod handlers {
             archive,
             ai.as_ref(),
             region,
-            cancelled,
         );
 
         // Re-fetch targets from graph to find this specific one

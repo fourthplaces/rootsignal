@@ -89,7 +89,6 @@ impl ScoutDeps {
         deps.extractor = Some(extractor);
         deps.archive = Some(archive);
         deps.budget = Some(budget);
-        deps.cancelled = Some(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         deps.pg_pool = Some(self.pg_pool.clone());
         deps.task_id = task_id.map(String::from);
         deps.completion_phase_status = completion_phase_status.map(String::from);
