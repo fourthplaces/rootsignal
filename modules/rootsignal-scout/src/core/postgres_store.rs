@@ -16,7 +16,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use seesaw_core::store::Store;
-use seesaw_core::types::{EffectResolution, EventOutcome};
+use seesaw_core::types::{EffectResolution, EventOutcome, QueueStatus};
 use seesaw_core::{
     EffectCompletion, EffectDlq, EventCommit, ExpiredJoinWindow, JoinAppendParams, JoinEntry,
     NewEvent, PersistedEvent, QueuedEffect, QueuedEvent, Snapshot,
@@ -577,6 +577,64 @@ impl Store for PostgresStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    // ── Cancellation ──────────────────────────────────────────────────
+
+    async fn cancel_correlation(&self, correlation_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO seesaw_cancellations (correlation_id) \
+             VALUES ($1) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(correlation_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn is_cancelled(&self, correlation_id: Uuid) -> Result<bool> {
+        let (exists,) = sqlx::query_as::<_, (bool,)>(
+            "SELECT EXISTS(SELECT 1 FROM seesaw_cancellations WHERE correlation_id = $1)",
+        )
+        .bind(correlation_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
+    }
+
+    // ── Queue status ─────────────────────────────────────────────────
+
+    async fn queue_status(&self, correlation_id: Uuid) -> Result<QueueStatus> {
+        let (pending_events,) = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM seesaw_events \
+             WHERE correlation_id = $1 AND status IN ('pending', 'processing')",
+        )
+        .bind(correlation_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let (pending_effects,) = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM seesaw_effect_executions \
+             WHERE correlation_id = $1 AND status IN ('pending', 'running')",
+        )
+        .bind(correlation_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let (dead_lettered,) = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM seesaw_effect_executions \
+             WHERE correlation_id = $1 AND status = 'dead_lettered'",
+        )
+        .bind(correlation_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(QueueStatus {
+            pending_events: pending_events as usize,
+            pending_effects: pending_effects as usize,
+            dead_lettered: dead_lettered as usize,
+        })
     }
 }
 
