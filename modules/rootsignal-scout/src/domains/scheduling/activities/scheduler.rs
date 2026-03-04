@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use tracing::info;
 
+use tracing::debug;
+
 use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 
 /// Fraction of scrape slots reserved for exploring low-weight sources.
@@ -137,8 +139,18 @@ pub fn schedule(sources: &[SourceNode], now: DateTime<Utc>) -> ScheduleResult {
     }
 }
 
+/// A source is unproductive if scraped 3+ times with zero signals and zero discovery credit.
+fn is_unproductive(source: &SourceNode) -> bool {
+    source.scrape_count >= 3 && source.signals_produced == 0 && source.sources_discovered == 0
+}
+
 /// Check if a source is due for scraping based on its weight-derived cadence.
 fn should_scrape(source: &SourceNode, now: DateTime<Utc>) -> bool {
+    if is_unproductive(source) {
+        debug!(canonical_key = %source.canonical_key, scrape_count = source.scrape_count, "Gated unproductive source");
+        return false;
+    }
+
     let last = match source.last_scraped {
         Some(t) => t,
         None => return true, // Never scraped — always due
@@ -154,6 +166,9 @@ fn should_scrape(source: &SourceNode, now: DateTime<Utc>) -> bool {
 
 /// Check if a source is eligible for exploration sampling.
 fn is_exploration_candidate(source: &SourceNode, now: DateTime<Utc>) -> bool {
+    if is_unproductive(source) {
+        return false;
+    }
     if source.weight >= EXPLORATION_WEIGHT_THRESHOLD {
         return false;
     }
@@ -521,6 +536,7 @@ mod tests {
             quality_penalty: 1.0,
             source_role: SourceRole::default(),
             scrape_count: 0,
+            sources_discovered: 0,
         }
     }
 
@@ -798,6 +814,7 @@ mod tests {
             quality_penalty: 1.0,
             source_role: SourceRole::Response,
             scrape_count: 0,
+            sources_discovered: 0,
         }
     }
 
@@ -933,5 +950,52 @@ mod tests {
             "ice raids"
         );
         assert_eq!(extract_tension_from_gap_context(None), "unknown");
+    }
+
+    // --- Unproductive source gate ---
+
+    #[test]
+    fn unproductive_source_with_no_discovery_credit_not_scheduled() {
+        let now = Utc::now();
+        let mut source = make_source(0.5, Some(now - Duration::hours(73)));
+        source.scrape_count = 3;
+        source.signals_produced = 0;
+        source.sources_discovered = 0;
+        let result = schedule(&[source], now);
+        assert_eq!(result.scheduled.len(), 0, "Unproductive source should be gated");
+    }
+
+    #[test]
+    fn unproductive_source_with_discovery_credit_still_scheduled() {
+        let now = Utc::now();
+        let mut source = make_source(0.5, Some(now - Duration::hours(73)));
+        source.scrape_count = 3;
+        source.signals_produced = 0;
+        source.sources_discovered = 5;
+        let result = schedule(&[source], now);
+        assert_eq!(result.scheduled.len(), 1, "Source with discovery credit should pass gate");
+    }
+
+    #[test]
+    fn source_under_scrape_threshold_still_gets_benefit_of_doubt() {
+        let now = Utc::now();
+        let mut source = make_source(0.5, Some(now - Duration::hours(73)));
+        source.scrape_count = 2;
+        source.signals_produced = 0;
+        source.sources_discovered = 0;
+        let result = schedule(&[source], now);
+        assert_eq!(result.scheduled.len(), 1, "Source under threshold should still be scheduled");
+    }
+
+    #[test]
+    fn unproductive_source_excluded_from_exploration() {
+        let now = Utc::now();
+        let mut source = make_source(0.15, Some(now - Duration::days(6)));
+        source.scrape_count = 3;
+        source.signals_produced = 0;
+        source.sources_discovered = 0;
+        let result = schedule(&[source], now);
+        assert_eq!(result.exploration.len(), 0, "Unproductive source should not explore");
+        assert_eq!(result.scheduled.len(), 0, "Unproductive source should not be scheduled");
     }
 }

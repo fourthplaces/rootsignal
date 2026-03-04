@@ -57,6 +57,7 @@ pub fn build_future_query_source(
         quality_penalty: 1.0,
         source_role: SourceRole::Response,
         scrape_count: 0,
+        sources_discovered: 0,
     }
 }
 

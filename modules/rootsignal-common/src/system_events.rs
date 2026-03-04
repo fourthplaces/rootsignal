@@ -457,6 +457,12 @@ pub enum SystemEvent {
         scraped_at: DateTime<Utc>,
     },
 
+    /// Credit a source for discovering child sources via link promotion.
+    SourceDiscoveryCredit {
+        canonical_key: String,
+        sources_discovered: u32,
+    },
+
     // -----------------------------------------------------------------------
     // Investigation & curiosity bookkeeping
     // -----------------------------------------------------------------------
@@ -635,6 +641,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::CuriosityTriggered { .. } => "curiosity_triggered",
             SystemEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",
             SystemEvent::SourceScraped { .. } => "source_scraped",
+            SystemEvent::SourceDiscoveryCredit { .. } => "source_discovery_credit",
             SystemEvent::SignalInvestigated { .. } => "signal_investigated",
             SystemEvent::ExhaustedRetriesPromoted { .. } => "exhausted_retries_promoted",
             SystemEvent::ConcernLinkerOutcomeRecorded { .. } => "concern_linker_outcome_recorded",

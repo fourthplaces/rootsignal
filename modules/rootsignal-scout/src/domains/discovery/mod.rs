@@ -3,6 +3,8 @@
 pub mod activities;
 pub mod events;
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
@@ -17,6 +19,7 @@ use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::domain_filter;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 use crate::domains::discovery::activities::{bootstrap, discover_expansion_sources};
+use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::domains::lifecycle::events::LifecycleEvent;
@@ -128,10 +131,29 @@ pub mod handlers {
         if let Some(log) = filter_events {
             events.push(log);
         }
+
+        // Count discovery credit per parent source from promoted results
+        let mut credit: HashMap<String, u32> = HashMap::new();
+        for source in &promoted {
+            if let Some(ref ctx) = source.gap_context {
+                if let Some(parent_url) = ctx.strip_prefix("Linked from ") {
+                    if let Some(ck) = state.url_to_canonical_key.get(parent_url) {
+                        *credit.entry(ck.clone()).or_default() += 1;
+                    }
+                }
+            }
+        }
+
         for s in promoted {
             events.push(DiscoveryEvent::SourceDiscovered {
                 source: s,
                 discovered_by: "link_promoter".into(),
+            });
+        }
+        for (canonical_key, sources_discovered) in credit {
+            events.push(SystemEvent::SourceDiscoveryCredit {
+                canonical_key,
+                sources_discovered,
             });
         }
         events.push(DiscoveryEvent::LinksPromoted { count });

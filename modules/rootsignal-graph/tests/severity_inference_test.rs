@@ -24,6 +24,7 @@ fn trusted_source() -> SourceNode {
         quality_penalty: 1.0,
         source_role: SourceRole::Mixed,
         scrape_count: 30,
+        sources_discovered: 0,
     }
 }
 
@@ -48,6 +49,7 @@ fn new_source() -> SourceNode {
         quality_penalty: 1.0,
         source_role: SourceRole::Mixed,
         scrape_count: 2,
+        sources_discovered: 0,
     }
 }
 

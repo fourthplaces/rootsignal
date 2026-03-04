@@ -219,6 +219,7 @@ impl MutationRoot {
             quality_penalty: 1.0,
             source_role: SourceRole::default(),
             scrape_count: 0,
+            sources_discovered: 0,
         };
 
         engine
@@ -444,6 +445,7 @@ impl MutationRoot {
             quality_penalty: 1.0,
             source_role: SourceRole::default(),
             scrape_count: 0,
+            sources_discovered: 0,
         };
 
         engine

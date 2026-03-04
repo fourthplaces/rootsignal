@@ -514,7 +514,8 @@ impl GraphReader {
                        s.avg_signals_per_scrape AS avg_signals_per_scrape,
                        s.quality_penalty AS quality_penalty,
                        s.source_role AS source_role,
-                       s.scrape_count AS scrape_count",
+                       s.scrape_count AS scrape_count,
+                       s.sources_discovered AS sources_discovered",
             None => "MATCH (s:Source {active: true})
                 RETURN s.id AS id, s.canonical_key AS canonical_key,
                        s.canonical_value AS canonical_value, s.url AS url,
@@ -529,7 +530,8 @@ impl GraphReader {
                        s.avg_signals_per_scrape AS avg_signals_per_scrape,
                        s.quality_penalty AS quality_penalty,
                        s.source_role AS source_role,
-                       s.scrape_count AS scrape_count",
+                       s.scrape_count AS scrape_count,
+                       s.sources_discovered AS sources_discovered",
         };
 
         let q = match search {
@@ -661,6 +663,7 @@ impl GraphReader {
                AND s.consecutive_empty_runs >= 5
                AND coalesce(s.scrape_count, 0) >= 3
                AND s.signals_produced = 0
+               AND coalesce(s.sources_discovered, 0) = 0
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
              RETURN s.id AS id",
@@ -957,6 +960,7 @@ impl GraphReader {
                     quality_penalty: 1.0,
                     source_role: SourceRole::Mixed,
                     scrape_count: 0,
+                    sources_discovered: 0,
                 });
             }
 
@@ -1176,6 +1180,7 @@ impl GraphReader {
                 quality_penalty: 1.0,
                 source_role: SourceRole::Mixed,
                 scrape_count: 0,
+                sources_discovered: 0,
             };
             results.push((pin, source));
         }
@@ -3462,6 +3467,7 @@ impl GraphStore {
                AND s.consecutive_empty_runs >= 5
                AND coalesce(s.scrape_count, 0) >= 3
                AND s.signals_produced = 0
+               AND coalesce(s.sources_discovered, 0) = 0
                AND s.discovery_method <> 'curated'
                AND s.discovery_method <> 'human_submission'
              SET s.active = false
@@ -4554,6 +4560,7 @@ pub fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
             &row.get::<String>("source_role").unwrap_or_default(),
         ),
         scrape_count: row.get::<i64>("scrape_count").unwrap_or(0) as u32,
+        sources_discovered: row.get::<i64>("sources_discovered").unwrap_or(0) as u32,
     })
 }
 

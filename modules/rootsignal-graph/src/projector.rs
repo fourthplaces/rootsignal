@@ -151,7 +151,8 @@ impl GraphProjector {
                          s.avg_signals_per_scrape = 0.0,
                          s.quality_penalty = 1.0,
                          s.source_role = $source_role,
-                         s.scrape_count = 0
+                         s.scrape_count = 0,
+                         s.sources_discovered = 0
                      ON MATCH SET
                          s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                          s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END",
@@ -1917,7 +1918,8 @@ impl GraphProjector {
                          s.avg_signals_per_scrape = 0.0,
                          s.quality_penalty = 1.0,
                          s.source_role = $source_role,
-                         s.scrape_count = 0
+                         s.scrape_count = 0,
+                         s.sources_discovered = 0
                      ON MATCH SET
                          s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                          s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
@@ -2397,6 +2399,23 @@ impl GraphProjector {
                     .param("now", now.as_str());
                     self.client.run(q).await?;
                 }
+                Ok(ApplyResult::Applied)
+            }
+
+            // ---------------------------------------------------------
+            // Source discovery credit
+            // ---------------------------------------------------------
+            SystemEvent::SourceDiscoveryCredit {
+                canonical_key,
+                sources_discovered,
+            } => {
+                let q = query(
+                    "MATCH (s:Source {canonical_key: $key})
+                     SET s.sources_discovered = coalesce(s.sources_discovered, 0) + $count",
+                )
+                .param("key", canonical_key.as_str())
+                .param("count", sources_discovered as i64);
+                self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
 

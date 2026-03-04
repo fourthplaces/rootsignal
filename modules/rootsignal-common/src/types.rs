@@ -1177,6 +1177,8 @@ pub struct SourceNode {
     pub source_role: SourceRole,
     /// Number of times this source has been scraped (independent of signal count).
     pub scrape_count: u32,
+    /// Number of child sources discovered via link promotion from this source's pages.
+    pub sources_discovered: u32,
 }
 
 impl SourceNode {
@@ -1210,6 +1212,7 @@ impl SourceNode {
             quality_penalty: 1.0,
             source_role,
             scrape_count: 0,
+            sources_discovered: 0,
         }
     }
 
