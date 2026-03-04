@@ -121,6 +121,14 @@ pub struct PipelineState {
     #[serde(default)]
     pub completed_synthesis_roles: HashSet<SynthesisRole>,
 
+    /// Per-role total target count (set by fan-out handlers).
+    #[serde(default)]
+    pub synthesis_role_totals: HashMap<SynthesisRole, u32>,
+
+    /// Per-role completed target count (incremented by *TargetCompleted).
+    #[serde(default)]
+    pub synthesis_role_completed: HashMap<SynthesisRole, u32>,
+
     /// Enrichment roles completed, for phase-completion tracking.
     #[serde(default)]
     pub completed_enrichment_roles: HashSet<EnrichmentRole>,
@@ -180,6 +188,8 @@ impl PipelineState {
             role_urls_completed: HashMap::new(),
             role_stats: HashMap::new(),
             completed_synthesis_roles: HashSet::new(),
+            synthesis_role_totals: HashMap::new(),
+            synthesis_role_completed: HashMap::new(),
             completed_enrichment_roles: HashSet::new(),
         }
     }
@@ -356,6 +366,31 @@ impl PipelineState {
             SynthesisEvent::SynthesisTriggered { .. } => {}
             SynthesisEvent::SynthesisRoleCompleted { role, .. } => {
                 self.completed_synthesis_roles.insert(*role);
+            }
+            SynthesisEvent::SynthesisTargetsDispatched { role, count, .. } => {
+                self.synthesis_role_totals.insert(*role, *count);
+            }
+            // Per-target requested events are no-ops for aggregate state
+            SynthesisEvent::ConcernLinkerTargetRequested { .. }
+            | SynthesisEvent::ResponseFinderTargetRequested { .. }
+            | SynthesisEvent::GatheringFinderTargetRequested { .. }
+            | SynthesisEvent::InvestigationTargetRequested { .. }
+            | SynthesisEvent::ResponseMappingTargetRequested { .. } => {}
+            // Per-target completed events increment completed count
+            SynthesisEvent::ConcernLinkerTargetCompleted { .. } => {
+                *self.synthesis_role_completed.entry(SynthesisRole::ConcernLinker).or_default() += 1;
+            }
+            SynthesisEvent::ResponseFinderTargetCompleted { .. } => {
+                *self.synthesis_role_completed.entry(SynthesisRole::ResponseFinder).or_default() += 1;
+            }
+            SynthesisEvent::GatheringFinderTargetCompleted { .. } => {
+                *self.synthesis_role_completed.entry(SynthesisRole::GatheringFinder).or_default() += 1;
+            }
+            SynthesisEvent::InvestigationTargetCompleted { .. } => {
+                *self.synthesis_role_completed.entry(SynthesisRole::Investigation).or_default() += 1;
+            }
+            SynthesisEvent::ResponseMappingTargetCompleted { .. } => {
+                *self.synthesis_role_completed.entry(SynthesisRole::ResponseMapping).or_default() += 1;
             }
         }
     }

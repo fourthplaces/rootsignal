@@ -262,6 +262,22 @@ Also report:
 Return valid JSON matching the GravityFinding schema.";
 
 // =============================================================================
+// Per-target stats (returned by investigate_single_target)
+// =============================================================================
+
+#[derive(Debug, Default)]
+pub struct GatheringFinderTargetStats {
+    pub targets_investigated: u32,
+    pub targets_no_gravity: u32,
+    pub gatherings_discovered: u32,
+    pub gatherings_deduped: u32,
+    pub signals_created: u32,
+    pub edges_created: u32,
+    pub future_sources_created: u32,
+    pub no_gravity: bool,
+}
+
+// =============================================================================
 // GatheringFinder — deps struct + free functions
 // =============================================================================
 
@@ -360,33 +376,62 @@ pub async fn find_gatherings(
             break;
         }
 
-        let found_gatherings = match investigate_tension(deps, target, &mut stats, &mut discovered_sources, events)
-            .await
-        {
-            Ok(found) => {
-                stats.targets_investigated += 1;
-                found
-            }
-            Err(e) => {
-                warn!(
-                    concern_id = %target.concern_id,
-                    title = target.title.as_str(),
-                    error = %e,
-                    "Gathering finder investigation failed"
-                );
-                false
-            }
-        };
+        let (target_events, target_sources, _target_stats) =
+            investigate_single_target(deps, target).await;
 
-        // Mark scouted with backoff (success resets miss count, failure increments)
-        events.push(SystemEvent::GatheringScouted {
-            concern_id: target.concern_id,
-            found_gatherings,
-            scouted_at: Utc::now(),
-        });
+        stats.targets_investigated += 1;
+        events.extend(target_events);
+        discovered_sources.extend(target_sources);
     }
 
     (stats, discovered_sources)
+}
+
+/// Process a single target — returns events, discovered sources, and per-target stats.
+/// Used by both the monolithic `find_gatherings()` and the per-target handler.
+pub async fn investigate_single_target(
+    deps: &GatheringFinderDeps<'_>,
+    target: &GatheringFinderTarget,
+) -> (seesaw_core::Events, Vec<SourceNode>, GatheringFinderTargetStats) {
+    let mut events = seesaw_core::Events::new();
+    let mut discovered_sources = Vec::new();
+    let mut target_stats = GatheringFinderTargetStats::default();
+    let mut stats = GatheringFinderStats::default();
+
+    let found_gatherings = match investigate_tension(deps, target, &mut stats, &mut discovered_sources, &mut events)
+        .await
+    {
+        Ok(found) => {
+            target_stats.targets_investigated += 1;
+            found
+        }
+        Err(e) => {
+            warn!(
+                concern_id = %target.concern_id,
+                title = target.title.as_str(),
+                error = %e,
+                "Gathering finder investigation failed"
+            );
+            false
+        }
+    };
+
+    target_stats.gatherings_discovered = stats.gatherings_discovered;
+    target_stats.gatherings_deduped = stats.gatherings_deduped;
+    target_stats.signals_created = stats.signals_created;
+    target_stats.edges_created = stats.edges_created;
+    target_stats.future_sources_created = stats.future_sources_created;
+    target_stats.targets_no_gravity = stats.targets_no_gravity;
+    target_stats.no_gravity = !found_gatherings && stats.targets_no_gravity > 0;
+
+    // Mark scouted with backoff (success resets miss count, failure increments)
+    events.push(SystemEvent::GatheringScouted {
+        concern_id: target.concern_id,
+        found_gatherings,
+        scouted_at: Utc::now(),
+    });
+
+    (events, discovered_sources, target_stats)
 }
 
 /// Investigate a single tension for gatherings. Returns true if gatherings were found.

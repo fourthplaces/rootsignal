@@ -30,7 +30,7 @@ pub struct EventRow {
     pub data: serde_json::Value,
 }
 
-/// Extended event row with run_id, correlation_id, parent_seq.
+/// Extended event row with run_id, correlation_id, parent_seq, handler_id.
 pub struct EventRowFull {
     pub id: Option<Uuid>,
     pub parent_id: Option<Uuid>,
@@ -41,6 +41,7 @@ pub struct EventRowFull {
     pub run_id: Option<String>,
     pub correlation_id: Option<Uuid>,
     pub parent_seq: Option<i64>,
+    pub handler_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ pub async fn get_event_by_seq(pool: &PgPool, seq: i64) -> Result<Option<EventRow
     let row = sqlx::query(
         r#"
         SELECT seq, ts, event_type, payload AS data, id, parent_id,
-               run_id, correlation_id, parent_seq
+               run_id, correlation_id, parent_seq, handler_id
         FROM events
         WHERE seq = $1
         "#,
@@ -206,7 +207,7 @@ pub async fn get_events_from_seq(
     let rows = sqlx::query(
         r#"
         SELECT seq, ts, event_type, payload AS data, id, parent_id,
-               run_id, correlation_id, parent_seq
+               run_id, correlation_id, parent_seq, handler_id
         FROM events
         WHERE seq >= $1
         ORDER BY seq ASC
@@ -236,7 +237,7 @@ pub async fn list_events_paginated(
     let rows = sqlx::query(
         r#"
         SELECT seq, ts, event_type, payload AS data, id, parent_id,
-               run_id, correlation_id, parent_seq
+               run_id, correlation_id, parent_seq, handler_id
         FROM events
         WHERE ($1::bigint IS NULL OR seq < $1)
           AND ($2::timestamptz IS NULL OR ts >= $2)
@@ -269,7 +270,7 @@ pub async fn causal_tree(pool: &PgPool, seq: i64) -> Result<(Vec<EventRowFull>, 
     let rows = sqlx::query(
         r#"
         SELECT e.seq, e.ts, e.event_type, e.payload AS data, e.id, e.parent_id,
-               e.run_id, e.correlation_id, e.parent_seq
+               e.run_id, e.correlation_id, e.parent_seq, e.handler_id
         FROM events e
         WHERE e.correlation_id = (SELECT correlation_id FROM events WHERE seq = $1)
           AND e.correlation_id IS NOT NULL
@@ -288,6 +289,25 @@ pub async fn causal_tree(pool: &PgPool, seq: i64) -> Result<(Vec<EventRowFull>, 
         .unwrap_or(seq);
 
     Ok((rows.into_iter().map(row_to_event_full).collect(), root_seq))
+}
+
+/// Fetch all events for a run_id with handler_id, ordered by seq.
+/// Used by the causal flow viewer to build a DAG client-side.
+pub async fn causal_flow(pool: &PgPool, run_id: &str) -> Result<Vec<EventRowFull>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT seq, ts, event_type, payload AS data, id, parent_id,
+               run_id, correlation_id, parent_seq, handler_id
+        FROM events
+        WHERE run_id = $1
+        ORDER BY seq ASC
+        "#,
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(row_to_event_full).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +710,64 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
             Some(format!("signal {sid}: {outcome}"))
         }
 
+        // ── Synthesis per-target events ────────────────────────────
+        "synthesis_targets_dispatched" => {
+            let role = json_str(data, "role").unwrap_or_default();
+            let count = json_u32(data, "count").unwrap_or(0);
+            Some(format!("{role}: {count} targets"))
+        }
+        "concern_linker_target_requested" => {
+            let title = json_str(data, "signal_title").unwrap_or_default();
+            Some(format!("investigating: {title}"))
+        }
+        "concern_linker_target_completed" => {
+            let outcome = json_str(data, "outcome").unwrap_or_default();
+            let tensions = json_u32(data, "tensions_discovered").unwrap_or(0);
+            let edges = json_u32(data, "edges_created").unwrap_or(0);
+            Some(format!("{outcome}: {tensions} tensions, {edges} edges"))
+        }
+        "response_finder_target_requested" => {
+            let title = json_str(data, "concern_title").unwrap_or_default();
+            Some(format!("scouting: {title}"))
+        }
+        "response_finder_target_completed" => {
+            let responses = json_u32(data, "responses_discovered").unwrap_or(0);
+            let edges = json_u32(data, "edges_created").unwrap_or(0);
+            Some(format!("{responses} responses, {edges} edges"))
+        }
+        "gathering_finder_target_requested" => {
+            let title = json_str(data, "concern_title").unwrap_or_default();
+            Some(format!("finding gravity: {title}"))
+        }
+        "gathering_finder_target_completed" => {
+            let gatherings = json_u32(data, "gatherings_discovered").unwrap_or(0);
+            let no_gravity = data.get("no_gravity").and_then(|v| v.as_bool()).unwrap_or(false);
+            let edges = json_u32(data, "edges_created").unwrap_or(0);
+            if no_gravity {
+                Some("no gravity found".to_string())
+            } else {
+                Some(format!("{gatherings} gatherings, {edges} edges"))
+            }
+        }
+        "investigation_target_requested" => {
+            let title = json_str(data, "signal_title").unwrap_or_default();
+            Some(format!("investigating: {title}"))
+        }
+        "investigation_target_completed" => {
+            let evidence = json_u32(data, "evidence_created").unwrap_or(0);
+            let adjusted = data.get("confidence_adjusted").and_then(|v| v.as_bool()).unwrap_or(false);
+            let suffix = if adjusted { " (confidence revised)" } else { "" };
+            Some(format!("{evidence} evidence{suffix}"))
+        }
+        "response_mapping_target_requested" => {
+            let title = json_str(data, "concern_title").unwrap_or_default();
+            Some(format!("mapping: {title}"))
+        }
+        "response_mapping_target_completed" => {
+            let edges = json_u32(data, "edges_created").unwrap_or(0);
+            Some(format!("{edges} edges created"))
+        }
+
         // ── Fallback: generic field sniffing ───────────────────────
         _ => json_str(data, "message")
             .or_else(|| json_str(data, "title"))
@@ -746,5 +824,6 @@ fn row_to_event_full(r: sqlx::postgres::PgRow) -> EventRowFull {
         run_id: r.get("run_id"),
         correlation_id: r.get("correlation_id"),
         parent_seq: r.get("parent_seq"),
+        handler_id: r.get("handler_id"),
     }
 }

@@ -269,6 +269,15 @@ Also report:
 Return valid JSON matching the ResponseFinding schema.";
 
 // =============================================================================
+// Per-target stats (returned by process_single_target)
+// =============================================================================
+
+#[derive(Debug, Default)]
+pub struct ResponseFinderTargetStats {
+    pub inner: ResponseFinderStats,
+}
+
+// =============================================================================
 // ResponseFinder
 // =============================================================================
 
@@ -379,37 +388,59 @@ impl<'a> ResponseFinder<'a> {
                 break;
             }
 
-            match self
-                .investigate_tension(
-                    target,
-                    &situation_context,
-                    &mut stats,
-                    &mut discovered_sources,
-                    events,
-                )
-                .await
-            {
-                Ok(()) => {
-                    stats.targets_investigated += 1;
-                }
-                Err(e) => {
-                    warn!(
-                        concern_id = %target.concern_id,
-                        title = target.title.as_str(),
-                        error = %e,
-                        "Response scout investigation failed"
-                    );
-                }
-            }
+            let (target_events, target_sources, _target_stats) = self
+                .process_single_target(target, &situation_context)
+                .await;
 
-            // Emit event — projector sets response_scouted_at on the Tension node
-            events.push(SystemEvent::ResponseScouted {
-                concern_id: target.concern_id,
-                scouted_at: Utc::now(),
-            });
+            stats.targets_investigated += 1;
+            events.extend(target_events);
+            discovered_sources.extend(target_sources);
         }
 
         (stats, discovered_sources)
+    }
+
+    /// Process a single target — returns events, discovered sources, and per-target stats.
+    /// Used by both the monolithic `run()` and the per-target handler.
+    pub async fn process_single_target(
+        &self,
+        target: &ResponseFinderTarget,
+        situation_context: &str,
+    ) -> (seesaw_core::Events, Vec<SourceNode>, ResponseFinderTargetStats) {
+        let mut events = seesaw_core::Events::new();
+        let mut discovered_sources = Vec::new();
+        let mut target_stats = ResponseFinderTargetStats::default();
+
+        match self
+            .investigate_tension(
+                target,
+                situation_context,
+                &mut target_stats.inner,
+                &mut discovered_sources,
+                &mut events,
+            )
+            .await
+        {
+            Ok(()) => {
+                target_stats.inner.targets_investigated += 1;
+            }
+            Err(e) => {
+                warn!(
+                    concern_id = %target.concern_id,
+                    title = target.title.as_str(),
+                    error = %e,
+                    "Response scout investigation failed"
+                );
+            }
+        }
+
+        // Emit event — projector sets response_scouted_at on the Tension node
+        events.push(SystemEvent::ResponseScouted {
+            concern_id: target.concern_id,
+            scouted_at: Utc::now(),
+        });
+
+        (events, discovered_sources, target_stats)
     }
 
     async fn investigate_tension(

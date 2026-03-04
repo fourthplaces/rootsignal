@@ -168,6 +168,20 @@ fn format_situation_landscape(situations: &[SituationBrief]) -> String {
 }
 
 // =============================================================================
+// Per-target stats (returned by process_single_target)
+// =============================================================================
+
+#[derive(Debug, Default)]
+pub struct ConcernLinkerTargetStats {
+    pub targets_investigated: u32,
+    pub targets_skipped: u32,
+    pub tensions_discovered: u32,
+    pub tensions_deduplicated: u32,
+    pub edges_created: u32,
+    pub outcome: String,
+}
+
+// =============================================================================
 // ConcernLinker
 // =============================================================================
 
@@ -301,69 +315,102 @@ impl<'a> ConcernLinker<'a> {
                 break;
             }
 
-            let outcome = match self
-                .investigate_signal(target, &tension_landscape, &situation_landscape)
-                .await
-            {
-                Ok(finding) => {
-                    if !finding.curious {
-                        stats.targets_skipped += 1;
-                        info!(
-                            signal_id = %target.signal_id,
-                            title = target.title.as_str(),
-                            reason = finding.skip_reason.as_deref().unwrap_or("self-explanatory"),
-                            "Signal not curious, skipping"
-                        );
-                        ConcernLinkerOutcome::Skipped
-                    } else {
-                        stats.targets_investigated += 1;
-                        let tensions_count = finding.tensions.len().min(MAX_TENSIONS_PER_SIGNAL);
-                        let mut any_tension_failed = false;
-                        for tension in finding.tensions.into_iter().take(MAX_TENSIONS_PER_SIGNAL) {
-                            if let Err(e) = self.process_tension(target, &tension, &mut stats, events).await
-                            {
-                                any_tension_failed = true;
-                                warn!(
-                                    signal_id = %target.signal_id,
-                                    tension_title = tension.title.as_str(),
-                                    error = %e,
-                                    "Failed to process discovered tension"
-                                );
-                            }
-                        }
-                        info!(
-                            signal_id = %target.signal_id,
-                            title = target.title.as_str(),
-                            tensions = tensions_count,
-                            "Signal investigated"
-                        );
-                        if any_tension_failed {
-                            ConcernLinkerOutcome::Failed
-                        } else {
-                            ConcernLinkerOutcome::Done
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        signal_id = %target.signal_id,
-                        title = target.title.as_str(),
-                        error = %e,
-                        "Curiosity investigation failed"
-                    );
-                    ConcernLinkerOutcome::Failed
-                }
-            };
+            let (target_events, target_stats) = self
+                .process_single_target(target, &tension_landscape, &situation_landscape)
+                .await;
 
-            events.push(SystemEvent::ConcernLinkerOutcomeRecorded {
-                signal_id: target.signal_id,
-                label: target.label.clone(),
-                outcome: outcome.as_str().to_string(),
-                increment_retry: outcome == ConcernLinkerOutcome::Failed,
-            });
+            stats.targets_investigated += target_stats.targets_investigated;
+            stats.targets_skipped += target_stats.targets_skipped;
+            stats.tensions_discovered += target_stats.tensions_discovered;
+            stats.tensions_deduplicated += target_stats.tensions_deduplicated;
+            stats.edges_created += target_stats.edges_created;
+            events.extend(target_events);
         }
 
         stats
+    }
+
+    /// Process a single target — returns events and per-target stats.
+    /// Used by both the monolithic `run()` and the per-target handler.
+    pub async fn process_single_target(
+        &self,
+        target: &ConcernLinkerTarget,
+        tension_landscape: &str,
+        situation_landscape: &str,
+    ) -> (seesaw_core::Events, ConcernLinkerTargetStats) {
+        let mut events = seesaw_core::Events::new();
+        let mut stats = ConcernLinkerTargetStats::default();
+
+        let outcome = match self
+            .investigate_signal(target, tension_landscape, situation_landscape)
+            .await
+        {
+            Ok(finding) => {
+                if !finding.curious {
+                    stats.targets_skipped += 1;
+                    stats.outcome = "skipped".to_string();
+                    info!(
+                        signal_id = %target.signal_id,
+                        title = target.title.as_str(),
+                        reason = finding.skip_reason.as_deref().unwrap_or("self-explanatory"),
+                        "Signal not curious, skipping"
+                    );
+                    ConcernLinkerOutcome::Skipped
+                } else {
+                    stats.targets_investigated += 1;
+                    let tensions_count = finding.tensions.len().min(MAX_TENSIONS_PER_SIGNAL);
+                    let mut any_tension_failed = false;
+                    let mut per_target_stats = TensionLinkerStats::default();
+                    for tension in finding.tensions.into_iter().take(MAX_TENSIONS_PER_SIGNAL) {
+                        if let Err(e) = self.process_tension(target, &tension, &mut per_target_stats, &mut events).await
+                        {
+                            any_tension_failed = true;
+                            warn!(
+                                signal_id = %target.signal_id,
+                                tension_title = tension.title.as_str(),
+                                error = %e,
+                                "Failed to process discovered tension"
+                            );
+                        }
+                    }
+                    stats.tensions_discovered += per_target_stats.tensions_discovered;
+                    stats.tensions_deduplicated += per_target_stats.tensions_deduplicated;
+                    stats.edges_created += per_target_stats.edges_created;
+                    info!(
+                        signal_id = %target.signal_id,
+                        title = target.title.as_str(),
+                        tensions = tensions_count,
+                        "Signal investigated"
+                    );
+                    if any_tension_failed {
+                        stats.outcome = "failed".to_string();
+                        ConcernLinkerOutcome::Failed
+                    } else {
+                        stats.outcome = "done".to_string();
+                        ConcernLinkerOutcome::Done
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    signal_id = %target.signal_id,
+                    title = target.title.as_str(),
+                    error = %e,
+                    "Curiosity investigation failed"
+                );
+                stats.outcome = "failed".to_string();
+                ConcernLinkerOutcome::Failed
+            }
+        };
+
+        events.push(SystemEvent::ConcernLinkerOutcomeRecorded {
+            signal_id: target.signal_id,
+            label: target.label.clone(),
+            outcome: outcome.as_str().to_string(),
+            increment_retry: outcome == ConcernLinkerOutcome::Failed,
+        });
+
+        (events, stats)
     }
 
     async fn investigate_signal(

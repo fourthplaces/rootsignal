@@ -33,6 +33,14 @@ pub struct Investigator<'a> {
     cancelled: Arc<AtomicBool>,
 }
 
+/// Per-target stats (returned by investigate_single_signal).
+#[derive(Debug, Default)]
+pub struct InvestigationTargetStats {
+    pub inner: InvestigationStats,
+    pub evidence_created: u32,
+    pub confidence_adjusted: bool,
+}
+
 /// Stats from an investigation run.
 #[derive(Debug, Default)]
 pub struct InvestigationStats {
@@ -172,43 +180,67 @@ impl<'a> Investigator<'a> {
                 break;
             }
 
-            match self.investigate_signal(target, &mut stats, events).await {
-                Ok(evidence_count) => {
-                    stats.targets_investigated += 1;
-                    stats.evidence_created += evidence_count;
-                    info!(
-                        signal_id = %target.signal_id,
-                        node_type = %target.node_type,
-                        title = target.title.as_str(),
-                        evidence_count,
-                        "Signal investigated"
-                    );
+            let (target_events, target_stats) = self
+                .investigate_single_signal(target)
+                .await;
 
-                    // Revise confidence based on accumulated evidence
-                    if evidence_count > 0 {
-                        self.compute_confidence_revision(target, &mut stats, events).await;
-                    }
-                }
-                Err(e) => {
-                    stats.targets_failed += 1;
-                    warn!(
-                        signal_id = %target.signal_id,
-                        title = target.title.as_str(),
-                        error = %e,
-                        "Investigation failed for signal"
-                    );
-                }
-            }
-
-            // Always mark investigated (even on failure — prevents retry loops)
-            events.push(SystemEvent::SignalInvestigated {
-                signal_id: target.signal_id,
-                node_type: target.node_type,
-                investigated_at: Utc::now(),
-            });
+            stats.targets_investigated += target_stats.inner.targets_investigated;
+            stats.targets_failed += target_stats.inner.targets_failed;
+            stats.evidence_created += target_stats.evidence_created;
+            stats.search_queries_used += target_stats.inner.search_queries_used;
+            stats.confidence_adjustments += target_stats.inner.confidence_adjustments;
+            events.extend(target_events);
         }
 
         stats
+    }
+
+    /// Process a single signal — returns events and per-target stats.
+    /// Used by both the monolithic `run()` and the per-target handler.
+    pub async fn investigate_single_signal(
+        &self,
+        target: &InvestigationTarget,
+    ) -> (seesaw_core::Events, InvestigationTargetStats) {
+        let mut events = seesaw_core::Events::new();
+        let mut target_stats = InvestigationTargetStats::default();
+
+        match self.investigate_signal(target, &mut target_stats.inner, &mut events).await {
+            Ok(evidence_count) => {
+                target_stats.inner.targets_investigated += 1;
+                target_stats.evidence_created = evidence_count;
+                info!(
+                    signal_id = %target.signal_id,
+                    node_type = %target.node_type,
+                    title = target.title.as_str(),
+                    evidence_count,
+                    "Signal investigated"
+                );
+
+                // Revise confidence based on accumulated evidence
+                if evidence_count > 0 {
+                    self.compute_confidence_revision(target, &mut target_stats.inner, &mut events).await;
+                    target_stats.confidence_adjusted = target_stats.inner.confidence_adjustments > 0;
+                }
+            }
+            Err(e) => {
+                target_stats.inner.targets_failed += 1;
+                warn!(
+                    signal_id = %target.signal_id,
+                    title = target.title.as_str(),
+                    error = %e,
+                    "Investigation failed for signal"
+                );
+            }
+        }
+
+        // Always mark investigated (even on failure — prevents retry loops)
+        events.push(SystemEvent::SignalInvestigated {
+            signal_id: target.signal_id,
+            node_type: target.node_type,
+            investigated_at: Utc::now(),
+        });
+
+        (events, target_stats)
     }
 
     async fn investigate_signal(

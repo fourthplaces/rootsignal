@@ -132,6 +132,99 @@ pub async fn map_responses(
     Ok(stats)
 }
 
+/// Map responses for a single tension — returns events and edge count.
+/// Used by the per-target handler.
+pub async fn map_single_tension(
+    graph: &GraphReader,
+    ai: &dyn Agent,
+    concern_id: uuid::Uuid,
+    tension_embedding: &[f64],
+    min_lat: f64,
+    max_lat: f64,
+    min_lng: f64,
+    max_lng: f64,
+) -> (Events, u32) {
+    let mut events = Events::new();
+    let mut edges_created = 0u32;
+
+    let candidates = match graph
+        .find_response_candidates(tension_embedding, min_lat, max_lat, min_lng, max_lng)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(error = %e, "Failed to find response candidates for tension");
+            return (events, edges_created);
+        }
+    };
+
+    if candidates.is_empty() {
+        return (events, edges_created);
+    }
+
+    let tension_info = match graph.get_signal_info(concern_id).await {
+        Ok(Some((title, summary))) => (title, summary),
+        Ok(None) => return (events, edges_created),
+        Err(e) => {
+            warn!(error = %e, "Failed to get tension info");
+            return (events, edges_created);
+        }
+    };
+
+    let (tension_title, tension_summary) = tension_info;
+    let mut verified = 0u32;
+    let checked = candidates.len().min(5) as u32;
+
+    for (candidate_id, candidate_similarity) in candidates.iter().take(5) {
+        let candidate_info = match graph.get_signal_info(*candidate_id).await {
+            Ok(Some(info)) => info,
+            _ => continue,
+        };
+        let (candidate_title, candidate_summary) = candidate_info;
+
+        match verify_response(
+            ai,
+            &tension_title,
+            &tension_summary,
+            &candidate_title,
+            &candidate_summary,
+        )
+        .await
+        {
+            Ok(Some(explanation)) => {
+                events.push(SystemEvent::ResponseLinked {
+                    signal_id: *candidate_id,
+                    concern_id,
+                    strength: *candidate_similarity,
+                    explanation: explanation.clone(),
+                    source_url: None,
+                });
+                edges_created += 1;
+                verified += 1;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(error = %e, "LLM verification failed");
+            }
+        }
+    }
+
+    events.push(TelemetryEvent::SystemLog {
+        message: format!(
+            "LLM response mapping: \"{}\" — {}/{} candidates matched",
+            tension_title, verified, checked,
+        ),
+        context: Some(serde_json::json!({
+            "activity": "response_mapper",
+            "concern_id": concern_id.to_string(),
+            "candidates_checked": checked,
+            "candidates_matched": verified,
+        })),
+    });
+
+    (events, edges_created)
+}
+
 /// LLM verifies whether a candidate signal actually responds to a tension.
 async fn verify_response(
     ai: &dyn Agent,
