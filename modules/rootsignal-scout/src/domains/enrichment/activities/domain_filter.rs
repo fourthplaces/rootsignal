@@ -42,6 +42,8 @@ ACCEPT domains that host:\n\
 - Local event listings from regional organizers\n\n\
 REJECT domains that are:\n\
 - Web archives or historical snapshots (archive.org, archive-it.org, wayback machine)\n\
+- Federal/national government sites without a regional office for the target area \
+(e.g. loc.gov, si.edu, nps.gov, nasa.gov)\n\
 - Foreign government sites unrelated to the target region\n\
 - National/international aggregators with no local desk\n\
 - E-commerce platforms, SaaS marketing, developer docs\n\
