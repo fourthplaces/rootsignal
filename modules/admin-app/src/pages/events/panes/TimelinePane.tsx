@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, X } from "lucide-react";
+import { Search, GitBranch, X } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
 
 // ---------------------------------------------------------------------------
@@ -139,12 +139,14 @@ function EventRow({
   onClick,
   onInvestigate,
   onFilterRun,
+  onViewFlow,
 }: {
   event: AdminEvent;
   isSelected: boolean;
   onClick: () => void;
   onInvestigate: () => void;
   onFilterRun: (runId: string) => void;
+  onViewFlow: (runId: string) => void;
 }) {
   const [payloadOpen, setPayloadOpen] = useState(false);
   const layerColor = LAYER_COLORS[event.layer] ?? "bg-zinc-500/20 text-zinc-400";
@@ -185,9 +187,18 @@ function EventRow({
           >
             {event.summary ?? compactPayload(event.payload)}
           </button>
+          {event.runId && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onViewFlow(event.runId!); }}
+              className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto p-1 rounded hover:bg-accent shrink-0"
+              title="View causal flow"
+            >
+              <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          )}
           <button
             onClick={(e) => { e.stopPropagation(); onInvestigate(); }}
-            className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto p-1 rounded hover:bg-accent shrink-0"
+            className={`opacity-0 group-hover:opacity-100 transition-opacity ${event.runId ? "" : "ml-auto"} p-1 rounded hover:bg-accent shrink-0`}
             title="Investigate with AI"
           >
             <Search className="w-3.5 h-3.5 text-muted-foreground" />
@@ -246,6 +257,7 @@ export function TimelinePane() {
     selectSeq,
     setRunId,
     setInvestigateEvent,
+    setFlowRunId,
   } = useEventsPaneContext();
 
   const handleInvestigate = useCallback(
@@ -295,6 +307,7 @@ export function TimelinePane() {
               onClick={() => selectSeq(event.seq)}
               onInvestigate={() => handleInvestigate(event)}
               onFilterRun={setRunId}
+              onViewFlow={setFlowRunId}
             />
           ))}
           {hasMore && (

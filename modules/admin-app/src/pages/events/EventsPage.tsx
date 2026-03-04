@@ -5,6 +5,7 @@ import { PaneManager, type PaneType, type PaneManagerHandle } from "@/components
 import { EventsPaneProvider, useEventsPaneContext } from "./EventsPaneContext";
 import { TimelinePane } from "./panes/TimelinePane";
 import { CausalTreePane } from "./panes/CausalTreePane";
+import { CausalFlowPane } from "./panes/CausalFlowPane";
 import { InvestigatePane } from "./panes/InvestigatePane";
 import { DEFAULT_EVENTS_LAYOUT } from "./defaultLayout";
 
@@ -15,6 +16,7 @@ import { DEFAULT_EVENTS_LAYOUT } from "./defaultLayout";
 const PANE_REGISTRY: PaneType[] = [
   { name: "Timeline", component: "timeline", render: () => <TimelinePane /> },
   { name: "Causal Tree", component: "causal-tree", render: () => <CausalTreePane /> },
+  { name: "Flow", component: "causal-flow", render: () => <CausalFlowPane /> },
   { name: "Investigate", component: "investigate", render: () => <InvestigatePane /> },
 ];
 
@@ -23,7 +25,7 @@ const PANE_REGISTRY: PaneType[] = [
 // ---------------------------------------------------------------------------
 
 function EventsPageInner() {
-  const { selectedSeq, investigateEvent, setInvestigateEvent } = useEventsPaneContext();
+  const { selectedSeq, investigateEvent, setInvestigateEvent, flowRunId } = useEventsPaneContext();
   const paneManagerRef = useRef<PaneManagerHandle>(null);
 
   // Auto-open causal tree tab when an event is selected
@@ -34,6 +36,17 @@ function EventsPageInner() {
       pm.addTab("causal-tree", "Causal Tree");
     }
   }, [selectedSeq]);
+
+  // Auto-open flow tab when flowRunId is set
+  useEffect(() => {
+    if (!flowRunId || !paneManagerRef.current) return;
+    const pm = paneManagerRef.current;
+    if (pm.hasTab("causal-flow")) {
+      pm.selectTab("causal-flow");
+    } else {
+      pm.addTab("causal-flow", "Flow");
+    }
+  }, [flowRunId]);
 
   // Auto-open investigate tab when investigateEvent is set
   useEffect(() => {

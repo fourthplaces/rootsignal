@@ -66,6 +66,7 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                     correlation_id: None,
                     aggregate_type: None,
                     aggregate_id: None,
+                    handler_id: None,
                 };
                 projector.project(&stored).await?;
                 Ok(events![])

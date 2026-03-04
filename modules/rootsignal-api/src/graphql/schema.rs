@@ -718,6 +718,26 @@ impl QueryRoot {
         Ok(AdminCausalTree { events, root_seq })
     }
 
+    /// Fetch all events for a run, with handler_id, for the causal flow DAG viewer.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_causal_flow(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<AdminCausalFlow> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::causal_flow(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load causal flow: {e}")))?;
+
+        let events: Vec<AdminEvent> = rows.into_iter().map(AdminEvent::from).collect();
+        Ok(AdminCausalFlow { events })
+    }
+
     /// Aggregate summary of supervisor findings for a region.
     #[graphql(guard = "AdminGuard")]
     async fn supervisor_summary(
@@ -1569,6 +1589,7 @@ pub struct AdminEvent {
     parent_id: Option<String>,
     correlation_id: Option<String>,
     run_id: Option<String>,
+    handler_id: Option<String>,
     summary: Option<String>,
     payload: String,
 }
@@ -1583,6 +1604,11 @@ struct AdminEventsPage {
 struct AdminCausalTree {
     events: Vec<AdminEvent>,
     root_seq: i64,
+}
+
+#[derive(SimpleObject)]
+struct AdminCausalFlow {
+    events: Vec<AdminEvent>,
 }
 
 impl From<EventRowFull> for AdminEvent {
@@ -1601,6 +1627,7 @@ impl From<EventRowFull> for AdminEvent {
             parent_id: r.parent_id.map(|u| u.to_string()),
             correlation_id: r.correlation_id.map(|u| u.to_string()),
             run_id: r.run_id,
+            handler_id: r.handler_id,
             summary,
             payload,
         }

@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery, useLazyQuery, useSubscription } from "@apollo/client";
-import { ADMIN_EVENTS, ADMIN_CAUSAL_TREE, EVENTS_SUBSCRIPTION } from "@/graphql/queries";
+import { ADMIN_EVENTS, ADMIN_CAUSAL_TREE, ADMIN_CAUSAL_FLOW, EVENTS_SUBSCRIPTION } from "@/graphql/queries";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -17,6 +17,7 @@ export type AdminEvent = {
   parentId: string | null;
   correlationId: string | null;
   runId: string | null;
+  handlerId: string | null;
   summary: string | null;
   payload: string;
 };
@@ -71,6 +72,12 @@ type EventsPaneContextValue = {
   // Investigate
   investigateEvent: AdminEvent | null;
   setInvestigateEvent: (event: AdminEvent | null) => void;
+
+  // Causal flow
+  flowRunId: string | null;
+  setFlowRunId: (runId: string | null) => void;
+  flowData: AdminEvent[] | null;
+  flowLoading: boolean;
 };
 
 const EventsPaneContext = createContext<EventsPaneContextValue | null>(null);
@@ -106,6 +113,18 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
 
   // Investigate
   const [investigateEvent, setInvestigateEvent] = useState<AdminEvent | null>(null);
+
+  // Causal flow
+  const [flowRunId, setFlowRunId] = useState<string | null>(null);
+  const [fetchFlow, { data: flowQueryData, loading: flowLoading }] = useLazyQuery<{
+    adminCausalFlow: { events: AdminEvent[] };
+  }>(ADMIN_CAUSAL_FLOW);
+
+  useEffect(() => {
+    if (flowRunId) {
+      fetchFlow({ variables: { runId: flowRunId } });
+    }
+  }, [flowRunId, fetchFlow]);
 
   // Sync URL params
   const lastParamsRef = useRef("");
@@ -268,12 +287,17 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       treeLoading,
       investigateEvent,
       setInvestigateEvent,
+      flowRunId,
+      setFlowRunId,
+      flowData: flowQueryData?.adminCausalFlow?.events ?? null,
+      flowLoading,
     }),
     [
       layers, toggleLayer, search, runId, timeFrom, timeTo,
       filteredEvents, loading, hasMore, loadMore, allEvents.length,
       live, selectedSeq, selectSeq, treeData, treeLoading,
       investigateEvent,
+      flowRunId, flowQueryData, flowLoading,
     ],
   );
 

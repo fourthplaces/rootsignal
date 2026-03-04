@@ -26,6 +26,8 @@ pub struct StoredEvent {
     pub aggregate_type: Option<String>,
     /// Aggregate instance ID for aggregate-scoped events.
     pub aggregate_id: Option<Uuid>,
+    /// Which handler produced this event (from seesaw metadata).
+    pub handler_id: Option<String>,
 }
 
 /// An event to be appended. The caller builds this; the store assigns seq/ts.
@@ -46,6 +48,8 @@ pub struct AppendEvent {
     pub aggregate_type: Option<String>,
     /// Aggregate instance ID for aggregate-scoped events.
     pub aggregate_id: Option<Uuid>,
+    /// Which handler produced this event (from seesaw metadata).
+    pub handler_id: Option<String>,
 }
 
 impl AppendEvent {
@@ -63,6 +67,7 @@ impl AppendEvent {
             correlation_id: None,
             aggregate_type: None,
             aggregate_id: None,
+            handler_id: None,
         }
     }
 
@@ -88,6 +93,11 @@ impl AppendEvent {
 
     pub fn with_parent_id(mut self, parent_id: Uuid) -> Self {
         self.parent_id = Some(parent_id);
+        self
+    }
+
+    pub fn with_handler_id(mut self, handler_id: impl Into<String>) -> Self {
+        self.handler_id = Some(handler_id.into());
         self
     }
 }

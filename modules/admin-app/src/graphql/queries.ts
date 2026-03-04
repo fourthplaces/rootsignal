@@ -763,6 +763,7 @@ export const ADMIN_EVENTS = gql`
         parentId
         correlationId
         runId
+        handlerId
         summary
         payload
       }
@@ -782,10 +783,32 @@ export const ADMIN_CAUSAL_TREE = gql`
         layer
         id
         parentId
+        handlerId
         summary
         payload
       }
       rootSeq
+    }
+  }
+`;
+
+export const ADMIN_CAUSAL_FLOW = gql`
+  query AdminCausalFlow($runId: String!) {
+    adminCausalFlow(runId: $runId) {
+      events {
+        seq
+        ts
+        type
+        name
+        layer
+        id
+        parentId
+        correlationId
+        runId
+        handlerId
+        summary
+        payload
+      }
     }
   }
 `;
@@ -802,6 +825,7 @@ export const EVENTS_SUBSCRIPTION = gql`
       parentId
       correlationId
       runId
+      handlerId
       summary
       payload
     }

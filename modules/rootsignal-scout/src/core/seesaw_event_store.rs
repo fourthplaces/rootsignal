@@ -41,12 +41,21 @@ impl seesaw_core::event_store::EventStore for SeesawEventStoreAdapter {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(1) as i16;
 
+            let handler_id = event
+                .metadata
+                .get("handler_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             let mut append = AppendEvent::new(event.event_type, event.payload)
                 .with_id(event.event_id)
                 .with_schema_v(schema_v);
 
             if let Some(run_id) = run_id {
                 append = append.with_run_id(run_id);
+            }
+            if let Some(handler_id) = handler_id {
+                append = append.with_handler_id(handler_id);
             }
             if let Some(parent_id) = event.parent_id {
                 append = append.with_parent_id(parent_id);
@@ -121,6 +130,9 @@ fn stored_to_persisted(e: StoredEvent) -> PersistedEvent {
             map.insert("schema_v".to_string(), serde_json::json!(e.schema_v));
             if let Some(actor) = e.actor {
                 map.insert("actor".to_string(), serde_json::Value::String(actor));
+            }
+            if let Some(handler_id) = e.handler_id {
+                map.insert("handler_id".to_string(), serde_json::Value::String(handler_id));
             }
             map
         },
