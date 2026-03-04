@@ -1,13 +1,13 @@
--- Seesaw 0.18 unified Store: durable queues for crash recovery.
+-- Seesaw 0.20 unified Store: durable queues for crash recovery.
 
 -- Idempotent event append (required by Store trait contract).
 -- Migration 016 created a non-unique index; replace with unique.
 DROP INDEX IF EXISTS idx_events_id;
-CREATE UNIQUE INDEX idx_events_id_unique
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_id_unique
     ON events (id) WHERE id IS NOT NULL;
 
 -- Transient event queue
-CREATE TABLE seesaw_events (
+CREATE TABLE IF NOT EXISTS seesaw_events (
     row_id         BIGSERIAL    PRIMARY KEY,
     event_id       UUID         NOT NULL,
     parent_id      UUID,
@@ -23,11 +23,11 @@ CREATE TABLE seesaw_events (
     status         TEXT         NOT NULL DEFAULT 'pending',
     created_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_seesaw_events_poll
+CREATE INDEX IF NOT EXISTS idx_seesaw_events_poll
     ON seesaw_events (correlation_id, row_id) WHERE status = 'pending';
 
 -- Effect executions
-CREATE TABLE seesaw_effect_executions (
+CREATE TABLE IF NOT EXISTS seesaw_effect_executions (
     event_id            UUID         NOT NULL,
     handler_id          TEXT         NOT NULL,
     correlation_id      UUID         NOT NULL,
@@ -51,15 +51,15 @@ CREATE TABLE seesaw_effect_executions (
     updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
     PRIMARY KEY (event_id, handler_id)
 );
-CREATE INDEX idx_seesaw_effects_poll
+CREATE INDEX IF NOT EXISTS idx_seesaw_effects_poll
     ON seesaw_effect_executions (correlation_id, priority, execute_at)
     WHERE status = 'pending';
-CREATE INDEX idx_seesaw_effects_running
+CREATE INDEX IF NOT EXISTS idx_seesaw_effects_running
     ON seesaw_effect_executions (updated_at)
     WHERE status = 'running';
 
 -- Join windows
-CREATE TABLE seesaw_join_windows (
+CREATE TABLE IF NOT EXISTS seesaw_join_windows (
     join_handler_id TEXT NOT NULL,
     correlation_id  UUID NOT NULL,
     batch_id        UUID NOT NULL,
@@ -71,7 +71,7 @@ CREATE TABLE seesaw_join_windows (
 );
 
 -- Join entries
-CREATE TABLE seesaw_join_entries (
+CREATE TABLE IF NOT EXISTS seesaw_join_entries (
     join_handler_id   TEXT NOT NULL,
     correlation_id    UUID NOT NULL,
     batch_id          UUID NOT NULL,
@@ -85,7 +85,7 @@ CREATE TABLE seesaw_join_entries (
 );
 
 -- Dead letter queue
-CREATE TABLE seesaw_dead_letter_queue (
+CREATE TABLE IF NOT EXISTS seesaw_dead_letter_queue (
     id         BIGSERIAL PRIMARY KEY,
     event_id   UUID      NOT NULL,
     handler_id TEXT,

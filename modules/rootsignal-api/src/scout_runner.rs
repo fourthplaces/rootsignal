@@ -18,6 +18,7 @@ use tracing::{info, warn};
 
 use rootsignal_scout::core::engine::{self, build_infra_only_engine};
 use rootsignal_scout::core::postgres_store::PostgresStore;
+use seesaw_core::store::Store;
 use rootsignal_scout::domains::lifecycle::events::LifecycleEvent;
 use rootsignal_scout::workflows::ScoutDeps;
 
@@ -191,12 +192,8 @@ impl ScoutRunner {
 
             let store = PostgresStore::new(self.deps.pg_pool.clone(), run_uuid);
 
-            if let Err(e) = store.reclaim_stale_events().await {
-                warn!(run_id = %run.run_id, error = %e, "Failed to reclaim stale events");
-                continue;
-            }
-            if let Err(e) = store.reclaim_stale_effects().await {
-                warn!(run_id = %run.run_id, error = %e, "Failed to reclaim stale effects");
+            if let Err(e) = store.reclaim_stale().await {
+                warn!(run_id = %run.run_id, error = %e, "Failed to reclaim stale work");
                 continue;
             }
 

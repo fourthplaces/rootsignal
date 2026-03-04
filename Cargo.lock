@@ -3814,9 +3814,9 @@ dependencies = [
 
 [[package]]
 name = "seesaw_core"
-version = "0.18.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a24df096b02c8915c65353aa8ef05797dadc0447dc837cd7d053fa28e93dcea"
+checksum = "4d9b381669b8c01c24a798ca21c6436e16e45c99b848a9782bab4075b33a5936"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3835,9 +3835,9 @@ dependencies = [
 
 [[package]]
 name = "seesaw_core_macros"
-version = "0.18.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89a2a0b7e834f58b6fdcd2ddc1c141b8a13a5f97035260fa0455e861994381e4"
+checksum = "9e271c89e4622ffbecc8b13d16fb215e04aa7dbfd6501cc4e41e13d73b039a92"
 dependencies = [
  "proc-macro2",
  "quote",

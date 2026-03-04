@@ -1,6 +1,6 @@
 //! PostgresStore — durable seesaw Store backed by Postgres.
 //!
-//! Scoped by `correlation_id`. Implements seesaw 0.18's unified `Store` trait
+//! Scoped by `correlation_id`. Implements seesaw 0.20's unified `Store` trait
 //! covering event queue, effect queue, joins, event persistence, and snapshots.
 //!
 //! Queue tables: `seesaw_events`, `seesaw_effect_executions`, `seesaw_join_*`,
@@ -16,9 +16,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use seesaw_core::store::Store;
+use seesaw_core::types::{EffectResolution, EventOutcome};
 use seesaw_core::{
-    EffectCompletion, EffectDlq, EventProcessingCommit, ExpiredJoinWindow, JoinAppendParams,
-    JoinEntry, NewEvent, PersistedEvent, QueuedEvent, QueuedHandlerExecution, Snapshot,
+    EffectCompletion, EffectDlq, EventCommit, ExpiredJoinWindow, JoinAppendParams, JoinEntry,
+    NewEvent, PersistedEvent, QueuedEffect, QueuedEvent, Snapshot,
 };
 
 /// Postgres-backed seesaw Store, scoped by a single correlation_id.
@@ -36,30 +37,6 @@ impl PostgresStore {
             pool,
             correlation_id,
         }
-    }
-
-    /// Reset stale `processing` events back to `pending` (crash recovery).
-    pub async fn reclaim_stale_events(&self) -> Result<u64> {
-        let result = sqlx::query(
-            "UPDATE seesaw_events SET status = 'pending' \
-             WHERE correlation_id = $1 AND status = 'processing'",
-        )
-        .bind(self.correlation_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(result.rows_affected())
-    }
-
-    /// Reset stale `running` effects back to `pending` (crash recovery).
-    pub async fn reclaim_stale_effects(&self) -> Result<u64> {
-        let result = sqlx::query(
-            "UPDATE seesaw_effect_executions SET status = 'pending', updated_at = now() \
-             WHERE correlation_id = $1 AND status = 'running'",
-        )
-        .bind(self.correlation_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(result.rows_affected())
     }
 
     /// Check if this correlation has any pending work (events or effects).
@@ -128,128 +105,46 @@ impl Store for PostgresStore {
         Ok(row.map(|r| r.into_queued_event()))
     }
 
-    async fn commit_event_processing(&self, commit: EventProcessingCommit) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
+    async fn complete_event(&self, result: EventOutcome) -> Result<()> {
+        match result {
+            EventOutcome::Processed(commit) => self.commit_event(commit).await,
+            EventOutcome::Rejected {
+                event_row_id,
+                event_id,
+                error,
+                reason,
+            } => {
+                let mut tx = self.pool.begin().await?;
 
-        // 1. Ack the source event
-        sqlx::query(
-            "UPDATE seesaw_events SET status = 'done' WHERE row_id = $1 AND correlation_id = $2",
-        )
-        .bind(commit.event_row_id)
-        .bind(self.correlation_id)
-        .execute(&mut *tx)
-        .await?;
+                sqlx::query(
+                    "UPDATE seesaw_events SET status = 'rejected' \
+                     WHERE row_id = $1 AND correlation_id = $2",
+                )
+                .bind(event_row_id)
+                .bind(self.correlation_id)
+                .execute(&mut *tx)
+                .await?;
 
-        // 2. Insert effect intents
-        for intent in &commit.queued_effect_intents {
-            sqlx::query(
-                "INSERT INTO seesaw_effect_executions \
-                 (event_id, handler_id, correlation_id, event_type, event_payload, \
-                  parent_event_id, batch_id, batch_index, batch_size, hops, \
-                  max_attempts, timeout_seconds, priority, execute_at, \
-                  join_window_timeout_seconds, status) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'pending')",
-            )
-            .bind(commit.event_id)
-            .bind(&intent.handler_id)
-            .bind(self.correlation_id)
-            .bind(&commit.event_type)
-            .bind(&commit.event_payload)
-            .bind(intent.parent_event_id)
-            .bind(intent.batch_id)
-            .bind(intent.batch_index)
-            .bind(intent.batch_size)
-            .bind(intent.hops)
-            .bind(intent.max_attempts)
-            .bind(intent.timeout_seconds)
-            .bind(intent.priority)
-            .bind(intent.execute_at)
-            .bind(intent.join_window_timeout_seconds)
-            .execute(&mut *tx)
-            .await?;
+                sqlx::query(
+                    "INSERT INTO seesaw_dead_letter_queue \
+                     (event_id, handler_id, error, reason) \
+                     VALUES ($1, NULL, $2, $3)",
+                )
+                .bind(event_id)
+                .bind(&error)
+                .bind(&reason)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+                Ok(())
+            }
         }
-
-        // 3. Publish inline emitted events
-        for evt in &commit.emitted_events {
-            sqlx::query(
-                "INSERT INTO seesaw_events \
-                 (event_id, parent_id, correlation_id, event_type, payload, handler_id, \
-                  hops, retry_count, batch_id, batch_index, batch_size, status, created_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)",
-            )
-            .bind(evt.event_id)
-            .bind(evt.parent_id)
-            .bind(self.correlation_id)
-            .bind(&evt.event_type)
-            .bind(&evt.payload)
-            .bind(&evt.handler_id)
-            .bind(evt.hops)
-            .bind(evt.retry_count)
-            .bind(evt.batch_id)
-            .bind(evt.batch_index)
-            .bind(evt.batch_size)
-            .bind(evt.created_at)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        // 4. DLQ inline failures
-        for failure in &commit.inline_effect_failures {
-            sqlx::query(
-                "INSERT INTO seesaw_dead_letter_queue \
-                 (event_id, handler_id, error, reason, attempts, payload) \
-                 VALUES ($1, $2, $3, $4, $5, $6)",
-            )
-            .bind(commit.event_id)
-            .bind(&failure.handler_id)
-            .bind(&failure.error)
-            .bind(&failure.reason)
-            .bind(failure.attempts)
-            .bind(&commit.event_payload)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    async fn reject_event(
-        &self,
-        event_row_id: i64,
-        event_id: Uuid,
-        error: String,
-        reason: String,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query(
-            "UPDATE seesaw_events SET status = 'rejected' \
-             WHERE row_id = $1 AND correlation_id = $2",
-        )
-        .bind(event_row_id)
-        .bind(self.correlation_id)
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            "INSERT INTO seesaw_dead_letter_queue \
-             (event_id, handler_id, error, reason) \
-             VALUES ($1, NULL, $2, $3)",
-        )
-        .bind(event_id)
-        .bind(&error)
-        .bind(&reason)
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-        Ok(())
     }
 
     // ── Effect queue ─────────────────────────────────────────────────
 
-    async fn poll_next_effect(&self) -> Result<Option<QueuedHandlerExecution>> {
+    async fn poll_next_effect(&self) -> Result<Option<QueuedEffect>> {
         let row = sqlx::query_as::<_, EffectRow>(
             "UPDATE seesaw_effect_executions SET status = 'running', updated_at = now() \
              WHERE (event_id, handler_id) = ( \
@@ -271,29 +166,6 @@ impl Store for PostgresStore {
         Ok(row.map(|r| r.into_queued()))
     }
 
-    async fn poll_next_effects(&self, limit: usize) -> Result<Vec<QueuedHandlerExecution>> {
-        let rows = sqlx::query_as::<_, EffectRow>(
-            "UPDATE seesaw_effect_executions SET status = 'running', updated_at = now() \
-             WHERE (event_id, handler_id) IN ( \
-                 SELECT event_id, handler_id FROM seesaw_effect_executions \
-                 WHERE correlation_id = $1 AND status = 'pending' AND execute_at <= now() \
-                 ORDER BY priority DESC, execute_at ASC \
-                 FOR UPDATE SKIP LOCKED \
-                 LIMIT $2 \
-             ) \
-             RETURNING event_id, handler_id, correlation_id, event_type, event_payload, \
-                       parent_event_id, batch_id, batch_index, batch_size, \
-                       execute_at, timeout_seconds, max_attempts, priority, hops, attempts, \
-                       join_window_timeout_seconds",
-        )
-        .bind(self.correlation_id)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.into_iter().map(|r| r.into_queued()).collect())
-    }
-
     async fn earliest_pending_effect_at(&self) -> Result<Option<DateTime<Utc>>> {
         let row = sqlx::query_as::<_, (Option<DateTime<Utc>>,)>(
             "SELECT MIN(execute_at) FROM seesaw_effect_executions \
@@ -305,124 +177,56 @@ impl Store for PostgresStore {
         Ok(row.0)
     }
 
-    async fn complete_effect(&self, completion: EffectCompletion) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query(
-            "UPDATE seesaw_effect_executions \
-             SET status = 'completed', result = $3, updated_at = now() \
-             WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $4",
-        )
-        .bind(completion.event_id)
-        .bind(&completion.handler_id)
-        .bind(&completion.result)
-        .bind(self.correlation_id)
-        .execute(&mut *tx)
-        .await?;
-
-        for evt in &completion.events_to_publish {
-            sqlx::query(
-                "INSERT INTO seesaw_events \
-                 (event_id, parent_id, correlation_id, event_type, payload, handler_id, \
-                  hops, retry_count, batch_id, batch_index, batch_size, status, created_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)",
-            )
-            .bind(evt.event_id)
-            .bind(evt.parent_id)
-            .bind(self.correlation_id)
-            .bind(&evt.event_type)
-            .bind(&evt.payload)
-            .bind(&evt.handler_id)
-            .bind(evt.hops)
-            .bind(evt.retry_count)
-            .bind(evt.batch_id)
-            .bind(evt.batch_index)
-            .bind(evt.batch_size)
-            .bind(evt.created_at)
-            .execute(&mut *tx)
-            .await?;
+    async fn resolve_effect(&self, resolution: EffectResolution) -> Result<()> {
+        match resolution {
+            EffectResolution::Complete(completion) => {
+                self.complete_effect_inner(completion).await
+            }
+            EffectResolution::Retry {
+                event_id,
+                handler_id,
+                error,
+                new_attempts,
+                next_execute_at,
+            } => {
+                sqlx::query(
+                    "UPDATE seesaw_effect_executions \
+                     SET status = 'pending', attempts = $3, execute_at = $4, error = $5, updated_at = now() \
+                     WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $6",
+                )
+                .bind(event_id)
+                .bind(&handler_id)
+                .bind(new_attempts)
+                .bind(next_execute_at)
+                .bind(&error)
+                .bind(self.correlation_id)
+                .execute(&self.pool)
+                .await?;
+                Ok(())
+            }
+            EffectResolution::DeadLetter(dlq) => self.dlq_effect_inner(dlq).await,
         }
-
-        tx.commit().await?;
-        Ok(())
     }
 
-    async fn fail_effect(
-        &self,
-        event_id: Uuid,
-        handler_id: String,
-        error: String,
-        new_attempts: i32,
-        next_execute_at: DateTime<Utc>,
-    ) -> Result<()> {
+    async fn reclaim_stale(&self) -> Result<()> {
+        // Reset stale `processing` events back to `pending`
         sqlx::query(
-            "UPDATE seesaw_effect_executions \
-             SET status = 'pending', attempts = $3, execute_at = $4, error = $5, updated_at = now() \
-             WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $6",
+            "UPDATE seesaw_events SET status = 'pending' \
+             WHERE correlation_id = $1 AND status = 'processing'",
         )
-        .bind(event_id)
-        .bind(&handler_id)
-        .bind(new_attempts)
-        .bind(next_execute_at)
-        .bind(&error)
         .bind(self.correlation_id)
         .execute(&self.pool)
         .await?;
-        Ok(())
-    }
 
-    async fn dlq_effect(&self, dlq: EffectDlq) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
+        // Reset stale `running` effects back to `pending`
         sqlx::query(
-            "UPDATE seesaw_effect_executions \
-             SET status = 'dead_lettered', error = $3, updated_at = now() \
-             WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $4",
+            "UPDATE seesaw_effect_executions SET status = 'pending', updated_at = now() \
+             WHERE correlation_id = $1 AND status = 'running'",
         )
-        .bind(dlq.event_id)
-        .bind(&dlq.handler_id)
-        .bind(&dlq.error)
         .bind(self.correlation_id)
-        .execute(&mut *tx)
+        .execute(&self.pool)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO seesaw_dead_letter_queue \
-             (event_id, handler_id, error, reason, attempts) \
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind(dlq.event_id)
-        .bind(&dlq.handler_id)
-        .bind(&dlq.error)
-        .bind(&dlq.reason)
-        .bind(dlq.attempts)
-        .execute(&mut *tx)
-        .await?;
-
-        for evt in &dlq.events_to_publish {
-            sqlx::query(
-                "INSERT INTO seesaw_events \
-                 (event_id, parent_id, correlation_id, event_type, payload, handler_id, \
-                  hops, retry_count, batch_id, batch_index, batch_size, status, created_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)",
-            )
-            .bind(evt.event_id)
-            .bind(evt.parent_id)
-            .bind(self.correlation_id)
-            .bind(&evt.event_type)
-            .bind(&evt.payload)
-            .bind(&evt.handler_id)
-            .bind(evt.hops)
-            .bind(evt.retry_count)
-            .bind(evt.batch_id)
-            .bind(evt.batch_index)
-            .bind(evt.batch_size)
-            .bind(evt.created_at)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        tx.commit().await?;
         Ok(())
     }
 
@@ -676,40 +480,37 @@ impl Store for PostgresStore {
         &self,
         aggregate_type: &str,
         aggregate_id: Uuid,
+        after_position: Option<u64>,
     ) -> Result<Vec<PersistedEvent>> {
-        let rows = sqlx::query_as::<_, PersistedEventRow>(
-            "SELECT seq, id, parent_id, correlation_id, event_type, payload, ts, \
-                    aggregate_type, aggregate_id, run_id, schema_v, handler_id \
-             FROM events \
-             WHERE aggregate_type = $1 AND aggregate_id = $2 \
-             ORDER BY seq ASC",
-        )
-        .bind(aggregate_type)
-        .bind(aggregate_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.into_iter().map(|r| r.into_persisted()).collect())
-    }
-
-    async fn load_stream_from(
-        &self,
-        aggregate_type: &str,
-        aggregate_id: Uuid,
-        after_position: u64,
-    ) -> Result<Vec<PersistedEvent>> {
-        let rows = sqlx::query_as::<_, PersistedEventRow>(
-            "SELECT seq, id, parent_id, correlation_id, event_type, payload, ts, \
-                    aggregate_type, aggregate_id, run_id, schema_v, handler_id \
-             FROM events \
-             WHERE aggregate_type = $1 AND aggregate_id = $2 AND seq > $3 \
-             ORDER BY seq ASC",
-        )
-        .bind(aggregate_type)
-        .bind(aggregate_id)
-        .bind(after_position as i64)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = match after_position {
+            Some(pos) => {
+                sqlx::query_as::<_, PersistedEventRow>(
+                    "SELECT seq, id, parent_id, correlation_id, event_type, payload, ts, \
+                            aggregate_type, aggregate_id, run_id, schema_v, handler_id \
+                     FROM events \
+                     WHERE aggregate_type = $1 AND aggregate_id = $2 AND seq > $3 \
+                     ORDER BY seq ASC",
+                )
+                .bind(aggregate_type)
+                .bind(aggregate_id)
+                .bind(pos as i64)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query_as::<_, PersistedEventRow>(
+                    "SELECT seq, id, parent_id, correlation_id, event_type, payload, ts, \
+                            aggregate_type, aggregate_id, run_id, schema_v, handler_id \
+                     FROM events \
+                     WHERE aggregate_type = $1 AND aggregate_id = $2 \
+                     ORDER BY seq ASC",
+                )
+                .bind(aggregate_type)
+                .bind(aggregate_id)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
 
         Ok(rows.into_iter().map(|r| r.into_persisted()).collect())
     }
@@ -779,6 +580,193 @@ impl Store for PostgresStore {
     }
 }
 
+// ── Private helpers ─────────────────────────────────────────────────
+
+impl PostgresStore {
+    async fn commit_event(&self, commit: EventCommit) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        // 1. Ack the source event
+        sqlx::query(
+            "UPDATE seesaw_events SET status = 'done' WHERE row_id = $1 AND correlation_id = $2",
+        )
+        .bind(commit.event_row_id)
+        .bind(self.correlation_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // 2. Insert effect intents
+        for intent in &commit.queued_effect_intents {
+            sqlx::query(
+                "INSERT INTO seesaw_effect_executions \
+                 (event_id, handler_id, correlation_id, event_type, event_payload, \
+                  parent_event_id, batch_id, batch_index, batch_size, hops, \
+                  max_attempts, timeout_seconds, priority, execute_at, \
+                  join_window_timeout_seconds, status) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'pending')",
+            )
+            .bind(commit.event_id)
+            .bind(&intent.handler_id)
+            .bind(self.correlation_id)
+            .bind(&commit.event_type)
+            .bind(&commit.event_payload)
+            .bind(intent.parent_event_id)
+            .bind(intent.batch_id)
+            .bind(intent.batch_index)
+            .bind(intent.batch_size)
+            .bind(intent.hops)
+            .bind(intent.max_attempts)
+            .bind(intent.timeout_seconds)
+            .bind(intent.priority)
+            .bind(intent.execute_at)
+            .bind(intent.join_window_timeout_seconds)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // 3. Publish inline emitted events
+        for evt in &commit.emitted_events {
+            sqlx::query(
+                "INSERT INTO seesaw_events \
+                 (event_id, parent_id, correlation_id, event_type, payload, handler_id, \
+                  hops, retry_count, batch_id, batch_index, batch_size, status, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)",
+            )
+            .bind(evt.event_id)
+            .bind(evt.parent_id)
+            .bind(self.correlation_id)
+            .bind(&evt.event_type)
+            .bind(&evt.payload)
+            .bind(&evt.handler_id)
+            .bind(evt.hops)
+            .bind(evt.retry_count)
+            .bind(evt.batch_id)
+            .bind(evt.batch_index)
+            .bind(evt.batch_size)
+            .bind(evt.created_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // 4. DLQ inline failures
+        for failure in &commit.inline_effect_failures {
+            sqlx::query(
+                "INSERT INTO seesaw_dead_letter_queue \
+                 (event_id, handler_id, error, reason, attempts, payload) \
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(commit.event_id)
+            .bind(&failure.handler_id)
+            .bind(&failure.error)
+            .bind(&failure.reason)
+            .bind(failure.attempts)
+            .bind(&commit.event_payload)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn complete_effect_inner(&self, completion: EffectCompletion) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            "UPDATE seesaw_effect_executions \
+             SET status = 'completed', result = $3, updated_at = now() \
+             WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $4",
+        )
+        .bind(completion.event_id)
+        .bind(&completion.handler_id)
+        .bind(&completion.result)
+        .bind(self.correlation_id)
+        .execute(&mut *tx)
+        .await?;
+
+        for evt in &completion.events_to_publish {
+            sqlx::query(
+                "INSERT INTO seesaw_events \
+                 (event_id, parent_id, correlation_id, event_type, payload, handler_id, \
+                  hops, retry_count, batch_id, batch_index, batch_size, status, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)",
+            )
+            .bind(evt.event_id)
+            .bind(evt.parent_id)
+            .bind(self.correlation_id)
+            .bind(&evt.event_type)
+            .bind(&evt.payload)
+            .bind(&evt.handler_id)
+            .bind(evt.hops)
+            .bind(evt.retry_count)
+            .bind(evt.batch_id)
+            .bind(evt.batch_index)
+            .bind(evt.batch_size)
+            .bind(evt.created_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn dlq_effect_inner(&self, dlq: EffectDlq) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            "UPDATE seesaw_effect_executions \
+             SET status = 'dead_lettered', error = $3, updated_at = now() \
+             WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $4",
+        )
+        .bind(dlq.event_id)
+        .bind(&dlq.handler_id)
+        .bind(&dlq.error)
+        .bind(self.correlation_id)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO seesaw_dead_letter_queue \
+             (event_id, handler_id, error, reason, attempts) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(dlq.event_id)
+        .bind(&dlq.handler_id)
+        .bind(&dlq.error)
+        .bind(&dlq.reason)
+        .bind(dlq.attempts)
+        .execute(&mut *tx)
+        .await?;
+
+        for evt in &dlq.events_to_publish {
+            sqlx::query(
+                "INSERT INTO seesaw_events \
+                 (event_id, parent_id, correlation_id, event_type, payload, handler_id, \
+                  hops, retry_count, batch_id, batch_index, batch_size, status, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)",
+            )
+            .bind(evt.event_id)
+            .bind(evt.parent_id)
+            .bind(self.correlation_id)
+            .bind(&evt.event_type)
+            .bind(&evt.payload)
+            .bind(&evt.handler_id)
+            .bind(evt.hops)
+            .bind(evt.retry_count)
+            .bind(evt.batch_id)
+            .bind(evt.batch_index)
+            .bind(evt.batch_size)
+            .bind(evt.created_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
 // ── Internal row types ───────────────────────────────────────────────
 
 #[derive(sqlx::FromRow)]
@@ -839,8 +827,8 @@ struct EffectRow {
 }
 
 impl EffectRow {
-    fn into_queued(self) -> QueuedHandlerExecution {
-        QueuedHandlerExecution {
+    fn into_queued(self) -> QueuedEffect {
+        QueuedEffect {
             event_id: self.event_id,
             handler_id: self.handler_id,
             correlation_id: self.correlation_id,
