@@ -1,10 +1,8 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { useLazyQuery } from "@apollo/client";
 import { Search } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent, type FlowSelection } from "../EventsPaneContext";
 import { eventTextColor } from "../eventColor";
 import { CopyablePayload } from "./TimelinePane";
-import { ADMIN_HANDLER_LOGS } from "@/graphql/queries";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -14,12 +12,6 @@ const LAYER_COLORS: Record<string, string> = {
   world: "bg-blue-500/20 text-blue-400",
   system: "bg-amber-500/20 text-amber-400",
   telemetry: "bg-zinc-500/20 text-zinc-400",
-};
-
-const LOG_LEVEL_COLORS: Record<string, string> = {
-  debug: "text-zinc-500",
-  info: "text-blue-400",
-  warn: "text-amber-400",
 };
 
 function formatTs(ts: string): string {
@@ -62,17 +54,6 @@ function compactPayload(raw: string, maxLen = 80): string {
 }
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type HandlerLogEntry = {
-  level: string;
-  message: string;
-  data: string | null;
-  loggedAt: string;
-};
-
-// ---------------------------------------------------------------------------
 // HandlerNode — intermediate node grouping children by handler_id
 // ---------------------------------------------------------------------------
 
@@ -91,12 +72,8 @@ function HandlerNode({
   depth: number;
   isHighlighted: boolean;
 }) {
-  const { setFlowSelection, flowRunId } = useEventsPaneContext();
+  const { setFlowSelection, flowRunId, setLogsFilter } = useEventsPaneContext();
   const [collapsed, setCollapsed] = useState(false);
-  const [logsOpen, setLogsOpen] = useState(false);
-  const [fetchLogs, { data: logsData, loading: logsLoading }] = useLazyQuery<{
-    adminHandlerLogs: HandlerLogEntry[];
-  }>(ADMIN_HANDLER_LOGS);
   const nodeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -105,21 +82,18 @@ function HandlerNode({
     }
   }, [isHighlighted]);
 
-  const handleToggleLogs = useCallback((e: React.MouseEvent) => {
+  const handleOpenLogs = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!logsOpen && !logsData) {
-      fetchLogs({ variables: { eventId: parentEventId, handlerId } });
-    }
-    setLogsOpen(v => !v);
-  }, [logsOpen, logsData, fetchLogs, parentEventId, handlerId]);
+    // Find the run_id from the first child event (all share same run)
+    const runId = children[0]?.runId ?? null;
+    setLogsFilter({ eventId: parentEventId, handlerId, runId });
+  }, [setLogsFilter, parentEventId, handlerId, children]);
 
   const handleClick = useCallback(() => {
     if (flowRunId) {
       setFlowSelection({ kind: "handler", handlerId });
     }
   }, [flowRunId, setFlowSelection, handlerId]);
-
-  const logs = logsData?.adminHandlerLogs ?? [];
 
   return (
     <div className={depth > 0 ? "pl-6" : ""}>
@@ -153,38 +127,13 @@ function HandlerNode({
             )}
           </button>
           <button
-            onClick={handleToggleLogs}
+            onClick={handleOpenLogs}
             className="ml-auto text-[10px] px-1.5 py-0.5 rounded hover:bg-accent shrink-0 text-muted-foreground hover:text-foreground"
-            title="Toggle handler logs"
+            title="Open handler logs in Logs panel"
           >
-            {logsOpen ? "hide logs" : "logs"}
+            logs
           </button>
         </div>
-
-        {logsOpen && (
-          <div className="mt-1 ml-4 border-l border-zinc-700 pl-2">
-            {logsLoading && (
-              <div className="text-[10px] text-muted-foreground animate-pulse">Loading logs…</div>
-            )}
-            {!logsLoading && logs.length === 0 && (
-              <div className="text-[10px] text-muted-foreground">No logs</div>
-            )}
-            {logs.map((log, i) => (
-              <div key={i} className="text-[10px] font-mono py-0.5">
-                <span className={`uppercase font-semibold ${LOG_LEVEL_COLORS[log.level] ?? "text-zinc-400"}`}>
-                  {log.level}
-                </span>
-                {" "}
-                <span className="text-zinc-400">{formatTs(log.loggedAt)}</span>
-                {" "}
-                <span className="text-zinc-200">{log.message}</span>
-                {log.data && (
-                  <span className="text-zinc-500 ml-1">{typeof log.data === "string" ? log.data : JSON.stringify(log.data)}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {!collapsed && children.map((child) => (

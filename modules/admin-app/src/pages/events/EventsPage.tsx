@@ -7,6 +7,7 @@ import { TimelinePane } from "./panes/TimelinePane";
 import { CausalTreePane } from "./panes/CausalTreePane";
 import { CausalFlowPane } from "./panes/CausalFlowPane";
 import { InvestigatePane } from "./panes/InvestigatePane";
+import { LogsPane } from "./panes/LogsPane";
 import { DEFAULT_EVENTS_LAYOUT } from "./defaultLayout";
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,7 @@ const PANE_REGISTRY: PaneType[] = [
   { name: "Causal Tree", component: "causal-tree", render: () => <CausalTreePane /> },
   { name: "Flow", component: "causal-flow", render: () => <CausalFlowPane /> },
   { name: "Investigate", component: "investigate", render: () => <InvestigatePane /> },
+  { name: "Logs", component: "logs", render: () => <LogsPane /> },
 ];
 
 // ---------------------------------------------------------------------------
@@ -25,7 +27,7 @@ const PANE_REGISTRY: PaneType[] = [
 // ---------------------------------------------------------------------------
 
 function EventsPageInner() {
-  const { selectedSeq, investigateEvent, setInvestigateEvent, flowRunId } = useEventsPaneContext();
+  const { selectedSeq, investigateEvent, setInvestigateEvent, flowRunId, logsFilter, setLogsFilter } = useEventsPaneContext();
   const paneManagerRef = useRef<PaneManagerHandle>(null);
 
   // Auto-open causal tree tab when an event is selected
@@ -59,22 +61,35 @@ function EventsPageInner() {
     }
   }, [investigateEvent]);
 
+  // Auto-open logs tab when logsFilter is set
+  useEffect(() => {
+    if (!logsFilter || !paneManagerRef.current) return;
+    const pm = paneManagerRef.current;
+    if (pm.hasTab("logs")) {
+      pm.selectTab("logs");
+    } else {
+      pm.addTab("logs", "Logs");
+    }
+  }, [logsFilter]);
+
   const handleModelChange = useCallback(
     (model: Model, action: Action) => {
       // If an investigate tab was closed, clear the investigate event
       if (action.type === Actions.DELETE_TAB) {
         let hasInvestigateTab = false;
+        let hasLogsTab = false;
         model.visitNodes((node) => {
-          if ("getComponent" in node && (node as any).getComponent() === "investigate") {
-            hasInvestigateTab = true;
+          if ("getComponent" in node) {
+            const comp = (node as any).getComponent();
+            if (comp === "investigate") hasInvestigateTab = true;
+            if (comp === "logs") hasLogsTab = true;
           }
         });
-        if (!hasInvestigateTab) {
-          setInvestigateEvent(null);
-        }
+        if (!hasInvestigateTab) setInvestigateEvent(null);
+        if (!hasLogsTab) setLogsFilter(null);
       }
     },
-    [setInvestigateEvent],
+    [setInvestigateEvent, setLogsFilter],
   );
 
   return (

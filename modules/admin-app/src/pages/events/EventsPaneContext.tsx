@@ -65,6 +65,12 @@ function serializeFlowSelection(sel: FlowSelection, params: Record<string, strin
   }
 }
 
+export type LogsFilter = {
+  eventId: string;
+  handlerId: string;
+  runId: string | null;
+};
+
 const LAYER_OPTIONS = ["world", "system", "telemetry"] as const;
 
 // ---------------------------------------------------------------------------
@@ -116,6 +122,10 @@ type EventsPaneContextValue = {
   // Flow → Tree highlighting
   flowSelection: FlowSelection;
   setFlowSelection: (sel: FlowSelection) => void;
+
+  // Logs panel
+  logsFilter: LogsFilter | null;
+  setLogsFilter: (filter: LogsFilter | null) => void;
 };
 
 const EventsPaneContext = createContext<EventsPaneContextValue | null>(null);
@@ -158,6 +168,9 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
 
   // Investigate
   const [investigateEvent, setInvestigateEvent] = useState<AdminEvent | null>(null);
+
+  // Logs panel
+  const [logsFilter, setLogsFilter] = useState<LogsFilter | null>(null);
 
   // Causal flow
   const [flowSelection, setFlowSelection] = useState<FlowSelection>(() => parseFlowSelection(searchParams));
@@ -422,6 +435,8 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       flowLoading,
       flowSelection,
       setFlowSelection,
+      logsFilter,
+      setLogsFilter,
     }),
     [
       layers, toggleLayer, search, runId, timeFrom, timeTo,
@@ -430,6 +445,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       investigateEvent,
       flowRunId, openFlow, closeFlow, flowEvents,
       flowSelection,
+      logsFilter,
     ],
   );
 

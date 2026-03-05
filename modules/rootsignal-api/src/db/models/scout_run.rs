@@ -953,6 +953,15 @@ pub struct HandlerLogRow {
     pub logged_at: DateTime<Utc>,
 }
 
+pub struct HandlerLogRowFull {
+    pub event_id: Uuid,
+    pub handler_id: String,
+    pub level: String,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+    pub logged_at: DateTime<Utc>,
+}
+
 pub async fn handler_logs(
     pool: &PgPool,
     event_id: &Uuid,
@@ -972,6 +981,37 @@ pub async fn handler_logs(
     Ok(rows
         .into_iter()
         .map(|(level, message, data, logged_at)| HandlerLogRow {
+            level,
+            message,
+            data,
+            logged_at,
+        })
+        .collect())
+}
+
+/// Fetch all handler logs for a run, identified by run_id (which equals correlation_id as UUID).
+pub async fn handler_logs_by_run(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<Vec<HandlerLogRowFull>> {
+    let correlation_id = Uuid::parse_str(run_id)
+        .map_err(|e| anyhow::anyhow!("Invalid run_id as UUID: {e}"))?;
+
+    let rows = sqlx::query_as::<_, (Uuid, String, String, String, Option<serde_json::Value>, DateTime<Utc>)>(
+        "SELECT event_id, handler_id, level, message, data, logged_at \
+         FROM seesaw_handler_logs \
+         WHERE correlation_id = $1 \
+         ORDER BY id",
+    )
+    .bind(correlation_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(event_id, handler_id, level, message, data, logged_at)| HandlerLogRowFull {
+            event_id,
+            handler_id,
             level,
             message,
             data,

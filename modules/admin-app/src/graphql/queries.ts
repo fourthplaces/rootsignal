@@ -891,6 +891,21 @@ export const ADMIN_CAUSAL_FLOW = gql`
 export const ADMIN_HANDLER_LOGS = gql`
   query AdminHandlerLogs($eventId: String!, $handlerId: String!) {
     adminHandlerLogs(eventId: $eventId, handlerId: $handlerId) {
+      eventId
+      handlerId
+      level
+      message
+      data
+      loggedAt
+    }
+  }
+`;
+
+export const ADMIN_HANDLER_LOGS_BY_RUN = gql`
+  query AdminHandlerLogsByRun($runId: String!) {
+    adminHandlerLogsByRun(runId: $runId) {
+      eventId
+      handlerId
       level
       message
       data

@@ -1310,6 +1310,37 @@ impl QueryRoot {
         Ok(rows
             .into_iter()
             .map(|r| HandlerLog {
+                event_id: event_id.clone(),
+                handler_id: handler_id.clone(),
+                level: r.level,
+                message: r.message,
+                data: r.data,
+                logged_at: r.logged_at,
+            })
+            .collect())
+    }
+
+    /// Fetch all handler logs for a run, identified by run_id.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_handler_logs_by_run(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<Vec<HandlerLog>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::handler_logs_by_run(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load handler logs: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| HandlerLog {
+                event_id: r.event_id.to_string(),
+                handler_id: r.handler_id,
                 level: r.level,
                 message: r.message,
                 data: r.data,
@@ -1614,6 +1645,8 @@ struct GqlArchiveFile {
 
 #[derive(SimpleObject)]
 struct HandlerLog {
+    event_id: String,
+    handler_id: String,
     level: String,
     message: String,
     data: Option<serde_json::Value>,
