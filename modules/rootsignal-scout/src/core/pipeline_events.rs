@@ -35,8 +35,6 @@ pub enum PipelineEvent {
     SocialTopicsCollected {
         topics: Vec<String>,
     },
-    /// Social topics consumed by response scrape.
-    SocialTopicsConsumed,
     /// URL resolution state — mappings, pub_dates, API errors.
     UrlsResolvedAccumulated {
         url_mappings: HashMap<String, String>,
@@ -75,7 +73,6 @@ impl PipelineEvent {
             Self::ScheduleResolved { .. } => "schedule_resolved",
             Self::ExpansionAccumulated { .. } => "expansion_accumulated",
             Self::SocialTopicsCollected { .. } => "social_topics_collected",
-            Self::SocialTopicsConsumed => "social_topics_consumed",
             Self::HandlerSkipped { .. } => "handler_skipped",
             Self::HandlerFailed { .. } => "handler_failed",
             Self::UrlsResolvedAccumulated { .. } => "urls_resolved_accumulated",

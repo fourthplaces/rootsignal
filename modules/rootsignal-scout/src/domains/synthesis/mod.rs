@@ -246,12 +246,6 @@ pub mod handlers {
         let count = targets.len() as u32;
         info!(count, "Dispatching concern linker targets");
 
-        out.push(SynthesisEvent::SynthesisTargetsDispatched {
-            run_id,
-            role: SynthesisRole::ConcernLinker,
-            count,
-        });
-
         for target in &targets {
             out.push(SynthesisEvent::ConcernLinkerTargetRequested {
                 run_id,
@@ -475,12 +469,6 @@ pub mod handlers {
         let count = targets.len() as u32;
         info!(count, "Dispatching response finder targets");
 
-        out.push(SynthesisEvent::SynthesisTargetsDispatched {
-            run_id,
-            role: SynthesisRole::ResponseFinder,
-            count,
-        });
-
         for target in &targets {
             out.push(SynthesisEvent::ResponseFinderTargetRequested {
                 run_id,
@@ -687,12 +675,6 @@ pub mod handlers {
         let count = targets.len() as u32;
         info!(count, "Dispatching gathering finder targets");
 
-        out.push(SynthesisEvent::SynthesisTargetsDispatched {
-            run_id,
-            role: SynthesisRole::GatheringFinder,
-            count,
-        });
-
         for target in &targets {
             out.push(SynthesisEvent::GatheringFinderTargetRequested {
                 run_id,
@@ -874,12 +856,6 @@ pub mod handlers {
         let count = targets.len() as u32;
         info!(count, "Dispatching investigation targets");
 
-        out.push(SynthesisEvent::SynthesisTargetsDispatched {
-            run_id,
-            role: SynthesisRole::Investigation,
-            count,
-        });
-
         for target in &targets {
             out.push(SynthesisEvent::InvestigationTargetRequested {
                 run_id,
@@ -1033,12 +1009,6 @@ pub mod handlers {
 
         let count = tensions.len() as u32;
         info!(count, "Dispatching response mapping targets");
-
-        out.push(SynthesisEvent::SynthesisTargetsDispatched {
-            run_id,
-            role: SynthesisRole::ResponseMapping,
-            count,
-        });
 
         // We need to get tension titles for the events
         for (concern_id, _embedding) in &tensions {

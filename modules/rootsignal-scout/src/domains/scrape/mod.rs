@@ -41,24 +41,20 @@ fn is_source_expansion_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-fn is_web_urls_resolved(e: &ScrapeEvent) -> bool {
-    matches!(e, ScrapeEvent::WebUrlsResolved { .. })
+fn is_sources_resolved(e: &ScrapeEvent) -> bool {
+    matches!(e, ScrapeEvent::SourcesResolved { .. })
+}
+
+fn is_response_sources_resolved(e: &ScrapeEvent) -> bool {
+    matches!(e, ScrapeEvent::SourcesResolved { web_role: ScrapeRole::ResponseWeb, .. })
 }
 
 fn is_url_fetch_requested(e: &ScrapeEvent) -> bool {
     matches!(e, ScrapeEvent::UrlFetchRequested { .. })
 }
 
-fn is_social_scrape_triggered(e: &ScrapeEvent) -> bool {
-    matches!(e, ScrapeEvent::SocialScrapeTriggered { .. })
-}
-
 fn is_social_source_requested(e: &ScrapeEvent) -> bool {
     matches!(e, ScrapeEvent::SocialSourceRequested { .. })
-}
-
-fn is_topic_discovery_triggered(e: &ScrapeEvent) -> bool {
-    matches!(e, ScrapeEvent::TopicDiscoveryTriggered { .. })
 }
 
 fn is_url_scrape_completed(e: &ScrapeEvent) -> bool {
@@ -91,7 +87,7 @@ fn build_source_keys(sources: &[rootsignal_common::SourceNode]) -> HashMap<Strin
 pub mod handlers {
     use super::*;
 
-    /// SourcesScheduled → resolve tension URLs, emit WebUrlsResolved + SocialScrapeTriggered.
+    /// SourcesScheduled → resolve tension URLs, emit SourcesResolved.
     #[handle(on = LifecycleEvent, id = "scrape:resolve_tension", filter = is_sources_scheduled)]
     async fn resolve_tension(
         _event: LifecycleEvent,
@@ -128,43 +124,29 @@ pub mod handlers {
             deps.run_scope.region().map(|r| r.name.as_str()),
         ).await;
 
-        let mut all_events = Events::new();
-
-        // Emit UrlsResolvedAccumulated for URL mappings + pub_dates
-        all_events.push(PipelineEvent::UrlsResolvedAccumulated {
-            url_mappings: resolution.url_mappings.clone(),
-            pub_dates: resolution.pub_dates.clone(),
-            query_api_errors: resolution.query_api_errors.clone(),
-        });
-
-        // Emit WebUrlsResolved for web sources — carry source_keys so fetch handler doesn't re-derive
         let tension_web_keys = build_source_keys(&tension_web);
-        all_events.push(ScrapeEvent::WebUrlsResolved {
-            run_id,
-            role: ScrapeRole::TensionWeb,
-            urls: resolution.urls,
-            source_keys: tension_web_keys,
-            source_count: resolution.source_count,
-        });
 
-        // Trigger social scrape — handler reads sources from scheduled state
-        all_events.push(ScrapeEvent::SocialScrapeTriggered {
+        Ok(events![ScrapeEvent::SourcesResolved {
             run_id,
-            role: ScrapeRole::TensionSocial,
-        });
-
-        Ok(all_events)
+            web_role: ScrapeRole::TensionWeb,
+            web_urls: resolution.urls,
+            web_source_keys: tension_web_keys,
+            web_source_count: resolution.source_count,
+            url_mappings: resolution.url_mappings,
+            pub_dates: resolution.pub_dates,
+            query_api_errors: resolution.query_api_errors,
+        }])
     }
 
-    /// WebUrlsResolved → fan out individual UrlFetchRequested per URL.
-    #[handle(on = ScrapeEvent, id = "scrape:fan_out_urls", filter = is_web_urls_resolved)]
+    /// SourcesResolved → fan out individual UrlFetchRequested per URL.
+    #[handle(on = ScrapeEvent, id = "scrape:fan_out_urls", filter = is_sources_resolved)]
     async fn fan_out_urls(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let (run_id, role, urls, source_keys) = match event {
-            ScrapeEvent::WebUrlsResolved { run_id, role, urls, source_keys, .. } => (run_id, role, urls, source_keys),
-            _ => unreachable!("filter guarantees WebUrlsResolved"),
+            ScrapeEvent::SourcesResolved { run_id, web_role, web_urls, web_source_keys, .. } => (run_id, web_role, web_urls, web_source_keys),
+            _ => unreachable!("filter guarantees SourcesResolved"),
         };
 
         info!(?role, url_count = urls.len(), "Fan-out URLs for web scrape role");
@@ -249,15 +231,22 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// SocialScrapeTriggered → fan out individual SocialSourceRequested per source.
-    #[handle(on = ScrapeEvent, id = "scrape:fan_out_social", filter = is_social_scrape_triggered)]
+    /// SourcesResolved → fan out individual SocialSourceRequested per source.
+    #[handle(on = ScrapeEvent, id = "scrape:fan_out_social", filter = is_sources_resolved)]
     async fn fan_out_social(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let (run_id, role) = match &event {
-            ScrapeEvent::SocialScrapeTriggered { run_id, role } => (*run_id, *role),
-            _ => unreachable!("filter guarantees SocialScrapeTriggered"),
+        let (run_id, web_role) = match &event {
+            ScrapeEvent::SourcesResolved { run_id, web_role, .. } => (*run_id, *web_role),
+            _ => unreachable!("filter guarantees SourcesResolved"),
+        };
+
+        // Derive social role from web role
+        let role = match web_role {
+            ScrapeRole::TensionWeb => ScrapeRole::TensionSocial,
+            ScrapeRole::ResponseWeb => ScrapeRole::ResponseSocial,
+            _ => unreachable!("SourcesResolved always has TensionWeb or ResponseWeb"),
         };
 
         info!(?role, "Fan-out social sources for scrape role");
@@ -423,15 +412,15 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// TopicDiscoveryTriggered → discover from social topics.
-    #[handle(on = ScrapeEvent, id = "scrape:fetch_topics", filter = is_topic_discovery_triggered)]
+    /// SourcesResolved(ResponseWeb) → discover from social topics.
+    #[handle(on = ScrapeEvent, id = "scrape:fetch_topics", filter = is_response_sources_resolved)]
     async fn fetch_topics(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let run_id = match &event {
-            ScrapeEvent::TopicDiscoveryTriggered { run_id } => *run_id,
-            _ => unreachable!("filter guarantees TopicDiscoveryTriggered"),
+            ScrapeEvent::SourcesResolved { run_id, .. } => *run_id,
+            _ => unreachable!("filter guarantees SourcesResolved(ResponseWeb)"),
         };
 
         info!("Fetch topics for topic discovery");
@@ -455,7 +444,6 @@ pub mod handlers {
                 signals_extracted: 0,
             });
         } else {
-            all_events.push(PipelineEvent::SocialTopicsConsumed);
             let mut topic_output = activities::topic_discovery::discover_from_topics(
                 deps,
                 &all_social_topics,
@@ -662,10 +650,10 @@ pub mod handlers {
 
         let mut all_events = Events::new();
 
-        // Emit fresh URL mappings
+        // Emit fresh URL mappings (still used by expansion domain)
         if !fresh_url_mappings.is_empty() {
             all_events.push(PipelineEvent::UrlsResolvedAccumulated {
-                url_mappings: fresh_url_mappings,
+                url_mappings: fresh_url_mappings.clone(),
                 pub_dates: Default::default(),
                 query_api_errors: Default::default(),
             });
@@ -682,19 +670,13 @@ pub mod handlers {
 
         if !web_sources.is_empty() {
             info!(count = web_sources.len(), "Phase B sources (response + fresh discovery)");
-            let resolution = activities::url_resolution::resolve_web_urls(
+            let mut resolution = activities::url_resolution::resolve_web_urls(
                 deps,
                 &web_sources,
                 &state.url_to_canonical_key,
                 deps.ai.as_deref(),
                 deps.run_scope.region().map(|r| r.name.as_str()),
             ).await;
-
-            all_events.push(PipelineEvent::UrlsResolvedAccumulated {
-                url_mappings: resolution.url_mappings,
-                pub_dates: resolution.pub_dates,
-                query_api_errors: resolution.query_api_errors,
-            });
 
             // Build source_keys from web sources for fetch handler
             let web_source_nodes: Vec<rootsignal_common::SourceNode> = phase_b_sources
@@ -707,34 +689,32 @@ pub mod handlers {
                 .collect();
             let web_source_keys = build_source_keys(&web_source_nodes);
 
-            all_events.push(ScrapeEvent::WebUrlsResolved {
+            // Merge fresh URL mappings into resolution so SourcesResolved carries everything
+            resolution.url_mappings.extend(fresh_url_mappings);
+
+            all_events.push(ScrapeEvent::SourcesResolved {
                 run_id,
-                role: ScrapeRole::ResponseWeb,
-                urls: resolution.urls,
-                source_keys: web_source_keys,
-                source_count: resolution.source_count,
+                web_role: ScrapeRole::ResponseWeb,
+                web_urls: resolution.urls,
+                web_source_keys,
+                web_source_count: resolution.source_count,
+                url_mappings: resolution.url_mappings,
+                pub_dates: resolution.pub_dates,
+                query_api_errors: resolution.query_api_errors,
             });
         } else {
-            // No web sources — emit empty WebUrlsResolved to trigger completion
-            all_events.push(ScrapeEvent::WebUrlsResolved {
+            // No web sources — emit empty SourcesResolved to trigger completion
+            all_events.push(ScrapeEvent::SourcesResolved {
                 run_id,
-                role: ScrapeRole::ResponseWeb,
-                urls: Vec::new(),
-                source_keys: HashMap::new(),
-                source_count: 0,
+                web_role: ScrapeRole::ResponseWeb,
+                web_urls: Vec::new(),
+                web_source_keys: HashMap::new(),
+                web_source_count: 0,
+                url_mappings: Default::default(),
+                pub_dates: Default::default(),
+                query_api_errors: Default::default(),
             });
         }
-
-        // Trigger social scrape — handler reads sources from scheduled state
-        all_events.push(ScrapeEvent::SocialScrapeTriggered {
-            run_id,
-            role: ScrapeRole::ResponseSocial,
-        });
-
-        // Trigger topic discovery — handler reads topics from PipelineState
-        all_events.push(ScrapeEvent::TopicDiscoveryTriggered {
-            run_id,
-        });
 
         Ok(all_events)
     }

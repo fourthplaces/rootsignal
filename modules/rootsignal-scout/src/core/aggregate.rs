@@ -253,11 +253,12 @@ impl PipelineState {
                 });
             }
             ScrapeEvent::ExtractionFailed { .. } => {}
-            ScrapeEvent::WebUrlsResolved { role, urls, .. } => {
-                self.role_url_totals.insert(*role, urls.len() as u32);
+            ScrapeEvent::SourcesResolved { web_role, web_urls, url_mappings, pub_dates, query_api_errors, .. } => {
+                self.role_url_totals.insert(*web_role, web_urls.len() as u32);
+                self.url_to_canonical_key.extend(url_mappings.clone());
+                self.url_to_pub_date.extend(pub_dates.clone());
+                self.query_api_errors.extend(query_api_errors.clone());
             }
-            ScrapeEvent::SocialScrapeTriggered { .. } => {}
-            ScrapeEvent::TopicDiscoveryTriggered { .. } => {}
             ScrapeEvent::UrlFetchRequested { .. } => {}
             ScrapeEvent::UrlScrapeCompleted {
                 role,
@@ -290,6 +291,10 @@ impl PipelineState {
             }
             ScrapeEvent::ScrapeRoleCompleted { role, .. } => {
                 self.completed_scrape_roles.insert(*role);
+                if *role == ScrapeRole::TopicDiscovery {
+                    self.social_topics.clear();
+                    self.social_expansion_topics.clear();
+                }
             }
         }
     }
@@ -367,15 +372,22 @@ impl PipelineState {
             SynthesisEvent::SynthesisRoleCompleted { role, .. } => {
                 self.completed_synthesis_roles.insert(*role);
             }
-            SynthesisEvent::SynthesisTargetsDispatched { role, count, .. } => {
-                self.synthesis_role_totals.insert(*role, *count);
+            // Per-target requested events set role totals (replaces SynthesisTargetsDispatched)
+            SynthesisEvent::ConcernLinkerTargetRequested { .. } => {
+                *self.synthesis_role_totals.entry(SynthesisRole::ConcernLinker).or_default() += 1;
             }
-            // Per-target requested events are no-ops for aggregate state
-            SynthesisEvent::ConcernLinkerTargetRequested { .. }
-            | SynthesisEvent::ResponseFinderTargetRequested { .. }
-            | SynthesisEvent::GatheringFinderTargetRequested { .. }
-            | SynthesisEvent::InvestigationTargetRequested { .. }
-            | SynthesisEvent::ResponseMappingTargetRequested { .. } => {}
+            SynthesisEvent::ResponseFinderTargetRequested { .. } => {
+                *self.synthesis_role_totals.entry(SynthesisRole::ResponseFinder).or_default() += 1;
+            }
+            SynthesisEvent::GatheringFinderTargetRequested { .. } => {
+                *self.synthesis_role_totals.entry(SynthesisRole::GatheringFinder).or_default() += 1;
+            }
+            SynthesisEvent::InvestigationTargetRequested { .. } => {
+                *self.synthesis_role_totals.entry(SynthesisRole::Investigation).or_default() += 1;
+            }
+            SynthesisEvent::ResponseMappingTargetRequested { .. } => {
+                *self.synthesis_role_totals.entry(SynthesisRole::ResponseMapping).or_default() += 1;
+            }
             // Per-target completed events increment completed count
             SynthesisEvent::ConcernLinkerTargetCompleted { .. } => {
                 *self.synthesis_role_completed.entry(SynthesisRole::ConcernLinker).or_default() += 1;
@@ -470,9 +482,6 @@ impl PipelineState {
             }
             PipelineEvent::SocialTopicsCollected { topics } => {
                 self.social_topics = topics.clone();
-            }
-            PipelineEvent::SocialTopicsConsumed => {
-                self.social_topics.clear();
             }
             PipelineEvent::HandlerSkipped { .. } => {}
             PipelineEvent::HandlerFailed { .. } => {

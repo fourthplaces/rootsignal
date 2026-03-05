@@ -33,9 +33,6 @@ pub enum SynthesisEvent {
     SynthesisTriggered { run_id: Uuid },
     SynthesisRoleCompleted { run_id: Uuid, role: SynthesisRole },
 
-    // Fan-out bookkeeping
-    SynthesisTargetsDispatched { run_id: Uuid, role: SynthesisRole, count: u32 },
-
     // ConcernLinker per-target
     ConcernLinkerTargetRequested { run_id: Uuid, signal_id: Uuid, signal_title: String, signal_type: String, source_url: String },
     ConcernLinkerTargetCompleted { run_id: Uuid, signal_id: Uuid, outcome: String, tensions_discovered: u32, edges_created: u32 },
@@ -62,7 +59,6 @@ impl SynthesisEvent {
         match self {
             Self::SynthesisTriggered { run_id }
             | Self::SynthesisRoleCompleted { run_id, .. }
-            | Self::SynthesisTargetsDispatched { run_id, .. }
             | Self::ConcernLinkerTargetRequested { run_id, .. }
             | Self::ConcernLinkerTargetCompleted { run_id, .. }
             | Self::ResponseFinderTargetRequested { run_id, .. }
