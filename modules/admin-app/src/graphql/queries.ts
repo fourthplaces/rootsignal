@@ -230,8 +230,8 @@ export const ADMIN_SIGNALS = gql`
 `;
 
 export const SIGNAL_DETAIL = gql`
-  query Signal($id: UUID!, $scheduleFrom: DateTime!, $scheduleTo: DateTime!) {
-    signal(id: $id) {
+  query AdminSignal($id: UUID!, $scheduleFrom: DateTime!, $scheduleTo: DateTime!) {
+    adminSignal(id: $id) {
       ${SIGNAL_FIELDS}
       ... on GqlGatheringSignal {
         citations { id sourceUrl snippet relevance }

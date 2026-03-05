@@ -55,7 +55,7 @@ export function SignalDetailPage() {
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
-  const signal = data?.signal;
+  const signal = data?.adminSignal;
   if (!signal) return <p className="text-muted-foreground">Signal not found</p>;
 
   const typeName = (signal.__typename as string).replace("Gql", "").replace("Signal", "");

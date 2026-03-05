@@ -245,6 +245,14 @@ impl QueryRoot {
 
     // ========== Admin queries (AdminGuard) ==========
 
+    /// Get a single signal by ID, bypassing display filters (expired, past, etc.).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_signal(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlSignal>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let node = reader.get_signal_by_id_unfiltered(id).await?;
+        Ok(node.map(GqlSignal::from))
+    }
+
     /// Dashboard data for a region.
     #[graphql(guard = "AdminGuard")]
     async fn admin_dashboard(
