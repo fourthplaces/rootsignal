@@ -142,7 +142,7 @@ function DiscoveryTreeView({ tree }: { tree: DiscoveryTree }) {
           <span className="text-muted-foreground text-xs">{"└─"}</span>
         )}
         <Link
-          to={`/sources/${id}`}
+          to={`/scout/sources/${id}`}
           className={`text-sm hover:underline ${
             isRoot ? "text-blue-400 font-medium" : "text-foreground"
           }`}
@@ -209,7 +209,7 @@ export function SourceDetailPage() {
       <div className="space-y-2">
         <div className="flex items-center gap-3">
           <Link
-            to="/sources"
+            to="/scout?tab=sources"
             className="text-muted-foreground hover:text-foreground text-sm"
           >
             Sources

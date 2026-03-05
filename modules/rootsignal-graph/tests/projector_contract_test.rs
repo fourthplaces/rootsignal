@@ -171,13 +171,8 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "signal_diversity_computed",
     "actor_stats_computed",
     "similarity_edges_rebuilt",
-    "beacon_detected",
-    // System: Task lifecycle
-    "task_phase_transitioned",
     // System: Admin actions
     "validation_issue_dismissed",
-    "scout_task_created",
-    "scout_task_cancelled",
 ];
 
 #[test]
@@ -987,44 +982,9 @@ fn build_all_events() -> Vec<Event> {
         Event::System(SystemEvent::SimilarityEdgesRebuilt {
             edges: vec![],
         }),
-        Event::System(SystemEvent::BeaconDetected {
-            task: ScoutTask {
-                id,
-                center_lat: 0.0,
-                center_lng: 0.0,
-                radius_km: 10.0,
-                context: "".into(),
-                geo_terms: vec![],
-                priority: 0.5,
-                source: ScoutTaskSource::Beacon,
-                status: ScoutTaskStatus::Pending,
-                phase_status: "idle".into(),
-                created_at: now,
-                completed_at: None,
-            },
-        }),
-        // Task lifecycle
-        Event::System(SystemEvent::TaskPhaseTransitioned {
-            task_id: "".into(),
-            phase: "".into(),
-            status: "".into(),
-        }),
         // Admin actions
         Event::System(SystemEvent::ValidationIssueDismissed {
             issue_id: "".into(),
-        }),
-        Event::System(SystemEvent::ScoutTaskCreated {
-            task_id: id,
-            center_lat: 0.0,
-            center_lng: 0.0,
-            radius_km: 10.0,
-            context: "".into(),
-            geo_terms: vec![],
-            priority: 0.5,
-            source: "beacon".into(),
-        }),
-        Event::System(SystemEvent::ScoutTaskCancelled {
-            task_id: "".into(),
         }),
     ]
 }

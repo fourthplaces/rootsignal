@@ -1,8 +1,6 @@
-import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery } from "@apollo/client";
-import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_EVENTS, SIGNAL_BRIEF } from "@/graphql/queries";
-import { EVENT_COLORS, eventDetail, truncate, formatBytes, type ScoutRunEvent } from "@/lib/event-colors";
+import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_OUTCOMES } from "@/graphql/queries";
 
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -12,398 +10,270 @@ function ExternalLink({ href, children }: { href: string; children: React.ReactN
   );
 }
 
-function KV({ label, children }: { label: string; children: React.ReactNode }) {
-  if (children == null || children === "") return null;
+function StatCard({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
   return (
-    <div className="flex gap-2 text-xs">
-      <span className="text-muted-foreground shrink-0">{label}:</span>
-      <span className="text-foreground break-all">{children}</span>
+    <div className={`rounded-lg border p-4 ${warn ? "border-yellow-500/50 bg-yellow-500/5" : "border-border"}`}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-lg font-semibold mt-1 tabular-nums ${warn ? "text-yellow-400" : ""}`}>{value}</p>
     </div>
   );
 }
 
-function SignalBriefCard({ signalId, label }: { signalId: string; label: string }) {
-  const { data, loading } = useQuery(SIGNAL_BRIEF, {
-    variables: { id: signalId },
-    skip: !signalId,
-  });
-
-  const signal = data?.signal;
-
+function SectionHeader({ title, total }: { title: string; total: number }) {
   return (
-    <div className="flex-1 rounded border border-border p-3 space-y-2 min-w-0">
-      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{label}</p>
-      {loading && <p className="text-xs text-muted-foreground">Loading...</p>}
-      {signal && (
-        <>
-          <p className="text-sm font-medium">
-            <Link to={`/signals/${signal.id}`} className="text-blue-400 hover:underline">
-              {signal.title}
-            </Link>
-          </p>
-          {signal.summary && <p className="text-xs text-muted-foreground">{signal.summary}</p>}
-          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-            {signal.confidence != null && <span>confidence: {signal.confidence.toFixed(2)}</span>}
-            {signal.contentDate && <span>date: {signal.contentDate}</span>}
-            {signal.locationName && <span>{signal.locationName}</span>}
-          </div>
-          {signal.sourceUrl && (
-            <ExternalLink href={signal.sourceUrl}>{truncate(signal.sourceUrl, 60)}</ExternalLink>
-          )}
-        </>
-      )}
-      {!loading && !signal && <p className="text-xs text-muted-foreground">Signal not found</p>}
-    </div>
+    <h2 className="text-sm font-semibold flex items-center gap-2">
+      {title}
+      <span className="text-xs font-normal text-muted-foreground bg-muted px-2 py-0.5 rounded-full tabular-nums">
+        {total}
+      </span>
+    </h2>
   );
 }
 
-function DedupPanel({ e }: { e: ScoutRunEvent }) {
-  const matchId = e.matchedId ?? e.existingId;
-  return (
-    <div className="flex gap-4">
-      <div className="flex-1 rounded border border-border p-3 space-y-2 min-w-0">
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Incoming Signal</p>
-        <p className="text-sm font-medium">{e.title}</p>
-        {e.summary && <p className="text-xs text-muted-foreground">{e.summary}</p>}
-        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-          {e.signalType && <span>{e.signalType}</span>}
-          {e.confidence != null && <span>confidence: {e.confidence.toFixed(2)}</span>}
-        </div>
-        {(e.sourceUrl ?? e.newSourceUrl) && (
-          <ExternalLink href={(e.sourceUrl ?? e.newSourceUrl)!}>
-            {truncate((e.sourceUrl ?? e.newSourceUrl)!, 60)}
-          </ExternalLink>
-        )}
-      </div>
-      <div className="flex flex-col items-center justify-center px-2">
-        <span className="text-xs font-mono text-muted-foreground">sim</span>
-        <span className="text-lg font-bold tabular-nums">
-          {(e.similarity ?? 0).toFixed(3)}
-        </span>
-        {e.action && <span className="text-xs text-muted-foreground mt-1">{e.action}</span>}
-      </div>
-      {matchId ? (
-        <SignalBriefCard signalId={matchId} label="Existing Signal" />
-      ) : (
-        <div className="flex-1 rounded border border-border p-3">
-          <p className="text-xs text-muted-foreground">No matched signal ID</p>
-        </div>
-      )}
-    </div>
-  );
+function EmptySection() {
+  return <p className="text-xs text-muted-foreground py-2">None</p>;
 }
 
-function EventDetailPanel({ e }: { e: ScoutRunEvent }) {
-  switch (e.type) {
-    case "signal_deduplicated":
-    case "signal_corroborated":
-      return <DedupPanel e={e} />;
+function truncate(s: string, n: number) {
+  return s.length > n ? s.slice(0, n) + "..." : s;
+}
 
-    case "signal_created":
-      return (
-        <div className="space-y-1">
-          <KV label="Title">{e.title}</KV>
-          <KV label="Type">{e.signalType}</KV>
-          <KV label="Confidence">{e.confidence?.toFixed(2)}</KV>
-          {e.nodeId && (
-            <KV label="Signal">
-              <Link to={`/signals/${e.nodeId}`} className="text-blue-400 hover:underline">{e.nodeId.slice(0, 8)}</Link>
-            </KV>
-          )}
-          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
-        </div>
-      );
-
-    case "signal_rejected":
-      return (
-        <div className="space-y-1">
-          <KV label="Title">{e.title}</KV>
-          <KV label="Reason"><span className="text-red-400">{e.reason}</span></KV>
-          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
-        </div>
-      );
-
-    case "signal_dropped_no_date":
-      return (
-        <div className="space-y-1">
-          <KV label="Title">{e.title}</KV>
-          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
-        </div>
-      );
-
-    case "scrape_url":
-      return (
-        <div className="space-y-1">
-          {e.url && <KV label="URL"><ExternalLink href={e.url}>{e.url}</ExternalLink></KV>}
-          <KV label="Strategy">{e.strategy}</KV>
-          <KV label="Result">{e.success ? `Success (${formatBytes(e.contentBytes ?? 0)})` : "Failed"}</KV>
-        </div>
-      );
-
-    case "search_query":
-      return (
-        <div className="space-y-1">
-          <KV label="Query">{e.query}</KV>
-          <KV label="Provider">{e.provider}</KV>
-          <KV label="Results">{e.resultCount}</KV>
-          <KV label="Canonical Key">{e.canonicalKey}</KV>
-        </div>
-      );
-
-    case "llm_extraction":
-      return (
-        <div className="space-y-1">
-          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
-          <KV label="Content">{e.contentChars?.toLocaleString()} chars</KV>
-          <KV label="Signals Extracted">{e.signalsExtracted}</KV>
-          <KV label="Implied Queries">{e.impliedQueries}</KV>
-        </div>
-      );
-
-    case "lint_batch":
-      return (
-        <div className="space-y-1">
-          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
-          <KV label="Total Signals">{e.signalCount}</KV>
-          <div className="flex gap-4 text-xs">
-            <span className="text-green-400">{e.resultCount} passed</span>
-            <span className="text-yellow-400">{e.postCount} corrected</span>
-            <span className="text-red-400">{e.items} rejected</span>
-          </div>
-        </div>
-      );
-
-    case "lint_correction":
-      return (
-        <div className="space-y-1">
-          {e.nodeId && (
-            <KV label="Signal">
-              <Link to={`/signals/${e.nodeId}`} className="text-blue-400 hover:underline">
-                {e.title ?? e.nodeId.slice(0, 8)}
-              </Link>
-              {e.signalType && <span className="text-muted-foreground ml-2">({e.signalType})</span>}
-            </KV>
-          )}
-          <KV label="Field">{e.field}</KV>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="rounded bg-red-500/10 border border-red-500/20 px-2 py-0.5 line-through">{e.oldValue}</span>
-            <span className="text-muted-foreground">→</span>
-            <span className="rounded bg-green-500/10 border border-green-500/20 px-2 py-0.5">{e.newValue}</span>
-          </div>
-          <KV label="Reason">{e.reason}</KV>
-        </div>
-      );
-
-    case "lint_rejection":
-      return (
-        <div className="space-y-1">
-          {e.nodeId && (
-            <KV label="Signal">
-              <Link to={`/signals/${e.nodeId}`} className="text-blue-400 hover:underline">
-                {e.title ?? e.nodeId.slice(0, 8)}
-              </Link>
-              {e.signalType && <span className="text-muted-foreground ml-2">({e.signalType})</span>}
-            </KV>
-          )}
-          <KV label="Reason"><span className="text-red-400">{e.reason}</span></KV>
-        </div>
-      );
-
-    case "expansion_query_collected":
-      return (
-        <div className="space-y-1">
-          <KV label="Query">{e.query}</KV>
-          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
-        </div>
-      );
-
-    case "expansion_source_created":
-      return (
-        <div className="space-y-1">
-          <KV label="Canonical Key">{e.canonicalKey}</KV>
-          <KV label="Query">{e.query}</KV>
-          {e.sourceUrl && <KV label="Source"><ExternalLink href={e.sourceUrl}>{e.sourceUrl}</ExternalLink></KV>}
-        </div>
-      );
-
-    default: {
-      // Fallback: show all non-null fields as key-value pairs
-      const skip = new Set(["id", "parentId", "seq", "ts", "type"]);
-      const entries = Object.entries(e).filter(
-        ([k, v]) => !skip.has(k) && v != null && v !== "",
-      );
-      if (entries.length === 0) return <p className="text-xs text-muted-foreground">No additional details</p>;
-      return (
-        <div className="space-y-1">
-          {entries.map(([k, v]) => (
-            <KV key={k} label={k}>{typeof v === "object" ? JSON.stringify(v) : String(v)}</KV>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function OutcomeTable({ columns, rows }: { columns: { key: string; label: string; render?: (v: any, row: any) => React.ReactNode }[]; rows: Record<string, unknown>[] }) {
+  if (rows.length === 0) return <EmptySection />;
+  return (
+    <div className="rounded-lg border border-border overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border bg-muted/50">
+            {columns.map((c) => (
+              <th key={c.key} className="text-left px-4 py-2 font-medium text-xs">{c.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/30">
+              {columns.map((c) => (
+                <td key={c.key} className="px-4 py-2 text-xs">
+                  {c.render ? c.render(row[c.key], row) : (row[c.key] as string) ?? ""}
+                </td>
+              ))}
+            </tr>
           ))}
-        </div>
-      );
-    }
-  }
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ShowingCount({ shown, total }: { shown: number; total: number }) {
+  if (total <= shown) return null;
+  return <p className="text-xs text-muted-foreground mt-1">Showing {shown} of {total}</p>;
 }
 
 export function ScoutRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
-  const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined);
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   const { data, loading } = useQuery(ADMIN_SCOUT_RUN, {
     variables: { runId: runId ?? "" },
     skip: !runId,
   });
 
-  const { data: eventsData, loading: eventsLoading } = useQuery(ADMIN_SCOUT_RUN_EVENTS, {
+  const { data: outcomesData, loading: outcomesLoading } = useQuery(ADMIN_SCOUT_RUN_OUTCOMES, {
     variables: { runId: runId ?? "" },
     skip: !runId,
   });
 
   const run = data?.adminScoutRun;
 
-  if (loading) {
-    return <p className="text-muted-foreground">Loading run...</p>;
-  }
+  if (loading) return <p className="text-muted-foreground">Loading run...</p>;
+  if (!run) return <p className="text-muted-foreground">Run not found.</p>;
 
-  if (!run) {
-    return <p className="text-muted-foreground">Run not found.</p>;
-  }
-
-  const events: ScoutRunEvent[] = eventsData?.adminScoutRunEvents ?? [];
-  const eventTypes = [...new Set(events.map((e: ScoutRunEvent) => e.type))].sort();
-  const filtered = typeFilter
-    ? events.filter((e: ScoutRunEvent) => e.type === typeFilter)
-    : events;
+  const outcomes = outcomesData?.adminScoutRunOutcomes;
 
   const duration = (() => {
-    const ms =
-      new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
+    if (!run.finishedAt) return "running";
+    const ms = new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
     const secs = Math.round(ms / 1000);
     if (secs < 60) return `${secs}s`;
     const mins = Math.floor(secs / 60);
     return `${mins}m ${secs % 60}s`;
   })();
 
-  const formatTime = (d: string) =>
-    new Date(d).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+  const formatTs = (d: string) =>
+    new Date(d).toLocaleString("en-US", {
+      month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          to="/scout-runs"
-          className="text-muted-foreground hover:text-foreground text-sm"
-        >
-          Scout Runs
-        </Link>
-        <span className="text-muted-foreground">/</span>
-        <h1 className="text-xl font-semibold font-mono text-sm">
-          {run.runId.slice(0, 8)}
-        </h1>
-      </div>
-
-      {/* Header stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-        {[
-          { label: "Region", value: run.region },
-          { label: "Duration", value: duration },
-          { label: "URLs Scraped", value: run.stats.urlsScraped },
-          { label: "Signals Stored", value: run.stats.signalsStored },
-          { label: "Deduplicated", value: run.stats.signalsDeduplicated },
-          { label: "Events", value: eventsLoading ? "..." : events.length },
-          ...(run.stats.handlerFailures > 0
-            ? [{ label: "Handler Failures", value: run.stats.handlerFailures, warn: true }]
-            : []),
-        ].map((stat) => (
-          <div key={stat.label} className={`rounded-lg border p-4 ${"warn" in stat && stat.warn ? "border-yellow-500/50 bg-yellow-500/5" : "border-border"}`}>
-            <p className="text-xs text-muted-foreground">{stat.label}</p>
-            <p className={`text-lg font-semibold mt-1 ${"warn" in stat && stat.warn ? "text-yellow-400" : ""}`}>{stat.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Filter */}
-      <div className="flex gap-3 items-center">
-        <select
-          value={typeFilter ?? ""}
-          onChange={(e) => setTypeFilter(e.target.value || undefined)}
-          className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-        >
-          <option value="">All event types ({events.length})</option>
-          {eventTypes.map((t) => (
-            <option key={t} value={t}>
-              {t} ({events.filter((e: ScoutRunEvent) => e.type === t).length})
-            </option>
-          ))}
-        </select>
-        <span className="text-xs text-muted-foreground">
-          Showing {filtered.length} of {events.length} events
-        </span>
-      </div>
-
-      {/* Event timeline */}
-      {eventsLoading ? (
-        <p className="text-muted-foreground">Loading events...</p>
-      ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
-                <th className="text-left px-4 py-2 font-medium w-12">#</th>
-                <th className="text-left px-4 py-2 font-medium w-24">Time</th>
-                <th className="text-left px-4 py-2 font-medium w-48">Type</th>
-                <th className="text-left px-4 py-2 font-medium">Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((e: ScoutRunEvent) => {
-                const eKey = e.id ?? String(e.seq);
-                const isExpanded = expandedKey === eKey;
-                return (
-                  <>
-                    <tr
-                      key={eKey}
-                      className={`border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer ${isExpanded ? "bg-muted/40" : ""}`}
-                      onClick={() => setExpandedKey(isExpanded ? null : eKey)}
-                    >
-                      <td className="px-4 py-2 text-muted-foreground tabular-nums">
-                        {e.seq}
-                      </td>
-                      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap tabular-nums text-xs">
-                        {formatTime(e.ts)}
-                      </td>
-                      <td className="px-4 py-2">
-                        <span
-                          className={`inline-block px-2 py-0.5 rounded text-xs border ${EVENT_COLORS[e.type] ?? "bg-muted text-muted-foreground"}`}
-                        >
-                          {e.type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-muted-foreground font-mono text-xs truncate max-w-lg">
-                        <span className="flex items-center gap-2">
-                          <span className={`transition-transform text-xs ${isExpanded ? "rotate-90" : ""}`}>▶</span>
-                          {eventDetail(e)}
-                        </span>
-                      </td>
-                    </tr>
-                    {isExpanded && (
-                      <tr key={`${eKey}-detail`} className="border-b border-border bg-muted/20">
-                        <td colSpan={4} className="px-6 py-4">
-                          <EventDetailPanel e={e} />
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
-          </table>
+      {/* Breadcrumb + header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link to="/scout-runs" className="text-muted-foreground hover:text-foreground text-sm">Scout Runs</Link>
+          <span className="text-muted-foreground">/</span>
+          <h1 className="text-sm font-semibold font-mono">{run.runId.slice(0, 8)}</h1>
+          {run.flowType && (
+            <span className="text-xs px-2 py-0.5 rounded border border-border bg-muted">{run.flowType}</span>
+          )}
+          {!run.finishedAt && (
+            <span className="text-xs px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/30">running</span>
+          )}
         </div>
-      )}
+        <Link
+          to={`/events?runId=${run.runId}`}
+          className="text-xs text-blue-400 hover:underline"
+        >
+          View Events &rarr;
+        </Link>
+      </div>
+
+      {/* Timestamps */}
+      <div className="flex gap-6 text-xs text-muted-foreground">
+        <span>Started: {formatTs(run.startedAt)}</span>
+        {run.finishedAt && <span>Finished: {formatTs(run.finishedAt)}</span>}
+        <span>Duration: {duration}</span>
+        <span>Region: {run.region}</span>
+      </div>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+        <StatCard label="URLs Scraped" value={run.stats.urlsScraped} />
+        <StatCard label="Signals Stored" value={run.stats.signalsStored} />
+        <StatCard label="Deduplicated" value={run.stats.signalsDeduplicated} />
+        <StatCard label="Sources Discovered" value={run.stats.expansionSourcesCreated} />
+        <StatCard label="Expansion Queries" value={run.stats.expansionQueriesCollected} />
+        {run.stats.handlerFailures > 0 && (
+          <StatCard label="Failures" value={run.stats.handlerFailures} warn />
+        )}
+      </div>
+
+      {/* Outcome sections */}
+      {outcomesLoading ? (
+        <p className="text-muted-foreground text-sm">Loading outcomes...</p>
+      ) : outcomes ? (
+        <div className="space-y-6">
+          {/* Sources Scraped */}
+          <div className="space-y-2">
+            <SectionHeader title="Sources Scraped" total={outcomes.sourcesScraped.total} />
+            <OutcomeTable
+              columns={[
+                { key: "canonicalKey", label: "Source", render: (v: string) => <span className="font-mono">{truncate(v, 60)}</span> },
+                { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 50)}</ExternalLink> : null },
+                { key: "signalsProduced", label: "Signals" },
+              ]}
+              rows={outcomes.sourcesScraped.items}
+            />
+            <ShowingCount shown={outcomes.sourcesScraped.items.length} total={outcomes.sourcesScraped.total} />
+          </div>
+
+          {/* Signals Created */}
+          <div className="space-y-2">
+            <SectionHeader title="Signals Created" total={outcomes.signalsCreated.total} />
+            <OutcomeTable
+              columns={[
+                { key: "nodeType", label: "Type", render: (v: string) => (
+                  <span className="px-2 py-0.5 rounded text-xs border border-border bg-muted">{v}</span>
+                )},
+                { key: "title", label: "Title", render: (v: string, row: { nodeId: string }) => (
+                  <Link to={`/signals/${row.nodeId}`} className="text-blue-400 hover:underline">{v ?? "untitled"}</Link>
+                )},
+                { key: "confidence", label: "Confidence", render: (v: number | null) => v != null ? `${(v * 100).toFixed(0)}%` : "" },
+                { key: "sourceUrl", label: "Source", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+              ]}
+              rows={outcomes.signalsCreated.items}
+            />
+            <ShowingCount shown={outcomes.signalsCreated.items.length} total={outcomes.signalsCreated.total} />
+          </div>
+
+          {/* Dedup Matches */}
+          {outcomes.dedupMatches.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Dedup Matches" total={outcomes.dedupMatches.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "nodeType", label: "Type" },
+                  { key: "title", label: "Title" },
+                  { key: "similarity", label: "Similarity", render: (v: number | null) => v != null ? `${(v * 100).toFixed(0)}%` : "" },
+                  { key: "existingId", label: "Existing Signal", render: (v: string) => v ? (
+                    <Link to={`/signals/${v}`} className="text-blue-400 hover:underline font-mono text-xs">{v.slice(0, 8)}</Link>
+                  ) : null },
+                ]}
+                rows={outcomes.dedupMatches.items}
+              />
+              <ShowingCount shown={outcomes.dedupMatches.items.length} total={outcomes.dedupMatches.total} />
+            </div>
+          )}
+
+          {/* Rejections */}
+          {outcomes.rejections.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Rejections" total={outcomes.rejections.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "title", label: "Title" },
+                  { key: "reason", label: "Reason", render: (v: string) => <span className="text-red-400">{v}</span> },
+                ]}
+                rows={outcomes.rejections.items}
+              />
+              <ShowingCount shown={outcomes.rejections.items.length} total={outcomes.rejections.total} />
+            </div>
+          )}
+
+          {/* Sources Discovered */}
+          {outcomes.sourcesDiscovered.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Sources Discovered" total={outcomes.sourcesDiscovered.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "canonicalKey", label: "Source", render: (v: string) => <span className="font-mono">{truncate(v, 50)}</span> },
+                  { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+                  { key: "discoveryMethod", label: "Method" },
+                  { key: "gapContext", label: "Gap Context", render: (v: string) => v ? <span className="text-muted-foreground">{truncate(v, 40)}</span> : null },
+                ]}
+                rows={outcomes.sourcesDiscovered.items}
+              />
+              <ShowingCount shown={outcomes.sourcesDiscovered.items.length} total={outcomes.sourcesDiscovered.total} />
+            </div>
+          )}
+
+          {/* Expansion Queries */}
+          {outcomes.expansionQueries.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Expansion Queries" total={outcomes.expansionQueries.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "query", label: "Query" },
+                  { key: "sourceUrl", label: "Source", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+                ]}
+                rows={outcomes.expansionQueries.items}
+              />
+              <ShowingCount shown={outcomes.expansionQueries.items.length} total={outcomes.expansionQueries.total} />
+            </div>
+          )}
+
+          {/* Failures */}
+          {outcomes.failures.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Failures" total={outcomes.failures.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "variant", label: "Type", render: (v: string) => (
+                    <span className="px-2 py-0.5 rounded text-xs border border-red-500/30 bg-red-500/10 text-red-400">{v}</span>
+                  )},
+                  { key: "handlerId", label: "Handler", render: (v: string) => v ? <span className="font-mono">{v}</span> : null },
+                  { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+                  { key: "error", label: "Error", render: (v: string) => <span className="text-red-400">{truncate(v, 80)}</span> },
+                ]}
+                rows={outcomes.failures.items}
+              />
+              <ShowingCount shown={outcomes.failures.items.length} total={outcomes.failures.total} />
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

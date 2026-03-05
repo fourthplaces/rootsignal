@@ -57,7 +57,6 @@ impl ScoutDeps {
         run_id: &str,
         spent_cents: u64,
         task_id: Option<&str>,
-        completion_phase_status: Option<&str>,
     ) -> ScoutEngineDeps {
         let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
         let embedder: Arc<dyn TextEmbedder> =
@@ -91,7 +90,6 @@ impl ScoutDeps {
         deps.budget = Some(budget);
         deps.pg_pool = Some(self.pg_pool.clone());
         deps.task_id = task_id.map(String::from);
-        deps.completion_phase_status = completion_phase_status.map(String::from);
 
         // Validate scrape-critical deps. build_engine_deps is the production
         // entry point for both scrape and full engines — catch configuration
@@ -111,14 +109,13 @@ impl ScoutDeps {
         scope: &rootsignal_common::ScoutScope,
         run_id: &str,
         task_id: Option<&str>,
-        completion_phase_status: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_engine_deps(scope, run_id, 0, task_id, completion_phase_status);
+        let deps = self.build_engine_deps(scope, run_id, 0, task_id);
         let store = self.make_store(run_id);
         engine::build_engine(deps, store)
     }
 
-    /// Build a news-scan engine: NewsScanRequested → BeaconDetected.
+    /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
     ///
     /// Minimal deps: no scope/region, no extractor.
     pub fn build_news_engine(&self, run_id: &str) -> ScoutEngine {
@@ -158,11 +155,24 @@ impl ScoutDeps {
         run_id: &str,
         spent_cents: u64,
         task_id: Option<&str>,
-        completion_phase_status: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_engine_deps(scope, run_id, spent_cents, task_id, completion_phase_status);
+        let deps = self.build_engine_deps(scope, run_id, spent_cents, task_id);
         let store = self.make_store(run_id);
         engine::build_full_engine(deps, store)
+    }
+
+    /// Build a weave-only engine: cross-signal synthesis at any region level.
+    ///
+    /// Includes synthesis, situation_weaving, supervisor — excludes scrape/discovery/enrichment/expansion.
+    pub fn build_weave_engine(
+        &self,
+        scope: &rootsignal_common::ScoutScope,
+        run_id: &str,
+        task_id: Option<&str>,
+    ) -> ScoutEngine {
+        let deps = self.build_engine_deps(scope, run_id, 0, task_id);
+        let store = self.make_store(run_id);
+        engine::build_weave_engine(deps, store)
     }
 
     /// Build engine deps for resuming a crashed run. Same as `build_engine_deps`
@@ -174,7 +184,7 @@ impl ScoutDeps {
         run_id: &str,
         task_id: Option<&str>,
     ) -> ScoutEngineDeps {
-        self.build_engine_deps(scope, run_id, 0, task_id, None)
+        self.build_engine_deps(scope, run_id, 0, task_id)
     }
 
     /// Create a PostgresStore scoped to a run_id (used as correlation_id).

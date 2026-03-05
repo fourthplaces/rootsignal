@@ -1,4 +1,3 @@
-pub mod beacon;
 pub mod cache;
 pub mod cached_reader;
 pub mod cause_heat;

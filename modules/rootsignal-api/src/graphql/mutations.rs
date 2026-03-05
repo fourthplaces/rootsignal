@@ -241,28 +241,29 @@ impl MutationRoot {
 
     // --- Region CRUD ---
 
-    /// Create a new region.
+    /// Create a new region by name. Geocodes the location automatically.
     #[graphql(guard = "AdminGuard")]
     async fn create_region(
         &self,
         ctx: &Context<'_>,
         name: String,
-        center_lat: f64,
-        center_lng: f64,
-        radius_km: f64,
-        #[graphql(default)] geo_terms: Vec<String>,
-        #[graphql(default = true)] is_leaf: bool,
     ) -> Result<super::types::GqlRegion> {
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+
+        let (lat, lng, _display_name) = geocode_location(&name)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
+
+        let geo_terms = vec![name.clone()];
 
         let region = rootsignal_common::Region {
             id: Uuid::new_v4(),
             name,
-            center_lat,
-            center_lng,
-            radius_km,
+            center_lat: lat,
+            center_lng: lng,
+            radius_km: 20.0,
             geo_terms,
-            is_leaf,
+            is_leaf: true,
             created_at: chrono::Utc::now(),
         };
 

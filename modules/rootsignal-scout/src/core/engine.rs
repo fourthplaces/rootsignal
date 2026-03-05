@@ -9,7 +9,7 @@
 //!   situation_weaving → supervisor before finalize. Used by full_run and
 //!   standalone synthesis/situation_weaver/supervisor workflows.
 //!
-//! - **News engine** (`build_news_engine`): NewsScanRequested → scan RSS → BeaconDetected.
+//! - **News engine** (`build_news_engine`): NewsScanRequested → scan RSS → extract signals.
 //!   Used by the news scanner workflow.
 
 use std::sync::Arc;
@@ -60,10 +60,8 @@ pub struct ScoutEngineDeps {
     pub pg_pool: Option<PgPool>,
     /// Archive for web search/page reading in synthesis finders.
     pub archive: Option<Arc<rootsignal_archive::Archive>>,
-    /// Task ID for emitting TaskPhaseTransitioned on finalize.
+    /// Task ID — legacy, kept for `resume_incomplete_runs` backward compat.
     pub task_id: Option<String>,
-    /// Phase status to emit on successful finalize (e.g. "scrape_complete").
-    pub completion_phase_status: Option<String>,
 }
 
 impl ScoutEngineDeps {
@@ -89,7 +87,6 @@ impl ScoutEngineDeps {
             pg_pool: None,
             archive: None,
             task_id: None,
-            completion_phase_status: None,
         }
     }
 }
@@ -249,11 +246,77 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
     engine
 }
 
+/// Build a weave-only engine: cross-signal synthesis at any region level.
+///
+/// Includes: lifecycle, signals, synthesis, situation_weaving, supervisor.
+/// Excludes: scrape, discovery, enrichment, expansion (those are scrape-time only).
+///
+/// Finalize triggers on PhaseCompleted(Supervisor).
+pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
+    let capture_sink = deps.captured_events.clone();
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                EMBEDDING_MODEL.to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
+    let graph_projector = deps.graph_client.as_ref().map(|gc| {
+        let mut projector = GraphProjector::new(gc.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
+    });
+    let run_id = deps.run_id.clone();
+
+    let mut engine = seesaw_core::Engine::new(deps)
+        .with_aggregators(pipeline_aggregators::aggregators())
+        // Cross-signal domain handlers only
+        .with_handlers(signals::handlers::handlers())
+        .with_handlers(lifecycle::handlers::handlers())
+        .with_handlers(synthesis::handlers::handlers())
+        .with_handlers(situation_weaving::handlers::handlers())
+        .with_handlers(supervisor::handlers::handlers())
+        // Full chain finalize — triggers on PhaseCompleted(Supervisor)
+        .with_handler(lifecycle::__seesaw_effect_full_finalize())
+        .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.handler_id.clone(),
+            source_event_type: info.source_event_type.clone(),
+            error: info.error.clone(),
+            attempts: info.attempts,
+        });
+
+    if let Some(s) = seesaw_store {
+        engine = engine
+            .with_store(s)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .snapshot_every(100);
+    }
+
+    if let Some(projector) = graph_projector {
+        engine = engine.with_handler(projection::neo4j_projection_handler(projector));
+    }
+
+    engine = engine.with_handler(projection::scout_runs_handler());
+    engine = engine.with_handler(projection::system_log_handler());
+
+    if let Some(sink) = capture_sink {
+        engine = engine.with_handler(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
 /// Build an infrastructure-only engine: event persistence + Neo4j projector.
 ///
 /// No domain handlers, no aggregators, no production deps — used for emitting
-/// system events (e.g. TaskPhaseTransitioned) from error paths where the main
-/// engine is dead. Takes only the two infrastructure handles it actually needs.
+/// system events from error paths where the main engine is dead.
+/// Takes only the two infrastructure handles it actually needs.
 pub fn build_infra_only_engine(
     pg_pool: PgPool,
     graph_client: GraphClient,
@@ -292,7 +355,7 @@ pub fn build_infra_only_engine(
         .with_handler(projection::system_log_handler())
 }
 
-/// Build a news-scan engine: NewsScanRequested → scan RSS → BeaconDetected.
+/// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
 ///
 /// Minimal handler set — only news scanning domain + infrastructure.
 pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
@@ -315,7 +378,6 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
     let run_id = deps.run_id.clone();
 
     let mut engine = seesaw_core::Engine::new(deps)
-        .with_aggregators(news_scanning::aggregate::news_aggregators::aggregators())
         .with_handlers(news_scanning::handlers::handlers());
 
     if let Some(s) = seesaw_store {

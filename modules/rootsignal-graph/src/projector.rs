@@ -2619,51 +2619,6 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
-            SystemEvent::BeaconDetected { task } => {
-                let q = query(
-                    "MERGE (t:ScoutTask {id: $id})
-                     SET t.center_lat = $center_lat,
-                         t.center_lng = $center_lng,
-                         t.radius_km = $radius_km,
-                         t.context = $context,
-                         t.geo_terms = $geo_terms,
-                         t.priority = $priority,
-                         t.source = $source,
-                         t.status = $status,
-                         t.phase_status = coalesce(t.phase_status, $phase_status),
-                         t.created_at = datetime($created_at)",
-                )
-                .param("id", task.id.to_string())
-                .param("center_lat", task.center_lat)
-                .param("center_lng", task.center_lng)
-                .param("radius_km", task.radius_km)
-                .param("context", task.context.as_str())
-                .param("geo_terms", task.geo_terms.clone())
-                .param("priority", task.priority)
-                .param("source", task.source.to_string())
-                .param("status", task.status.to_string())
-                .param("phase_status", task.phase_status.as_str())
-                .param("created_at", task.created_at.format("%Y-%m-%dT%H:%M:%S%.6f").to_string());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
-            SystemEvent::TaskPhaseTransitioned {
-                task_id,
-                status,
-                ..
-            } => {
-                let q = query(
-                    "MATCH (t:ScoutTask {id: $id})
-                     SET t.phase_status = $status,
-                         t.phase_status_updated_at = datetime()",
-                )
-                .param("id", task_id.as_str())
-                .param("status", status.as_str());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
             // ---------------------------------------------------------
             // Admin actions
             // ---------------------------------------------------------
@@ -2676,53 +2631,6 @@ impl GraphProjector {
                          v.resolution = 'dismissed by admin'",
                 )
                 .param("id", issue_id.as_str());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
-            SystemEvent::ScoutTaskCreated {
-                task_id,
-                center_lat,
-                center_lng,
-                radius_km,
-                context,
-                geo_terms,
-                priority,
-                source,
-            } => {
-                let q = query(
-                    "MERGE (t:ScoutTask {id: $id})
-                     SET t.center_lat = $center_lat,
-                         t.center_lng = $center_lng,
-                         t.radius_km = $radius_km,
-                         t.context = $context,
-                         t.geo_terms = $geo_terms,
-                         t.priority = $priority,
-                         t.source = $source,
-                         t.status = 'pending',
-                         t.phase_status = coalesce(t.phase_status, 'idle'),
-                         t.created_at = datetime($ts)",
-                )
-                .param("id", task_id.to_string())
-                .param("center_lat", center_lat)
-                .param("center_lng", center_lng)
-                .param("radius_km", radius_km)
-                .param("context", context.as_str())
-                .param("geo_terms", geo_terms.clone())
-                .param("priority", priority)
-                .param("source", source.as_str())
-                .param("ts", format_dt_from_stored(event));
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
-            }
-
-            SystemEvent::ScoutTaskCancelled { task_id } => {
-                let q = query(
-                    "MATCH (t:ScoutTask {id: $id})
-                     WHERE t.status IN ['pending', 'running']
-                     SET t.status = 'cancelled'",
-                )
-                .param("id", task_id.as_str());
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
             }

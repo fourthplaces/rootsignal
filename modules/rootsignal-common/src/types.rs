@@ -435,110 +435,70 @@ impl ScoutScope {
     }
 }
 
-// --- Scout Task (ephemeral unit of work for the scout swarm) ---
+// --- Region (persistent geographic area to watch) ---
 
-/// How a scout task was created.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ScoutTaskSource {
-    /// Seeded from config/env vars
-    Manual,
-    /// Created by signal clustering (feedback loop)
-    Beacon,
-    /// Created by Driver A (user search demand aggregation)
-    DriverA,
-    /// Created by Driver B (global news scanning)
-    DriverB,
-}
-
-impl std::fmt::Display for ScoutTaskSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Manual => write!(f, "manual"),
-            Self::Beacon => write!(f, "beacon"),
-            Self::DriverA => write!(f, "driver_a"),
-            Self::DriverB => write!(f, "driver_b"),
-        }
-    }
-}
-
-impl std::str::FromStr for ScoutTaskSource {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "manual" => Ok(Self::Manual),
-            "beacon" => Ok(Self::Beacon),
-            "driver_a" => Ok(Self::DriverA),
-            "driver_b" => Ok(Self::DriverB),
-            other => Err(format!("unknown ScoutTaskSource: {other}")),
-        }
-    }
-}
-
-/// Status of a scout task in the queue.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ScoutTaskStatus {
-    Pending,
-    Running,
-    Completed,
-    Cancelled,
-}
-
-impl std::fmt::Display for ScoutTaskStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Running => write!(f, "running"),
-            Self::Completed => write!(f, "completed"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
-impl std::str::FromStr for ScoutTaskStatus {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "pending" => Ok(Self::Pending),
-            "running" => Ok(Self::Running),
-            "completed" => Ok(Self::Completed),
-            "cancelled" => Ok(Self::Cancelled),
-            other => Err(format!("unknown ScoutTaskStatus: {other}")),
-        }
-    }
-}
-
-/// An ephemeral unit of work for the scout swarm.
-/// Each task owns its own phase_status (idle → running_bootstrap → ... → complete).
-/// Tasks are one-shot and append-only — if a run fails, create a new task rather than retrying.
+/// A persistent geographic region that scouts watch.
+/// Regions can nest: a parent region (e.g. "US") CONTAINS child regions (e.g. "Portland").
+/// Leaf regions have sources and can bootstrap/scrape/weave.
+/// Parent regions define a larger scope and can only weave (reading signals from all contained area).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScoutTask {
+pub struct Region {
     pub id: Uuid,
+    pub name: String,
     pub center_lat: f64,
     pub center_lng: f64,
     pub radius_km: f64,
-    pub context: String,
     pub geo_terms: Vec<String>,
-    pub priority: f64,
-    pub source: ScoutTaskSource,
-    pub status: ScoutTaskStatus,
+    pub is_leaf: bool,
     pub created_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    /// Workflow phase status: "idle", "running_bootstrap", "bootstrap_complete", etc.
-    #[serde(default = "default_phase_status")]
-    pub phase_status: String,
 }
 
-fn default_phase_status() -> String {
-    "idle".to_string()
-}
-
-impl From<&ScoutTask> for ScoutScope {
-    fn from(task: &ScoutTask) -> Self {
+impl From<&Region> for ScoutScope {
+    fn from(region: &Region) -> Self {
         ScoutScope {
-            center_lat: task.center_lat,
-            center_lng: task.center_lng,
-            radius_km: task.radius_km,
-            name: task.context.clone(),
+            center_lat: region.center_lat,
+            center_lng: region.center_lng,
+            radius_km: region.radius_km,
+            name: region.name.clone(),
+        }
+    }
+}
+
+// --- Flow Type (independent scout workflow operations) ---
+
+/// Independent scout workflow operations. Each flow produces its own Run.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FlowType {
+    /// Discover sources for a region (web search, news, social)
+    Bootstrap,
+    /// Scrape all watched sources in a region, extract + classify signals (auto-bootstraps if empty)
+    Scrape,
+    /// Cross-signal synthesis: concern↔response linking, actor dedup, situation building
+    Weave,
+    /// Scrape specific source(s), no region context needed
+    ScoutSource,
+}
+
+impl std::fmt::Display for FlowType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bootstrap => write!(f, "bootstrap"),
+            Self::Scrape => write!(f, "scrape"),
+            Self::Weave => write!(f, "weave"),
+            Self::ScoutSource => write!(f, "scout_source"),
+        }
+    }
+}
+
+impl std::str::FromStr for FlowType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "bootstrap" => Ok(Self::Bootstrap),
+            "scrape" => Ok(Self::Scrape),
+            "weave" => Ok(Self::Weave),
+            "scout_source" => Ok(Self::ScoutSource),
+            other => Err(format!("unknown FlowType: {other}")),
         }
     }
 }
@@ -546,7 +506,6 @@ impl From<&ScoutTask> for ScoutScope {
 // --- Demand Signal (raw user search telemetry for Driver A) ---
 
 /// A raw demand signal recorded from a user search.
-/// Aggregated into ScoutTasks by the interval loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DemandSignal {
     pub id: Uuid,

@@ -1,4 +1,4 @@
-// Supervisor domain: issue detection, duplicate merging, cause heat, beacons.
+// Supervisor domain: issue detection, duplicate merging, cause heat.
 
 pub mod activities;
 

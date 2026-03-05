@@ -53,14 +53,6 @@ function compactPayload(raw: string, maxLen = 80): string {
   }
 }
 
-function formatPayload(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2);
-  } catch {
-    return raw;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // TreeNode (recursive)
 // ---------------------------------------------------------------------------

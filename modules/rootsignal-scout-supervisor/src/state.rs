@@ -1,5 +1,4 @@
 use chrono::{DateTime, Duration, Utc};
-use neo4rs::query;
 use sqlx::PgPool;
 use tracing::info;
 
@@ -99,19 +98,17 @@ impl SupervisorState {
         Ok(())
     }
 
-    /// Check if any scout task is currently running (ScoutTask with running_* phase_status).
-    pub async fn is_scout_running(&self) -> Result<bool, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask) \
-             WHERE t.phase_status STARTS WITH 'running_' \
-               AND t.phase_status_updated_at >= datetime() - duration('PT30M') \
-             RETURN count(t) > 0 AS running",
-        );
-        let mut stream = self.client.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let running: bool = row.get("running").unwrap_or(false);
-            return Ok(running);
-        }
-        Ok(false)
+    /// Check if any scout run is currently in progress (started but not finished within 30min).
+    pub async fn is_scout_running(&self) -> Result<bool, anyhow::Error> {
+        let (running,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(
+                 SELECT 1 FROM scout_runs
+                 WHERE finished_at IS NULL
+                   AND started_at >= now() - interval '30 minutes'
+             )",
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(running)
     }
 }

@@ -20,7 +20,6 @@ use crate::types::{
     ActorType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc, SourceRole, Tone,
     Urgency,
 };
-use crate::ScoutTask;
 
 /// A system event — an editorial judgment Root Signal made about world facts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -552,39 +551,11 @@ pub enum SystemEvent {
         edges: Vec<SimilarityEdge>,
     },
 
-    BeaconDetected {
-        task: ScoutTask,
-    },
-
-    // -----------------------------------------------------------------------
-    // Task lifecycle
-    // -----------------------------------------------------------------------
-    TaskPhaseTransitioned {
-        task_id: String,
-        phase: String,
-        status: String,
-    },
-
     // -----------------------------------------------------------------------
     // Admin actions
     // -----------------------------------------------------------------------
     ValidationIssueDismissed {
         issue_id: String,
-    },
-
-    ScoutTaskCreated {
-        task_id: Uuid,
-        center_lat: f64,
-        center_lng: f64,
-        radius_km: f64,
-        context: String,
-        geo_terms: Vec<String>,
-        priority: f64,
-        source: String,
-    },
-
-    ScoutTaskCancelled {
-        task_id: String,
     },
 }
 
@@ -662,11 +633,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::SignalDiversityComputed { .. } => "signal_diversity_computed",
             SystemEvent::ActorStatsComputed { .. } => "actor_stats_computed",
             SystemEvent::SimilarityEdgesRebuilt { .. } => "similarity_edges_rebuilt",
-            SystemEvent::BeaconDetected { .. } => "beacon_detected",
-            SystemEvent::TaskPhaseTransitioned { .. } => "task_phase_transitioned",
             SystemEvent::ValidationIssueDismissed { .. } => "validation_issue_dismissed",
-            SystemEvent::ScoutTaskCreated { .. } => "scout_task_created",
-            SystemEvent::ScoutTaskCancelled { .. } => "scout_task_cancelled",
         }
     }
 

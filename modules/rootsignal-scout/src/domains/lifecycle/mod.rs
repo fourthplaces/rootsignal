@@ -7,7 +7,6 @@ use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 
-use rootsignal_common::events::SystemEvent;
 use rootsignal_graph::GraphReader;
 
 use crate::core::aggregate::PipelineState;
@@ -32,15 +31,6 @@ fn is_supervisor_completed(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Supervisor))
 }
 
-/// Matches the coarse phase boundaries that should update task status in the UI.
-fn is_coarse_phase_boundary(e: &LifecycleEvent) -> bool {
-    matches!(
-        e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::ReapExpired | PipelinePhase::Synthesis | PipelinePhase::SituationWeaving)
-    )
-}
-
 #[handlers]
 pub mod handlers {
     use super::*;
@@ -57,37 +47,6 @@ pub mod handlers {
             phase: PipelinePhase::ReapExpired,
         });
         Ok(events)
-    }
-
-    /// Coarse phase boundary → emit TaskPhaseTransitioned so the UI tracks progress.
-    #[handle(on = LifecycleEvent, id = "lifecycle:phase_announcer", filter = is_coarse_phase_boundary)]
-    async fn phase_announcer(
-        event: LifecycleEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-        let task_id = match &deps.task_id {
-            Some(tid) => tid.clone(),
-            None => return Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "lifecycle:phase_announcer".into(),
-                reason: "no task_id set".into(),
-            }]),
-        };
-
-        let status = match &event {
-            LifecycleEvent::PhaseCompleted { phase: PipelinePhase::ReapExpired } => "running_scrape",
-            LifecycleEvent::PhaseCompleted { phase: PipelinePhase::Synthesis } => "running_situation_weaver",
-            LifecycleEvent::PhaseCompleted { phase: PipelinePhase::SituationWeaving } => "running_supervisor",
-            _ => unreachable!("filter guarantees coarse phase boundary"),
-        };
-
-        info!(task_id = task_id.as_str(), status, "Phase boundary → task status update");
-
-        Ok(events![SystemEvent::TaskPhaseTransitioned {
-            task_id,
-            phase: String::new(),
-            status: status.to_string(),
-        }])
     }
 
     /// PhaseCompleted(ReapExpired) → load + schedule sources, stash in state, emit SourcesScheduled.
@@ -142,15 +101,7 @@ async fn finalize_impl(ctx: Context<ScoutEngineDeps>) -> Result<Events> {
     }
 
     info!("{}", stats);
-    let mut result = events![LifecycleEvent::RunCompleted { stats }];
-    if let (Some(tid), Some(status)) = (&deps.task_id, &deps.completion_phase_status) {
-        result.push(SystemEvent::TaskPhaseTransitioned {
-            task_id: tid.clone(),
-            phase: String::new(),
-            status: status.clone(),
-        });
-    }
-    Ok(result)
+    Ok(events![LifecycleEvent::RunCompleted { stats }])
 }
 
 /// Finalize handler for the scrape chain: triggers on PhaseCompleted(Synthesis).
@@ -180,11 +131,9 @@ mod tests {
     use crate::core::engine::{build_engine, ScoutEngineDeps};
     use crate::core::events::PipelinePhase;
     use crate::domains::lifecycle::events::LifecycleEvent;
-    use rootsignal_common::events::SystemEvent;
 
     fn build_test_engine(
         task_id: Option<&str>,
-        completion_phase_status: Option<&str>,
     ) -> (seesaw_core::Engine<ScoutEngineDeps>, Arc<Mutex<Vec<AnyEvent>>>) {
         let sink = Arc::new(Mutex::new(Vec::new()));
         let mut deps = ScoutEngineDeps::new(
@@ -193,15 +142,14 @@ mod tests {
             "test",
         );
         deps.task_id = task_id.map(String::from);
-        deps.completion_phase_status = completion_phase_status.map(String::from);
         deps.captured_events = Some(sink.clone());
         let engine = build_engine(deps, None);
         (engine, sink)
     }
 
     #[tokio::test]
-    async fn finalize_emits_task_phase_transitioned_when_task_id_is_set() {
-        let (engine, sink) = build_test_engine(Some("task-1"), Some("scrape_complete"));
+    async fn finalize_emits_run_completed() {
+        let (engine, sink) = build_test_engine(Some("task-1"));
 
         engine
             .emit(LifecycleEvent::PhaseCompleted {
@@ -215,76 +163,16 @@ mod tests {
         let has_run_completed = events
             .iter()
             .any(|e| e.downcast_ref::<LifecycleEvent>().is_some_and(|le| matches!(le, LifecycleEvent::RunCompleted { .. })));
-        let statuses: Vec<String> = events
-            .iter()
-            .filter_map(|e| e.downcast_ref::<SystemEvent>())
-            .filter_map(|se| match se {
-                SystemEvent::TaskPhaseTransitioned { status, .. } => Some(status.clone()),
-                _ => None,
-            })
-            .collect();
 
         assert!(has_run_completed, "should emit RunCompleted");
-        // phase_announcer emits running_situation_weaver, then finalize emits scrape_complete
-        assert!(statuses.contains(&"running_situation_weaver".to_string()), "should emit phase boundary status");
-        assert!(statuses.contains(&"scrape_complete".to_string()), "should emit finalize status");
-    }
-
-    #[tokio::test]
-    async fn finalize_does_not_emit_task_phase_transitioned_without_task_id() {
-        let (engine, sink) = build_test_engine(None, None);
-
-        engine
-            .emit(LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::Synthesis,
-            })
-            .settled()
-            .await
-            .unwrap();
-
-        let events = sink.lock().unwrap();
-        let has_phase_transition = events
-            .iter()
-            .any(|e| e.downcast_ref::<SystemEvent>().is_some_and(|se| matches!(se, SystemEvent::TaskPhaseTransitioned { .. })));
-
-        assert!(!has_phase_transition, "should NOT emit TaskPhaseTransitioned when task_id is None");
-    }
-
-    #[tokio::test]
-    async fn phase_boundary_emits_running_scrape_when_task_id_is_set() {
-        let (engine, sink) = build_test_engine(Some("task-1"), Some("complete"));
-
-        engine
-            .emit(LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::ReapExpired,
-            })
-            .settled()
-            .await
-            .unwrap();
-
-        let events = sink.lock().unwrap();
-        let phase_transition = events
-            .iter()
-            .find_map(|e| e.downcast_ref::<SystemEvent>())
-            .and_then(|se| match se {
-                SystemEvent::TaskPhaseTransitioned { task_id, status, .. } => {
-                    Some((task_id.clone(), status.clone()))
-                }
-                _ => None,
-            });
-
-        let (tid, status) = phase_transition.expect("should emit TaskPhaseTransitioned at phase boundary");
-        assert_eq!(tid, "task-1");
-        assert_eq!(status, "running_scrape");
     }
 
     #[tokio::test]
     async fn handler_failure_counted_in_run_completed_stats() {
         use crate::core::pipeline_events::PipelineEvent;
 
-        let (engine, sink) = build_test_engine(Some("task-1"), Some("scrape_complete"));
+        let (engine, sink) = build_test_engine(Some("task-1"));
 
-        // Simulate two handler failures (e.g. a timeout and a panic)
         engine
             .emit(PipelineEvent::HandlerFailed {
                 handler_id: "scrape:fetch".to_string(),
@@ -327,25 +215,5 @@ mod tests {
             .expect("should emit RunCompleted");
 
         assert_eq!(stats.handler_failures, 2, "RunCompleted stats should carry accumulated handler failure count");
-    }
-
-    #[tokio::test]
-    async fn phase_boundary_skipped_without_task_id() {
-        let (engine, sink) = build_test_engine(None, None);
-
-        engine
-            .emit(LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::ReapExpired,
-            })
-            .settled()
-            .await
-            .unwrap();
-
-        let events = sink.lock().unwrap();
-        let has_phase_transition = events
-            .iter()
-            .any(|e| e.downcast_ref::<SystemEvent>().is_some_and(|se| matches!(se, SystemEvent::TaskPhaseTransitioned { .. })));
-
-        assert!(!has_phase_transition, "should NOT emit TaskPhaseTransitioned when task_id is None");
     }
 }

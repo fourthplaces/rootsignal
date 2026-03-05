@@ -394,14 +394,37 @@ export const ADMIN_SCOUT_RUN_EVENTS = gql`
   }
 `;
 
-export const SIGNAL_BRIEF = gql`
-  query SignalBrief($id: UUID!) {
-    signal(id: $id) {
-      ... on GqlGatheringSignal { id title summary sourceUrl confidence contentDate locationName }
-      ... on GqlResourceSignal { id title summary sourceUrl confidence contentDate locationName }
-      ... on GqlHelpRequestSignal { id title summary sourceUrl confidence contentDate locationName }
-      ... on GqlAnnouncementSignal { id title summary sourceUrl confidence contentDate locationName }
-      ... on GqlConcernSignal { id title summary sourceUrl confidence contentDate locationName }
+export const ADMIN_SCOUT_RUN_OUTCOMES = gql`
+  query AdminScoutRunOutcomes($runId: String!) {
+    adminScoutRunOutcomes(runId: $runId) {
+      sourcesScraped(limit: 100) {
+        items { canonicalKey url signalsProduced }
+        total
+      }
+      signalsCreated(limit: 100) {
+        items { nodeId nodeType title confidence sourceUrl }
+        total
+      }
+      dedupMatches(limit: 50) {
+        items { nodeType similarity existingId title }
+        total
+      }
+      rejections(limit: 50) {
+        items { title reason }
+        total
+      }
+      sourcesDiscovered(limit: 50) {
+        items { canonicalKey url discoveryMethod gapContext }
+        total
+      }
+      expansionQueries(limit: 50) {
+        items { query sourceUrl }
+        total
+      }
+      failures(limit: 50) {
+        items { handlerId error url variant }
+        total
+      }
     }
   }
 `;

@@ -318,6 +318,50 @@ pub async fn causal_flow(pool: &PgPool, run_id: &str) -> Result<Vec<EventRowFull
 }
 
 // ---------------------------------------------------------------------------
+// Variant-filtered event queries (for outcome pages)
+// ---------------------------------------------------------------------------
+
+/// Query events for a run filtered by payload variant name, with LIMIT.
+pub async fn list_events_by_variant(
+    pool: &PgPool,
+    run_id: &str,
+    variant: &str,
+    limit: i64,
+) -> Result<Vec<EventRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT seq, ts, event_type, payload AS data, id, parent_id
+        FROM events
+        WHERE run_id = $1 AND payload->>'type' = $2
+        ORDER BY seq
+        LIMIT $3
+        "#,
+    )
+    .bind(run_id)
+    .bind(variant)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(row_to_event).collect())
+}
+
+/// Count events for a run by variant name (for "showing N of M" UI).
+pub async fn count_events_by_variant(
+    pool: &PgPool,
+    run_id: &str,
+    variant: &str,
+) -> Result<i64> {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM events WHERE run_id = $1 AND payload->>'type' = $2",
+    )
+    .bind(run_id)
+    .bind(variant)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+// ---------------------------------------------------------------------------
 // Busy checks (uses scout_runs as implicit lock)
 // ---------------------------------------------------------------------------
 

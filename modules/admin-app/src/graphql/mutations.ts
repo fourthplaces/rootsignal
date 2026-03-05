@@ -33,59 +33,69 @@ export const ADD_SOURCE = gql`
   }
 `;
 
-export const RUN_SCOUT = gql`
-  mutation RunScout($taskId: String!) {
-    runScout(taskId: $taskId) {
+export const RUN_BOOTSTRAP = gql`
+  mutation RunBootstrap($regionId: String!) {
+    runBootstrap(regionId: $regionId) {
       success
       message
     }
   }
 `;
 
-export const STOP_SCOUT = gql`
-  mutation StopScout($taskId: String!) {
-    stopScout(taskId: $taskId) {
+export const RUN_SCRAPE = gql`
+  mutation RunScrape($regionId: String!) {
+    runScrape(regionId: $regionId) {
       success
       message
     }
   }
 `;
 
-export const RESET_SCOUT_STATUS = gql`
-  mutation ResetScoutStatus($taskId: String!) {
-    resetScoutStatus(taskId: $taskId) {
+export const RUN_WEAVE = gql`
+  mutation RunWeave($regionId: String!) {
+    runWeave(regionId: $regionId) {
       success
       message
     }
   }
 `;
 
-export const RUN_SCOUT_PHASE = gql`
-  mutation RunScoutPhase($phase: ScoutPhase!, $taskId: String!) {
-    runScoutPhase(phase: $phase, taskId: $taskId) {
+export const RUN_SCOUT_SOURCE = gql`
+  mutation RunScoutSource($sourceIds: [String!]!) {
+    runScoutSource(sourceIds: $sourceIds) {
       success
       message
     }
   }
 `;
 
-export const CREATE_SCOUT_TASK = gql`
-  mutation CreateScoutTask(
-    $location: String!
-    $radiusKm: Float
-    $priority: Float
-  ) {
-    createScoutTask(
-      location: $location
-      radiusKm: $radiusKm
-      priority: $priority
-    )
+export const CANCEL_RUN = gql`
+  mutation CancelRun($runId: String!) {
+    cancelRun(runId: $runId) {
+      success
+      message
+    }
   }
 `;
 
-export const CANCEL_SCOUT_TASK = gql`
-  mutation CancelScoutTask($id: String!) {
-    cancelScoutTask(id: $id)
+export const CREATE_REGION = gql`
+  mutation CreateRegion($name: String!) {
+    createRegion(name: $name) {
+      id
+      name
+      centerLat
+      centerLng
+      radiusKm
+      geoTerms
+      isLeaf
+      createdAt
+    }
+  }
+`;
+
+export const DELETE_REGION = gql`
+  mutation DeleteRegion($id: String!) {
+    deleteRegion(id: $id)
   }
 `;
 
@@ -147,16 +157,6 @@ export const SCRAPE_URL = gql`
   }
 `;
 
-export const PURGE_AREA = gql`
-  mutation PurgeArea($taskId: String!) {
-    purgeArea(taskId: $taskId) {
-      success
-      message
-      signals
-      situations
-    }
-  }
-`;
 
 export const RE_EXTRACT_SIGNAL = gql`
   mutation ReExtractSignal($signalId: UUID!) {

@@ -442,7 +442,7 @@ export function SourcesPage() {
         render: (s) => (
           <span className="inline-flex items-center gap-1.5 truncate" title={s.canonicalValue}>
             <Link
-              to={`/sources/${s.id}`}
+              to={`/scout/sources/${s.id}`}
               className="text-blue-400 hover:underline truncate"
             >
               {s.canonicalValue}
@@ -542,7 +542,7 @@ export function SourcesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Sources ({sources.length})</h1>
+        <span className="text-sm text-muted-foreground">{sources.length} sources</span>
         <button
           onClick={() => setShowAdd(!showAdd)}
           className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"

@@ -4,11 +4,11 @@ use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::telemetry_events::TelemetryEvent;
-use rootsignal_graph::{GraphReader, GraphStore};
+use rootsignal_graph::GraphReader;
 
 use crate::core::engine::ScoutEngineDeps;
 
-/// Run supervisor: issue detection, merge duplicates, cause heat, beacon detection.
+/// Run supervisor: issue detection, merge duplicates, cause heat.
 /// Returns events (e.g. DuplicateTensionMerged) for the caller to dispatch.
 pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events) {
     let (graph_client, region, pg_pool, api_key) = match (
@@ -102,23 +102,5 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
         Err(e) => warn!(error = %e, "Failed to compute cause heat"),
     }
 
-    // 4. Detect beacons (geographic signal clusters → new ScoutTasks)
-    let graph_rw = GraphStore::new(graph_client.clone());
-    let existing_hashes = match rootsignal_graph::beacon::existing_task_hashes(&graph_rw).await {
-        Ok(h) => h,
-        Err(e) => {
-            warn!(error = %e, "Failed to load existing task hashes");
-            return;
-        }
-    };
-    match rootsignal_graph::beacon::detect_beacons(graph_client, &existing_hashes).await {
-        Ok(tasks) if !tasks.is_empty() => {
-            info!(count = tasks.len(), "Beacon tasks detected");
-            for task in tasks {
-                events.push(SystemEvent::BeaconDetected { task });
-            }
-        }
-        Ok(_) => {}
-        Err(e) => warn!(error = %e, "Beacon detection failed"),
-    }
+    // Beacon detection removed — will be rebuilt as Region-based discovery.
 }

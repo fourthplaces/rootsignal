@@ -17,10 +17,14 @@ import {
   CANCEL_RUN,
   DISMISS_FINDING,
 } from "@/graphql/mutations";
+import { SourcesPage } from "@/pages/SourcesPage";
+import { DataTable, type Column } from "@/components/DataTable";
 
-type Tab = "regions" | "findings";
+type Tab = "runs" | "regions" | "sources" | "findings";
 const TABS: { key: Tab; label: string }[] = [
+  { key: "runs", label: "Runs" },
   { key: "regions", label: "Regions" },
+  { key: "sources", label: "Sources" },
   { key: "findings", label: "Findings" },
 ];
 
@@ -73,15 +77,7 @@ const formatDate = (d: string) =>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MutationFn = (options?: any) => Promise<any>;
 
-function RegionRow({
-  region: r,
-  onDelete,
-  onRefetch,
-}: {
-  region: Region;
-  onDelete: (id: string) => void;
-  onRefetch: () => void;
-}) {
+function RegionActions({ region: r, onDelete, onRefetch }: { region: Region; onDelete: (id: string) => void; onRefetch: () => void }) {
   const [runScrape] = useMutation(RUN_SCRAPE);
   const [runBootstrap] = useMutation(RUN_BOOTSTRAP);
   const [runWeave] = useMutation(RUN_WEAVE);
@@ -102,60 +98,23 @@ function RegionRow({
   };
 
   return (
-    <tr className="border-b border-border last:border-0 hover:bg-muted/30">
-      <td className="px-4 py-2">
-        <Link to={`/scout/regions/${r.id}`} className="text-blue-400 hover:underline font-medium">
-          {r.name}
-        </Link>
-      </td>
-      <td className="px-4 py-2 text-muted-foreground text-xs font-mono">
-        {r.centerLat.toFixed(3)}, {r.centerLng.toFixed(3)}
-      </td>
-      <td className="px-4 py-2 text-right tabular-nums">{r.radiusKm}km</td>
-      <td className="px-4 py-2">
-        <span className={`text-xs px-2 py-0.5 rounded-full ${r.isLeaf ? "bg-green-500/10 text-green-400" : "bg-blue-500/10 text-blue-400"}`}>
-          {r.isLeaf ? "Leaf" : "Parent"}
-        </span>
-      </td>
-      <td className="px-4 py-2 text-muted-foreground text-xs">
-        {r.geoTerms.length > 0 ? r.geoTerms.join(", ") : "-"}
-      </td>
-      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-        {formatDate(r.createdAt)}
-      </td>
-      <td className="px-4 py-2 text-right">
-        <div className="flex gap-1 justify-end items-center flex-wrap">
-          <button
-            onClick={() => runFlow(runBootstrap, "bootstrap")}
-            disabled={busy !== null}
-            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
-          >
-            {busy === "bootstrap" ? "..." : "Bootstrap"}
-          </button>
-          <button
-            onClick={() => runFlow(runScrape, "scrape")}
-            disabled={busy !== null}
-            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
-          >
-            {busy === "scrape" ? "..." : "Scrape"}
-          </button>
-          <button
-            onClick={() => runFlow(runWeave, "weave")}
-            disabled={busy !== null}
-            className="text-xs px-2 py-1 rounded border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 disabled:opacity-50"
-          >
-            {busy === "weave" ? "..." : "Weave"}
-          </button>
-          <button
-            onClick={() => onDelete(r.id)}
-            className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10"
-          >
-            Delete
-          </button>
-        </div>
-        {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
-      </td>
-    </tr>
+    <div>
+      <div className="flex gap-1 justify-end items-center flex-wrap">
+        <button onClick={() => runFlow(runBootstrap, "bootstrap")} disabled={busy !== null} className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50">
+          {busy === "bootstrap" ? "..." : "Bootstrap"}
+        </button>
+        <button onClick={() => runFlow(runScrape, "scrape")} disabled={busy !== null} className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50">
+          {busy === "scrape" ? "..." : "Scrape"}
+        </button>
+        <button onClick={() => runFlow(runWeave, "weave")} disabled={busy !== null} className="text-xs px-2 py-1 rounded border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 disabled:opacity-50">
+          {busy === "weave" ? "..." : "Weave"}
+        </button>
+        <button onClick={() => onDelete(r.id)} className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10">
+          Delete
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+    </div>
   );
 }
 
@@ -223,7 +182,7 @@ function ScoutFindingRow({
 export function ScoutPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab");
-  const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "regions") as Tab;
+  const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "runs") as Tab;
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: false });
 
   // --- Regions ---
@@ -238,11 +197,6 @@ export function ScoutPage() {
   // Create region form state
   const [showCreate, setShowCreate] = useState(false);
   const [formName, setFormName] = useState("");
-  const [formLat, setFormLat] = useState("");
-  const [formLng, setFormLng] = useState("");
-  const [formRadius, setFormRadius] = useState("20");
-  const [formGeoTerms, setFormGeoTerms] = useState("");
-  const [formIsLeaf, setFormIsLeaf] = useState(true);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -252,20 +206,9 @@ export function ScoutPage() {
     setCreateError(null);
     try {
       await createRegion({
-        variables: {
-          name: formName.trim(),
-          centerLat: parseFloat(formLat),
-          centerLng: parseFloat(formLng),
-          radiusKm: parseFloat(formRadius),
-          geoTerms: formGeoTerms.trim() ? formGeoTerms.split(",").map((s) => s.trim()) : [],
-          isLeaf: formIsLeaf,
-        },
+        variables: { name: formName.trim() },
       });
       setFormName("");
-      setFormLat("");
-      setFormLng("");
-      setFormRadius("20");
-      setFormGeoTerms("");
       setShowCreate(false);
       refetchRegions();
     } catch (err: unknown) {
@@ -281,10 +224,10 @@ export function ScoutPage() {
     refetchRegions();
   };
 
-  // --- Recent runs ---
-  const { data: runsData } = useQuery(ADMIN_SCOUT_RUNS, {
-    variables: { limit: 10 },
-    skip: tab !== "regions",
+  // --- Runs ---
+  const { data: runsData, loading: runsLoading } = useQuery(ADMIN_SCOUT_RUNS, {
+    variables: { limit: 50 },
+    skip: tab !== "runs",
   });
   const runs: ScoutRun[] = runsData?.adminScoutRuns ?? [];
   const [cancelRun] = useMutation(CANCEL_RUN);
@@ -323,6 +266,44 @@ export function ScoutPage() {
     refetchFindingsSummary();
   };
 
+  const runColumns: Column<ScoutRun>[] = [
+    { key: "runId", label: "Run", render: (r) => (
+      <Link to={`/scout-runs/${r.runId}`} className="text-blue-400 hover:underline font-mono text-xs">{r.runId.slice(0, 8)}</Link>
+    )},
+    { key: "region", label: "Region", render: (r) => <span className="text-muted-foreground">{r.region || "-"}</span> },
+    { key: "flowType", label: "Flow", render: (r) => r.flowType ? (
+      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{r.flowType}</span>
+    ) : null },
+    { key: "startedAt", label: "Started", render: (r) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(r.startedAt)}</span> },
+    { key: "status", label: "Status", render: (r) => (
+      <span className={`text-xs ${r.finishedAt ? "text-green-400" : "text-amber-400"}`}>{r.finishedAt ? "Completed" : "Running"}</span>
+    )},
+    { key: "actions", label: "", align: "right" as const, render: (r) => !r.finishedAt ? (
+      <button
+        onClick={() => cancelRun({ variables: { runId: r.runId } })}
+        className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10"
+      >
+        Cancel
+      </button>
+    ) : null },
+  ];
+
+  const regionColumns: Column<Region>[] = [
+    { key: "name", label: "Name", render: (r) => (
+      <Link to={`/scout/regions/${r.id}`} className="text-blue-400 hover:underline font-medium">{r.name}</Link>
+    )},
+    { key: "center", label: "Center", render: (r) => <span className="text-muted-foreground text-xs font-mono">{r.centerLat.toFixed(3)}, {r.centerLng.toFixed(3)}</span> },
+    { key: "radius", label: "Radius", align: "right" as const, render: (r) => <span className="tabular-nums">{r.radiusKm}km</span> },
+    { key: "type", label: "Type", render: (r) => (
+      <span className={`text-xs px-2 py-0.5 rounded-full ${r.isLeaf ? "bg-green-500/10 text-green-400" : "bg-blue-500/10 text-blue-400"}`}>{r.isLeaf ? "Leaf" : "Parent"}</span>
+    )},
+    { key: "geoTerms", label: "Geo Terms", render: (r) => <span className="text-muted-foreground text-xs">{r.geoTerms.length > 0 ? r.geoTerms.join(", ") : "-"}</span> },
+    { key: "createdAt", label: "Created", render: (r) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(r.createdAt)}</span> },
+    { key: "actions", label: "Actions", align: "right" as const, render: (r) => (
+      <RegionActions region={r} onDelete={handleDelete} onRefetch={refetchRegions} />
+    )},
+  ];
+
   return (
     <div className="space-y-4">
       <div>
@@ -346,6 +327,17 @@ export function ScoutPage() {
         ))}
       </div>
 
+      {/* Runs tab */}
+      {tab === "runs" && (
+        <DataTable<ScoutRun>
+          columns={runColumns}
+          data={runs}
+          getRowKey={(r) => r.runId}
+          loading={runsLoading}
+          emptyMessage="No runs yet."
+        />
+      )}
+
       {/* Regions tab */}
       {tab === "regions" && (
         <div className="space-y-4">
@@ -360,62 +352,15 @@ export function ScoutPage() {
 
           {showCreate && (
             <form onSubmit={handleCreate} className="rounded-lg border border-border p-4 space-y-3">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="flex gap-3 items-center">
                 <input
                   type="text"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  placeholder="Name (e.g. Portland)"
-                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+                  placeholder="Location (e.g. Minneapolis, Minnesota)"
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm flex-1"
                   required
                 />
-                <input
-                  type="number"
-                  step="any"
-                  value={formLat}
-                  onChange={(e) => setFormLat(e.target.value)}
-                  placeholder="Latitude"
-                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-                  required
-                />
-                <input
-                  type="number"
-                  step="any"
-                  value={formLng}
-                  onChange={(e) => setFormLng(e.target.value)}
-                  placeholder="Longitude"
-                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-                  required
-                />
-                <input
-                  type="number"
-                  step="any"
-                  value={formRadius}
-                  onChange={(e) => setFormRadius(e.target.value)}
-                  placeholder="Radius (km)"
-                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  type="text"
-                  value={formGeoTerms}
-                  onChange={(e) => setFormGeoTerms(e.target.value)}
-                  placeholder="Geo terms (comma-separated)"
-                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-                />
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={formIsLeaf}
-                    onChange={(e) => setFormIsLeaf(e.target.checked)}
-                    className="rounded"
-                  />
-                  Leaf region (has sources)
-                </label>
-              </div>
-              <div className="flex gap-2 items-center">
                 <button
                   type="submit"
                   disabled={creating}
@@ -423,105 +368,24 @@ export function ScoutPage() {
                 >
                   {creating ? "Creating..." : "Create"}
                 </button>
-                {createError && <span className="text-sm text-red-400">{createError}</span>}
               </div>
+              {createError && <span className="text-sm text-red-400">{createError}</span>}
             </form>
           )}
 
-          {regionsLoading ? (
-            <p className="text-muted-foreground">Loading regions...</p>
-          ) : regions.length === 0 ? (
-            <p className="text-muted-foreground">No regions configured.</p>
-          ) : (
-            <div className="rounded-lg border border-border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/50">
-                    <th className="text-left px-4 py-2 font-medium">Name</th>
-                    <th className="text-left px-4 py-2 font-medium">Center</th>
-                    <th className="text-right px-4 py-2 font-medium">Radius</th>
-                    <th className="text-left px-4 py-2 font-medium">Type</th>
-                    <th className="text-left px-4 py-2 font-medium">Geo Terms</th>
-                    <th className="text-left px-4 py-2 font-medium">Created</th>
-                    <th className="text-right px-4 py-2 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {regions.map((r) => (
-                    <RegionRow
-                      key={r.id}
-                      region={r}
-                      onDelete={handleDelete}
-                      onRefetch={refetchRegions}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable<Region>
+            columns={regionColumns}
+            data={regions}
+            getRowKey={(r) => r.id}
+            loading={regionsLoading}
+            emptyMessage="No regions configured."
+          />
 
-          {/* Recent runs */}
-          {runs.length > 0 && (
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground mb-2">Recent Runs</h2>
-              <div className="rounded-lg border border-border overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left px-4 py-2 font-medium">Run</th>
-                      <th className="text-left px-4 py-2 font-medium">Region</th>
-                      <th className="text-left px-4 py-2 font-medium">Flow</th>
-                      <th className="text-left px-4 py-2 font-medium">Started</th>
-                      <th className="text-left px-4 py-2 font-medium">Status</th>
-                      <th className="text-right px-4 py-2 font-medium"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {runs.map((run) => (
-                      <tr key={run.runId} className="border-b border-border last:border-0 hover:bg-muted/30">
-                        <td className="px-4 py-2">
-                          <Link to={`/scout-runs/${run.runId}`} className="text-blue-400 hover:underline font-mono text-xs">
-                            {run.runId.slice(0, 8)}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground">{run.region || "-"}</td>
-                        <td className="px-4 py-2">
-                          {run.flowType && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
-                              {run.flowType}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                          {formatDate(run.startedAt)}
-                        </td>
-                        <td className="px-4 py-2">
-                          <span className={`text-xs ${run.finishedAt ? "text-green-400" : "text-amber-400"}`}>
-                            {run.finishedAt ? "Completed" : "Running"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          {!run.finishedAt && (
-                            <button
-                              onClick={async () => {
-                                await cancelRun({ variables: { runId: run.runId } });
-                                refetchRegions();
-                              }}
-                              className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10"
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
       )}
+
+      {/* Sources tab */}
+      {tab === "sources" && <SourcesPage />}
 
       {/* Findings tab */}
       {tab === "findings" && (

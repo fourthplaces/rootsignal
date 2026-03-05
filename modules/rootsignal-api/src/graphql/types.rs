@@ -20,15 +20,6 @@ ActorsBySignalLoader, CitationBySignalLoader, ScheduleBySignalLoader, TagsBySitu
 
 // --- GraphQL Enums ---
 
-#[derive(async_graphql::Enum, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ScoutPhase {
-    Bootstrap,
-    Scrape,
-    Synthesis,
-    SituationWeaver,
-    Supervisor,
-}
-
 #[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SignalType {
     Gathering,
@@ -1296,23 +1287,42 @@ impl GqlDispatch {
     }
 }
 
-// --- Scout Task types ---
+// --- Region types ---
 
 #[derive(SimpleObject)]
-pub struct GqlScoutTask {
+pub struct GqlRegion {
     pub id: String,
+    pub name: String,
     pub center_lat: f64,
     pub center_lng: f64,
     pub radius_km: f64,
-    pub context: String,
     pub geo_terms: Vec<String>,
-    pub priority: f64,
-    pub source: String,
-    pub status: String,
+    pub is_leaf: bool,
     pub created_at: String,
-    pub completed_at: Option<String>,
-    /// Current workflow phase status for this task's region (e.g. "complete", "idle", "running_scrape").
-    pub phase_status: String,
+}
+
+impl GqlRegion {
+    pub fn from_region(r: rootsignal_common::Region) -> Self {
+        GqlRegion {
+            id: r.id.to_string(),
+            name: r.name,
+            center_lat: r.center_lat,
+            center_lng: r.center_lng,
+            radius_km: r.radius_km,
+            geo_terms: r.geo_terms,
+            is_leaf: r.is_leaf,
+            created_at: r.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// GraphQL enum for flow types.
+#[derive(async_graphql::Enum, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum GqlFlowType {
+    Bootstrap,
+    Scrape,
+    Weave,
+    ScoutSource,
 }
 
 // --- Graph Explorer types ---
@@ -1342,22 +1352,4 @@ pub struct GqlGraphEdge {
     pub edge_type: String,
 }
 
-impl GqlScoutTask {
-    pub fn from_task(t: rootsignal_common::ScoutTask) -> Self {
-        GqlScoutTask {
-            id: t.id.to_string(),
-            center_lat: t.center_lat,
-            center_lng: t.center_lng,
-            radius_km: t.radius_km,
-            context: t.context.clone(),
-            geo_terms: t.geo_terms,
-            priority: t.priority,
-            source: t.source.to_string(),
-            status: t.status.to_string(),
-            created_at: t.created_at.to_rfc3339(),
-            completed_at: t.completed_at.map(|dt| dt.to_rfc3339()),
-            phase_status: t.phase_status,
-        }
-    }
-}
 

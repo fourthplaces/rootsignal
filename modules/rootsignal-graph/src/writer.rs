@@ -6,8 +6,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, DemandSignal, DiscoveryMethod, NodeType, PinNode, ScheduleNode, ScoutTask,
-    ScoutTaskSource, ScoutTaskStatus, SourceNode, SourceRole, FRESHNESS_MAX_DAYS,
+    ActorNode, DemandSignal, DiscoveryMethod, NodeType, PinNode, Region, ScheduleNode,
+    SourceNode, SourceRole, FRESHNESS_MAX_DAYS,
     GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
 use crate::GraphClient;
@@ -339,23 +339,6 @@ impl GraphReader {
         }
     }
 
-    /// Check if any task for a region (by context) is currently running.
-    pub async fn is_region_task_running(&self, context: &str) -> Result<bool, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask {context: $context})
-             WHERE t.phase_status STARTS WITH 'running_'
-               AND t.phase_status_updated_at >= datetime() - duration('PT30M')
-             RETURN count(t) > 0 AS running",
-        )
-        .param("context", context);
-
-        let mut result = self.client().execute(q).await?;
-        if let Some(row) = result.next().await? {
-            let running: bool = row.get("running").unwrap_or(false);
-            return Ok(running);
-        }
-        Ok(false)
-    }
 
     /// Count sources that are overdue for scraping.
     pub async fn count_due_sources(&self) -> Result<u32, neo4rs::Error> {
@@ -425,68 +408,217 @@ impl GraphReader {
         Ok(None)
     }
 
-    // --- ScoutTask operations ---
+    // --- Region operations ---
 
-    /// Get a ScoutTask by id.
-    pub async fn get_scout_task(&self, id: &str) -> Result<Option<ScoutTask>, neo4rs::Error> {
+    /// Get a Region by id.
+    pub async fn get_region(&self, id: &str) -> Result<Option<Region>, neo4rs::Error> {
         let q = query(
-            "MATCH (t:ScoutTask {id: $id})
-             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
-                    t.radius_km AS radius_km, t.context AS context,
-                    t.geo_terms AS geo_terms, t.priority AS priority,
-                    t.source AS source, t.status AS status,
-                    t.created_at AS created_at, t.completed_at AS completed_at,
-                    t.phase_status AS phase_status",
+            "MATCH (r:Region {id: $id})
+             RETURN r.id AS id, r.name AS name,
+                    r.center_lat AS center_lat, r.center_lng AS center_lng,
+                    r.radius_km AS radius_km, r.geo_terms AS geo_terms,
+                    r.is_leaf AS is_leaf, r.created_at AS created_at",
         )
         .param("id", id);
 
         let mut stream = self.client().execute(q).await?;
         if let Some(row) = stream.next().await? {
-            Ok(Some(row_to_scout_task(&row)))
+            Ok(Some(row_to_region(&row)))
         } else {
             Ok(None)
         }
     }
 
-    /// List scout tasks, optionally filtered by status. Ordered by newest first.
-    pub async fn list_scout_tasks(
+    /// List regions, optionally filtered by is_leaf. Ordered by name.
+    pub async fn list_regions(
         &self,
-        status: Option<&str>,
+        leaf_only: Option<bool>,
         limit: u32,
-    ) -> Result<Vec<ScoutTask>, neo4rs::Error> {
-        let cypher = if status.is_some() {
-            "MATCH (t:ScoutTask {status: $status})
-             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
-                    t.radius_km AS radius_km, t.context AS context,
-                    t.geo_terms AS geo_terms, t.priority AS priority,
-                    t.source AS source, t.status AS status,
-                    t.created_at AS created_at, t.completed_at AS completed_at,
-                    t.phase_status AS phase_status
-             ORDER BY t.created_at DESC
+    ) -> Result<Vec<Region>, neo4rs::Error> {
+        let cypher = if leaf_only.is_some() {
+            "MATCH (r:Region {is_leaf: $is_leaf})
+             RETURN r.id AS id, r.name AS name,
+                    r.center_lat AS center_lat, r.center_lng AS center_lng,
+                    r.radius_km AS radius_km, r.geo_terms AS geo_terms,
+                    r.is_leaf AS is_leaf, r.created_at AS created_at
+             ORDER BY r.name
              LIMIT $limit"
         } else {
-            "MATCH (t:ScoutTask)
-             RETURN t.id AS id, t.center_lat AS center_lat, t.center_lng AS center_lng,
-                    t.radius_km AS radius_km, t.context AS context,
-                    t.geo_terms AS geo_terms, t.priority AS priority,
-                    t.source AS source, t.status AS status,
-                    t.created_at AS created_at, t.completed_at AS completed_at,
-                    t.phase_status AS phase_status
-             ORDER BY t.created_at DESC
+            "MATCH (r:Region)
+             RETURN r.id AS id, r.name AS name,
+                    r.center_lat AS center_lat, r.center_lng AS center_lng,
+                    r.radius_km AS radius_km, r.geo_terms AS geo_terms,
+                    r.is_leaf AS is_leaf, r.created_at AS created_at
+             ORDER BY r.name
              LIMIT $limit"
         };
 
-        let mut q = query(cypher).param("limit", limit as i64);
-        if let Some(s) = status {
-            q = q.param("status", s);
-        }
+        let q = query(cypher)
+            .param("is_leaf", leaf_only.unwrap_or(true))
+            .param("limit", limit as i64);
 
-        let mut tasks = Vec::new();
         let mut stream = self.client().execute(q).await?;
+        let mut regions = Vec::new();
         while let Some(row) = stream.next().await? {
-            tasks.push(row_to_scout_task(&row));
+            regions.push(row_to_region(&row));
         }
-        Ok(tasks)
+        Ok(regions)
+    }
+
+    /// Create or update a Region node. MERGE on id for idempotency.
+    pub async fn upsert_region(&self, region: &Region) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MERGE (r:Region {id: $id})
+             SET r.name = $name,
+                 r.center_lat = $center_lat,
+                 r.center_lng = $center_lng,
+                 r.radius_km = $radius_km,
+                 r.geo_terms = $geo_terms,
+                 r.is_leaf = $is_leaf,
+                 r.created_at = datetime($created_at)",
+        )
+        .param("id", region.id.to_string())
+        .param("name", region.name.as_str())
+        .param("center_lat", region.center_lat)
+        .param("center_lng", region.center_lng)
+        .param("radius_km", region.radius_km)
+        .param("geo_terms", region.geo_terms.clone())
+        .param("is_leaf", region.is_leaf)
+        .param("created_at", format_datetime(&region.created_at));
+
+        self.client().run(q).await?;
+        info!(id = %region.id, name = region.name.as_str(), "Region upserted");
+        Ok(())
+    }
+
+    /// Delete a Region node and its CONTAINS/WATCHES edges.
+    pub async fn delete_region(&self, id: &str) -> Result<bool, neo4rs::Error> {
+        self.client().run(query(
+            "MATCH (r:Region {id: $id}) DETACH DELETE r",
+        ).param("id", id)).await?;
+        info!(id, "Region deleted");
+        Ok(true)
+    }
+
+    /// Add a WATCHES edge from a region to a source.
+    pub async fn add_region_source(
+        &self,
+        region_id: &str,
+        source_id: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Region {id: $region_id}), (s:Source {id: $source_id})
+             MERGE (r)-[:WATCHES]->(s)",
+        )
+        .param("region_id", region_id)
+        .param("source_id", source_id);
+
+        self.client().run(q).await?;
+        info!(region_id, source_id, "Region WATCHES source");
+        Ok(())
+    }
+
+    /// Remove a WATCHES edge from a region to a source.
+    pub async fn remove_region_source(
+        &self,
+        region_id: &str,
+        source_id: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Region {id: $region_id})-[w:WATCHES]->(s:Source {id: $source_id})
+             DELETE w",
+        )
+        .param("region_id", region_id)
+        .param("source_id", source_id);
+
+        self.client().run(q).await?;
+        info!(region_id, source_id, "Region WATCHES edge removed");
+        Ok(())
+    }
+
+    /// Add a CONTAINS edge from parent region to child region.
+    pub async fn nest_region(
+        &self,
+        parent_id: &str,
+        child_id: &str,
+    ) -> Result<(), neo4rs::Error> {
+        let q = query(
+            "MATCH (p:Region {id: $parent_id}), (c:Region {id: $child_id})
+             MERGE (p)-[:CONTAINS]->(c)",
+        )
+        .param("parent_id", parent_id)
+        .param("child_id", child_id);
+
+        self.client().run(q).await?;
+        info!(parent_id, child_id, "Region CONTAINS edge created");
+        Ok(())
+    }
+
+    /// List sources watched by a region.
+    pub async fn list_region_sources(
+        &self,
+        region_id: &str,
+    ) -> Result<Vec<SourceNode>, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Region {id: $region_id})-[:WATCHES]->(s:Source)
+             RETURN s.id AS id, s.canonical_key AS canonical_key,
+                    s.url AS url, s.name AS name, s.role AS role,
+                    s.discovery_method AS discovery_method,
+                    s.last_scraped_at AS last_scraped_at,
+                    s.scrape_count AS scrape_count,
+                    s.sources_discovered AS sources_discovered
+             ORDER BY s.canonical_key",
+        )
+        .param("region_id", region_id);
+
+        let mut stream = self.client().execute(q).await?;
+        let mut sources = Vec::new();
+        while let Some(row) = stream.next().await? {
+            if let Some(source) = row_to_source_node(&row) {
+                sources.push(source);
+            }
+        }
+        Ok(sources)
+    }
+
+    /// List child regions contained by a parent region.
+    pub async fn list_child_regions(
+        &self,
+        parent_id: &str,
+    ) -> Result<Vec<Region>, neo4rs::Error> {
+        let q = query(
+            "MATCH (p:Region {id: $parent_id})-[:CONTAINS]->(c:Region)
+             RETURN c.id AS id, c.name AS name,
+                    c.center_lat AS center_lat, c.center_lng AS center_lng,
+                    c.radius_km AS radius_km, c.geo_terms AS geo_terms,
+                    c.is_leaf AS is_leaf, c.created_at AS created_at
+             ORDER BY c.name",
+        )
+        .param("parent_id", parent_id);
+
+        let mut stream = self.client().execute(q).await?;
+        let mut regions = Vec::new();
+        while let Some(row) = stream.next().await? {
+            regions.push(row_to_region(&row));
+        }
+        Ok(regions)
+    }
+
+    /// Check if a region has any sources (used by scrape to decide whether to auto-bootstrap).
+    pub async fn region_has_sources(&self, region_id: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "MATCH (r:Region {id: $region_id})-[:WATCHES]->(:Source)
+             RETURN count(*) > 0 AS has_sources",
+        )
+        .param("region_id", region_id);
+
+        let mut stream = self.client().execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let has: bool = row.get("has_sources").unwrap_or(false);
+            Ok(has)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Get all active sources (global — used for dedup checks).
@@ -3096,180 +3228,6 @@ impl GraphStore {
         Ok(deleted)
     }
 
-    /// Atomically transition a region's scout run status. Returns false if the current
-    /// status is not in the `allowed_from` set (acts as a lock — rejects concurrent runs).
-    /// Cleans up stale running statuses (>5 min) before attempting transition.
-    // --- Task-scoped phase status operations ---
-
-    /// CAS guard: only transitions if current phase_status is in allowed_from set.
-    /// Also auto-resets stale running statuses (>5 min) on the same task.
-    pub async fn transition_task_phase_status(
-        &self,
-        task_id: &str,
-        allowed_from: &[&str],
-        new_status: &str,
-    ) -> Result<bool, neo4rs::Error> {
-        // Clean up stale running status for this task (>5 min).
-        self.client
-            .run(
-                query(
-                    "MATCH (t:ScoutTask {id: $id}) \
-                 WHERE t.phase_status STARTS WITH 'running_' \
-                   AND t.phase_status_updated_at < datetime() - duration('PT5M') \
-                 SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()",
-                )
-                .param("id", task_id),
-            )
-            .await?;
-
-        // Atomic conditional SET: only transitions if current phase_status is allowed
-        let q = query(
-            "MATCH (t:ScoutTask {id: $id})
-             WHERE t.phase_status IN $allowed_from
-             SET t.phase_status = $new_status, t.phase_status_updated_at = datetime()
-             RETURN true AS transitioned",
-        )
-        .param("id", task_id)
-        .param("allowed_from", allowed_from.to_vec())
-        .param("new_status", new_status);
-
-        let mut result = self.client().execute(q).await?;
-        if let Some(row) = result.next().await? {
-            let transitioned: bool = row.get("transitioned").unwrap_or(false);
-            return Ok(transitioned);
-        }
-
-        // No row returned means the WHERE filtered it out
-        Ok(false)
-    }
-
-    /// Directly set a task's phase status.
-    pub async fn set_task_phase_status(
-        &self,
-        task_id: &str,
-        status: &str,
-    ) -> Result<(), neo4rs::Error> {
-        self.client
-            .run(
-                query(
-                    "MATCH (t:ScoutTask {id: $id})
-                 SET t.phase_status = $status, t.phase_status_updated_at = datetime()",
-                )
-                .param("id", task_id)
-                .param("status", status),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Reset a stuck task's phase status to "idle".
-    pub async fn reset_task_phase_status(&self, task_id: &str) -> Result<(), neo4rs::Error> {
-        self.client
-            .run(query(
-                "MATCH (t:ScoutTask {id: $id}) SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()"
-            ).param("id", task_id))
-            .await?;
-        Ok(())
-    }
-
-    /// Clean up all stale running task statuses (>30 min).
-    pub async fn cleanup_stale_task_statuses(&self) -> Result<u32, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask)
-             WHERE t.phase_status STARTS WITH 'running_'
-               AND t.phase_status_updated_at < datetime() - duration('PT30M')
-             SET t.phase_status = 'idle', t.phase_status_updated_at = datetime()
-             RETURN count(t) AS cleaned",
-        );
-
-        let mut result = self.client().execute(q).await?;
-        if let Some(row) = result.next().await? {
-            let cleaned: i64 = row.get("cleaned").unwrap_or(0);
-            return Ok(cleaned as u32);
-        }
-        Ok(0)
-    }
-
-    /// Create or update a ScoutTask node. MERGE on id for idempotency.
-    pub async fn upsert_scout_task(&self, task: &ScoutTask) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MERGE (t:ScoutTask {id: $id})
-             SET t.center_lat = $center_lat,
-                 t.center_lng = $center_lng,
-                 t.radius_km = $radius_km,
-                 t.context = $context,
-                 t.geo_terms = $geo_terms,
-                 t.priority = $priority,
-                 t.source = $source,
-                 t.status = $status,
-                 t.phase_status = coalesce(t.phase_status, $phase_status),
-                 t.created_at = datetime($created_at)",
-        )
-        .param("id", task.id.to_string())
-        .param("center_lat", task.center_lat)
-        .param("center_lng", task.center_lng)
-        .param("radius_km", task.radius_km)
-        .param("context", task.context.as_str())
-        .param("geo_terms", task.geo_terms.clone())
-        .param("priority", task.priority)
-        .param("source", task.source.to_string())
-        .param("status", task.status.to_string())
-        .param("phase_status", task.phase_status.as_str())
-        .param("created_at", format_datetime(&task.created_at));
-
-        self.client().run(q).await?;
-        info!(id = %task.id, context = task.context.as_str(), "ScoutTask upserted");
-        Ok(())
-    }
-
-    /// Cancel a scout task by setting its status to "cancelled".
-    pub async fn cancel_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask {id: $id})
-             WHERE t.status IN ['pending', 'running']
-             SET t.status = 'cancelled'
-             RETURN count(t) AS updated",
-        )
-        .param("id", id);
-
-        let mut stream = self.client().execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let updated: i64 = row.get("updated").unwrap_or(0);
-            Ok(updated > 0)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Mark a scout task as completed.
-    pub async fn complete_scout_task(&self, id: &str) -> Result<(), neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask {id: $id})
-             SET t.status = 'completed', t.completed_at = datetime()",
-        )
-        .param("id", id);
-
-        self.client().run(q).await
-    }
-
-    /// Claim a scout task by setting its status from pending → running.
-    pub async fn claim_scout_task(&self, id: &str) -> Result<bool, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask {id: $id, status: 'pending'})
-             SET t.status = 'running'
-             RETURN count(t) AS updated",
-        )
-        .param("id", id);
-
-        let mut stream = self.client().execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let updated: i64 = row.get("updated").unwrap_or(0);
-            Ok(updated > 0)
-        } else {
-            Ok(false)
-        }
-    }
-
     // --- Demand Signal operations (Driver A) ---
 
     /// Store a raw demand signal from a user search.
@@ -3292,100 +3250,6 @@ impl GraphStore {
         self.client().run(q).await?;
         info!(id = %signal.id, query = signal.query.as_str(), "DemandSignal stored");
         Ok(())
-    }
-
-    /// Aggregate recent demand signals into ScoutTasks.
-    /// Buckets by geohash-5 (~5km cells), creates tasks for cells with ≥ 2 signals.
-    /// Deletes consumed demand signals.
-    pub async fn aggregate_demand(&self) -> Result<Vec<ScoutTask>, neo4rs::Error> {
-        // Fetch recent demand signals (last 24h)
-        let q = query(
-            "MATCH (d:DemandSignal)
-             WHERE d.created_at > datetime() - duration('P1D')
-             RETURN d.id AS id, d.query AS query,
-                    d.center_lat AS center_lat, d.center_lng AS center_lng,
-                    d.radius_km AS radius_km",
-        );
-
-        let mut signals: Vec<(String, String, f64, f64, f64)> = Vec::new();
-        let mut stream = self.client().execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let id: String = row.get("id").unwrap_or_default();
-            let q_text: String = row.get("query").unwrap_or_default();
-            let lat: f64 = row.get("center_lat").unwrap_or(0.0);
-            let lng: f64 = row.get("center_lng").unwrap_or(0.0);
-            let radius: f64 = row.get("radius_km").unwrap_or(30.0);
-            signals.push((id, q_text, lat, lng, radius));
-        }
-
-        if signals.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Bucket by truncated lat/lng (~5km grid cells)
-        // Using 0.05 degree resolution ≈ 5km
-        let mut cells: HashMap<(i64, i64), Vec<&(String, String, f64, f64, f64)>> = HashMap::new();
-        for sig in &signals {
-            let lat_cell = (sig.2 / 0.05).round() as i64;
-            let lng_cell = (sig.3 / 0.05).round() as i64;
-            cells.entry((lat_cell, lng_cell)).or_default().push(sig);
-        }
-
-        let mut tasks = Vec::new();
-        let mut consumed_ids = Vec::new();
-
-        for ((_lat_cell, _lng_cell), cell_signals) in &cells {
-            if cell_signals.len() < 2 {
-                continue;
-            }
-
-            // Compute centroid
-            let n = cell_signals.len() as f64;
-            let avg_lat: f64 = cell_signals.iter().map(|s| s.2).sum::<f64>() / n;
-            let avg_lng: f64 = cell_signals.iter().map(|s| s.3).sum::<f64>() / n;
-            let avg_radius: f64 = cell_signals.iter().map(|s| s.4).sum::<f64>() / n;
-
-            // Collect unique query terms for context
-            let queries: Vec<&str> = cell_signals.iter().map(|s| s.1.as_str()).collect();
-            let context = queries.join("; ");
-
-            let task = ScoutTask {
-                id: Uuid::new_v4(),
-                center_lat: avg_lat,
-                center_lng: avg_lng,
-                radius_km: avg_radius.min(100.0),
-                context,
-                geo_terms: queries.iter().map(|q| q.to_string()).collect(),
-                priority: 0.5,
-                source: ScoutTaskSource::DriverA,
-                status: ScoutTaskStatus::Pending,
-                phase_status: "idle".to_string(),
-                created_at: chrono::Utc::now(),
-                completed_at: None,
-            };
-
-            self.upsert_scout_task(&task).await?;
-            tasks.push(task);
-
-            // Mark these signals as consumed
-            for sig in cell_signals {
-                consumed_ids.push(sig.0.clone());
-            }
-        }
-
-        // Delete consumed demand signals
-        if !consumed_ids.is_empty() {
-            let q = query(
-                "UNWIND $ids AS id
-                 MATCH (d:DemandSignal {id: id})
-                 DELETE d",
-            )
-            .param("ids", consumed_ids);
-            self.client().run(q).await?;
-        }
-
-        info!(tasks = tasks.len(), "Demand aggregation complete");
-        Ok(tasks)
     }
 
     // --- Source operations (emergent source discovery) ---
@@ -4623,29 +4487,19 @@ pub fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
     })
 }
 
-/// Parse a neo4rs Row (with aliased columns) into a ScoutTask.
-pub fn row_to_scout_task(row: &neo4rs::Row) -> ScoutTask {
+/// Parse a neo4rs Row (with aliased columns) into a Region.
+pub fn row_to_region(row: &neo4rs::Row) -> Region {
     let id_str: String = row.get("id").unwrap_or_default();
-    let source_str: String = row.get("source").unwrap_or_default();
-    let status_str: String = row.get("status").unwrap_or_default();
 
-    let phase_status: String = row
-        .get("phase_status")
-        .unwrap_or_else(|_| "idle".to_string());
-
-    ScoutTask {
+    Region {
         id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::nil()),
+        name: row.get("name").unwrap_or_default(),
         center_lat: row.get("center_lat").unwrap_or(0.0),
         center_lng: row.get("center_lng").unwrap_or(0.0),
         radius_km: row.get("radius_km").unwrap_or(0.0),
-        context: row.get("context").unwrap_or_default(),
         geo_terms: row.get("geo_terms").unwrap_or_default(),
-        priority: row.get("priority").unwrap_or(0.0),
-        source: source_str.parse().unwrap_or(ScoutTaskSource::Manual),
-        status: status_str.parse().unwrap_or(ScoutTaskStatus::Pending),
+        is_leaf: row.get("is_leaf").unwrap_or(true),
         created_at: row_datetime_opt(row, "created_at").unwrap_or_else(Utc::now),
-        completed_at: row_datetime_opt(row, "completed_at"),
-        phase_status,
     }
 }
 

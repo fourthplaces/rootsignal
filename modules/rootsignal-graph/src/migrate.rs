@@ -114,13 +114,12 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     info!("Edge indexes created");
 
-    // ── ScoutTask constraints and indexes ─────────────────────────────────
+    // ── Region constraints and indexes ──────────────────────────────────
 
-    g.run(query("CREATE CONSTRAINT scouttask_id IF NOT EXISTS FOR (t:ScoutTask) REQUIRE t.id IS UNIQUE")).await?;
-    g.run(query("CREATE INDEX scouttask_status IF NOT EXISTS FOR (t:ScoutTask) ON (t.status)")).await?;
-    g.run(query("CREATE INDEX scouttask_priority IF NOT EXISTS FOR (t:ScoutTask) ON (t.priority)")).await?;
+    g.run(query("CREATE CONSTRAINT region_id IF NOT EXISTS FOR (r:Region) REQUIRE r.id IS UNIQUE")).await?;
+    g.run(query("CREATE INDEX region_is_leaf IF NOT EXISTS FOR (r:Region) ON (r.is_leaf)")).await?;
 
-    info!("ScoutTask constraints and indexes created");
+    info!("Region constraints and indexes created");
 
     // ── Source constraints and indexes ────────────────────────────────────
 

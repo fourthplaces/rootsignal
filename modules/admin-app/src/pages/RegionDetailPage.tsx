@@ -338,7 +338,7 @@ export function RegionDetailPage() {
                 {regionSources.map((s: Record<string, string | number | boolean | null>) => (
                   <tr key={s.id as string} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-2 max-w-[300px] truncate">
-                      <Link to={`/sources/${s.id}`} className="text-blue-400 hover:underline">
+                      <Link to={`/scout/sources/${s.id}`} className="text-blue-400 hover:underline">
                         {(s.canonicalValue as string) || (s.url as string)}
                       </Link>
                     </td>

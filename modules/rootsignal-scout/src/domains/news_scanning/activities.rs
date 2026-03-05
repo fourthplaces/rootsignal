@@ -1,16 +1,15 @@
-//! News scanning activities — scan RSS feeds and emit BeaconDetected events.
+//! News scanning activities — scan RSS feeds and extract signals.
 
 use std::sync::Arc;
 
 use tracing::{info, warn};
 
-use rootsignal_common::events::SystemEvent;
 use rootsignal_common::telemetry_events::TelemetryEvent;
 use rootsignal_graph::GraphStore;
 
 use crate::core::engine::ScoutEngineDeps;
 
-/// Scan news feeds and push BeaconDetected events for each new beacon task.
+/// Scan news feeds for signals.
 pub async fn scan_news(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events) {
     let (archive, ai, graph_client, budget) = match (
         deps.archive.as_ref(),
@@ -47,11 +46,8 @@ pub async fn scan_news(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
     );
 
     match scanner.scan().await {
-        Ok((articles_scanned, beacon_tasks)) => {
-            info!(articles_scanned, beacons = beacon_tasks.len(), "News scan complete");
-            for task in beacon_tasks {
-                events.push(SystemEvent::BeaconDetected { task });
-            }
+        Ok(articles_scanned) => {
+            info!(articles_scanned, "News scan complete");
         }
         Err(e) => warn!(error = %e, "News scan failed"),
     }

@@ -20,6 +20,7 @@ use crate::scout_runner::ScoutRunner;
 use crate::db::scout_run::{
     EventRow, EventRowFull, ScoutRunRow, StatsJson,
     event_layer, event_summary, json_str, json_u32, json_u64, json_f64,
+    list_events_by_variant, count_events_by_variant,
 };
 use crate::jwt::JwtService;
 use rootsignal_common::Config;
@@ -707,6 +708,17 @@ impl QueryRoot {
         .await
         .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
         Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
+    }
+
+    /// Get outcome-focused data for a scout run. Returns a lazy object whose
+    /// field resolvers each issue targeted queries (by payload variant).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_run_outcomes(
+        &self,
+        _ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<ScoutRunOutcomes> {
+        Ok(ScoutRunOutcomes { run_id })
     }
 
     /// List events that touched a specific graph node.
@@ -1722,6 +1734,318 @@ impl From<EventRow> for ScoutRunEvent {
             signal_count: json_u32(d, "signal_count"),
             summary: json_str(d, "summary"),
         }
+    }
+}
+
+// ========== Scout Run Outcomes (lazy field resolvers) ==========
+
+fn get_pool<'a>(ctx: &'a Context<'a>) -> Result<&'a sqlx::PgPool> {
+    ctx.data_unchecked::<Option<sqlx::PgPool>>()
+        .as_ref()
+        .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))
+}
+
+#[derive(SimpleObject)]
+struct OutcomeSourceScraped {
+    canonical_key: String,
+    url: Option<String>,
+    signals_produced: u32,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeSignalCreated {
+    node_id: String,
+    node_type: String,
+    title: Option<String>,
+    confidence: Option<f64>,
+    source_url: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeDedupMatch {
+    node_type: Option<String>,
+    similarity: Option<f64>,
+    existing_id: Option<String>,
+    title: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeRejection {
+    title: String,
+    reason: String,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeSourceDiscovered {
+    canonical_key: String,
+    url: Option<String>,
+    discovery_method: Option<String>,
+    gap_context: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeExpansionQuery {
+    query: String,
+    source_url: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeFailure {
+    handler_id: Option<String>,
+    error: String,
+    url: Option<String>,
+    variant: String,
+}
+
+#[derive(SimpleObject)]
+#[graphql(concrete(name = "OutcomePageSourceScraped", params(OutcomeSourceScraped)))]
+#[graphql(concrete(name = "OutcomePageSignalCreated", params(OutcomeSignalCreated)))]
+#[graphql(concrete(name = "OutcomePageDedupMatch", params(OutcomeDedupMatch)))]
+#[graphql(concrete(name = "OutcomePageRejection", params(OutcomeRejection)))]
+#[graphql(concrete(name = "OutcomePageSourceDiscovered", params(OutcomeSourceDiscovered)))]
+#[graphql(concrete(name = "OutcomePageExpansionQuery", params(OutcomeExpansionQuery)))]
+#[graphql(concrete(name = "OutcomePageFailure", params(OutcomeFailure)))]
+struct OutcomePage<T: async_graphql::OutputType> {
+    items: Vec<T>,
+    total: i64,
+}
+
+struct ScoutRunOutcomes {
+    run_id: String,
+}
+
+#[Object]
+impl ScoutRunOutcomes {
+    async fn sources_scraped(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeSourceScraped>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(100).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "source_scraped")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "source_scraped", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let items = rows
+            .into_iter()
+            .map(|r| OutcomeSourceScraped {
+                canonical_key: json_str(&r.data, "canonical_key").unwrap_or_default(),
+                url: json_str(&r.data, "url"),
+                signals_produced: json_u32(&r.data, "signals_produced").unwrap_or(0),
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn signals_created(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeSignalCreated>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(100).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "new_signal_accepted")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "new_signal_accepted", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let items = rows
+            .into_iter()
+            .map(|r| OutcomeSignalCreated {
+                node_id: json_str(&r.data, "node_id").unwrap_or_default(),
+                node_type: json_str(&r.data, "node_type").unwrap_or_default(),
+                title: json_str(&r.data, "title"),
+                confidence: json_f64(&r.data, "confidence"),
+                source_url: json_str(&r.data, "source_url"),
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn dedup_matches(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeDedupMatch>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+
+        let cross = list_events_by_variant(pool, &self.run_id, "cross_source_match_detected", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let same = list_events_by_variant(pool, &self.run_id, "same_source_reencountered", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let count_cross = count_events_by_variant(pool, &self.run_id, "cross_source_match_detected")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let count_same = count_events_by_variant(pool, &self.run_id, "same_source_reencountered")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let items: Vec<OutcomeDedupMatch> = cross
+            .into_iter()
+            .chain(same)
+            .map(|r| OutcomeDedupMatch {
+                node_type: json_str(&r.data, "node_type"),
+                similarity: json_f64(&r.data, "similarity"),
+                existing_id: json_str(&r.data, "existing_id"),
+                title: json_str(&r.data, "title"),
+            })
+            .take(limit as usize)
+            .collect();
+        Ok(OutcomePage {
+            items,
+            total: count_cross + count_same,
+        })
+    }
+
+    async fn rejections(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeRejection>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "observation_rejected")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "observation_rejected", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let items = rows
+            .into_iter()
+            .map(|r| OutcomeRejection {
+                title: json_str(&r.data, "title").unwrap_or_default(),
+                reason: json_str(&r.data, "reason").unwrap_or_default(),
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn sources_discovered(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeSourceDiscovered>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "source_discovered")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "source_discovered", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                let src = r.data.get("source");
+                OutcomeSourceDiscovered {
+                    canonical_key: src
+                        .and_then(|s| s.get("canonical_key"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string(),
+                    url: src
+                        .and_then(|s| s.get("url"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    discovery_method: src
+                        .and_then(|s| s.get("discovery_method"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    gap_context: src
+                        .and_then(|s| s.get("gap_context"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                }
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn expansion_queries(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeExpansionQuery>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "expansion_query_collected")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "expansion_query_collected", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let items = rows
+            .into_iter()
+            .map(|r| OutcomeExpansionQuery {
+                query: json_str(&r.data, "query").unwrap_or_default(),
+                source_url: json_str(&r.data, "source_url"),
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn failures(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeFailure>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+
+        let handler = list_events_by_variant(pool, &self.run_id, "handler_failed", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let fetch = list_events_by_variant(pool, &self.run_id, "content_fetch_failed", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let extract = list_events_by_variant(pool, &self.run_id, "extraction_failed", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let count_handler = count_events_by_variant(pool, &self.run_id, "handler_failed")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let count_fetch = count_events_by_variant(pool, &self.run_id, "content_fetch_failed")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let count_extract = count_events_by_variant(pool, &self.run_id, "extraction_failed")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let items: Vec<OutcomeFailure> = handler
+            .into_iter()
+            .map(|r| OutcomeFailure {
+                handler_id: json_str(&r.data, "handler_id"),
+                error: json_str(&r.data, "error").unwrap_or_default(),
+                url: json_str(&r.data, "url"),
+                variant: "handler_failed".to_string(),
+            })
+            .chain(fetch.into_iter().map(|r| OutcomeFailure {
+                handler_id: None,
+                error: json_str(&r.data, "error").unwrap_or_default(),
+                url: json_str(&r.data, "url"),
+                variant: "content_fetch_failed".to_string(),
+            }))
+            .chain(extract.into_iter().map(|r| OutcomeFailure {
+                handler_id: None,
+                error: json_str(&r.data, "error").unwrap_or_default(),
+                url: json_str(&r.data, "url"),
+                variant: "extraction_failed".to_string(),
+            }))
+            .take(limit as usize)
+            .collect();
+        Ok(OutcomePage {
+            items,
+            total: count_handler + count_fetch + count_extract,
+        })
     }
 }
 
