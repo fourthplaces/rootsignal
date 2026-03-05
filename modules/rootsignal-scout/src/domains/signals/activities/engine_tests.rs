@@ -318,11 +318,11 @@ async fn link_promotion_promotes_links_on_phase_completed() {
             source_signal_counts: HashMap::new(),
             collected_links: vec![
                 CollectedLink {
-                    url: "https://example.org/community".to_string(),
+                    url: "https://instagram.com/mutual_aid_mpls".to_string(),
                     discovered_on: "https://localorg.org".to_string(),
                 },
                 CollectedLink {
-                    url: "https://another.org/events".to_string(),
+                    url: "https://twitter.com/mpls_community".to_string(),
                     discovered_on: "https://localorg.org".to_string(),
                 },
             ],

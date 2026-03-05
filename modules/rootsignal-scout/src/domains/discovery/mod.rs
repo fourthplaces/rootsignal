@@ -16,9 +16,9 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
-use crate::domains::enrichment::activities::domain_filter;
-use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
+use crate::domains::enrichment::activities::link_promoter;
 use crate::domains::discovery::activities::{bootstrap, discover_expansion_sources};
+use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
@@ -60,7 +60,7 @@ pub mod handlers {
         Ok(events)
     }
 
-    /// PhaseCompleted(TensionScrape|ResponseScrape|SignalExpansion) → promote collected links to sources.
+    /// PhaseCompleted(TensionScrape|ResponseScrape|SignalExpansion) → promote social handles from collected links.
     #[handle(on = LifecycleEvent, id = "discovery:link_promotion", filter = is_scrape_or_expansion_completed)]
     async fn link_promotion(
         _event: LifecycleEvent,
@@ -73,80 +73,76 @@ pub mod handlers {
                 reason: "no collected links to promote".into(),
             }]);
         }
-        let deps = ctx.deps();
         let links = state.collected_links.clone();
 
-        // Filter out irrelevant domains (SaaS, e-commerce, SEO spam, etc.) via LLM.
-        // Fail-open: if api key or region is missing, skip filtering.
-        let (links, filter_events) = match (deps.ai.as_ref(), deps.region.as_ref()) {
-            (Some(ai), Some(region)) => {
-                let urls: Vec<String> = links.iter().map(|l| l.url.clone()).collect();
-                let accepted = domain_filter::filter_domains_batch(
-                    &urls,
-                    &region.name,
-                    ai.as_ref(),
-                    &*deps.store,
-                )
-                .await;
-                let accepted_set: std::collections::HashSet<&str> =
-                    accepted.iter().map(|u| u.as_str()).collect();
-                let rejected_urls: Vec<&str> = urls.iter()
-                    .map(|u| u.as_str())
-                    .filter(|u| !accepted_set.contains(u))
-                    .collect();
-                let filtered: Vec<_> = links
-                    .into_iter()
-                    .filter(|l| accepted_set.contains(l.url.as_str()))
-                    .collect();
-                let rejected = rejected_urls.len();
-                let log_event = if rejected > 0 {
-                    info!(rejected, accepted = filtered.len(), "Domain filter applied to collected links");
-                    Some(TelemetryEvent::SystemLog {
-                        message: format!("Domain filter rejected {} of {} links", rejected, rejected + filtered.len()),
-                        context: Some(serde_json::json!({
-                            "handler": "discovery:link_promotion",
-                            "rejected": rejected,
-                            "accepted": filtered.len(),
-                            "rejected_urls": rejected_urls,
-                        })),
+        // Extract social handles from collected links and promote as sources.
+        // Build a url→discovered_on map for provenance tracking.
+        let url_to_source: HashMap<String, String> = links
+            .iter()
+            .map(|l| (l.url.clone(), l.discovered_on.clone()))
+            .collect();
+        let all_urls: Vec<String> = links.iter().map(|l| l.url.clone()).collect();
+        let handles = link_promoter::extract_social_handles_from_links(&all_urls);
+
+        if handles.is_empty() {
+            return Ok(events![
+                PipelineEvent::HandlerSkipped {
+                    handler_id: "discovery:link_promotion".into(),
+                    reason: "no social handles found in collected links".into(),
+                },
+                DiscoveryEvent::LinksPromoted { count: 0 }
+            ]);
+        }
+
+        // Dedup by canonical URL and build SourceNodes
+        let mut seen = std::collections::HashSet::new();
+        let mut promoted: Vec<(SourceNode, Option<String>)> = Vec::new();
+        for (platform, handle) in &handles {
+            let url = link_promoter::platform_url(platform, handle);
+            let cv = canonical_value(&url);
+            if seen.insert(cv.clone()) {
+                // Find which page this social link was discovered on
+                let discovered_on = all_urls.iter()
+                    .find(|u| {
+                        let u_lower = u.to_lowercase();
+                        u_lower.contains(&format!("/{handle}"))
+                            || u_lower.contains(&format!("/@{handle}"))
                     })
-                } else {
-                    None
-                };
-                (filtered, log_event)
+                    .and_then(|u| url_to_source.get(u))
+                    .cloned();
+                let gap = discovered_on.as_ref()
+                    .map(|src| format!("{platform:?} handle @{handle} found on {src}"))
+                    .unwrap_or_else(|| format!("{platform:?} handle @{handle} found on scraped page"));
+                let source = SourceNode::new(
+                    cv.clone(),
+                    cv,
+                    Some(url),
+                    DiscoveryMethod::LinkedFrom,
+                    0.25,
+                    SourceRole::Mixed,
+                    Some(gap),
+                );
+                promoted.push((source, discovered_on));
             }
-            _ => (links, None),
-        };
-
-        let promoted = link_promoter::promote_links(&links, &PromotionConfig::default());
-        if promoted.is_empty() {
-            let mut events = Events::new();
-            if let Some(log) = filter_events {
-                events.push(log);
-            }
-            return Ok(events);
         }
+
         let count = promoted.len() as u32;
+        info!(count, "Promoting social handles as sources");
         let mut events = Events::new();
-        if let Some(log) = filter_events {
-            events.push(log);
-        }
 
-        // Count discovery credit per parent source from promoted results
+        // Count discovery credit per parent source
         let mut credit: HashMap<String, u32> = HashMap::new();
-        for source in &promoted {
-            if let Some(ref ctx) = source.gap_context {
-                if let Some(parent_url) = ctx.strip_prefix("Linked from ") {
-                    if let Some(ck) = state.url_to_canonical_key.get(parent_url) {
-                        *credit.entry(ck.clone()).or_default() += 1;
-                    }
+        for (_, discovered_on) in &promoted {
+            if let Some(parent_url) = discovered_on {
+                if let Some(ck) = state.url_to_canonical_key.get(parent_url) {
+                    *credit.entry(ck.clone()).or_default() += 1;
                 }
             }
         }
 
-        for s in promoted {
+        for (source, _) in promoted {
             events.push(DiscoveryEvent::SourceDiscovered {
-                source: s,
+                source,
                 discovered_by: "link_promoter".into(),
             });
         }
