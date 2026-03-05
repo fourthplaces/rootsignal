@@ -1,11 +1,11 @@
 //! Dedup handler — 4-layer deduplication for extracted signals.
 //!
-//! Triggered by `SignalsExtracted` (fact: "extraction produced N nodes for this URL").
-//! Pulls the extracted batch from state, runs dedup layers, emits per-node facts:
+//! Triggered by `ScrapeRoleCompleted` (carries extracted batches in-memory).
+//! Runs dedup layers and emits final facts directly:
 //!
-//! - `NewSignalAccepted` — passed all dedup layers, this is a new signal
-//! - `CrossSourceMatchDetected` — found from a different source
-//! - `SameSourceReencountered` — re-encountered from the same source
+//! - Create: WorldEvent + SystemEvents + CitationPublished + SignalCreated
+//! - Corroborate: CitationPublished + ObservationCorroborated + CorroborationScored
+//! - Refresh: CitationPublished + FreshnessConfirmed
 //!
 //! Layer 1 (batch title dedup) is applied by the caller before stashing.
 //! This handler runs layers 2–4.
@@ -14,6 +14,7 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use rootsignal_common::types::NodeType;
+use seesaw_core::Events;
 use tracing::{info, warn};
 
 use crate::domains::signals::events::SignalEvent;
@@ -22,24 +23,34 @@ use crate::domains::signals::activities::dedup_utils::{dedup_verdict, normalize_
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::{ExtractedBatch, PendingNode, PipelineState};
 
-/// Handle `SignalsExtracted`: run 4-layer dedup on the extracted batch.
+use super::creation;
+
+/// Handle extracted batch: run 4-layer dedup, emit final facts.
 ///
 /// The batch is carried directly on the event payload — no stash/cleanup needed.
 pub async fn deduplicate_extracted_batch(
     url: &str,
+    canonical_key: &str,
     batch: &ExtractedBatch,
     state: &PipelineState,
     deps: &ScoutEngineDeps,
-) -> Result<Vec<SignalEvent>> {
+) -> Result<Events> {
 
     if batch.nodes.is_empty() {
-        return Ok(vec![SignalEvent::DedupCompleted {
+        let mut events = Events::new();
+        events.push(SignalEvent::DedupCompleted {
             url: url.to_string(),
-        }]);
+            canonical_key: canonical_key.to_string(),
+            signals_created: 0,
+            signals_deduplicated: 0,
+        });
+        return Ok(events);
     }
 
     let content_hash_str = format!("{:x}", rootsignal_common::content_hash(&batch.content));
-    let mut events = Vec::new();
+    let mut events = Events::new();
+    let mut created_count: u32 = 0;
+    let mut deduped_count: u32 = 0;
 
     // --- Layer 2: URL-based title dedup ---
     let existing_titles: HashSet<String> = deps
@@ -64,8 +75,12 @@ pub async fn deduplicate_extracted_batch(
     }
 
     if nodes.is_empty() {
+        deduped_count += url_deduped as u32;
         events.push(SignalEvent::DedupCompleted {
             url: url.to_string(),
+            canonical_key: canonical_key.to_string(),
+            signals_created: 0,
+            signals_deduplicated: deduped_count,
         });
         return Ok(events);
     }
@@ -99,16 +114,15 @@ pub async fn deduplicate_extracted_batch(
                     new_source = url,
                     "Global title+type match from different source"
                 );
-                events.push(SignalEvent::CrossSourceMatchDetected {
-                    existing_id,
-                    node_type: node.node_type(),
-                    source_url: url.to_string(),
-                    similarity,
-                });
+                deduped_count += 1;
+                let corr_events = creation::create_corroboration_events(
+                    existing_id, node.node_type(), url, similarity, deps,
+                ).await?;
+                events.extend(corr_events);
             }
             DedupVerdict::Refresh {
                 existing_id,
-                similarity,
+                similarity: _,
                 ..
             } => {
                 info!(
@@ -117,12 +131,11 @@ pub async fn deduplicate_extracted_batch(
                     source = url,
                     "Same-source title match"
                 );
-                events.push(SignalEvent::SameSourceReencountered {
-                    existing_id,
-                    node_type: node.node_type(),
-                    source_url: url.to_string(),
-                    similarity,
-                });
+                deduped_count += 1;
+                let fresh_events = creation::create_freshness_events(
+                    existing_id, node.node_type(), url, deps,
+                ).await?;
+                events.extend(fresh_events);
             }
             DedupVerdict::Create => {
                 remaining_nodes.push(node);
@@ -134,6 +147,9 @@ pub async fn deduplicate_extracted_batch(
     if nodes.is_empty() {
         events.push(SignalEvent::DedupCompleted {
             url: url.to_string(),
+            canonical_key: canonical_key.to_string(),
+            signals_created: 0,
+            signals_deduplicated: deduped_count,
         });
         return Ok(events);
     }
@@ -246,12 +262,11 @@ pub async fn deduplicate_extracted_batch(
                         );
                     }
                 }
-                events.push(SignalEvent::SameSourceReencountered {
-                    existing_id,
-                    node_type,
-                    source_url: url.to_string(),
-                    similarity,
-                });
+                deduped_count += 1;
+                let fresh_events = creation::create_freshness_events(
+                    existing_id, node_type, url, deps,
+                ).await?;
+                events.extend(fresh_events);
             }
             DedupVerdict::Corroborate {
                 existing_id,
@@ -281,12 +296,11 @@ pub async fn deduplicate_extracted_batch(
                         );
                     }
                 }
-                events.push(SignalEvent::CrossSourceMatchDetected {
-                    existing_id,
-                    node_type,
-                    source_url: url.to_string(),
-                    similarity,
-                });
+                deduped_count += 1;
+                let corr_events = creation::create_corroboration_events(
+                    existing_id, node_type, url, similarity, deps,
+                ).await?;
+                events.extend(corr_events);
             }
             DedupVerdict::Create => {
                 let node_id = node.id();
@@ -309,7 +323,6 @@ pub async fn deduplicate_extracted_batch(
                     .cloned()
                     .unwrap_or_default();
 
-                let title = node.title().to_string();
                 let pn = PendingNode {
                     node,
                     content_hash: content_hash_str.clone(),
@@ -319,19 +332,21 @@ pub async fn deduplicate_extracted_batch(
                     source_id: batch.source_id,
                 };
 
-                events.push(SignalEvent::NewSignalAccepted {
-                    node_id,
-                    node_type,
-                    title,
-                    source_url: url.to_string(),
-                    pending_node: Box::new(pn),
-                });
+                // Emit final facts directly
+                created_count += 1;
+                let create_events = creation::create_signal_events(
+                    &pn, canonical_key, url, state, deps,
+                ).await?;
+                events.extend(create_events);
             }
         }
     }
 
     events.push(SignalEvent::DedupCompleted {
         url: url.to_string(),
+        canonical_key: canonical_key.to_string(),
+        signals_created: created_count,
+        signals_deduplicated: deduped_count,
     });
 
     Ok(events)

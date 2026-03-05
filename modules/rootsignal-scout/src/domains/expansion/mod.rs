@@ -97,6 +97,8 @@ pub mod handlers {
                 expansion_queries: topic_scrape.expansion_queries,
                 stats_delta: topic_scrape.stats_delta,
                 page_previews: Default::default(),
+                extracted_batches: Vec::new(),
+                discovered_sources: Vec::new(),
             });
             all_events.extend(scrape_events);
         }

@@ -604,6 +604,9 @@ const BREAKDOWN_VARIANTS: &[&str] = &[
     "cross_source_match_detected",
     "same_source_reencountered",
     "source_discovered",
+    "sources_discovered",
+    "source_registered",
+    "source_rejected",
     "expansion_query_collected",
     "handler_failed",
     "handler_skipped",
@@ -615,7 +618,10 @@ const SAMPLE_VARIANTS: &[(&str, &str, i64)] = &[
     ("Fetch Failures", "content_fetch_failed", 10),
     ("Rejections", "observation_rejected", 15),
     ("Signals Created", "new_signal_accepted", 15),
-    ("Sources Discovered", "source_discovered", 15),
+    ("Sources Discovered (old)", "source_discovered", 15),
+    ("Sources Proposed", "sources_discovered", 10),
+    ("Sources Registered", "source_registered", 15),
+    ("Sources Rejected", "source_rejected", 10),
     ("Dedup Matches", "cross_source_match_detected", 10),
 ];
 

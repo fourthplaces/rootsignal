@@ -7,17 +7,18 @@ use futures::stream::{self, StreamExt};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::{ActorContext, NodeType};
+use rootsignal_common::ActorContext;
 #[cfg(test)]
 use rootsignal_common::SourceNode;
 use seesaw_core::Events;
 
+use crate::core::aggregate::ExtractedBatch;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
 use crate::infra::util::{content_hash, sanitize_url};
 
-use super::signal_events::{refresh_url_signals_events, store_signals_events};
-use super::types::{FetchExtractResult, FetchExtractStats, ScrapeOutcome, SingleUrlResult};
+use super::signal_events::refresh_url_signals_events;
+use super::types::{batch_title_dedup, score_and_filter, FetchExtractResult, FetchExtractStats, ScrapeOutcome, UrlExtraction};
 #[cfg(test)]
 use super::types::ScrapeOutput;
 
@@ -33,7 +34,7 @@ pub(crate) async fn scrape_web_sources(
     url_to_canonical_key: &HashMap<String, String>,
     actor_contexts: &HashMap<String, ActorContext>,
 ) -> ScrapeOutput {
-    let resolution = super::url_resolution::resolve_web_urls(deps, sources, url_to_canonical_key, None, None).await;
+    let resolution = super::url_resolution::resolve_web_urls(deps, sources, url_to_canonical_key).await;
 
     // Build merged url_to_ck for fetch_and_extract
     let mut url_to_ck = url_to_canonical_key.clone();
@@ -61,11 +62,12 @@ pub(crate) async fn scrape_web_sources(
     output.source_signal_counts = fetch_result.source_signal_counts;
     output.collected_links = fetch_result.collected_links;
     output.expansion_queries = fetch_result.expansion_queries;
+    output.extracted_batches = fetch_result.extracted_batches;
     output
 }
 
 /// Fetch and extract signals from resolved URLs in parallel.
-/// Emits per-URL events (SignalsExtracted, FreshnessConfirmed, etc.).
+/// Collects extracted batches and freshness events per URL.
 pub(crate) async fn fetch_and_extract(
     deps: &ScoutEngineDeps,
     urls: &[String],
@@ -81,6 +83,7 @@ pub(crate) async fn fetch_and_extract(
             expansion_queries: Vec::new(),
             stats: FetchExtractStats::default(),
             page_previews: HashMap::new(),
+            extracted_batches: Vec::new(),
         };
 
         if urls.is_empty() {
@@ -188,48 +191,49 @@ pub(crate) async fn fetch_and_extract(
                     let preview: String = content.chars().take(500).collect();
                     result.page_previews.insert(url.clone(), preview);
 
-                    // Count implied queries for logging
-                    let mut implied_q_count = 0u32;
-                    // Collect implied queries from Tension + Need nodes for immediate expansion
-                    for node in &nodes {
-                        if matches!(node.node_type(), NodeType::Concern | NodeType::HelpRequest) {
-                            if let Some(meta) = node.meta() {
-                                implied_q_count += meta.implied_queries.len() as u32;
-                                result.expansion_queries
-                                    .extend(meta.implied_queries.iter().cloned());
-                            }
-                        }
-                    }
+                    // Collect implied queries from Concern + HelpRequest nodes
+                    let implied = super::shared::collect_implied_queries(&nodes);
+                    result.expansion_queries.extend(implied);
 
                     result.stats.signals_extracted += nodes.len() as u32;
 
                     // Apply RSS/Atom pub_date as fallback published_at
                     if let Some(pub_date) = pub_dates.get(&url) {
-                        for node in &mut nodes {
-                            if let Some(meta) = node.meta_mut() {
-                                if meta.published_at.is_none() {
-                                    meta.published_at = Some(*pub_date);
-                                }
-                            }
-                        }
+                        super::shared::apply_published_at_fallback(&mut nodes, *pub_date);
                     }
 
                     let source_id = source_keys.get(&ck).copied();
-                    let events = store_signals_events(
-                        &url,
-                        &content,
-                        nodes,
-                        resource_tags,
-                        signal_tags,
-                        &author_actors,
-                        url_to_ck,
-                        actor_contexts,
-                        source_id,
-                    );
-                    if !events.is_empty() {
+
+                    // Score quality, populate from/about locations, remove Evidence nodes
+                    let actor_ctx = actor_contexts.get(&ck);
+                    let nodes = score_and_filter(nodes, &url, actor_ctx);
+
+                    if !nodes.is_empty() {
+                        // Within-batch dedup by (normalized_title, node_type)
+                        let nodes = batch_title_dedup(nodes);
+
+                        let canonical_key = url_to_ck
+                            .get(&url)
+                            .cloned()
+                            .unwrap_or_else(|| url.clone());
+
+                        let batch = ExtractedBatch {
+                            content,
+                            nodes,
+                            resource_tags: resource_tags.into_iter().collect(),
+                            signal_tags: signal_tags.into_iter().collect(),
+                            author_actors,
+                            source_id,
+                        };
+
                         result.source_signal_counts.entry(ck).or_default();
+                        result.extracted_batches.push(UrlExtraction {
+                            url: url.clone(),
+                            canonical_key,
+                            batch,
+                        });
                     }
-                    result.events.extend(events);
+
                     for log in logs {
                         result.events.push(log);
                     }
@@ -254,165 +258,3 @@ pub(crate) async fn fetch_and_extract(
         result
     }
 
-/// Fetch and extract signals for a single URL.
-/// Used by the per-URL fan-out handler.
-pub(crate) async fn fetch_and_extract_single(
-    deps: &ScoutEngineDeps,
-    url: &str,
-    source_id: Option<Uuid>,
-    url_to_ck: &HashMap<String, String>,
-    actor_contexts: &HashMap<String, ActorContext>,
-    pub_dates: &HashMap<String, DateTime<Utc>>,
-) -> SingleUrlResult {
-        let mut result = SingleUrlResult {
-            events: Events::new(),
-            source_signal_counts: HashMap::new(),
-            collected_links: Vec::new(),
-            expansion_queries: Vec::new(),
-            scraped: false,
-            unchanged: false,
-            failed: false,
-            signals_extracted: 0,
-        };
-
-        let clean_url = sanitize_url(url);
-
-    let fetcher = deps.fetcher.as_ref().expect("fetcher required");
-    let store = &deps.store;
-    let extractor = deps.extractor.as_ref().expect("extractor required");
-
-        let (content, page_links) = match fetcher.page(url).await {
-            Ok(p) if !p.markdown.is_empty() => (p.markdown, p.links),
-            Ok(p) => {
-                result.failed = true;
-                // Still collect links from failed pages
-                let discovered = link_promoter::extract_links(&p.links, false);
-                for link_url in discovered {
-                    result.collected_links.push(CollectedLink {
-                        url: link_url,
-                        discovered_on: clean_url.clone(),
-                    });
-                }
-                return result;
-            }
-            Err(e) => {
-                warn!(url, error = %e, "Scrape failed");
-                result.failed = true;
-                return result;
-            }
-        };
-
-        // Extract outbound links for promotion
-        let discovered = link_promoter::extract_links(&page_links, false);
-        for link_url in discovered {
-            result.collected_links.push(CollectedLink {
-                url: link_url,
-                discovered_on: clean_url.clone(),
-            });
-        }
-
-        let hash = format!("{:x}", content_hash(&content));
-        match store.content_already_processed(&hash, &clean_url).await {
-            Ok(true) => {
-                info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
-                result.unchanged = true;
-                let ck = url_to_ck
-                    .get(&clean_url)
-                    .cloned()
-                    .unwrap_or_else(|| clean_url.clone());
-                let now = Utc::now();
-                match refresh_url_signals_events(&**store, &clean_url, now).await {
-                    Ok(events) if !events.is_empty() => {
-                        info!(url = clean_url.as_str(), refreshed = events.len(), "Refreshed unchanged signals");
-                        result.events.extend(events);
-                    }
-                    Ok(_) => {}
-                    Err(e) => warn!(url = clean_url.as_str(), error = %e, "Failed to refresh signals"),
-                }
-                result.source_signal_counts.entry(ck).or_default();
-                return result;
-            }
-            Ok(false) => {}
-            Err(e) => {
-                warn!(url = clean_url.as_str(), error = %e, "Hash check failed, proceeding with extraction");
-            }
-        }
-
-        // Prepend first-hand filter for web search/feed sources
-        let filtered_content = format!(
-            "FIRST-HAND FILTER (applies to this content):\n\
-            This content comes from web search results, which may contain \
-            political commentary from people not directly involved. Apply strict filtering:\n\n\
-            For each potential signal, assess: Is this person describing something happening \
-            to them, their family, their community, or their neighborhood? Or are they \
-            asking for help? If yes, mark is_firsthand: true. If this is political commentary \
-            from someone not personally affected — regardless of viewpoint — mark \
-            is_firsthand: false.\n\n\
-            Only extract signals where is_firsthand is true. Reject the rest.\n\n\
-            {content}"
-        );
-
-        match extractor.extract(&filtered_content, &clean_url).await {
-            Ok(extraction) => {
-                result.scraped = true;
-                let ck = url_to_ck
-                    .get(&clean_url)
-                    .cloned()
-                    .unwrap_or_else(|| clean_url.clone());
-
-                let mut nodes = extraction.nodes;
-
-                // Collect implied queries from Concern + HelpRequest nodes
-                for node in &nodes {
-                    if matches!(node.node_type(), NodeType::Concern | NodeType::HelpRequest) {
-                        if let Some(meta) = node.meta() {
-                            result.expansion_queries
-                                .extend(meta.implied_queries.iter().cloned());
-                        }
-                    }
-                }
-
-                result.signals_extracted = nodes.len() as u32;
-
-                // Apply RSS/Atom pub_date as fallback published_at
-                if let Some(pub_date) = pub_dates.get(url).or_else(|| pub_dates.get(&clean_url)) {
-                    for node in &mut nodes {
-                        if let Some(meta) = node.meta_mut() {
-                            if meta.published_at.is_none() {
-                                meta.published_at = Some(*pub_date);
-                            }
-                        }
-                    }
-                }
-
-                let source_keys: HashMap<String, Uuid> = source_id
-                    .map(|id| vec![(ck.clone(), id)].into_iter().collect())
-                    .unwrap_or_default();
-                let sid = source_keys.get(&ck).copied();
-                let events = store_signals_events(
-                    &clean_url,
-                    &content,
-                    nodes,
-                    extraction.resource_tags,
-                    extraction.signal_tags,
-                    &extraction.author_actors.into_iter().collect(),
-                    url_to_ck,
-                    actor_contexts,
-                    sid,
-                );
-                if !events.is_empty() {
-                    result.source_signal_counts.entry(ck).or_default();
-                }
-                result.events.extend(events);
-                for log in extraction.logs {
-                    result.events.push(log);
-                }
-            }
-            Err(e) => {
-                warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
-                result.failed = true;
-            }
-        }
-
-        result
-    }

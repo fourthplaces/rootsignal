@@ -884,6 +884,7 @@ impl QueuedEventRow {
             batch_index: self.batch_index,
             batch_size: self.batch_size,
             created_at: self.created_at,
+            ephemeral: None,
         }
     }
 }
@@ -927,6 +928,7 @@ impl EffectRow {
             hops: self.hops,
             attempts: self.attempts,
             join_window_timeout_seconds: self.join_window_timeout_seconds,
+            ephemeral: None,
         }
     }
 }

@@ -11,11 +11,11 @@ use rootsignal_common::{
     SourceRole,
 };
 
+use crate::core::aggregate::ExtractedBatch;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
 
-use super::signal_events::{register_sources_events, store_signals_events};
-use super::types::ScrapeOutput;
+use super::types::{batch_title_dedup, score_and_filter, ScrapeOutput, UrlExtraction};
 
 /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
 /// across Instagram, X/Twitter, TikTok, and GoFundMe.
@@ -140,13 +140,8 @@ pub(crate) async fn discover_from_topics(
                 let combined_text: String = posts
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, p)| {
-                        let text = p.text.as_deref()?;
-                        Some(match &p.permalink {
-                            Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, text),
-                            None => format!("--- Post {} ---\n{}", i + 1, text),
-                        })
-                    })
+                    .filter(|(_, p)| p.text.as_deref().is_some_and(|t| !t.is_empty()))
+                    .map(|(i, p)| super::shared::format_post(i, p))
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
@@ -167,22 +162,34 @@ pub(crate) async fn discover_from_topics(
                     continue; // No signal found — don't follow this person
                 }
 
-                // Store signals through normal pipeline
+                // Build extracted batch for dedup downstream
                 let author_actors: HashMap<Uuid, String> =
                     result.author_actors.into_iter().collect();
-                let events = store_signals_events(
-                    &source_url,
-                    &combined_text,
-                    result.nodes,
-                    result.resource_tags,
-                    result.signal_tags,
-                    &author_actors,
-                    url_to_canonical_key,
-                    actor_contexts,
-                    None,
-                );
-                let produced = events.len() as u32;
-                output.events.extend(events);
+
+                let actor_ctx = actor_contexts.get(&source_url);
+                let nodes = score_and_filter(result.nodes, &source_url, actor_ctx);
+                let produced = if !nodes.is_empty() {
+                    let nodes = batch_title_dedup(nodes);
+                    let count = nodes.len() as u32;
+
+                    let batch = ExtractedBatch {
+                        content: combined_text,
+                        nodes,
+                        resource_tags: result.resource_tags.into_iter().collect(),
+                        signal_tags: result.signal_tags.into_iter().collect(),
+                        author_actors,
+                        source_id: None,
+                    };
+
+                    output.extracted_batches.push(UrlExtraction {
+                        url: source_url.clone(),
+                        canonical_key: source_url.clone(),
+                        batch,
+                    });
+                    count
+                } else {
+                    0
+                };
 
                 // Only follow mentions from authors whose posts produced signals
                 if produced > 0 {
@@ -296,26 +303,33 @@ pub(crate) async fn discover_from_topics(
 
                     let author_actors: HashMap<Uuid, String> =
                         extracted.author_actors.into_iter().collect();
-                    let events = store_signals_events(
-                        &result.url,
-                        &content,
-                        extracted.nodes,
-                        extracted.resource_tags,
-                        extracted.signal_tags,
-                        &author_actors,
-                        url_to_canonical_key,
-                        actor_contexts,
-                        None,
-                    );
-                    output.events.extend(events);
+
+                    let actor_ctx = actor_contexts.get(&result.url);
+                    let nodes = score_and_filter(extracted.nodes, &result.url, actor_ctx);
+                    if !nodes.is_empty() {
+                        let nodes = batch_title_dedup(nodes);
+
+                        let batch = ExtractedBatch {
+                            content,
+                            nodes,
+                            resource_tags: extracted.resource_tags.into_iter().collect(),
+                            signal_tags: extracted.signal_tags.into_iter().collect(),
+                            author_actors,
+                            source_id: None,
+                        };
+
+                        output.extracted_batches.push(UrlExtraction {
+                            url: result.url.clone(),
+                            canonical_key: result.url.clone(),
+                            batch,
+                        });
+                    }
                 }
             }
         }
 
-        // Collect source discovery events
-        if !new_sources.is_empty() {
-            output.events.extend(register_sources_events(new_sources, "topic_discovery"));
-        }
+        // Collect discovered sources as data (emitted at phase boundary)
+        output.discovered_sources.extend(new_sources);
 
         output.stats_delta.discovery_accounts_found = new_accounts;
         info!(

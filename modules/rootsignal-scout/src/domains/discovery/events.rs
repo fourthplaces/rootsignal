@@ -6,9 +6,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DiscoveryEvent {
-    SourceDiscovered {
-        source: SourceNode,
+    /// Batch of proposed sources — not projected directly.
+    /// The domain_filter handler decides which become SourceRegistered.
+    SourcesDiscovered {
+        sources: Vec<SourceNode>,
         discovered_by: String,
+    },
+    /// Audit trail: a proposed source was rejected by the domain filter.
+    SourceRejected {
+        source: SourceNode,
+        reason: String,
     },
     LinksPromoted {
         count: u32,
@@ -34,12 +41,13 @@ pub enum DiscoveryEvent {
 
 impl DiscoveryEvent {
     pub fn is_projectable(&self) -> bool {
-        matches!(self, DiscoveryEvent::SourceDiscovered { .. })
+        false // SourcesDiscovered is a proposal; SourceRejected is audit-only
     }
 
     pub fn event_type_str(&self) -> String {
         let variant = match self {
-            Self::SourceDiscovered { .. } => "source_discovered",
+            Self::SourcesDiscovered { .. } => "sources_discovered",
+            Self::SourceRejected { .. } => "source_rejected",
             Self::LinksPromoted { .. } => "links_promoted",
             Self::ExpansionQueryCollected { .. } => "expansion_query_collected",
             Self::SocialTopicCollected { .. } => "social_topic_collected",

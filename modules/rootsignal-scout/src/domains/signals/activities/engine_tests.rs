@@ -12,7 +12,9 @@ use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::signals::events::SignalEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
-use crate::core::aggregate::{ExtractedBatch, PendingNode};
+use crate::core::aggregate::ExtractedBatch;
+use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+use crate::domains::scrape::activities::UrlExtraction;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::testing::*;
 use chrono::Utc;
@@ -48,11 +50,37 @@ fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// NewSignalAccepted dispatch — full chain
+// Helper: build a ScrapeRoleCompleted carrying an extracted batch
+// ---------------------------------------------------------------------------
+
+fn scrape_completed_with_batch(url: &str, canonical_key: &str, batch: ExtractedBatch) -> ScrapeEvent {
+    ScrapeEvent::ScrapeRoleCompleted {
+        run_id: Uuid::new_v4(),
+        role: ScrapeRole::TensionWeb,
+        urls_scraped: 1,
+        urls_unchanged: 0,
+        urls_failed: 0,
+        signals_extracted: batch.nodes.len() as u32,
+        source_signal_counts: HashMap::new(),
+        collected_links: vec![],
+        expansion_queries: vec![],
+        stats_delta: Default::default(),
+        page_previews: Default::default(),
+        extracted_batches: vec![UrlExtraction {
+            url: url.to_string(),
+            canonical_key: canonical_key.to_string(),
+            batch,
+        }],
+        discovered_sources: Vec::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// New signal via ScrapeRoleCompleted — full dedup + creation chain
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn new_signal_accepted_dispatches_full_event_chain() {
+async fn new_signal_dispatches_full_event_chain() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
@@ -60,25 +88,29 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
     );
 
     let node = tension_at("Free Legal Clinic", 44.9341, -93.2619);
-    let node_id = node.id();
+    let meta_id = node.meta().unwrap().id;
 
-    let pn = PendingNode {
-        node,
-        content_hash: "abc123".to_string(),
-        resource_tags: vec![],
-        signal_tags: vec!["legal".to_string()],
-        author_name: Some("Local Legal Aid".to_string()),
+    let mut signal_tags = HashMap::new();
+    signal_tags.insert(meta_id, vec!["legal".to_string()]);
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "Local Legal Aid".to_string());
+
+    let batch = ExtractedBatch {
+        content: "page content about legal clinic".to_string(),
+        nodes: vec![node],
+        resource_tags: HashMap::new(),
+        signal_tags,
+        author_actors,
         source_id: None,
     };
 
     engine
-        .emit(SignalEvent::NewSignalAccepted {
-            node_id,
-            node_type: NodeType::Concern,
-            title: "Free Legal Clinic".to_string(),
-            source_url: "https://www.instagram.com/locallegalaid".to_string(),
-            pending_node: Box::new(pn),
-        })
+        .emit(scrape_completed_with_batch(
+            "https://www.instagram.com/locallegalaid",
+            "instagram.com/locallegalaid",
+            batch,
+        ))
         .settled()
         .await
         .unwrap();
@@ -102,31 +134,43 @@ async fn new_signal_accepted_dispatches_full_event_chain() {
         "expected ActorIdentified event, got: {names:?}"
     );
 
-    // PendingNode consumed by reducer on SignalCreated
-    assert!(!state.pending_nodes.contains_key(&node_id));
+    // Wiring contexts stay until end of run
+    assert!(!state.wiring_contexts.is_empty());
 }
 
 // ---------------------------------------------------------------------------
-// CrossSourceMatchDetected dispatch
+// Cross-source match via dedup — corroboration events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn cross_source_match_dispatches_citation_and_scoring_events() {
     let store = Arc::new(MockSignalReader::new());
+    // Pre-populate: "Community Dinner" exists at a DIFFERENT source
+    store.insert_signal(
+        "Community Dinner",
+        NodeType::Concern,
+        "https://other-source.org/events",
+    );
     let (engine, captured) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
-    let existing_id = uuid::Uuid::new_v4();
+    let batch = ExtractedBatch {
+        content: "page content".to_string(),
+        nodes: vec![tension_at("Community Dinner", 44.95, -93.27)],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        source_id: None,
+    };
 
     engine
-        .emit(SignalEvent::CrossSourceMatchDetected {
-            existing_id,
-            node_type: NodeType::Concern,
-            source_url: "https://org-b.org/events".to_string(),
-            similarity: 0.95,
-        })
+        .emit(scrape_completed_with_batch(
+            "https://example.org/events",
+            "example.org",
+            batch,
+        ))
         .settled()
         .await
         .unwrap();
@@ -136,34 +180,45 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
     assert_eq!(state.stats.signals_deduplicated, 1);
 
     let names = event_names(&captured);
-    // CrossSourceMatchDetected → CitationPublished + ObservationCorroborated + CorroborationScored
-    assert_eq!(names.len(), 4, "expected 4 events, got: {names:?}");
-    assert!(names.contains(&"citation_published".to_string()));
-    assert!(names.contains(&"observation_corroborated".to_string()));
-    assert!(names.contains(&"corroboration_scored".to_string()));
+    // Dedup emits CitationPublished + ObservationCorroborated + CorroborationScored directly
+    assert!(names.contains(&"citation_published".to_string()), "expected CitationPublished, got: {names:?}");
+    assert!(names.contains(&"observation_corroborated".to_string()), "expected ObservationCorroborated, got: {names:?}");
+    assert!(names.contains(&"corroboration_scored".to_string()), "expected CorroborationScored, got: {names:?}");
 }
 
 // ---------------------------------------------------------------------------
-// SameSourceReencountered dispatch
+// Same-source reencounter via dedup — freshness events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn same_source_reencountered_dispatches_citation_and_freshness() {
+async fn same_source_reencounter_dispatches_citation_and_freshness() {
     let store = Arc::new(MockSignalReader::new());
+    // Pre-populate: "Community Dinner" exists at the SAME source
+    store.insert_signal(
+        "Community Dinner",
+        NodeType::Concern,
+        "https://example.org/events",
+    );
     let (engine, captured) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
-    let existing_id = uuid::Uuid::new_v4();
+    let batch = ExtractedBatch {
+        content: "page content".to_string(),
+        nodes: vec![tension_at("Community Dinner", 44.95, -93.27)],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        source_id: None,
+    };
 
     engine
-        .emit(SignalEvent::SameSourceReencountered {
-            existing_id,
-            node_type: NodeType::Gathering,
-            source_url: "https://example.org".to_string(),
-            similarity: 1.0,
-        })
+        .emit(scrape_completed_with_batch(
+            "https://example.org/events",
+            "example.org",
+            batch,
+        ))
         .settled()
         .await
         .unwrap();
@@ -173,18 +228,17 @@ async fn same_source_reencountered_dispatches_citation_and_freshness() {
     assert_eq!(state.stats.signals_deduplicated, 1);
 
     let names = event_names(&captured);
-    // SameSourceReencountered → CitationPublished + FreshnessConfirmed
-    assert_eq!(names.len(), 3, "expected 3 events, got: {names:?}");
-    assert!(names.contains(&"citation_published".to_string()));
-    assert!(names.contains(&"freshness_confirmed".to_string()));
+    // Dedup emits CitationPublished + FreshnessConfirmed directly
+    assert!(names.contains(&"citation_published".to_string()), "expected CitationPublished, got: {names:?}");
+    assert!(names.contains(&"freshness_confirmed".to_string()), "expected FreshnessConfirmed, got: {names:?}");
 }
 
 // ---------------------------------------------------------------------------
-// SignalsExtracted → full dispatch chain through dedup + creation
+// ScrapeRoleCompleted with batch — dedup + creation chain
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn signals_extracted_dispatches_dedup_and_creation_chain() {
+async fn scrape_completed_dispatches_dedup_and_creation_chain() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
@@ -202,48 +256,43 @@ async fn signals_extracted_dispatches_dedup_and_creation_chain() {
         source_id: None,
     };
 
-    // Dispatch SignalEvent::SignalsExtracted — the engine does the rest
     engine
-        .emit(SignalEvent::SignalsExtracted {
-            url: "https://localorg.org/events".to_string(),
-            canonical_key: "localorg.org".to_string(),
-            count: 1,
-            batch: Box::new(batch),
-        })
+        .emit(scrape_completed_with_batch(
+            "https://localorg.org/events",
+            "localorg.org",
+            batch,
+        ))
         .settled()
         .await
         .unwrap();
 
     let state = engine.singleton::<PipelineState>();
 
-    // Reducer counted extraction + creation
-    assert_eq!(state.stats.signals_extracted, 1);
+    // Reducer counted creation
     assert_eq!(state.stats.signals_stored, 1);
-
-    // Pending nodes cleaned up by reducer on SignalCreated
-    assert!(state.pending_nodes.is_empty());
 
     // Wiring contexts stay until end of run
     assert!(!state.wiring_contexts.is_empty());
 
     let names = event_names(&captured);
 
-    // Root: SignalsExtracted
-    assert_eq!(names[0], "signal:signals_extracted");
-
-    // NewSignalAccepted somewhere in chain
+    // Dedup emitted directly: DedupCompleted + SignalCreated + World/System facts
     assert!(
-        names.contains(&"signal:new_signal_accepted".to_string()),
-        "expected NewSignalAccepted, got: {names:?}"
+        names.iter().any(|n| n == "signal:dedup_completed"),
+        "expected DedupCompleted, got: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "signal:signal_created"),
+        "expected SignalCreated, got: {names:?}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// SignalsExtracted with existing title → dedup reencounter path
+// ScrapeRoleCompleted with existing title — dedup reencounter path
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn signals_extracted_with_existing_title_emits_reencounter() {
+async fn scrape_completed_with_existing_title_emits_freshness() {
     let store = Arc::new(MockSignalReader::new());
     // Pre-populate: "Community Dinner" exists at same URL
     store.insert_signal(
@@ -266,32 +315,24 @@ async fn signals_extracted_with_existing_title_emits_reencounter() {
     };
 
     engine
-        .emit(SignalEvent::SignalsExtracted {
-            url: "https://example.org/events".to_string(),
-            canonical_key: "example.org".to_string(),
-            count: 1,
-            batch: Box::new(batch),
-        })
+        .emit(scrape_completed_with_batch(
+            "https://example.org/events",
+            "example.org",
+            batch,
+        ))
         .settled()
         .await
         .unwrap();
 
     let state = engine.singleton::<PipelineState>();
 
-    // Reducer counted extraction + dedup
-    assert_eq!(state.stats.signals_extracted, 1);
+    // Reducer counted dedup
     assert_eq!(state.stats.signals_deduplicated, 1);
     assert_eq!(state.stats.signals_stored, 0);
 
     let names = event_names(&captured);
 
-    // SameSourceReencountered in chain
-    assert!(
-        names.contains(&"signal:same_source_reencountered".to_string()),
-        "expected SameSourceReencountered, got: {names:?}"
-    );
-
-    // FreshnessConfirmed emitted
+    // FreshnessConfirmed emitted directly by dedup
     assert!(
         names.contains(&"freshness_confirmed".to_string()),
         "expected FreshnessConfirmed, got: {names:?}"
@@ -335,6 +376,8 @@ async fn link_promotion_promotes_links_on_phase_completed() {
             expansion_queries: vec![],
             stats_delta: Default::default(),
             page_previews: Default::default(),
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -354,14 +397,14 @@ async fn link_promotion_promotes_links_on_phase_completed() {
 
     let names = event_names(&captured);
 
-    // SourceDiscovered events emitted for promoted links
-    let source_discovered_count = names
+    // SourceRegistered events emitted for promoted links (via domain_filter chokepoint)
+    let source_registered_count = names
         .iter()
-        .filter(|n| n.contains("source_discovered"))
+        .filter(|n| n.contains("source_registered"))
         .count();
     assert!(
-        source_discovered_count >= 1,
-        "expected at least 1 SourceDiscovered, got: {names:?}"
+        source_registered_count >= 1,
+        "expected at least 1 SourceRegistered, got: {names:?}"
     );
 
     // LinksPromoted event emitted
@@ -404,8 +447,8 @@ async fn link_promotion_skips_when_no_links() {
 
     // Only the root PhaseCompleted event — no handler output
     assert!(
-        !names.iter().any(|n| n.contains("source_discovered")),
-        "should not emit SourceDiscovered with no links, got: {names:?}"
+        !names.iter().any(|n| n.contains("source_registered")),
+        "should not emit SourceRegistered with no links, got: {names:?}"
     );
     assert!(
         !names.iter().any(|n| n.contains("links_promoted")),
@@ -450,6 +493,8 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
             expansion_queries: vec![],
             stats_delta: Default::default(),
             page_previews: Default::default(),
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -466,7 +511,7 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
         .unwrap();
 
     let names = event_names(&captured);
-    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert!(
         source_count >= 2,
         "social handles should be promoted even from zero-signal pages, got: {names:?}"
@@ -519,6 +564,8 @@ async fn productive_page_content_links_promoted_without_triage() {
             expansion_queries: vec![],
             stats_delta: Default::default(),
             page_previews: Default::default(),
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -535,7 +582,7 @@ async fn productive_page_content_links_promoted_without_triage() {
         .unwrap();
 
     let names = event_names(&captured);
-    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert!(
         source_count >= 2,
         "content links from productive page should be promoted, got: {names:?}"
@@ -576,6 +623,8 @@ async fn zero_signal_page_content_links_not_promoted_without_ai() {
             expansion_queries: vec![],
             stats_delta: Default::default(),
             page_previews: Default::default(),
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -592,7 +641,7 @@ async fn zero_signal_page_content_links_not_promoted_without_ai() {
         .unwrap();
 
     let names = event_names(&captured);
-    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert_eq!(
         source_count, 0,
         "content links from zero-signal page should NOT be promoted without AI, got: {names:?}"
@@ -652,6 +701,8 @@ async fn zero_signal_page_triaged_and_promoted() {
                 );
                 m
             },
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -676,7 +727,7 @@ async fn zero_signal_page_triaged_and_promoted() {
     );
 
     // Content links promoted from triage-passed page
-    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert!(
         source_count >= 2,
         "content links from triage-passed page should be promoted, got: {names:?}"
@@ -732,6 +783,8 @@ async fn zero_signal_page_triaged_and_rejected() {
                 );
                 m
             },
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -756,7 +809,7 @@ async fn zero_signal_page_triaged_and_rejected() {
     );
 
     // No content links promoted
-    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert_eq!(
         source_count, 0,
         "content links from rejected page should NOT be promoted, got: {names:?}"
@@ -808,6 +861,8 @@ async fn ai_error_fails_closed_no_content_links_promoted() {
                 );
                 m
             },
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -832,7 +887,7 @@ async fn ai_error_fails_closed_no_content_links_promoted() {
     );
 
     // No content links promoted
-    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert_eq!(
         source_count, 0,
         "AI error should fail closed — no content links promoted, got: {names:?}"
@@ -877,6 +932,8 @@ async fn content_links_capped_per_source() {
             expansion_queries: vec![],
             stats_delta: Default::default(),
             page_previews: Default::default(),
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -893,7 +950,7 @@ async fn content_links_capped_per_source() {
         .unwrap();
 
     let names = event_names(&captured);
-    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert!(
         source_count <= 10,
         "content links should be capped at 10 per source, got {source_count}: {names:?}"
@@ -940,6 +997,8 @@ async fn page_previews_cleared_after_links_promoted() {
                 m.insert("https://page.org".to_string(), "some preview".to_string());
                 m
             },
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         })
         .settled()
         .await
@@ -1056,6 +1115,211 @@ async fn actor_location_emits_events_on_response_complete() {
     assert!(
         names.iter().any(|n| n.contains("enrichment_role_completed")),
         "expected EnrichmentRoleCompleted, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Full pipeline: SERP query → linktree pages → scrape → extract social links
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    let store = Arc::new(MockSignalReader::new());
+    let query = "site:linktr.ee mutual aid Minneapolis";
+    let result_urls = [
+        "https://linktr.ee/mpls_mutual_aid",
+        "https://linktr.ee/northside_aid",
+        "https://linktr.ee/south_mpls_community",
+    ];
+
+    // MOCK: fetcher — SERP returns linktree URLs, each page has outbound social links
+    let fetcher = MockFetcher::new()
+        .on_search(query, search_results(query, &result_urls))
+        .on_page(
+            "https://linktr.ee/mpls_mutual_aid",
+            rootsignal_common::ArchivedPage {
+                id: Uuid::new_v4(),
+                source_id: Uuid::new_v4(),
+                fetched_at: Utc::now(),
+                content_hash: "hash-0".into(),
+                raw_html: String::new(),
+                markdown: "# Minneapolis Mutual Aid\n\n\
+                           Food, housing, and legal help for our community.\n\n\
+                           Sign up for a food shelf slot or request housing assistance."
+                    .into(),
+                title: Some("MPLS Mutual Aid".into()),
+                links: vec![
+                    "https://www.instagram.com/mpls_mutual_aid".into(),
+                    "https://twitter.com/mplsmutualaid".into(),
+                    "https://www.givemn.org/mpls-mutual-aid".into(),
+                ],
+                published_at: None,
+            },
+        )
+        .on_page(
+            "https://linktr.ee/northside_aid",
+            rootsignal_common::ArchivedPage {
+                id: Uuid::new_v4(),
+                source_id: Uuid::new_v4(),
+                fetched_at: Utc::now(),
+                content_hash: "hash-1".into(),
+                raw_html: String::new(),
+                markdown: "# Northside Aid Network\n\n\
+                           Supporting North Minneapolis families with groceries and supplies."
+                    .into(),
+                title: Some("Northside Aid".into()),
+                links: vec![
+                    "https://www.instagram.com/northside_aid".into(),
+                    "https://linktr.ee/northside_aid/about".into(),
+                ],
+                published_at: None,
+            },
+        )
+        .on_page(
+            "https://linktr.ee/south_mpls_community",
+            rootsignal_common::ArchivedPage {
+                id: Uuid::new_v4(),
+                source_id: Uuid::new_v4(),
+                fetched_at: Utc::now(),
+                content_hash: "hash-2".into(),
+                raw_html: String::new(),
+                markdown: "# South MPLS Community Resources\n\n\
+                           Mutual aid collective serving South Minneapolis neighborhoods."
+                    .into(),
+                title: Some("South MPLS Community".into()),
+                links: vec![
+                    "https://www.instagram.com/southmpls_community".into(),
+                ],
+                published_at: None,
+            },
+        );
+
+    // MOCK: AI agent — returns a realistic extraction response.
+    // The real Extractor constructs the prompt and parses this response.
+    // Same response for all pages (dedup handles duplicates).
+    let ai = Arc::new(MockAgent::with_response(serde_json::json!({
+        "signals": [{
+            "signal_type": "resource",
+            "title": "Community mutual aid program",
+            "summary": "Local mutual aid network providing food and housing assistance",
+            "sensitivity": "general",
+            "latitude": 44.9778,
+            "longitude": -93.2650,
+            "location_name": "Minneapolis",
+            "is_ongoing": true
+        }]
+    })));
+
+    // ENGINE: source-targeted run — real Extractor, real link promotion, real dispatch
+    let (engine, captured) = test_engine_for_source_run(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        vec![web_query_source(query)],
+        Arc::new(fetcher),
+        ai,
+    );
+
+    // INPUT: one event kicks off the entire causal chain
+    engine
+        .emit(LifecycleEvent::ScoutRunRequested {
+            run_id: "test-run".to_string(),
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    // OUTPUT
+    let names = event_names(&captured);
+    let events = captured.lock().unwrap();
+
+    // 1. SERP resolved all 3 linktree URLs
+    let resolved_urls = events
+        .iter()
+        .filter_map(|e| e.downcast_ref::<ScrapeEvent>())
+        .find_map(|e| match e {
+            ScrapeEvent::SourcesResolved {
+                web_role: ScrapeRole::TensionWeb,
+                web_urls,
+                ..
+            } => Some(web_urls.clone()),
+            _ => None,
+        })
+        .expect("should emit SourcesResolved(TensionWeb)");
+    assert_eq!(
+        resolved_urls.len(),
+        3,
+        "SERP should resolve all 3 linktree URLs"
+    );
+
+    // 2. All 3 pages scraped
+    let urls_scraped = events
+        .iter()
+        .filter_map(|e| e.downcast_ref::<ScrapeEvent>())
+        .find_map(|e| match e {
+            ScrapeEvent::ScrapeRoleCompleted {
+                role: ScrapeRole::TensionWeb,
+                urls_scraped,
+                ..
+            } => Some(*urls_scraped),
+            _ => None,
+        })
+        .expect("should emit ScrapeRoleCompleted(TensionWeb)");
+    assert_eq!(urls_scraped, 3, "should scrape all 3 linktree pages");
+
+    // 3. Social handles extracted from page links and promoted as sources
+    //    Sources flow through SourcesDiscovered → domain_filter → SourceRegistered
+    let promoted_urls: Vec<String> = events
+        .iter()
+        .filter_map(|e| e.downcast_ref::<SystemEvent>())
+        .filter_map(|e| match e {
+            SystemEvent::SourceRegistered { url, .. } => url.clone(),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        promoted_urls
+            .iter()
+            .any(|u| u.contains("instagram.com/mpls_mutual_aid")),
+        "instagram.com/mpls_mutual_aid should be promoted from linktree page, got: {promoted_urls:?}"
+    );
+    assert!(
+        promoted_urls
+            .iter()
+            .any(|u| u.contains("instagram.com/northside_aid")),
+        "instagram.com/northside_aid should be promoted from linktree page, got: {promoted_urls:?}"
+    );
+    assert!(
+        promoted_urls
+            .iter()
+            .any(|u| u.contains("instagram.com/southmpls_community")),
+        "instagram.com/southmpls_community should be promoted from linktree page, got: {promoted_urls:?}"
+    );
+    assert!(
+        promoted_urls.iter().any(|u| u.contains("x.com/mplsmutualaid")),
+        "x.com/mplsmutualaid should be promoted from linktree page, got: {promoted_urls:?}"
+    );
+
+    // 4. Links promoted event emitted
+    assert!(
+        names.iter().any(|n| n.contains("links_promoted")),
+        "should emit LinksPromoted, got: {names:?}"
+    );
+
+    // 5. Pipeline state: signals extracted and stored
+    drop(events);
+    let state = engine.singleton::<PipelineState>();
+    assert!(
+        state.stats.signals_stored > 0,
+        "should store at least one signal from scraped pages (stored: {})",
+        state.stats.signals_stored,
+    );
+
+    // 6. Full chain settled to RunCompleted
+    assert!(
+        names.contains(&"lifecycle:run_completed".to_string()),
+        "pipeline should settle to RunCompleted, got: {names:?}"
     );
 }
 

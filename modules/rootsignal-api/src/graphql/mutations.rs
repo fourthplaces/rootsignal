@@ -183,18 +183,26 @@ impl MutationRoot {
         reason: Option<String>,
     ) -> Result<AddSourceResult> {
         let engine = require_engine(ctx)?;
-        let url = url.trim().to_string();
+        let input = url.trim().to_string();
 
-        // Validate URL
-        if url.len() > 2048 {
-            return Err("URL too long (max 2048 characters)".into());
+        if input.is_empty() {
+            return Err("Source value cannot be empty".into());
         }
-        let parsed = url::Url::parse(&url).map_err(|_| async_graphql::Error::new("Invalid URL"))?;
-        if parsed.scheme() != "http" && parsed.scheme() != "https" {
-            return Err("URL must use http or https scheme".into());
+        if input.len() > 2048 {
+            return Err("Source value too long (max 2048 characters)".into());
         }
 
-        let cv = rootsignal_common::canonical_value(&url);
+        let is_query = rootsignal_common::is_web_query(&input);
+
+        // Validate URL scheme for non-query sources
+        if !is_query {
+            let parsed = url::Url::parse(&input).map_err(|_| async_graphql::Error::new("Invalid URL"))?;
+            if parsed.scheme() != "http" && parsed.scheme() != "https" {
+                return Err("URL must use http or https scheme".into());
+            }
+        }
+
+        let cv = rootsignal_common::canonical_value(&input);
         let canonical_key = cv.clone();
         let source_id = Uuid::new_v4();
         let now = chrono::Utc::now();
@@ -203,7 +211,7 @@ impl MutationRoot {
             id: source_id,
             canonical_key: canonical_key.clone(),
             canonical_value: cv,
-            url: Some(url.clone()),
+            url: if is_query { None } else { Some(input.clone()) },
             discovery_method: DiscoveryMethod::HumanSubmission,
             created_at: now,
             last_scraped: None,
@@ -223,15 +231,15 @@ impl MutationRoot {
         };
 
         engine
-            .emit(rootsignal_scout::domains::discovery::events::DiscoveryEvent::SourceDiscovered {
-                source,
+            .emit(rootsignal_scout::domains::discovery::events::DiscoveryEvent::SourcesDiscovered {
+                sources: vec![source],
                 discovered_by: "admin".into(),
             })
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
 
-        info!(url, "Source added by admin");
+        info!(source = input, "Source added by admin");
 
         Ok(AddSourceResult {
             success: true,
@@ -499,8 +507,8 @@ impl MutationRoot {
         };
 
         engine
-            .emit(rootsignal_scout::domains::discovery::events::DiscoveryEvent::SourceDiscovered {
-                source,
+            .emit(rootsignal_scout::domains::discovery::events::DiscoveryEvent::SourcesDiscovered {
+                sources: vec![source],
                 discovered_by: "human_submission".into(),
             })
             .settled()

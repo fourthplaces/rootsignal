@@ -69,6 +69,7 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Similarity,
+                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -82,6 +83,7 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Similarity,
+                    discovered_sources: Vec::new(),
                 });
                 Ok(out)
             }
@@ -90,6 +92,7 @@ pub mod handlers {
                 Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Similarity,
+                    discovered_sources: Vec::new(),
                 }])
             }
         }
@@ -118,6 +121,7 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ConcernLinker,
+                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -132,6 +136,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ConcernLinker,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -152,6 +157,7 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ConcernLinker,
+                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -162,6 +168,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ConcernLinker,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -238,6 +245,7 @@ pub mod handlers {
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::ConcernLinker,
+            discovered_sources: Vec::new(),
         });
 
         Ok(out)
@@ -266,6 +274,7 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseFinder,
+                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -280,6 +289,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseFinder,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -295,6 +305,7 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseFinder,
+                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -305,6 +316,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseFinder,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -360,16 +372,11 @@ pub mod handlers {
             out.extend(target_events);
             all_sources.extend(target_sources);
         }
-        if !all_sources.is_empty() {
-            out.push(DiscoveryEvent::SourcesDiscovered {
-                sources: all_sources,
-                discovered_by: "synthesis".into(),
-            });
-        }
 
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::ResponseFinder,
+            discovered_sources: all_sources,
         });
 
         Ok(out)
@@ -398,6 +405,7 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::GatheringFinder,
+                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -412,6 +420,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::GatheringFinder,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -427,6 +436,7 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::GatheringFinder,
+                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -437,6 +447,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::GatheringFinder,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -464,16 +475,11 @@ pub mod handlers {
             out.extend(target_events);
             all_sources.extend(target_sources);
         }
-        if !all_sources.is_empty() {
-            out.push(DiscoveryEvent::SourcesDiscovered {
-                sources: all_sources,
-                discovered_by: "synthesis".into(),
-            });
-        }
 
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::GatheringFinder,
+            discovered_sources: all_sources,
         });
 
         Ok(out)
@@ -502,6 +508,7 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Investigation,
+                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -516,6 +523,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::Investigation,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -531,6 +539,7 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Investigation,
+                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -543,6 +552,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::Investigation,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -570,6 +580,7 @@ pub mod handlers {
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::Investigation,
+            discovered_sources: Vec::new(),
         });
 
         Ok(out)
@@ -597,6 +608,7 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseMapping,
+                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -609,6 +621,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseMapping,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -624,6 +637,7 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseMapping,
+                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -634,6 +648,7 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseMapping,
+                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -666,6 +681,7 @@ pub mod handlers {
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::ResponseMapping,
+            discovered_sources: Vec::new(),
         });
 
         Ok(out)
@@ -695,9 +711,17 @@ pub mod handlers {
             .is_superset(&all_synthesis_roles())
         {
             info!("All synthesis roles complete, emitting PhaseCompleted");
-            Ok(events![LifecycleEvent::PhaseCompleted {
+            let mut out = events![LifecycleEvent::PhaseCompleted {
                 phase: PipelinePhase::Synthesis,
-            }])
+            }];
+            // Emit SourcesDiscovered from stashed sources at phase boundary
+            if !state.synthesis_discovered_sources.is_empty() {
+                out = out.add(DiscoveryEvent::SourcesDiscovered {
+                    sources: state.synthesis_discovered_sources.clone(),
+                    discovered_by: "synthesis".into(),
+                });
+            }
+            Ok(out)
         } else {
             let completed: Vec<_> = state.completed_synthesis_roles.iter().collect();
             let expected: Vec<_> = all_synthesis_roles().into_iter().collect();

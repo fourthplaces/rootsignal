@@ -73,7 +73,7 @@ impl ScoutRunner {
 
             let engine = deps.build_scrape_engine(&scope, &run_id, None);
             let result = engine
-                .emit(LifecycleEvent::EngineStarted { run_id: run_id.clone() })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id: run_id.clone() })
                 .correlation_id(run_id_uuid)
                 .settled()
                 .await;
@@ -104,7 +104,7 @@ impl ScoutRunner {
 
             let engine = deps.build_scrape_engine(&scope, &run_id, None);
             let result = engine
-                .emit(LifecycleEvent::EngineStarted { run_id: run_id.clone() })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id: run_id.clone() })
                 .correlation_id(run_id_uuid)
                 .settled()
                 .await;
@@ -138,7 +138,7 @@ impl ScoutRunner {
             // Weave engine starts from synthesis phase (skips scrape chain)
             let engine = deps.build_weave_engine(&scope, &run_id, None);
             let result = engine
-                .emit(LifecycleEvent::EngineStarted { run_id: run_id.clone() })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id: run_id.clone() })
                 .correlation_id(run_id_uuid)
                 .settled()
                 .await;
@@ -182,7 +182,7 @@ impl ScoutRunner {
 
             let engine = deps.build_source_engine(region.as_ref(), &run_id, sources);
             let result = engine
-                .emit(LifecycleEvent::EngineStarted { run_id: run_id.clone() })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id: run_id.clone() })
                 .correlation_id(run_id_uuid)
                 .settled()
                 .await;

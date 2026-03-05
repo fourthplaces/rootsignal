@@ -9,64 +9,54 @@ use uuid::Uuid;
 
 use rootsignal_common::types::NodeType;
 
-use crate::core::aggregate::{ExtractedBatch, PipelineState};
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::activities::{creation, dedup};
 use crate::domains::signals::events::SignalEvent;
+use crate::domains::scrape::events::ScrapeEvent;
+
+fn is_scrape_role_completed(e: &ScrapeEvent) -> bool {
+    matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. })
+}
 
 #[handlers]
 pub mod handlers {
     use super::*;
 
-    /// SignalsExtracted → run 4-layer dedup on the extracted batch.
-    #[handle(on = [SignalEvent::SignalsExtracted], id = "signals:dedup", extract(url, batch))]
+    /// ScrapeRoleCompleted → run 4-layer dedup on all extracted batches.
+    #[handle(on = ScrapeEvent, id = "signals:dedup", filter = is_scrape_role_completed)]
     async fn dedup(
-        url: String,
-        batch: Box<ExtractedBatch>,
+        event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
+        let extracted_batches = match event {
+            ScrapeEvent::ScrapeRoleCompleted { extracted_batches, .. } => extracted_batches,
+            _ => unreachable!("filter guarantees ScrapeRoleCompleted"),
+        };
+
+        if extracted_batches.is_empty() {
+            return Ok(events![crate::core::pipeline_events::PipelineEvent::HandlerSkipped {
+                handler_id: "signals:dedup".into(),
+                reason: "no extracted batches".into(),
+            }]);
+        }
+
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
-        let events = dedup::deduplicate_extracted_batch(&url, &batch, &state, deps).await?;
-        Ok(Events::batch(events))
-    }
+        let mut all_events = Events::new();
 
-    /// NewSignalAccepted → emit World + System + Citation events, trigger wiring.
-    #[handle(on = [SignalEvent::NewSignalAccepted], id = "signals:create", extract(node_id, source_url))]
-    async fn create_signal(
-        node_id: Uuid,
-        source_url: String,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
-        creation::create_signal_events(node_id, &source_url, &state, deps).await
-    }
+        for extraction in &extracted_batches {
+            let events = dedup::deduplicate_extracted_batch(
+                &extraction.url,
+                &extraction.canonical_key,
+                &extraction.batch,
+                &state,
+                deps,
+            ).await?;
+            all_events.extend(events);
+        }
 
-    /// CrossSourceMatchDetected → emit citation + corroboration + scoring events.
-    #[handle(on = [SignalEvent::CrossSourceMatchDetected], id = "signals:corroborate", extract(existing_id, node_type, source_url, similarity))]
-    async fn corroborate(
-        existing_id: Uuid,
-        node_type: NodeType,
-        source_url: String,
-        similarity: f64,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-        creation::create_corroboration_events(existing_id, node_type, &source_url, similarity, deps)
-            .await
-    }
-
-    /// SameSourceReencountered → emit citation + freshness events.
-    #[handle(on = [SignalEvent::SameSourceReencountered], id = "signals:refresh", extract(existing_id, node_type, source_url))]
-    async fn refresh(
-        existing_id: Uuid,
-        node_type: NodeType,
-        source_url: String,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-        creation::create_freshness_events(existing_id, node_type, &source_url, deps).await
+        Ok(all_events)
     }
 
     /// SignalCreated → wire edges (source, actor, resources, tags).

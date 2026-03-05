@@ -45,7 +45,7 @@ async fn five_of_six_synthesis_roles_does_not_emit_phase_completed() {
 
     for role in five_roles {
         engine
-            .emit(SynthesisEvent::SynthesisRoleCompleted { run_id, role })
+            .emit(SynthesisEvent::SynthesisRoleCompleted { run_id, role, discovered_sources: Vec::new() })
             .settled()
             .await
             .unwrap();
@@ -79,7 +79,7 @@ async fn sixth_synthesis_role_emits_phase_completed() {
 
     for role in all_roles {
         engine
-            .emit(SynthesisEvent::SynthesisRoleCompleted { run_id, role })
+            .emit(SynthesisEvent::SynthesisRoleCompleted { run_id, role, discovered_sources: Vec::new() })
             .settled()
             .await
             .unwrap();

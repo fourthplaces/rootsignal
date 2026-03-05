@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ME } from "@/graphql/queries";
 import { LOGOUT } from "@/graphql/mutations";
-import { useRegion } from "@/contexts/RegionContext";
+import { RegionProvider, useRegion } from "@/contexts/RegionContext";
 import {
   LayoutDashboard,
   Radar,
@@ -67,6 +67,7 @@ export function AdminLayout() {
   };
 
   return (
+    <RegionProvider>
     <div className="flex h-screen">
       <aside
         className={`${collapsed ? "w-12" : "w-56"} shrink-0 border-r border-border bg-card flex flex-col transition-[width] duration-200`}
@@ -135,5 +136,6 @@ export function AdminLayout() {
         <Outlet />
       </main>
     </div>
+    </RegionProvider>
   );
 }

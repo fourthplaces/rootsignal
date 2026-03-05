@@ -32,7 +32,9 @@ const errorLink = onError(({ graphQLErrors }) => {
   if (graphQLErrors) {
     for (const err of graphQLErrors) {
       if (err.extensions?.code === "UNAUTHENTICATED") {
-        window.location.href = "/login";
+        if (window.location.pathname !== "/login") {
+          window.location.href = "/login";
+        }
         return;
       }
     }

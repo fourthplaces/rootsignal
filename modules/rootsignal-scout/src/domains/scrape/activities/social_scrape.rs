@@ -10,17 +10,16 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    scraping_strategy, ActorContext, Node, NodeType, Post, ScrapingStrategy, SocialPlatform,
+    scraping_strategy, ActorContext, Node, ScrapingStrategy, SocialPlatform,
     SourceNode,
 };
-use seesaw_core::Events;
 
+use crate::core::aggregate::ExtractedBatch;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::extractor::ResourceTag;
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
 
-use super::signal_events::store_signals_events;
-use super::types::{ScrapeOutput, SingleSocialResult, StatsDelta};
+use super::types::{batch_title_dedup, score_and_filter, ScrapeOutput, UrlExtraction};
 
 /// Scrape social media accounts, feed posts through LLM extraction.
 /// Returns accumulated `ScrapeOutput` with events and state updates.
@@ -226,15 +225,6 @@ pub(crate) async fn scrape_social_sources(
                     .flat_map(|p| p.mentions.iter().cloned())
                     .collect();
 
-                // Format a post header including the specific post URL when available.
-                let post_header = |i: usize, p: &Post| -> String {
-                    let text = p.text.as_deref().unwrap_or("");
-                    match &p.permalink {
-                        Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, text),
-                        None => format!("--- Post {} ---\n{}", i + 1, text),
-                    }
-                };
-
                 if is_reddit {
                     // Reddit: batch posts 10 at a time for extraction
                     let batches: Vec<_> = posts.chunks(10).collect();
@@ -247,7 +237,7 @@ pub(crate) async fn scrape_social_sources(
                         let mut combined_text: String = batch
                             .iter()
                             .enumerate()
-                            .map(|(i, p)| post_header(i, p))
+                            .map(|(i, p)| super::shared::format_post(i, p))
                             .collect::<Vec<_>>()
                             .join("\n\n");
                         if combined_text.is_empty() {
@@ -295,7 +285,7 @@ pub(crate) async fn scrape_social_sources(
                     let mut combined_text: String = posts
                         .iter()
                         .enumerate()
-                        .map(|(i, p)| post_header(i, p))
+                        .map(|(i, p)| super::shared::format_post(i, p))
                         .collect::<Vec<_>>()
                         .join("\n\n");
                     if combined_text.is_empty() {
@@ -357,13 +347,7 @@ pub(crate) async fn scrape_social_sources(
 
             // Apply social published_at as fallback published_at when LLM didn't extract one
             if let Some(pub_at) = newest_published_at {
-                for node in &mut nodes {
-                    if let Some(meta) = node.meta_mut() {
-                        if meta.published_at.is_none() {
-                            meta.published_at = Some(pub_at);
-                        }
-                    }
-                }
+                super::shared::apply_published_at_fallback(&mut nodes, pub_at);
             }
 
             // Accumulate mentions as URLs for promotion (capped per source)
@@ -375,239 +359,44 @@ pub(crate) async fn scrape_social_sources(
                 });
             }
 
-            // Collect implied queries from Tension/Need social signals
-            for node in &nodes {
-                if matches!(node.node_type(), NodeType::Concern | NodeType::HelpRequest) {
-                    if let Some(meta) = node.meta() {
-                        output.expansion_queries
-                            .extend(meta.implied_queries.iter().cloned());
-                    }
-                }
-            }
+            // Collect implied queries from Concern/HelpRequest social signals
+            output.expansion_queries.extend(super::shared::collect_implied_queries(&nodes));
             output.stats_delta.social_media_posts += post_count as u32;
             let source_id = ck_to_source_id.get(&canonical_key).copied();
-            let events = store_signals_events(
-                &source_url,
-                &combined_text,
-                nodes,
-                resource_tags,
-                signal_tags,
-                &author_actors,
-                url_to_canonical_key,
-                actor_contexts,
-                source_id,
-            );
-            output.source_signal_counts.entry(canonical_key).or_default();
-            output.events.extend(events);
+
+            // Score quality, populate from/about locations, remove Evidence nodes
+            let ck_for_fallback = url_to_canonical_key
+                .get(&source_url)
+                .cloned()
+                .unwrap_or_else(|| source_url.clone());
+            let actor_ctx = actor_contexts.get(&ck_for_fallback);
+            let nodes = score_and_filter(nodes, &source_url, actor_ctx);
+
+            if !nodes.is_empty() {
+                let nodes = batch_title_dedup(nodes);
+
+                let ck = url_to_canonical_key
+                    .get(&source_url)
+                    .cloned()
+                    .unwrap_or_else(|| source_url.clone());
+
+                let batch = ExtractedBatch {
+                    content: combined_text,
+                    nodes,
+                    resource_tags: resource_tags.into_iter().collect(),
+                    signal_tags: signal_tags.into_iter().collect(),
+                    author_actors,
+                    source_id,
+                };
+
+                output.source_signal_counts.entry(canonical_key).or_default();
+                output.extracted_batches.push(UrlExtraction {
+                    url: source_url,
+                    canonical_key: ck,
+                    batch,
+                });
+            }
         }
         output
     }
 
-/// Fetch and extract signals for a single social source.
-/// Used by the per-source fan-out handler.
-pub(crate) async fn scrape_single_social_source(
-    deps: &ScoutEngineDeps,
-    canonical_key: &str,
-    source_url: &str,
-    platform: SocialPlatform,
-    identifier: &str,
-    source_id: Option<Uuid>,
-    url_to_canonical_key: &HashMap<String, String>,
-    actor_contexts: &HashMap<String, ActorContext>,
-) -> SingleSocialResult {
-        let mut result = SingleSocialResult {
-            events: Events::new(),
-            source_signal_counts: HashMap::new(),
-            collected_links: Vec::new(),
-            expansion_queries: Vec::new(),
-            posts_fetched: 0,
-            signals_extracted: 0,
-            stats_delta: StatsDelta::default(),
-        };
-
-    let fetcher = deps.fetcher.as_ref().expect("fetcher required");
-    let extractor = deps.extractor.as_ref().expect("extractor required");
-
-        let posts = match fetcher.posts(identifier, 20).await {
-            Ok(posts) => posts,
-            Err(e) => {
-                warn!(source_url, error = %e, "Social media scrape failed");
-                return result;
-            }
-        };
-        result.posts_fetched = posts.len() as u32;
-
-        let newest_published_at = posts.iter().filter_map(|p| p.published_at).max();
-
-        let source_mentions: Vec<String> = posts
-            .iter()
-            .flat_map(|p| p.mentions.iter().cloned())
-            .collect();
-
-        let post_header = |i: usize, p: &Post| -> String {
-            let text = p.text.as_deref().unwrap_or("");
-            match &p.permalink {
-                Some(url) => format!("--- Post {} ({}) ---\n{}", i + 1, url, text),
-                None => format!("--- Post {} ---\n{}", i + 1, text),
-            }
-        };
-
-        // Build actor prefix or first-hand filter
-        let actor_prefix = actor_contexts.get(canonical_key).map(|ac| {
-            let mut prefix = format!(
-                "ACTOR CONTEXT: This content is from {}", ac.actor_name
-            );
-            if let Some(ref bio) = ac.bio {
-                prefix.push_str(&format!(", {}", bio));
-            }
-            if let Some(ref loc) = ac.location_name {
-                prefix.push_str(&format!(", located in {}", loc));
-            }
-            prefix.push_str(". Use this location as fallback if the post doesn't mention a specific place.\n\n");
-            prefix
-        });
-
-        let firsthand_filter = if actor_prefix.is_none() {
-            Some("FIRST-HAND FILTER (applies to this content):\n\
-                This content comes from platform search results, which are flooded with \
-                political commentary from people not directly involved. Apply strict filtering:\n\n\
-                For each potential signal, assess: Is this person describing something happening \
-                to them, their family, their community, or their neighborhood? Or are they \
-                asking for help? If yes, mark is_firsthand: true. If this is political commentary \
-                from someone not personally affected — regardless of viewpoint — mark \
-                is_firsthand: false.\n\n\
-                Signal: \"My family was taken.\" → is_firsthand: true\n\
-                Signal: \"There were raids on 5th street today.\" → is_firsthand: true\n\
-                Signal: \"We need legal observers.\" → is_firsthand: true\n\
-                Noise: \"ICE is doing great work.\" → is_firsthand: false\n\
-                Noise: \"The housing crisis is a failure of capitalism.\" → is_firsthand: false\n\n\
-                Only extract signals where is_firsthand is true. Reject the rest.\n\n".to_string())
-        } else {
-            None
-        };
-
-        let is_reddit = matches!(platform, SocialPlatform::Reddit);
-
-        let (combined_text, nodes, resource_tags, signal_tags, author_actors) = if is_reddit {
-            let batches: Vec<_> = posts.chunks(10).collect();
-            let mut all_nodes = Vec::new();
-            let mut all_resource_tags = Vec::new();
-            let mut all_signal_tags = Vec::new();
-            let mut all_author_actors: HashMap<Uuid, String> = HashMap::new();
-            let mut combined_all = String::new();
-            for batch in batches {
-                let mut combined_text: String = batch
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| post_header(i, p))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                if combined_text.is_empty() {
-                    continue;
-                }
-                if let Some(ref prefix) = actor_prefix {
-                    combined_text = format!("{prefix}{combined_text}");
-                } else if let Some(ref prefix) = firsthand_filter {
-                    combined_text = format!("{prefix}{combined_text}");
-                }
-                combined_all.push_str(&combined_text);
-                match extractor.extract(&combined_text, source_url).await {
-                    Ok(r) => {
-                        all_nodes.extend(r.nodes);
-                        all_resource_tags.extend(r.resource_tags);
-                        all_signal_tags.extend(r.signal_tags);
-                        all_author_actors.extend(r.author_actors);
-                    }
-                    Err(e) => {
-                        warn!(source_url, error = %e, "Reddit extraction failed");
-                    }
-                }
-            }
-            if all_nodes.is_empty() {
-                return result;
-            }
-            (combined_all, all_nodes, all_resource_tags, all_signal_tags, all_author_actors)
-        } else {
-            let mut combined_text: String = posts
-                .iter()
-                .enumerate()
-                .map(|(i, p)| post_header(i, p))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            if combined_text.is_empty() {
-                return result;
-            }
-            if let Some(ref prefix) = actor_prefix {
-                combined_text = format!("{prefix}{combined_text}");
-            } else if let Some(ref prefix) = firsthand_filter {
-                combined_text = format!("{prefix}{combined_text}");
-            }
-            match extractor.extract(&combined_text, source_url).await {
-                Ok(r) => (
-                    combined_text,
-                    r.nodes,
-                    r.resource_tags,
-                    r.signal_tags,
-                    r.author_actors.into_iter().collect(),
-                ),
-                Err(e) => {
-                    warn!(source_url, error = %e, "Social extraction failed");
-                    return result;
-                }
-            }
-        };
-
-        info!(source_url, posts = result.posts_fetched, "Social scrape complete");
-
-        let mut nodes = nodes;
-
-        // Apply social published_at as fallback
-        if let Some(pub_at) = newest_published_at {
-            for node in &mut nodes {
-                if let Some(meta) = node.meta_mut() {
-                    if meta.published_at.is_none() {
-                        meta.published_at = Some(pub_at);
-                    }
-                }
-            }
-        }
-
-        // Accumulate mentions for promotion
-        let promotion_config = link_promoter::PromotionConfig::default();
-        for handle in source_mentions.into_iter().take(promotion_config.max_per_source) {
-            let mention_url = link_promoter::platform_url(&platform, &handle);
-            result.collected_links.push(CollectedLink {
-                url: mention_url,
-                discovered_on: source_url.to_string(),
-            });
-        }
-
-        // Collect implied queries
-        for node in &nodes {
-            if matches!(node.node_type(), NodeType::Concern | NodeType::HelpRequest) {
-                if let Some(meta) = node.meta() {
-                    result.expansion_queries
-                        .extend(meta.implied_queries.iter().cloned());
-                }
-            }
-        }
-
-        result.signals_extracted = nodes.len() as u32;
-        result.stats_delta.social_media_posts += result.posts_fetched;
-
-        let events = store_signals_events(
-            source_url,
-            &combined_text,
-            nodes,
-            resource_tags,
-            signal_tags,
-            &author_actors,
-            url_to_canonical_key,
-            actor_contexts,
-            source_id,
-        );
-        result.source_signal_counts.entry(canonical_key.to_string()).or_default();
-        result.events.extend(events);
-
-        result
-    }

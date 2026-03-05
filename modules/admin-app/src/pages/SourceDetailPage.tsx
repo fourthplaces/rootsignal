@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
-import { SOURCE_DETAIL } from "@/graphql/queries";
+import { SOURCE_DETAIL, ADMIN_SCOUT_RUNS_BY_SOURCE } from "@/graphql/queries";
 import { RUN_SCOUT_SOURCE } from "@/graphql/mutations";
 
 const formatDate = (d: string | null | undefined) => {
@@ -61,6 +61,24 @@ type DiscoveryTree = {
   nodes: TreeNode[];
   edges: TreeEdge[];
   rootId: string;
+};
+
+type RunStats = {
+  urlsScraped: number | null;
+  signalsExtracted: number | null;
+  signalsStored: number | null;
+  handlerFailures: number | null;
+};
+
+type ScoutRunBrief = {
+  runId: string;
+  region: string;
+  regionId: string | null;
+  flowType: string | null;
+  sources: { id: string; label: string }[];
+  startedAt: string;
+  finishedAt: string | null;
+  stats: RunStats;
 };
 
 type SourceDetail = {
@@ -179,6 +197,10 @@ export function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data, loading } = useQuery(SOURCE_DETAIL, {
     variables: { id },
+  });
+  const { data: runsData } = useQuery(ADMIN_SCOUT_RUNS_BY_SOURCE, {
+    variables: { sourceId: id, limit: 10 },
+    skip: !id,
   });
   const [runScoutSource] = useMutation(RUN_SCOUT_SOURCE);
   const [scouting, setScouting] = useState(false);
@@ -377,6 +399,98 @@ export function SourceDetailPage() {
           <p className="text-sm">{source.gapContext}</p>
         </div>
       )}
+
+      {/* Recent runs */}
+      {(() => {
+        const runs: ScoutRunBrief[] = runsData?.adminScoutRunsBySource ?? [];
+        return (
+          <div className="rounded-lg border border-border">
+            <div className="px-4 py-3 border-b border-border">
+              <h3 className="text-sm font-medium">Recent Runs</h3>
+            </div>
+            {runs.length === 0 ? (
+              <p className="px-4 py-3 text-sm text-muted-foreground">
+                No scout runs found for this source
+              </p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
+                    <th className="px-4 py-2 font-medium">Run</th>
+                    <th className="px-4 py-2 font-medium">Flow</th>
+                    <th className="px-4 py-2 font-medium">Started</th>
+                    <th className="px-4 py-2 font-medium">Status</th>
+                    <th className="px-4 py-2 font-medium text-right">Signals</th>
+                    <th className="px-4 py-2 font-medium text-right">Failures</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => {
+                    const finished = !!r.finishedAt;
+                    const duration = finished
+                      ? Math.round(
+                          (new Date(r.finishedAt!).getTime() -
+                            new Date(r.startedAt).getTime()) /
+                            1000
+                        )
+                      : null;
+                    return (
+                      <tr
+                        key={r.runId}
+                        className="border-b border-border last:border-0 hover:bg-muted/30"
+                      >
+                        <td className="px-4 py-2">
+                          <Link
+                            to={`/scout-runs/${r.runId}`}
+                            className="text-blue-400 hover:underline font-mono text-xs"
+                          >
+                            {r.runId.slice(0, 8)}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2">
+                          {r.flowType && (
+                            <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
+                              {r.flowType}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+                          {formatDate(r.startedAt)}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full border ${
+                              finished
+                                ? "bg-green-900/30 text-green-400 border-green-500/30"
+                                : "bg-amber-900/30 text-amber-400 border-amber-500/30"
+                            }`}
+                          >
+                            {finished
+                              ? `Done${duration !== null ? ` (${duration}s)` : ""}`
+                              : "Running"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {r.stats.signalsExtracted ?? 0}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {(r.stats.handlerFailures ?? 0) > 0 ? (
+                            <span className="text-red-400">
+                              {r.stats.handlerFailures}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">0</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Signals produced */}
       <div className="rounded-lg border border-border">

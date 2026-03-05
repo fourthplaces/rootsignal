@@ -1580,6 +1580,44 @@ pub fn test_engine_with_ai(
     (engine, captured)
 }
 
+/// Create a test engine for a source-targeted run with real extractor, event capture,
+/// and all scrape deps wired. Uses the real `Extractor` backed by the given AI agent.
+pub fn test_engine_for_source_run(
+    store: Arc<dyn SignalReader>,
+    sources: Vec<rootsignal_common::SourceNode>,
+    fetcher: Arc<dyn ContentFetcher>,
+    ai: Arc<dyn ai_client::Agent>,
+) -> (
+    Arc<ScoutEngine>,
+    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+) {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let region = mpls_region();
+    let extractor: Arc<dyn crate::core::extractor::SignalExtractor> = Arc::new(
+        crate::core::extractor::Extractor::new(
+            ai.clone(),
+            &region.name,
+            region.center_lat,
+            region.center_lng,
+        ),
+    );
+    let mut deps = ScoutEngineDeps::new(
+        store,
+        Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        "test-run",
+    );
+    deps.run_scope = crate::core::run_scope::RunScope::Sources {
+        sources,
+        region: Some(region),
+    };
+    deps.fetcher = Some(fetcher);
+    deps.extractor = Some(extractor);
+    deps.ai = Some(ai);
+    deps.captured_events = Some(captured.clone());
+    let engine = Arc::new(build_engine(deps, None));
+    (engine, captured)
+}
+
 /// Create a test ScoutEngineDeps with a given store (for activity-level tests).
 pub fn test_scout_deps(
     store: Arc<dyn SignalReader>,

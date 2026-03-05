@@ -34,15 +34,52 @@ async fn dispatch_events(
 }
 
 /// Take events from scrape output, apply state, and dispatch through engine.
+///
+/// Mirrors the scrape handler: dispatches freshness events, then constructs
+/// a ScrapeRoleCompleted carrying extracted_batches so dedup triggers.
 async fn scrape_and_dispatch(
     output: ScrapeOutput,
     ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
 ) {
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+    use crate::domains::scrape::activities::StatsDelta;
+    use std::collections::HashMap;
+
     let mut output = output;
     let events = output.take_events();
+    let extracted_batches = std::mem::take(&mut output.extracted_batches);
+    let discovered_sources = std::mem::take(&mut output.discovered_sources);
     ctx.apply_scrape_output(output);
-    dispatch_events(events, ctx, store).await;
+
+    let engine = test_engine_for_store(store.clone() as Arc<dyn SignalReader>);
+    for out in events.into_outputs() {
+        let _ = engine.emit_output(out).settled().await;
+    }
+
+    if !extracted_batches.is_empty() {
+        let _ = engine
+            .emit(ScrapeEvent::ScrapeRoleCompleted {
+                run_id: uuid::Uuid::new_v4(),
+                role: ScrapeRole::TensionWeb,
+                urls_scraped: 0,
+                urls_unchanged: 0,
+                urls_failed: 0,
+                signals_extracted: 0,
+                source_signal_counts: HashMap::new(),
+                collected_links: vec![],
+                expansion_queries: vec![],
+                stats_delta: StatsDelta::default(),
+                page_previews: Default::default(),
+                extracted_batches,
+                discovered_sources,
+            })
+            .settled()
+            .await;
+    }
+
+    let state = engine.singleton::<crate::core::aggregate::PipelineState>();
+    ctx.stats = state.stats.clone();
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,7 +1052,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
     // Step 1: resolve URLs
-    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key, None, None).await;
+    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key).await;
     assert_eq!(resolution.urls.len(), 1, "search resolved one URL");
     assert!(resolution.query_api_errors.is_empty());
 
@@ -1038,10 +1075,38 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
 
     assert_eq!(result.stats.urls_scraped, 1, "one URL fetched+extracted");
     assert_eq!(result.stats.signals_extracted, 1, "one signal extracted");
-    assert!(!result.events.is_empty(), "should produce SignalsExtracted events");
+    assert!(!result.extracted_batches.is_empty(), "should produce extracted batches");
 
-    // Dispatch events through engine to verify full chain
-    dispatch_events(result.events, &mut ctx, &store).await;
+    // Dispatch through engine: freshness events + extracted batches via ScrapeRoleCompleted
+    {
+        use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+        use crate::domains::scrape::activities::StatsDelta;
+
+        let engine = test_engine_for_store(store.clone() as Arc<dyn SignalReader>);
+        for out in result.events.into_outputs() {
+            let _ = engine.emit_output(out).settled().await;
+        }
+        let _ = engine
+            .emit(ScrapeEvent::ScrapeRoleCompleted {
+                run_id: uuid::Uuid::new_v4(),
+                role: ScrapeRole::TensionWeb,
+                urls_scraped: 0,
+                urls_unchanged: 0,
+                urls_failed: 0,
+                signals_extracted: 0,
+                source_signal_counts: std::collections::HashMap::new(),
+                collected_links: vec![],
+                expansion_queries: vec![],
+                stats_delta: StatsDelta::default(),
+                page_previews: Default::default(),
+                extracted_batches: result.extracted_batches,
+                discovered_sources: Vec::new(),
+            })
+            .settled()
+            .await;
+        let state = engine.singleton::<crate::core::aggregate::PipelineState>();
+        ctx.stats = state.stats.clone();
+    }
     assert_eq!(ctx.stats.signals_stored, 1, "signal stored through engine");
 
     // Links collected

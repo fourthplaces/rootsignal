@@ -45,10 +45,11 @@ pub async fn seed_sources_if_empty(
     let platform_sources =
         generate_platform_sources(ai, region, deps.fetcher.as_deref()).await;
 
+    let all_sources: Vec<_> = seed_sources.into_iter().chain(platform_sources).collect();
     let mut events = seesaw_core::Events::new();
-    for source in seed_sources.into_iter().chain(platform_sources) {
-        events.push(DiscoveryEvent::SourceDiscovered {
-            source,
+    if !all_sources.is_empty() {
+        events.push(DiscoveryEvent::SourcesDiscovered {
+            sources: all_sources,
             discovered_by: "engine_started".into(),
         });
     }

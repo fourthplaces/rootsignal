@@ -28,12 +28,21 @@ mod engine_tests {
         );
         let engine = build_engine(deps, None);
 
-        let event = ScrapeEvent::ContentFetched {
+        use crate::domains::scrape::events::ScrapeRole;
+        let event = ScrapeEvent::ScrapeRoleCompleted {
             run_id: uuid::Uuid::new_v4(),
-            url: "https://test.com".into(),
-            canonical_key: "test".into(),
-            content_hash: "abc123".into(),
-            link_count: 0,
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 0,
+            source_signal_counts: Default::default(),
+            collected_links: vec![],
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: Default::default(),
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         };
         let result = engine.emit(event).settled().await;
         assert!(result.is_ok(), "settled should succeed: {:?}", result.err());

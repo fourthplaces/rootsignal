@@ -55,21 +55,19 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
     let node = tension_at("Free Legal Clinic", 44.9341, -93.2619);
     let node_id = node.id();
 
-    let mut state = PipelineState::new(HashMap::new());
-    state.pending_nodes.insert(
-        node_id,
-        PendingNode {
-            node,
-            content_hash: "abc123".to_string(),
-            resource_tags: vec![],
-            signal_tags: vec!["legal".to_string()],
-            author_name: Some("Local Legal Aid".to_string()),
-            source_id: None,
-        },
-    );
+    let pending = PendingNode {
+        node,
+        content_hash: "abc123".to_string(),
+        resource_tags: vec![],
+        signal_tags: vec!["legal".to_string()],
+        author_name: Some("Local Legal Aid".to_string()),
+        source_id: None,
+    };
+
+    let state = PipelineState::new(HashMap::new());
 
     let events =
-        super::creation::create_signal_events(node_id, "https://localorg.org/events", &state, &deps)
+        super::creation::create_signal_events(&pending, "localorg.org", "https://localorg.org/events", &state, &deps)
             .await
             .unwrap();
 
@@ -95,28 +93,6 @@ async fn new_signal_emits_world_system_citation_and_signal_stored() {
         }
         other => panic!("expected SignalCreated, got {:?}", other),
     }
-
-    // PendingNode still in state (handler reads, reducer cleans up on SignalCreated)
-    assert!(
-        state.pending_nodes.contains_key(&node_id),
-        "pending node should still be in state (handler reads, reducer cleans up)"
-    );
-}
-
-#[tokio::test]
-async fn missing_pending_node_returns_empty_events() {
-    let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-
-    let state = PipelineState::new(HashMap::new());
-    let bogus_id = Uuid::new_v4();
-
-    let events = super::creation::create_signal_events(bogus_id, "https://example.org", &state, &deps)
-        .await
-        .unwrap();
-
-    let (world, system, signal) = extract_events(events);
-    assert!(world.is_empty() && system.is_empty() && signal.is_empty(), "no pending node → no events");
 }
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
+use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::StatsDelta;
 use rootsignal_common::telemetry_events::TelemetryEvent;
@@ -146,6 +147,8 @@ pub mod handlers {
                 expansion_queries: Default::default(),
                 stats_delta: Default::default(),
                 page_previews: Default::default(),
+                extracted_batches: Default::default(),
+                discovered_sources: Default::default(),
             }]);
         }
 
@@ -175,6 +178,8 @@ pub mod handlers {
             expansion_queries: fetch_result.expansion_queries,
             stats_delta: StatsDelta::default(),
             page_previews: fetch_result.page_previews,
+            extracted_batches: fetch_result.extracted_batches,
+            discovered_sources: Vec::new(),
         });
 
         Ok(all_events)
@@ -239,6 +244,8 @@ pub mod handlers {
                 expansion_queries: Default::default(),
                 stats_delta: Default::default(),
                 page_previews: Default::default(),
+                extracted_batches: Default::default(),
+                discovered_sources: Default::default(),
             }]);
         }
 
@@ -266,6 +273,8 @@ pub mod handlers {
             expansion_queries: social_output.expansion_queries,
             stats_delta: social_output.stats_delta,
             page_previews: Default::default(),
+            extracted_batches: social_output.extracted_batches,
+            discovered_sources: Vec::new(),
         });
 
         Ok(all_events)
@@ -306,6 +315,8 @@ pub mod handlers {
                 expansion_queries: Default::default(),
                 stats_delta: Default::default(),
                 page_previews: Default::default(),
+                extracted_batches: Default::default(),
+                discovered_sources: Default::default(),
             });
         } else {
             let mut topic_output = activities::topic_discovery::discover_from_topics(
@@ -329,6 +340,8 @@ pub mod handlers {
                 expansion_queries: topic_output.expansion_queries,
                 stats_delta: topic_output.stats_delta,
                 page_previews: Default::default(),
+                extracted_batches: topic_output.extracted_batches,
+                discovered_sources: topic_output.discovered_sources,
             });
         }
 
@@ -369,7 +382,15 @@ pub mod handlers {
         // Check if all expected roles are complete (including this one, which was just applied)
         if state.completed_scrape_roles.is_superset(&expected_roles) {
             info!(?phase, "All scrape roles complete, emitting PhaseCompleted");
-            Ok(events![LifecycleEvent::PhaseCompleted { phase }])
+            let mut out = events![LifecycleEvent::PhaseCompleted { phase }];
+            // Emit SourcesDiscovered from stashed sources at phase boundary
+            if !state.scrape_discovered_sources.is_empty() {
+                out = out.add(DiscoveryEvent::SourcesDiscovered {
+                    sources: state.scrape_discovered_sources.clone(),
+                    discovered_by: "topic_discovery".into(),
+                });
+            }
+            Ok(out)
         } else {
             let completed: Vec<_> = state.completed_scrape_roles.iter().collect();
             let expected: Vec<_> = expected_roles.iter().collect();

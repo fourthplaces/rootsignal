@@ -30,7 +30,14 @@ pub fn all_synthesis_roles() -> std::collections::HashSet<SynthesisRole> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SynthesisEvent {
-    SynthesisRoleCompleted { run_id: Uuid, role: SynthesisRole },
+    SynthesisRoleCompleted {
+        run_id: Uuid,
+        role: SynthesisRole,
+        /// Sources discovered during this role (e.g. response_finder, gathering_finder).
+        /// In-memory only — skipped during serialization.
+        #[serde(skip)]
+        discovered_sources: Vec<rootsignal_common::SourceNode>,
+    },
 }
 
 impl SynthesisEvent {

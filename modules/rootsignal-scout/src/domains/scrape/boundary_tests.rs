@@ -68,16 +68,63 @@ async fn scrape_and_dispatch(
 }
 
 /// Take events from scrape output, apply state, and dispatch with custom embedder.
+///
+/// Mirrors what the scrape handler does: dispatches freshness events, then
+/// constructs a ScrapeRoleCompleted carrying extracted_batches so the dedup
+/// handler triggers and processes new signals through the engine.
 async fn scrape_and_dispatch_with(
     output: ScrapeOutput,
     ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
     embedder: Option<Arc<dyn TextEmbedder>>,
 ) {
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+    use crate::domains::scrape::activities::StatsDelta;
+    use std::collections::HashMap;
+
     let mut output = output;
     let events = output.take_events();
+    let extracted_batches = std::mem::take(&mut output.extracted_batches);
+    let discovered_sources = std::mem::take(&mut output.discovered_sources);
     ctx.apply_scrape_output(output);
-    dispatch_events_with(events, ctx, store, embedder).await;
+
+    // Build engine and dispatch scrape events (freshness, etc.)
+    let store_arc = store.clone() as Arc<dyn SignalReader>;
+    let engine = match embedder {
+        Some(e) => test_engine_for_store_with_embedder(store_arc, e),
+        None => test_engine_for_store(store_arc),
+    };
+    for out in events.into_outputs() {
+        let _ = engine.emit_output(out).settled().await;
+    }
+
+    // Dispatch ScrapeRoleCompleted with extracted batches — triggers dedup handler
+    if !extracted_batches.is_empty() {
+        let _ = engine
+            .emit(ScrapeEvent::ScrapeRoleCompleted {
+                run_id: Uuid::new_v4(),
+                role: ScrapeRole::TensionWeb,
+                urls_scraped: 0,
+                urls_unchanged: 0,
+                urls_failed: 0,
+                signals_extracted: 0,
+                source_signal_counts: HashMap::new(),
+                collected_links: vec![],
+                expansion_queries: vec![],
+                stats_delta: StatsDelta::default(),
+                page_previews: Default::default(),
+                extracted_batches,
+                discovered_sources,
+            })
+            .settled()
+            .await;
+    }
+
+    // Sync engine stats back to ctx so test assertions work.
+    let state = engine.singleton::<PipelineState>();
+    ctx.stats = state.stats.clone();
+    // Also sync wiring contexts for tests that check them
+    ctx.wiring_contexts = state.wiring_contexts.clone();
 }
 
 /// Build a CollectedLink for testing.
@@ -3652,7 +3699,7 @@ async fn resolve_web_urls_collects_search_result_urls() {
     let sources: Vec<&_> = vec![&source];
     let ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key, None, None).await;
+    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key).await;
 
     assert_eq!(resolution.urls.len(), 2, "should resolve 2 URLs from search");
     assert!(resolution.query_api_errors.is_empty(), "no API errors");
@@ -3676,7 +3723,7 @@ async fn resolve_web_urls_records_api_errors() {
     let sources: Vec<&_> = vec![&source];
     let ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key, None, None).await;
+    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key).await;
 
     assert!(resolution.urls.is_empty(), "no URLs on API error");
     assert!(
@@ -3698,7 +3745,7 @@ async fn resolve_web_urls_includes_page_source_urls() {
     let sources: Vec<&_> = vec![&source];
     let ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key, None, None).await;
+    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key).await;
 
     assert_eq!(resolution.urls.len(), 1);
     assert_eq!(resolution.urls[0], "https://localorg.org/events");
@@ -3753,7 +3800,7 @@ async fn fetch_and_extract_produces_signals_and_stats() {
     assert_eq!(result.stats.urls_scraped, 1, "one URL scraped");
     assert_eq!(result.stats.urls_failed, 0, "no failures");
     assert_eq!(result.stats.signals_extracted, 1, "one signal extracted");
-    assert!(!result.events.is_empty(), "should produce events");
+    assert!(!result.extracted_batches.is_empty(), "should produce extracted batches");
 }
 
 #[tokio::test]

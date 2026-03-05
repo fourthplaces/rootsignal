@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use rootsignal_common::Node;
 
-use crate::core::events::{FreshnessBucket, PipelinePhase};
+use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::scrape::events::ScrapeRole;
 use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
@@ -83,15 +83,16 @@ pub struct PipelineState {
     #[serde(default)]
     pub page_previews: HashMap<String, String>,
 
-    /// Nodes awaiting creation (passed dedup as new).
-    /// Stashed by the dedup handler, consumed by `create_signal_events`,
-    /// which moves wiring data to `wiring_contexts`.
-    pub pending_nodes: HashMap<Uuid, PendingNode>,
-
-    /// Edge-wiring context stashed by `create_signal_events` for `wire_signal_edges`.
-    /// Separate from `pending_nodes` so each handler has a clear lifecycle:
-    /// dedup stashes → create consumes + stashes wiring → signal_stored consumes.
+    /// Edge-wiring context stashed by reducer on `SignalCreated` for `wire_signal_edges`.
     pub wiring_contexts: HashMap<Uuid, WiringContext>,
+
+    /// Sources discovered during scrape (topic discovery), accumulated by reducer.
+    #[serde(default)]
+    pub scrape_discovered_sources: Vec<rootsignal_common::SourceNode>,
+
+    /// Sources discovered during synthesis, accumulated by reducer.
+    #[serde(default)]
+    pub synthesis_discovered_sources: Vec<rootsignal_common::SourceNode>,
 
     /// Scheduling data stashed by schedule_handler, consumed by scrape handlers.
     pub scheduled: Option<ScheduledData>,
@@ -116,8 +117,8 @@ pub struct PipelineState {
     pub completed_phases: HashSet<PipelinePhase>,
 }
 
-/// A batch of extracted nodes for a single URL, carried on `SignalsExtracted`
-/// as event payload for the dedup handler.
+/// A batch of extracted nodes for a single URL, carried on `ScrapeRoleCompleted`
+/// as in-memory data for the dedup handler.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedBatch {
     pub content: String,
@@ -141,7 +142,7 @@ pub struct PendingNode {
 
 /// Edge-wiring data stashed by `create_signal_events` for `wire_signal_edges`.
 /// Only the fields needed for wiring — the Node itself is already projected.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WiringContext {
     pub resource_tags: Vec<ResourceTag>,
     pub signal_tags: Vec<String>,
@@ -162,8 +163,9 @@ impl PipelineState {
             url_to_pub_date: HashMap::new(),
             collected_links: Vec::new(),
             page_previews: HashMap::new(),
-            pending_nodes: HashMap::new(),
             wiring_contexts: HashMap::new(),
+            scrape_discovered_sources: Vec::new(),
+            synthesis_discovered_sources: Vec::new(),
             scheduled: None,
             social_topics: Vec::new(),
             completed_scrape_roles: HashSet::new(),
@@ -202,36 +204,6 @@ impl PipelineState {
     /// Apply a scrape domain event.
     pub fn apply_scrape(&mut self, event: &ScrapeEvent) {
         match event {
-            ScrapeEvent::ContentFetched { .. } => {
-                self.stats.urls_scraped += 1;
-            }
-            ScrapeEvent::ContentUnchanged { .. } => {
-                self.stats.urls_unchanged += 1;
-            }
-            ScrapeEvent::ContentFetchFailed { .. } => {
-                self.stats.urls_failed += 1;
-            }
-            ScrapeEvent::SignalsExtracted { count, .. } => {
-                self.stats.signals_extracted += count;
-            }
-            ScrapeEvent::SocialPostsFetched { count, .. } => {
-                self.stats.social_media_posts += count;
-            }
-            ScrapeEvent::FreshnessRecorded { bucket, .. } => match bucket {
-                FreshnessBucket::Within7d => self.stats.fresh_7d += 1,
-                FreshnessBucket::Within30d => self.stats.fresh_30d += 1,
-                FreshnessBucket::Within90d => self.stats.fresh_90d += 1,
-                FreshnessBucket::Older | FreshnessBucket::Unknown => {}
-            },
-            ScrapeEvent::LinkCollected {
-                url, discovered_on, ..
-            } => {
-                self.collected_links.push(CollectedLink {
-                    url: url.clone(),
-                    discovered_on: discovered_on.clone(),
-                });
-            }
-            ScrapeEvent::ExtractionFailed { .. } => {}
             ScrapeEvent::SourcesResolved { url_mappings, pub_dates, query_api_errors, .. } => {
                 self.url_to_canonical_key.extend(url_mappings.clone());
                 self.url_to_pub_date.extend(pub_dates.clone());
@@ -239,13 +211,22 @@ impl PipelineState {
             }
             ScrapeEvent::ScrapeRoleCompleted {
                 role,
+                urls_scraped,
+                urls_unchanged,
+                urls_failed,
+                signals_extracted,
                 source_signal_counts,
                 collected_links,
                 expansion_queries,
                 stats_delta,
                 page_previews,
+                discovered_sources,
                 ..
             } => {
+                self.stats.urls_scraped += urls_scraped;
+                self.stats.urls_unchanged += urls_unchanged;
+                self.stats.urls_failed += urls_failed;
+                self.stats.signals_extracted += signals_extracted;
                 self.completed_scrape_roles.insert(*role);
                 for (k, v) in source_signal_counts {
                     *self.source_signal_counts.entry(k.clone()).or_default() += v;
@@ -256,6 +237,7 @@ impl PipelineState {
                 self.stats.social_media_posts += stats_delta.social_media_posts;
                 self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
                 self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
+                self.scrape_discovered_sources.extend(discovered_sources.clone());
                 if *role == ScrapeRole::TopicDiscovery {
                     self.social_topics.clear();
                     self.social_expansion_topics.clear();
@@ -267,55 +249,35 @@ impl PipelineState {
     /// Apply a signal domain event.
     pub fn apply_signal(&mut self, event: &SignalEvent) {
         match event {
-            SignalEvent::SignalsExtracted { count, .. } => {
-                self.stats.signals_extracted += count;
-            }
-            SignalEvent::NewSignalAccepted {
-                node_id,
-                node_type,
-                pending_node,
-                ..
-            } => {
+            SignalEvent::SignalCreated { node_id, node_type, wiring, .. } => {
                 self.stats.signals_stored += 1;
                 *self.stats.by_type.entry(*node_type).or_default() += 1;
-                self.wiring_contexts.insert(
-                    *node_id,
-                    WiringContext {
-                        resource_tags: pending_node.resource_tags.clone(),
-                        signal_tags: pending_node.signal_tags.clone(),
-                        author_name: pending_node.author_name.clone(),
-                        source_id: pending_node.source_id,
-                    },
-                );
-                self.pending_nodes.insert(*node_id, *pending_node.clone());
+                if let Some(w) = wiring {
+                    self.wiring_contexts.insert(*node_id, w.clone());
+                }
             }
-            SignalEvent::CrossSourceMatchDetected { .. }
-            | SignalEvent::SameSourceReencountered { .. } => {
-                self.stats.signals_deduplicated += 1;
-            }
-            SignalEvent::UrlProcessed {
+            SignalEvent::DedupCompleted {
                 canonical_key,
                 signals_created,
+                signals_deduplicated,
                 ..
             } => {
                 *self
                     .source_signal_counts
                     .entry(canonical_key.clone())
                     .or_default() += signals_created;
+                self.stats.signals_deduplicated += *signals_deduplicated;
             }
-            SignalEvent::SignalCreated { node_id, .. } => {
-                self.pending_nodes.remove(node_id);
-            }
-            SignalEvent::DedupCompleted { .. } => {}
         }
     }
 
     /// Apply a discovery domain event.
     pub fn apply_discovery(&mut self, event: &DiscoveryEvent) {
         match event {
-            DiscoveryEvent::SourceDiscovered { .. } => {
-                self.stats.sources_discovered += 1;
+            DiscoveryEvent::SourcesDiscovered { sources, .. } => {
+                self.stats.sources_discovered += sources.len() as u32;
             }
+            DiscoveryEvent::SourceRejected { .. } => {}
             DiscoveryEvent::LinksPromoted { .. } => {
                 self.collected_links.clear();
                 self.page_previews.clear();
@@ -339,8 +301,9 @@ impl PipelineState {
     /// Apply a synthesis domain event.
     pub fn apply_synthesis(&mut self, event: &SynthesisEvent) {
         match event {
-            SynthesisEvent::SynthesisRoleCompleted { role, .. } => {
+            SynthesisEvent::SynthesisRoleCompleted { role, discovered_sources, .. } => {
                 self.completed_synthesis_roles.insert(*role);
+                self.synthesis_discovered_sources.extend(discovered_sources.clone());
             }
         }
     }

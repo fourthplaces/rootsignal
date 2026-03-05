@@ -1,12 +1,11 @@
-//! Handlers that react to dedup verdict facts.
+//! Signal creation helpers called by the dedup handler.
 //!
-//! NewSignalAccepted → construct World + System events for the new signal.
-//! CrossSourceMatchDetected → construct corroboration events.
-//! SameSourceReencountered → construct freshness confirmation event.
-//! SignalCreated → wire edges (source, actor, resources, tags) via events.
+//! create_signal_events — construct World + System events for a new signal.
+//! create_corroboration_events — construct corroboration events for cross-source match.
+//! create_freshness_events — construct freshness confirmation for same-source re-encounter.
+//! wire_signal_edges — wire edges (source, actor, resources, tags) via events.
 //!
 //! All graph writes flow through events → engine → EventStore → GraphProjector.
-//! Handlers only emit events — no direct store writes.
 
 use anyhow::Result;
 use chrono::Utc;
@@ -19,31 +18,21 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::extractor::ResourceRole;
 use crate::domains::signals::activities::dedup_utils::is_owned_source;
 use crate::domains::signals::events::SignalEvent;
-use crate::core::aggregate::PipelineState;
+use crate::core::aggregate::{PendingNode, PipelineState, WiringContext};
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 
-/// NewSignalAccepted: a new signal passed all dedup layers.
+/// New signal passed all dedup layers.
 /// Emits World + System + Citation events, then triggers edge wiring via SignalCreated.
 ///
-/// Reads PendingNode from state (stashed by reducer). Pure — no state mutations.
+/// Takes PendingNode directly (dedup has it in hand). Pure — no state mutations.
 pub async fn create_signal_events(
-    node_id: Uuid,
+    pending: &PendingNode,
+    canonical_key: &str,
     scrape_url: &str,
     state: &PipelineState,
     _deps: &ScoutEngineDeps,
 ) -> Result<Events> {
-    let pending = match state.pending_nodes.get(&node_id) {
-        Some(p) => p,
-        None => {
-            tracing::warn!(%node_id, "NewSignalAccepted: no pending node found");
-            return Ok(events![]);
-        }
-    };
-
     let stored_id = pending.node.id();
-
-    // embed_cache.add already done by dedup handler
-    // wiring_contexts already stashed by reducer
 
     let mut events = events![];
 
@@ -67,24 +56,29 @@ pub async fn create_signal_events(
         evidence_confidence: None,
     });
 
-    // 4. Trigger edge wiring
-    let canonical_key = state
+    // 4. Trigger edge wiring — carry WiringContext for the wire_edges handler
+    let ck = state
         .url_to_canonical_key
         .get(scrape_url)
         .cloned()
-        .unwrap_or_else(|| scrape_url.to_string());
+        .unwrap_or_else(|| canonical_key.to_string());
     events = events.add(SignalEvent::SignalCreated {
         node_id: stored_id,
         node_type: pending.node.node_type(),
         source_url: scrape_url.to_string(),
-        canonical_key,
+        canonical_key: ck,
+        wiring: Some(WiringContext {
+            resource_tags: pending.resource_tags.clone(),
+            signal_tags: pending.signal_tags.clone(),
+            author_name: pending.author_name.clone(),
+            source_id: pending.source_id,
+        }),
     });
 
     Ok(events)
 }
 
-/// CrossSourceMatchDetected: cross-source match found.
-/// Emits citation, corroboration, and scoring events.
+/// Cross-source match found: emits citation, corroboration, and scoring events.
 pub async fn create_corroboration_events(
     existing_id: Uuid,
     node_type: NodeType,
@@ -123,8 +117,7 @@ pub async fn create_corroboration_events(
     ])
 }
 
-/// SameSourceReencountered: same-source re-encounter.
-/// Emits citation and freshness confirmation events.
+/// Same-source re-encounter: emits citation and freshness confirmation events.
 pub async fn create_freshness_events(
     existing_id: Uuid,
     node_type: NodeType,

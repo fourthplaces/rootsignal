@@ -5,9 +5,10 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::core::aggregate::ExtractedBatch;
 use crate::core::extractor::ResourceTag;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
-use rootsignal_common::Node;
+use rootsignal_common::{Node, SourceNode};
 use rootsignal_common::telemetry_events::TelemetryEvent;
 use seesaw_core::Events;
 
@@ -17,6 +18,14 @@ pub(crate) use crate::domains::signals::activities::dedup_utils::{
     DedupVerdict,
 };
 
+/// Per-URL extraction result carried on ScrapeRoleCompleted (in-memory only).
+#[derive(Debug, Clone)]
+pub struct UrlExtraction {
+    pub url: String,
+    pub canonical_key: String,
+    pub batch: ExtractedBatch,
+}
+
 // ---------------------------------------------------------------------------
 // ScrapeOutput — accumulated output from a scrape phase
 // ---------------------------------------------------------------------------
@@ -24,7 +33,7 @@ pub(crate) use crate::domains::signals::activities::dedup_utils::{
 /// Accumulated output from a scrape phase (web, social, or topic discovery).
 /// Replaces direct mutations to PipelineState during scraping.
 pub struct ScrapeOutput {
-    /// Events to emit (SignalsExtracted, FreshnessConfirmed, etc.)
+    /// Events to emit (FreshnessConfirmed, etc.)
     pub events: Events,
     /// New URL→canonical_key mappings discovered during this scrape.
     pub url_mappings: HashMap<String, String>,
@@ -40,6 +49,10 @@ pub struct ScrapeOutput {
     pub expansion_queries: Vec<String>,
     /// Direct stat mutations not tracked through events.
     pub stats_delta: StatsDelta,
+    /// Extracted batches per URL — carried as data, not events.
+    pub extracted_batches: Vec<UrlExtraction>,
+    /// Sources discovered during topic discovery (data, not events).
+    pub discovered_sources: Vec<SourceNode>,
 }
 
 /// Direct stat mutations accumulated during scraping.
@@ -61,6 +74,8 @@ impl ScrapeOutput {
             collected_links: Vec::new(),
             expansion_queries: Vec::new(),
             stats_delta: StatsDelta::default(),
+            extracted_batches: Vec::new(),
+            discovered_sources: Vec::new(),
         }
     }
 
@@ -83,6 +98,8 @@ impl ScrapeOutput {
         self.stats_delta.social_media_posts += other.stats_delta.social_media_posts;
         self.stats_delta.discovery_posts_found += other.stats_delta.discovery_posts_found;
         self.stats_delta.discovery_accounts_found += other.stats_delta.discovery_accounts_found;
+        self.extracted_batches.extend(other.extracted_batches);
+        self.discovered_sources.extend(other.discovered_sources);
     }
 }
 
@@ -104,6 +121,8 @@ pub struct FetchExtractResult {
     pub stats: FetchExtractStats,
     /// Content previews (first 500 chars) keyed by URL, for downstream page triage.
     pub page_previews: HashMap<String, String>,
+    /// Extracted batches per URL — data, not events.
+    pub extracted_batches: Vec<UrlExtraction>,
 }
 
 /// Per-URL fetch+extract statistics.
@@ -113,29 +132,6 @@ pub struct FetchExtractStats {
     pub urls_unchanged: u32,
     pub urls_failed: u32,
     pub signals_extracted: u32,
-}
-
-/// Result from fetching and extracting a single URL.
-pub struct SingleUrlResult {
-    pub events: Events,
-    pub source_signal_counts: HashMap<String, u32>,
-    pub collected_links: Vec<CollectedLink>,
-    pub expansion_queries: Vec<String>,
-    pub scraped: bool,
-    pub unchanged: bool,
-    pub failed: bool,
-    pub signals_extracted: u32,
-}
-
-/// Result from scraping a single social source.
-pub struct SingleSocialResult {
-    pub events: Events,
-    pub source_signal_counts: HashMap<String, u32>,
-    pub collected_links: Vec<CollectedLink>,
-    pub expansion_queries: Vec<String>,
-    pub posts_fetched: u32,
-    pub signals_extracted: u32,
-    pub stats_delta: StatsDelta,
 }
 
 pub(crate) enum ScrapeOutcome {

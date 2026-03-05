@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useSearchParams, useNavigate } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_REGION_SOURCES } from "@/graphql/queries";
 import { ADD_SOURCE, UPDATE_SOURCE, DELETE_SOURCE, RUN_SCOUT_SOURCE } from "@/graphql/mutations";
@@ -226,6 +226,7 @@ const ACTIVE_FILTERS = ["all", "active", "inactive"] as const;
 type ActiveFilter = (typeof ACTIVE_FILTERS)[number];
 
 export function SourcesPage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const rawFilter = searchParams.get("filter");
   const activeFilter: ActiveFilter = ACTIVE_FILTERS.includes(rawFilter as ActiveFilter) ? (rawFilter as ActiveFilter) : "all";
@@ -250,10 +251,9 @@ export function SourcesPage() {
   const [addSource] = useMutation(ADD_SOURCE);
   const [runScoutSource] = useMutation(RUN_SCOUT_SOURCE);
 
-  // Add source form
+  // Add source modal
   const [showAdd, setShowAdd] = useState(false);
   const [sourceUrl, setSourceUrl] = useState("");
-  const [sourceReason, setSourceReason] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
   // Sort
@@ -419,13 +419,17 @@ export function SourcesPage() {
     e.preventDefault();
     setAddError(null);
     try {
-      await addSource({
-        variables: { url: sourceUrl, reason: sourceReason || undefined },
+      const { data: result } = await addSource({
+        variables: { url: sourceUrl },
       });
+      const newId = result?.addSource?.sourceId;
       setSourceUrl("");
-      setSourceReason("");
       setShowAdd(false);
-      refetch();
+      if (newId) {
+        navigate(`/scout/sources/${newId}`);
+      } else {
+        refetch();
+      }
     } catch (err: unknown) {
       setAddError(err instanceof Error ? err.message : "Failed to add source");
     }
@@ -552,39 +556,37 @@ export function SourcesPage() {
       </div>
 
       {showAdd && (
-        <form onSubmit={handleAdd} className="space-y-2 p-4 rounded-lg border border-border bg-card">
-          <input
-            type="url"
-            value={sourceUrl}
-            onChange={(e) => setSourceUrl(e.target.value)}
-            placeholder="https://..."
-            className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-            required
-          />
-          <input
-            type="text"
-            value={sourceReason}
-            onChange={(e) => setSourceReason(e.target.value)}
-            placeholder="Reason (optional)"
-            className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-          />
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
-            >
-              Add
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowAdd(false)}
-              className="px-4 py-2 rounded-md border border-border text-sm text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
-          </div>
-          {addError && <p className="text-xs text-red-400">{addError}</p>}
-        </form>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <form onSubmit={handleAdd} className="bg-card border border-border rounded-lg p-6 max-w-md w-full space-y-4">
+            <h2 className="font-semibold">Add Source</h2>
+            <p className="text-sm text-muted-foreground">Enter a URL or search query (e.g. <code className="text-xs bg-muted px-1 py-0.5 rounded">site:linktr.ee mutual aid Minneapolis</code>)</p>
+            <input
+              type="text"
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              placeholder="https://... or search query"
+              className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
+              autoFocus
+              required
+            />
+            {addError && <p className="text-xs text-red-400">{addError}</p>}
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => { setShowAdd(false); setAddError(null); }}
+                className="px-3 py-1.5 rounded-md border border-border text-sm text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
+              >
+                Add
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {/* Filter */}
