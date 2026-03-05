@@ -1,5 +1,5 @@
-import { useMemo, useCallback } from "react";
-import { ReactFlow, Background, Controls, type Node, type Edge, type NodeChange, Position } from "@xyflow/react";
+import { useMemo, useCallback, useEffect } from "react";
+import { ReactFlow, Background, Controls, useReactFlow, type Node, type Edge, type NodeChange, Position } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
@@ -218,6 +218,38 @@ function layoutGraph(nodes: Node[], edges: Edge[]): FlowGraph {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-center on selected tree event
+// ---------------------------------------------------------------------------
+
+function FocusOnSelection({ nodes, flowData }: { nodes: Node[]; flowData: AdminEvent[] | null }) {
+  const { selectedSeq } = useEventsPaneContext();
+  const { setCenter, getZoom } = useReactFlow();
+
+  useEffect(() => {
+    if (selectedSeq == null || !flowData) return;
+    const evt = flowData.find(e => e.seq === selectedSeq);
+    if (!evt) return;
+
+    const handler = evt.handlerId ?? "__root__";
+    const nodeId = `evt:${handler}::${evt.name}`;
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    const isHandler = node.id.startsWith("hdl:");
+    const w = isHandler ? HANDLER_WIDTH : NODE_WIDTH;
+    const h = isHandler ? HANDLER_HEIGHT : NODE_HEIGHT;
+
+    setCenter(
+      node.position.x + w / 2,
+      node.position.y + h / 2,
+      { zoom: getZoom(), duration: 400 },
+    );
+  }, [selectedSeq, flowData, nodes, setCenter, getZoom]);
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // CausalFlowPane
 // ---------------------------------------------------------------------------
 
@@ -355,6 +387,7 @@ export function CausalFlowPane() {
           nodesConnectable={false}
           colorMode="dark"
         >
+          <FocusOnSelection nodes={nodes} flowData={flowData} />
           <Background color="#27272a" gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
