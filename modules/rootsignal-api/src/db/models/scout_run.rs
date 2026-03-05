@@ -85,6 +85,27 @@ pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<V
     Ok(rows.iter().map(row_to_scout_run).collect())
 }
 
+pub async fn list_by_source_id(pool: &PgPool, source_id: &str, limit: u32) -> Result<Vec<ScoutRunRow>> {
+    let limit = limit.min(100) as i64;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT run_id, region, started_at, finished_at, stats,
+               region_id, flow_type, source_ids
+        FROM scout_runs
+        WHERE source_ids @> $1::jsonb
+        ORDER BY started_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(serde_json::json!([source_id]))
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.iter().map(row_to_scout_run).collect())
+}
+
 pub async fn list_recent(pool: &PgPool, limit: u32) -> Result<Vec<ScoutRunRow>> {
     let limit = limit.min(100) as i64;
 
@@ -618,6 +639,19 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
                 None => Some(format!("{link} via {method}")),
             }
         }
+        "sources_discovered" => {
+            let count = data.get("sources")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            Some(format!("{count} sources proposed"))
+        }
+        "source_rejected" => {
+            let src = data.get("source");
+            let key = src.and_then(|s| s.get("canonical_key")).and_then(|v| v.as_str()).unwrap_or("?");
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("{key} rejected: {reason}"))
+        }
         "links_promoted" => json_u32(data, "count").map(|n| format!("{n} links")),
         "expansion_query_collected" => json_str(data, "query").map(|q| format!("\"{q}\"")),
         "social_topic_collected" => json_str(data, "topic").map(|t| format!("\"{t}\"")),
@@ -906,6 +940,44 @@ fn row_to_event(r: sqlx::postgres::PgRow) -> EventRow {
         event_type: r.get("event_type"),
         data: r.get::<serde_json::Value, _>("data"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Handler logs
+// ---------------------------------------------------------------------------
+
+pub struct HandlerLogRow {
+    pub level: String,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+    pub logged_at: DateTime<Utc>,
+}
+
+pub async fn handler_logs(
+    pool: &PgPool,
+    event_id: &Uuid,
+    handler_id: &str,
+) -> Result<Vec<HandlerLogRow>> {
+    let rows = sqlx::query_as::<_, (String, String, Option<serde_json::Value>, DateTime<Utc>)>(
+        "SELECT level, message, data, logged_at \
+         FROM seesaw_handler_logs \
+         WHERE event_id = $1 AND handler_id = $2 \
+         ORDER BY id",
+    )
+    .bind(event_id)
+    .bind(handler_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(level, message, data, logged_at)| HandlerLogRow {
+            level,
+            message,
+            data,
+            logged_at,
+        })
+        .collect())
 }
 
 fn row_to_event_full(r: sqlx::postgres::PgRow) -> EventRowFull {

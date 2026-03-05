@@ -681,6 +681,27 @@ impl QueryRoot {
         Ok(rows.into_iter().map(ScoutRun::from).collect())
     }
 
+    /// List scout runs that included a specific source.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_runs_by_source(
+        &self,
+        ctx: &Context<'_>,
+        source_id: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<ScoutRun>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let limit = limit.unwrap_or(20).min(100);
+
+        let rows = crate::db::scout_run::list_by_source_id(pool, &source_id, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query scout runs: {e}")))?;
+
+        Ok(rows.into_iter().map(ScoutRun::from).collect())
+    }
+
     /// Get a single scout run by run_id.
     #[graphql(guard = "AdminGuard")]
     async fn admin_scout_run(&self, ctx: &Context<'_>, run_id: String) -> Result<Option<ScoutRun>> {
@@ -1265,6 +1286,37 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    /// Fetch handler log entries for a specific (event_id, handler_id) pair.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_handler_logs(
+        &self,
+        ctx: &Context<'_>,
+        event_id: String,
+        handler_id: String,
+    ) -> Result<Vec<HandlerLog>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let event_uuid = Uuid::parse_str(&event_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid event_id: {e}")))?;
+
+        let rows = crate::db::scout_run::handler_logs(pool, &event_uuid, &handler_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load handler logs: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| HandlerLog {
+                level: r.level,
+                message: r.message,
+                data: r.data,
+                logged_at: r.logged_at,
+            })
+            .collect())
+    }
 }
 
 // ========== Admin GQL Types ==========
@@ -1556,6 +1608,16 @@ struct GqlArchiveFile {
     duration: Option<f64>,
     page_count: Option<i32>,
     fetched_at: DateTime<Utc>,
+}
+
+// ========== Handler Log Types ==========
+
+#[derive(SimpleObject)]
+struct HandlerLog {
+    level: String,
+    message: String,
+    data: Option<serde_json::Value>,
+    logged_at: DateTime<Utc>,
 }
 
 // ========== Scout Run Types ==========
@@ -1979,34 +2041,36 @@ impl ScoutRunOutcomes {
     ) -> Result<OutcomePage<OutcomeSourceDiscovered>> {
         let pool = get_pool(ctx)?;
         let limit = limit.unwrap_or(50).min(200) as i64;
-        let total = count_events_by_variant(pool, &self.run_id, "source_discovered")
+        // Old runs: source_discovered (pipeline event). New runs: source_registered (system event).
+        let total_old = count_events_by_variant(pool, &self.run_id, "source_discovered")
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let rows = list_events_by_variant(pool, &self.run_id, "source_discovered", limit)
+        let total_new = count_events_by_variant(pool, &self.run_id, "source_registered")
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let total = total_old + total_new;
+        let mut rows = list_events_by_variant(pool, &self.run_id, "source_discovered", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows_new = list_events_by_variant(pool, &self.run_id, "source_registered", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        rows.extend(rows_new);
         let items = rows
             .into_iter()
             .map(|r| {
+                // Old format: fields nested under "source". New format (source_registered): top-level.
                 let src = r.data.get("source");
+                let get_field = |field: &str| -> Option<&str> {
+                    src.and_then(|s| s.get(field))
+                        .or_else(|| r.data.get(field))
+                        .and_then(|v| v.as_str())
+                };
                 OutcomeSourceDiscovered {
-                    canonical_key: src
-                        .and_then(|s| s.get("canonical_key"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("?")
-                        .to_string(),
-                    url: src
-                        .and_then(|s| s.get("url"))
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    discovery_method: src
-                        .and_then(|s| s.get("discovery_method"))
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    gap_context: src
-                        .and_then(|s| s.get("gap_context"))
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
+                    canonical_key: get_field("canonical_key").unwrap_or("?").to_string(),
+                    url: get_field("url").map(String::from),
+                    discovery_method: get_field("discovery_method").map(String::from),
+                    gap_context: get_field("gap_context").map(String::from),
                 }
             })
             .collect();

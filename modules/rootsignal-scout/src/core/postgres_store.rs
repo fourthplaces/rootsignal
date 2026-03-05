@@ -1,7 +1,7 @@
 //! PostgresStore — durable seesaw Store backed by Postgres.
 //!
-//! Scoped by `correlation_id`. Implements seesaw 0.20's unified `Store` trait
-//! covering event queue, effect queue, joins, event persistence, and snapshots.
+//! Scoped by `correlation_id`. Implements seesaw 0.21's unified `Store` trait
+//! covering event queue, handler queue, joins, event persistence, and snapshots.
 //!
 //! Queue tables: `seesaw_events`, `seesaw_effect_executions`, `seesaw_join_*`,
 //! `seesaw_dead_letter_queue`.
@@ -16,10 +16,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use seesaw_core::store::Store;
-use seesaw_core::types::{EffectResolution, EventOutcome, QueueStatus};
+use seesaw_core::types::{HandlerResolution, EventOutcome, LogLevel, QueueStatus};
 use seesaw_core::{
-    EffectCompletion, EffectDlq, EventCommit, ExpiredJoinWindow, JoinAppendParams, JoinEntry,
-    NewEvent, PersistedEvent, QueuedEffect, QueuedEvent, Snapshot,
+    HandlerCompletion, HandlerDlq, EventCommit, ExpiredJoinWindow, JoinAppendParams, JoinEntry,
+    NewEvent, PersistedEvent, QueuedHandler, QueuedEvent, Snapshot,
 };
 
 /// Postgres-backed seesaw Store, scoped by a single correlation_id.
@@ -144,7 +144,7 @@ impl Store for PostgresStore {
 
     // ── Effect queue ─────────────────────────────────────────────────
 
-    async fn poll_next_effect(&self) -> Result<Option<QueuedEffect>> {
+    async fn poll_next_handler(&self) -> Result<Option<QueuedHandler>> {
         let row = sqlx::query_as::<_, EffectRow>(
             "UPDATE seesaw_effect_executions SET status = 'running', updated_at = now() \
              WHERE (event_id, handler_id) = ( \
@@ -166,7 +166,7 @@ impl Store for PostgresStore {
         Ok(row.map(|r| r.into_queued()))
     }
 
-    async fn earliest_pending_effect_at(&self) -> Result<Option<DateTime<Utc>>> {
+    async fn earliest_pending_handler_at(&self) -> Result<Option<DateTime<Utc>>> {
         let row = sqlx::query_as::<_, (Option<DateTime<Utc>>,)>(
             "SELECT MIN(execute_at) FROM seesaw_effect_executions \
              WHERE correlation_id = $1 AND status = 'pending'",
@@ -177,12 +177,12 @@ impl Store for PostgresStore {
         Ok(row.0)
     }
 
-    async fn resolve_effect(&self, resolution: EffectResolution) -> Result<()> {
+    async fn resolve_handler(&self, resolution: HandlerResolution) -> Result<()> {
         match resolution {
-            EffectResolution::Complete(completion) => {
-                self.complete_effect_inner(completion).await
+            HandlerResolution::Complete(completion) => {
+                self.complete_handler_inner(completion).await
             }
-            EffectResolution::Retry {
+            HandlerResolution::Retry {
                 event_id,
                 handler_id,
                 error,
@@ -204,7 +204,7 @@ impl Store for PostgresStore {
                 .await?;
                 Ok(())
             }
-            EffectResolution::DeadLetter(dlq) => self.dlq_effect_inner(dlq).await,
+            HandlerResolution::DeadLetter(dlq) => self.dlq_handler_inner(dlq).await,
         }
     }
 
@@ -638,7 +638,7 @@ impl Store for PostgresStore {
 
         Ok(QueueStatus {
             pending_events: pending_events as usize,
-            pending_effects: pending_effects as usize,
+            pending_handlers: pending_effects as usize,
             dead_lettered: dead_lettered as usize,
         })
     }
@@ -659,8 +659,8 @@ impl PostgresStore {
         .execute(&mut *tx)
         .await?;
 
-        // 2. Insert effect intents
-        for intent in &commit.queued_effect_intents {
+        // 2. Insert handler intents
+        for intent in &commit.queued_handler_intents {
             sqlx::query(
                 "INSERT INTO seesaw_effect_executions \
                  (event_id, handler_id, correlation_id, event_type, event_payload, \
@@ -688,32 +688,8 @@ impl PostgresStore {
             .await?;
         }
 
-        // 3. Publish inline emitted events
-        for evt in &commit.emitted_events {
-            sqlx::query(
-                "INSERT INTO seesaw_events \
-                 (event_id, parent_id, correlation_id, event_type, payload, handler_id, \
-                  hops, retry_count, batch_id, batch_index, batch_size, status, created_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)",
-            )
-            .bind(evt.event_id)
-            .bind(evt.parent_id)
-            .bind(self.correlation_id)
-            .bind(&evt.event_type)
-            .bind(&evt.payload)
-            .bind(&evt.handler_id)
-            .bind(evt.hops)
-            .bind(evt.retry_count)
-            .bind(evt.batch_id)
-            .bind(evt.batch_index)
-            .bind(evt.batch_size)
-            .bind(evt.created_at)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        // 4. DLQ inline failures
-        for failure in &commit.inline_effect_failures {
+        // 3. DLQ projection failures
+        for failure in &commit.projection_failures {
             sqlx::query(
                 "INSERT INTO seesaw_dead_letter_queue \
                  (event_id, handler_id, error, reason, attempts, payload) \
@@ -733,7 +709,7 @@ impl PostgresStore {
         Ok(())
     }
 
-    async fn complete_effect_inner(&self, completion: EffectCompletion) -> Result<()> {
+    async fn complete_handler_inner(&self, completion: HandlerCompletion) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -771,11 +747,28 @@ impl PostgresStore {
             .await?;
         }
 
+        for entry in &completion.log_entries {
+            sqlx::query(
+                "INSERT INTO seesaw_handler_logs \
+                 (event_id, handler_id, correlation_id, level, message, data, logged_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(completion.event_id)
+            .bind(&completion.handler_id)
+            .bind(self.correlation_id)
+            .bind(log_level_str(&entry.level))
+            .bind(&entry.message)
+            .bind(&entry.data)
+            .bind(entry.timestamp)
+            .execute(&mut *tx)
+            .await?;
+        }
+
         tx.commit().await?;
         Ok(())
     }
 
-    async fn dlq_effect_inner(&self, dlq: EffectDlq) -> Result<()> {
+    async fn dlq_handler_inner(&self, dlq: HandlerDlq) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -826,8 +819,33 @@ impl PostgresStore {
             .await?;
         }
 
+        for entry in &dlq.log_entries {
+            sqlx::query(
+                "INSERT INTO seesaw_handler_logs \
+                 (event_id, handler_id, correlation_id, level, message, data, logged_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(dlq.event_id)
+            .bind(&dlq.handler_id)
+            .bind(self.correlation_id)
+            .bind(log_level_str(&entry.level))
+            .bind(&entry.message)
+            .bind(&entry.data)
+            .bind(entry.timestamp)
+            .execute(&mut *tx)
+            .await?;
+        }
+
         tx.commit().await?;
         Ok(())
+    }
+}
+
+fn log_level_str(level: &LogLevel) -> &'static str {
+    match level {
+        LogLevel::Debug => "debug",
+        LogLevel::Info => "info",
+        LogLevel::Warn => "warn",
     }
 }
 
@@ -891,8 +909,8 @@ struct EffectRow {
 }
 
 impl EffectRow {
-    fn into_queued(self) -> QueuedEffect {
-        QueuedEffect {
+    fn into_queued(self) -> QueuedHandler {
+        QueuedHandler {
             event_id: self.event_id,
             handler_id: self.handler_id,
             correlation_id: self.correlation_id,

@@ -321,6 +321,26 @@ export const ADMIN_SCOUT_RUNS = gql`
   }
 `;
 
+export const ADMIN_SCOUT_RUNS_BY_SOURCE = gql`
+  query AdminScoutRunsBySource($sourceId: String!, $limit: Int) {
+    adminScoutRunsBySource(sourceId: $sourceId, limit: $limit) {
+      runId
+      region
+      regionId
+      flowType
+      sources { id label }
+      startedAt
+      finishedAt
+      stats {
+        urlsScraped
+        signalsExtracted
+        signalsStored
+        handlerFailures
+      }
+    }
+  }
+`;
+
 export const ADMIN_SCOUT_RUN = gql`
   query AdminScoutRun($runId: String!) {
     adminScoutRun(runId: $runId) {
@@ -864,6 +884,17 @@ export const ADMIN_CAUSAL_FLOW = gql`
         summary
         payload
       }
+    }
+  }
+`;
+
+export const ADMIN_HANDLER_LOGS = gql`
+  query AdminHandlerLogs($eventId: String!, $handlerId: String!) {
+    adminHandlerLogs(eventId: $eventId, handlerId: $handlerId) {
+      level
+      message
+      data
+      loggedAt
     }
   }
 `;
