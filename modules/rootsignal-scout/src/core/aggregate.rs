@@ -79,6 +79,10 @@ pub struct PipelineState {
     /// Links collected during scraping for promotion.
     pub collected_links: Vec<CollectedLink>,
 
+    /// Content previews (first 500 chars) keyed by URL, for page triage in link promotion.
+    #[serde(default)]
+    pub page_previews: HashMap<String, String>,
+
     /// Nodes awaiting creation (passed dedup as new).
     /// Stashed by the dedup handler, consumed by `create_signal_events`,
     /// which moves wiring data to `wiring_contexts`.
@@ -157,6 +161,7 @@ impl PipelineState {
             actor_contexts: HashMap::new(),
             url_to_pub_date: HashMap::new(),
             collected_links: Vec::new(),
+            page_previews: HashMap::new(),
             pending_nodes: HashMap::new(),
             wiring_contexts: HashMap::new(),
             scheduled: None,
@@ -238,6 +243,7 @@ impl PipelineState {
                 collected_links,
                 expansion_queries,
                 stats_delta,
+                page_previews,
                 ..
             } => {
                 self.completed_scrape_roles.insert(*role);
@@ -246,6 +252,7 @@ impl PipelineState {
                 }
                 self.collected_links.extend(collected_links.clone());
                 self.expansion_queries.extend(expansion_queries.clone());
+                self.page_previews.extend(page_previews.clone());
                 self.stats.social_media_posts += stats_delta.social_media_posts;
                 self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
                 self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
@@ -311,6 +318,7 @@ impl PipelineState {
             }
             DiscoveryEvent::LinksPromoted { .. } => {
                 self.collected_links.clear();
+                self.page_previews.clear();
             }
             DiscoveryEvent::ExpansionQueryCollected { query, .. } => {
                 self.expansion_queries.push(query.clone());
@@ -323,6 +331,8 @@ impl PipelineState {
             DiscoveryEvent::SocialTopicsDiscovered { topics } => {
                 self.social_topics = topics.clone();
             }
+            DiscoveryEvent::PageTriaged { .. } => {}
+
         }
     }
 

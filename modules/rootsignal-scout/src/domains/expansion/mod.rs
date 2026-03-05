@@ -105,6 +105,7 @@ pub mod handlers {
                 collected_links: topic_scrape.collected_links,
                 expansion_queries: topic_scrape.expansion_queries,
                 stats_delta: topic_scrape.stats_delta,
+                page_previews: Default::default(),
             });
             all_events.extend(scrape_events);
         }

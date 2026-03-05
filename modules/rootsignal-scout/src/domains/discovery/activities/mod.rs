@@ -1,6 +1,7 @@
 //! Discovery domain activity functions: pure logic extracted from handlers.
 
 pub(crate) mod bootstrap;
+pub(crate) mod page_triage;
 pub mod source_finder;
 
 use tracing::info;

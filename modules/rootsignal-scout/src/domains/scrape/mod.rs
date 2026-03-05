@@ -147,6 +147,7 @@ pub mod handlers {
                 collected_links: Default::default(),
                 expansion_queries: Default::default(),
                 stats_delta: Default::default(),
+                page_previews: Default::default(),
             }]);
         }
 
@@ -175,6 +176,7 @@ pub mod handlers {
             collected_links: fetch_result.collected_links,
             expansion_queries: fetch_result.expansion_queries,
             stats_delta: StatsDelta::default(),
+            page_previews: fetch_result.page_previews,
         });
 
         Ok(all_events)
@@ -238,6 +240,7 @@ pub mod handlers {
                 collected_links: Default::default(),
                 expansion_queries: Default::default(),
                 stats_delta: Default::default(),
+                page_previews: Default::default(),
             }]);
         }
 
@@ -264,6 +267,7 @@ pub mod handlers {
             collected_links: social_output.collected_links,
             expansion_queries: social_output.expansion_queries,
             stats_delta: social_output.stats_delta,
+            page_previews: Default::default(),
         });
 
         Ok(all_events)
@@ -303,6 +307,7 @@ pub mod handlers {
                 collected_links: Default::default(),
                 expansion_queries: Default::default(),
                 stats_delta: Default::default(),
+                page_previews: Default::default(),
             });
         } else {
             let mut topic_output = activities::topic_discovery::discover_from_topics(
@@ -325,6 +330,7 @@ pub mod handlers {
                 collected_links: topic_output.collected_links,
                 expansion_queries: topic_output.expansion_queries,
                 stats_delta: topic_output.stats_delta,
+                page_previews: Default::default(),
             });
         }
 

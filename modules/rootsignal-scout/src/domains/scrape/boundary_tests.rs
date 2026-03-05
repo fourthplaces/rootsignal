@@ -492,6 +492,7 @@ async fn discovered_links_become_new_sources() {
     let config = PromotionConfig {
         max_per_source: 10,
         max_per_run: 50,
+        ..Default::default()
     };
 
     let sources = link_promoter::promote_links(&links, &config);
@@ -514,6 +515,7 @@ async fn same_link_from_two_pages_becomes_one_source() {
     let config = PromotionConfig {
         max_per_source: 10,
         max_per_run: 50,
+        ..Default::default()
     };
 
     let sources = link_promoter::promote_links(&links, &config);
@@ -535,6 +537,7 @@ async fn link_promotion_stops_at_configured_cap() {
     let config = PromotionConfig {
         max_per_source: 10,
         max_per_run: 3,
+        ..Default::default()
     };
 
     let sources = link_promoter::promote_links(&links, &config);
@@ -588,6 +591,7 @@ async fn scrape_then_promote_creates_new_sources() {
     let config = PromotionConfig {
         max_per_source: 10,
         max_per_run: 50,
+        ..Default::default()
     };
     let sources = link_promoter::promote_links(&ctx.collected_links, &config);
 

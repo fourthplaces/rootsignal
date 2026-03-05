@@ -102,6 +102,8 @@ pub struct FetchExtractResult {
     pub collected_links: Vec<CollectedLink>,
     pub expansion_queries: Vec<String>,
     pub stats: FetchExtractStats,
+    /// Content previews (first 500 chars) keyed by URL, for downstream page triage.
+    pub page_previews: HashMap<String, String>,
 }
 
 /// Per-URL fetch+extract statistics.

@@ -80,6 +80,7 @@ pub(crate) async fn fetch_and_extract(
             collected_links: Vec::new(),
             expansion_queries: Vec::new(),
             stats: FetchExtractStats::default(),
+            page_previews: HashMap::new(),
         };
 
         if urls.is_empty() {
@@ -182,6 +183,10 @@ pub(crate) async fn fetch_and_extract(
                     logs,
                 } => {
                     result.stats.urls_scraped += 1;
+
+                    // Stash content preview for downstream page triage
+                    let preview: String = content.chars().take(500).collect();
+                    result.page_previews.insert(url.clone(), preview);
 
                     // Count implied queries for logging
                     let mut implied_q_count = 0u32;

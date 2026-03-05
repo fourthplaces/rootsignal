@@ -334,6 +334,7 @@ async fn link_promotion_promotes_links_on_phase_completed() {
             ],
             expansion_queries: vec![],
             stats_delta: Default::default(),
+            page_previews: Default::default(),
         })
         .settled()
         .await
@@ -409,6 +410,559 @@ async fn link_promotion_skips_when_no_links() {
     assert!(
         !names.iter().any(|n| n.contains("links_promoted")),
         "should not emit LinksPromoted with no links, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Page triage: social handles always promoted regardless of signal count
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn social_handles_always_promoted_from_zero_signal_pages() {
+    let store = Arc::new(MockSignalReader::new());
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
+
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    // Seed links from a page with zero signals — no source_signal_counts entry
+    engine
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 0,
+            source_signal_counts: HashMap::new(), // zero signals
+            collected_links: vec![
+                CollectedLink {
+                    url: "https://instagram.com/mpls_mutual_aid".to_string(),
+                    discovered_on: "https://hub-page.org".to_string(),
+                },
+                CollectedLink {
+                    url: "https://x.com/mpls_help".to_string(),
+                    discovered_on: "https://hub-page.org".to_string(),
+                },
+            ],
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: Default::default(),
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    captured.lock().unwrap().clear();
+
+    engine
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    assert!(
+        source_count >= 2,
+        "social handles should be promoted even from zero-signal pages, got: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.contains("links_promoted")),
+        "LinksPromoted should be emitted, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Page triage: productive page content links promoted without triage
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn productive_page_content_links_promoted_without_triage() {
+    let store = Arc::new(MockSignalReader::new());
+    // No AI — content links from productive pages should still be promoted
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
+
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    // Seed links from a productive page (signal_count > 0).
+    // Use discovered_on URL as canonical key so url_to_canonical_key lookup succeeds.
+    let mut signal_counts = HashMap::new();
+    signal_counts.insert("https://hub-page.org/resources".to_string(), 3u32);
+
+    engine
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 3,
+            source_signal_counts: signal_counts,
+            collected_links: vec![
+                CollectedLink {
+                    url: "https://partner-org.org/programs".to_string(),
+                    discovered_on: "https://hub-page.org/resources".to_string(),
+                },
+                CollectedLink {
+                    url: "https://foodshelf.org/volunteer".to_string(),
+                    discovered_on: "https://hub-page.org/resources".to_string(),
+                },
+            ],
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: Default::default(),
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    captured.lock().unwrap().clear();
+
+    engine
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    assert!(
+        source_count >= 2,
+        "content links from productive page should be promoted, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Page triage: zero-signal page content links NOT promoted without AI
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn zero_signal_page_content_links_not_promoted_without_ai() {
+    let store = Arc::new(MockSignalReader::new());
+    // No AI configured — zero-signal pages should be fail-closed
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
+
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    // Seed only non-social links from a zero-signal page
+    engine
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 0,
+            source_signal_counts: HashMap::new(),
+            collected_links: vec![
+                CollectedLink {
+                    url: "https://partner-org.org/programs".to_string(),
+                    discovered_on: "https://empty-page.org".to_string(),
+                },
+            ],
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: Default::default(),
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    captured.lock().unwrap().clear();
+
+    engine
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    assert_eq!(
+        source_count, 0,
+        "content links from zero-signal page should NOT be promoted without AI, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Page triage: LLM approves zero-signal page → content links promoted
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn zero_signal_page_triaged_and_promoted() {
+    use crate::testing::MockAgent;
+    let store = Arc::new(MockSignalReader::new());
+
+    // Mock AI returns "relevant: true" for the zero-signal page
+    let ai = Arc::new(MockAgent::with_response(serde_json::json!({
+        "pages": [
+            { "url": "https://directory-page.org/links", "relevant": true, "reason": "resource directory" }
+        ]
+    })));
+
+    let (engine, captured) = test_engine_with_ai(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        ai,
+        Some(mpls_region()),
+    );
+
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    engine
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 0,
+            source_signal_counts: HashMap::new(),
+            collected_links: vec![
+                CollectedLink {
+                    url: "https://partner-org.org/programs".to_string(),
+                    discovered_on: "https://directory-page.org/links".to_string(),
+                },
+                CollectedLink {
+                    url: "https://foodshelf.org/volunteer".to_string(),
+                    discovered_on: "https://directory-page.org/links".to_string(),
+                },
+            ],
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "https://directory-page.org/links".to_string(),
+                    "Community Resources Directory: links to local orgs".to_string(),
+                );
+                m
+            },
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    captured.lock().unwrap().clear();
+
+    engine
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+
+    // PageTriaged event emitted
+    assert!(
+        names.iter().any(|n| n.contains("page_triaged")),
+        "expected PageTriaged event, got: {names:?}"
+    );
+
+    // Content links promoted from triage-passed page
+    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    assert!(
+        source_count >= 2,
+        "content links from triage-passed page should be promoted, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Page triage: LLM rejects zero-signal page → content links NOT promoted
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn zero_signal_page_triaged_and_rejected() {
+    use crate::testing::MockAgent;
+    let store = Arc::new(MockSignalReader::new());
+
+    // Mock AI returns "relevant: false"
+    let ai = Arc::new(MockAgent::with_response(serde_json::json!({
+        "pages": [
+            { "url": "https://news-article.com/story", "relevant": false, "reason": "news article, links to other articles" }
+        ]
+    })));
+
+    let (engine, captured) = test_engine_with_ai(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        ai,
+        Some(mpls_region()),
+    );
+
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    engine
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 0,
+            source_signal_counts: HashMap::new(),
+            collected_links: vec![
+                CollectedLink {
+                    url: "https://other-news.com/article".to_string(),
+                    discovered_on: "https://news-article.com/story".to_string(),
+                },
+            ],
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "https://news-article.com/story".to_string(),
+                    "Breaking: Local politics debate continues...".to_string(),
+                );
+                m
+            },
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    captured.lock().unwrap().clear();
+
+    engine
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+
+    // PageTriaged emitted
+    assert!(
+        names.iter().any(|n| n.contains("page_triaged")),
+        "expected PageTriaged event, got: {names:?}"
+    );
+
+    // No content links promoted
+    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    assert_eq!(
+        source_count, 0,
+        "content links from rejected page should NOT be promoted, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Page triage: AI error fails closed (no content links promoted)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ai_error_fails_closed_no_content_links_promoted() {
+    use crate::testing::MockAgent;
+    let store = Arc::new(MockSignalReader::new());
+
+    // Mock AI configured to fail
+    let ai = Arc::new(MockAgent::failing());
+
+    let (engine, captured) = test_engine_with_ai(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        ai,
+        Some(mpls_region()),
+    );
+
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    engine
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 0,
+            source_signal_counts: HashMap::new(),
+            collected_links: vec![
+                CollectedLink {
+                    url: "https://partner-org.org/programs".to_string(),
+                    discovered_on: "https://zero-signal-page.org".to_string(),
+                },
+            ],
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "https://zero-signal-page.org".to_string(),
+                    "Some page content".to_string(),
+                );
+                m
+            },
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    captured.lock().unwrap().clear();
+
+    engine
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+
+    // PageTriaged emitted (with relevant=false due to error)
+    assert!(
+        names.iter().any(|n| n.contains("page_triaged")),
+        "expected PageTriaged event even on error, got: {names:?}"
+    );
+
+    // No content links promoted
+    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    assert_eq!(
+        source_count, 0,
+        "AI error should fail closed — no content links promoted, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Page triage: content links capped at max per source
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn content_links_capped_per_source() {
+    let store = Arc::new(MockSignalReader::new());
+    let (engine, captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
+
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    // Create 15 content links from a productive page — should be capped at 10
+    let mut signal_counts = HashMap::new();
+    signal_counts.insert("https://productive.org/resources".to_string(), 5u32);
+
+    let collected_links: Vec<CollectedLink> = (0..15)
+        .map(|i| CollectedLink {
+            url: format!("https://site-{i}.org/page"),
+            discovered_on: "https://productive.org/resources".to_string(),
+        })
+        .collect();
+
+    engine
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 5,
+            source_signal_counts: signal_counts,
+            collected_links,
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: Default::default(),
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    captured.lock().unwrap().clear();
+
+    engine
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let names = event_names(&captured);
+    let source_count = names.iter().filter(|n| n.contains("source_discovered")).count();
+    assert!(
+        source_count <= 10,
+        "content links should be capped at 10 per source, got {source_count}: {names:?}"
+    );
+    assert!(
+        source_count > 0,
+        "some content links should be promoted from productive page, got: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Page previews cleared after LinksPromoted
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn page_previews_cleared_after_links_promoted() {
+    let store = Arc::new(MockSignalReader::new());
+    let (engine, _captured) = test_engine_with_capture_for_store(
+        store.clone() as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
+
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+    engine
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 1,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 0,
+            source_signal_counts: HashMap::new(),
+            collected_links: vec![
+                CollectedLink {
+                    url: "https://instagram.com/test_handle".to_string(),
+                    discovered_on: "https://page.org".to_string(),
+                },
+            ],
+            expansion_queries: vec![],
+            stats_delta: Default::default(),
+            page_previews: {
+                let mut m = HashMap::new();
+                m.insert("https://page.org".to_string(), "some preview".to_string());
+                m
+            },
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let state = engine.singleton::<PipelineState>();
+    assert!(
+        !state.page_previews.is_empty(),
+        "page_previews should be populated after ScrapeRoleCompleted"
+    );
+
+    engine
+        .emit(LifecycleEvent::PhaseCompleted {
+            phase: PipelinePhase::TensionScrape,
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let state = engine.singleton::<PipelineState>();
+    assert!(
+        state.page_previews.is_empty(),
+        "page_previews should be cleared after LinksPromoted"
     );
 }
 

@@ -22,6 +22,8 @@ pub struct CollectedLink {
 pub struct PromotionConfig {
     pub max_per_source: usize,
     pub max_per_run: usize,
+    /// Maximum number of non-social content links to promote per parent page.
+    pub max_content_links_per_source: usize,
 }
 
 impl Default for PromotionConfig {
@@ -29,6 +31,7 @@ impl Default for PromotionConfig {
         Self {
             max_per_source: 20,
             max_per_run: 100,
+            max_content_links_per_source: 10,
         }
     }
 }

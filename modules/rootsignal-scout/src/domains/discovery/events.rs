@@ -24,6 +24,12 @@ pub enum DiscoveryEvent {
     SocialTopicsDiscovered {
         topics: Vec<String>,
     },
+    /// Page triage result: whether a zero-signal page's outbound links are worth promoting.
+    PageTriaged {
+        url: String,
+        relevant: bool,
+        reason: String,
+    },
 }
 
 impl DiscoveryEvent {
@@ -38,6 +44,7 @@ impl DiscoveryEvent {
             Self::ExpansionQueryCollected { .. } => "expansion_query_collected",
             Self::SocialTopicCollected { .. } => "social_topic_collected",
             Self::SocialTopicsDiscovered { .. } => "social_topics_discovered",
+            Self::PageTriaged { .. } => "page_triaged",
         };
         format!("discovery:{variant}")
     }

@@ -903,6 +903,69 @@ impl SignalExtractor for MockExtractor {
 }
 
 // ---------------------------------------------------------------------------
+// MockAgent — canned JSON for ai_extract calls
+// ---------------------------------------------------------------------------
+
+/// A mock AI agent that returns pre-configured JSON from `extract_json` calls.
+/// Implements the `Agent` trait from `ai_client`.
+pub struct MockAgent {
+    extract_response: Mutex<Option<serde_json::Value>>,
+    should_error: bool,
+}
+
+impl MockAgent {
+    /// Create a MockAgent that returns the given JSON from `extract_json`.
+    pub fn with_response(response: serde_json::Value) -> Self {
+        Self {
+            extract_response: Mutex::new(Some(response)),
+            should_error: false,
+        }
+    }
+
+    /// Create a MockAgent that always returns an error.
+    pub fn failing() -> Self {
+        Self {
+            extract_response: Mutex::new(None),
+            should_error: true,
+        }
+    }
+}
+
+#[async_trait]
+impl ai_client::Agent for MockAgent {
+    async fn extract_json(
+        &self,
+        _system: &str,
+        _user: &str,
+        _schema: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        if self.should_error {
+            bail!("MockAgent: configured to fail");
+        }
+        self.extract_response
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("MockAgent: no response configured"))
+    }
+
+    async fn chat(&self, _system: &str, _user: &str) -> Result<String> {
+        bail!("MockAgent: chat not implemented")
+    }
+
+    fn with_tools(
+        &self,
+        _tools: Vec<Arc<dyn ai_client::tool::DynTool>>,
+    ) -> Box<dyn ai_client::Agent> {
+        unimplemented!("MockAgent: with_tools not needed in tests")
+    }
+
+    fn prompt(&self, _input: &str) -> Box<dyn ai_client::PromptBuilder> {
+        unimplemented!("MockAgent: prompt not needed in tests")
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
@@ -1487,6 +1550,31 @@ pub fn test_engine_with_capture_for_store(
         Some(r) => crate::core::run_scope::RunScope::Region(r),
         None => crate::core::run_scope::RunScope::Unscoped,
     };
+    deps.captured_events = Some(captured.clone());
+    let engine = Arc::new(build_engine(deps, None));
+    (engine, captured)
+}
+
+/// Create a test engine with capture, AI agent, and optional region.
+pub fn test_engine_with_ai(
+    store: Arc<dyn SignalReader>,
+    ai: Arc<dyn ai_client::Agent>,
+    region: Option<rootsignal_common::ScoutScope>,
+) -> (
+    Arc<ScoutEngine>,
+    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+) {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let mut deps = ScoutEngineDeps::new(
+        store,
+        Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        "test-run",
+    );
+    deps.run_scope = match region {
+        Some(r) => crate::core::run_scope::RunScope::Region(r),
+        None => crate::core::run_scope::RunScope::Unscoped,
+    };
+    deps.ai = Some(ai);
     deps.captured_events = Some(captured.clone());
     let engine = Arc::new(build_engine(deps, None));
     (engine, captured)

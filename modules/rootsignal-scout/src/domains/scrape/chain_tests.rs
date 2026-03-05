@@ -775,6 +775,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     let config = PromotionConfig {
         max_per_source: 10,
         max_per_run: 50,
+        ..Default::default()
     };
     let promoted_sources = link_promoter::promote_links(&ctx.collected_links, &config);
     assert!(!promoted_sources.is_empty(), "at least 1 link promoted");

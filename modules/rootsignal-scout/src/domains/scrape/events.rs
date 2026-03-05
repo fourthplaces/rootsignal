@@ -104,6 +104,9 @@ pub enum ScrapeEvent {
         /// Social/discovery stats delta from this role's scrape.
         #[serde(default)]
         stats_delta: StatsDelta,
+        /// Content previews (first 500 chars) keyed by URL, for page triage.
+        #[serde(default)]
+        page_previews: HashMap<String, String>,
     },
 }
 
