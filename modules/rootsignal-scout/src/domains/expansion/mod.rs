@@ -15,7 +15,6 @@ use crate::domains::expansion::activities::expansion::Expansion;
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::activities::Scraper;
 
 fn is_metrics_completed(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::MetricsCompleted)
@@ -57,16 +56,11 @@ pub mod handlers {
         let graph = GraphReader::new(graph_client.clone());
 
         let expansion = Expansion::new(&graph, &*deps.embedder, &region.name);
-        let phase = Scraper::new(
-            deps.store.clone(),
-            deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.fetcher.as_ref().expect("fetcher set").clone(),
-        );
 
         let (_, state) = ctx.singleton::<PipelineState>();
         let output = activities::expand_and_discover(
             &expansion,
-            Some(&phase),
+            Some(deps),
             &state,
             &graph,
             &region.name,

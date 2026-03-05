@@ -11,27 +11,30 @@ use rootsignal_common::{
     SourceRole,
 };
 
+use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
 
-use super::scraper::Scraper;
 use super::signal_events::{register_sources_events, store_signals_events};
 use super::types::ScrapeOutput;
 
-impl Scraper {
-    /// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
-    /// across Instagram, X/Twitter, TikTok, and GoFundMe.
-    pub async fn discover_from_topics(
-        &self,
-        topics: &[String],
-        url_to_canonical_key: &HashMap<String, String>,
-        actor_contexts: &HashMap<String, ActorContext>,
-    ) -> ScrapeOutput {
+/// Discover new accounts by searching platform-agnostic topics (hashtags/keywords)
+/// across Instagram, X/Twitter, TikTok, and GoFundMe.
+pub(crate) async fn discover_from_topics(
+    deps: &ScoutEngineDeps,
+    topics: &[String],
+    url_to_canonical_key: &HashMap<String, String>,
+    actor_contexts: &HashMap<String, ActorContext>,
+) -> ScrapeOutput {
         let mut output = ScrapeOutput::new();
         const MAX_SOCIAL_SEARCHES: usize = 10;
         const MAX_NEW_ACCOUNTS: usize = 10;
         const POSTS_PER_SEARCH: u32 = 30;
         const MAX_SITE_SEARCH_TOPICS: usize = 4;
         const SITE_SEARCH_RESULTS: usize = 5;
+
+    let store = &deps.store;
+    let fetcher = deps.fetcher.as_ref().expect("fetcher required");
+    let extractor = deps.extractor.as_ref().expect("extractor required");
 
         if topics.is_empty() {
             return output;
@@ -42,7 +45,7 @@ impl Scraper {
         let known_urls: HashSet<String> = url_to_canonical_key.keys().cloned().collect();
 
         // Load existing sources for dedup across all platforms
-        let existing_sources = self.store.get_active_sources().await.unwrap_or_default();
+        let existing_sources = store.get_active_sources().await.unwrap_or_default();
         let existing_canonical_values: HashSet<String> = existing_sources
             .iter()
             .map(|s| s.canonical_value.clone())
@@ -69,8 +72,7 @@ impl Scraper {
                 break;
             }
 
-            let discovered_posts = match self
-                .fetcher
+            let discovered_posts = match fetcher
                 .search_topics(platform_url, &topic_strs, POSTS_PER_SEARCH)
                 .await
             {
@@ -153,7 +155,7 @@ impl Scraper {
                 }
 
                 // Extract signals via LLM
-                let result = match self.extractor.extract(&combined_text, &source_url).await {
+                let result = match extractor.extract(&combined_text, &source_url).await {
                     Ok(r) => r,
                     Err(e) => {
                         warn!(username, platform = platform_name, error = %e, "Discovery extraction failed");
@@ -245,7 +247,7 @@ impl Scraper {
                 let query = format!("{} {}", site_prefix, topic);
 
                 let search_results =
-                    match self.fetcher.site_search(&query, SITE_SEARCH_RESULTS).await {
+                    match fetcher.site_search(&query, SITE_SEARCH_RESULTS).await {
                         Ok(r) => r,
                         Err(e) => {
                             warn!(query, error = %e, "Site-scoped search failed");
@@ -268,7 +270,7 @@ impl Scraper {
                         continue;
                     }
 
-                    let page = match self.fetcher.page(&result.url).await {
+                    let page = match fetcher.page(&result.url).await {
                         Ok(p) => p,
                         Err(e) => {
                             warn!(url = result.url.as_str(), error = %e, "Site-scoped scrape failed");
@@ -280,7 +282,7 @@ impl Scraper {
                     }
                     let content = page.markdown;
 
-                    let extracted = match self.extractor.extract(&content, &result.url).await {
+                    let extracted = match extractor.extract(&content, &result.url).await {
                         Ok(r) => r,
                         Err(e) => {
                             warn!(url = result.url, error = %e, "Site-scoped extraction failed");
@@ -322,4 +324,3 @@ impl Scraper {
         );
         output
     }
-}

@@ -12,68 +12,68 @@ use rootsignal_common::{ActorContext, NodeType};
 use rootsignal_common::SourceNode;
 use seesaw_core::Events;
 
+use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
 use crate::infra::util::{content_hash, sanitize_url};
 
-use super::scraper::Scraper;
 use super::signal_events::{refresh_url_signals_events, store_signals_events};
 use super::types::{FetchExtractResult, FetchExtractStats, ScrapeOutcome, SingleUrlResult};
 #[cfg(test)]
 use super::types::ScrapeOutput;
 
-impl Scraper {
-    /// Scrape a set of web sources: resolve queries → URLs, scrape pages, extract signals.
-    /// Returns accumulated `ScrapeOutput` with events and state updates.
-    ///
-    /// Test convenience: combines `resolve_web_urls` + `fetch_and_extract` into one call.
-    /// Production handlers call those two steps separately to emit intermediate events.
-    #[cfg(test)]
-    pub async fn scrape_web_sources(
-        &self,
-        sources: &[&SourceNode],
-        url_to_canonical_key: &HashMap<String, String>,
-        actor_contexts: &HashMap<String, ActorContext>,
-    ) -> ScrapeOutput {
-        let resolution = self.resolve_web_urls(sources, url_to_canonical_key, None, None).await;
+/// Scrape a set of web sources: resolve queries → URLs, scrape pages, extract signals.
+/// Returns accumulated `ScrapeOutput` with events and state updates.
+///
+/// Test convenience: combines `resolve_web_urls` + `fetch_and_extract` into one call.
+/// Production handlers call those two steps separately to emit intermediate events.
+#[cfg(test)]
+pub(crate) async fn scrape_web_sources(
+    deps: &ScoutEngineDeps,
+    sources: &[&SourceNode],
+    url_to_canonical_key: &HashMap<String, String>,
+    actor_contexts: &HashMap<String, ActorContext>,
+) -> ScrapeOutput {
+    let resolution = super::url_resolution::resolve_web_urls(deps, sources, url_to_canonical_key, None, None).await;
 
-        // Build merged url_to_ck for fetch_and_extract
-        let mut url_to_ck = url_to_canonical_key.clone();
-        url_to_ck.extend(resolution.url_mappings.iter().map(|(k, v)| (k.clone(), v.clone())));
+    // Build merged url_to_ck for fetch_and_extract
+    let mut url_to_ck = url_to_canonical_key.clone();
+    url_to_ck.extend(resolution.url_mappings.iter().map(|(k, v)| (k.clone(), v.clone())));
 
-        let source_keys: HashMap<String, Uuid> = sources
-            .iter()
-            .map(|s| (s.canonical_key.clone(), s.id))
-            .collect();
+    let source_keys: HashMap<String, Uuid> = sources
+        .iter()
+        .map(|s| (s.canonical_key.clone(), s.id))
+        .collect();
 
-        let fetch_result = self.fetch_and_extract(
-            &resolution.urls,
-            &source_keys,
-            &url_to_ck,
-            actor_contexts,
-            &resolution.pub_dates,
-        ).await;
+    let fetch_result = fetch_and_extract(
+        deps,
+        &resolution.urls,
+        &source_keys,
+        &url_to_ck,
+        actor_contexts,
+        &resolution.pub_dates,
+    ).await;
 
-        let mut output = ScrapeOutput::new();
-        output.url_mappings = resolution.url_mappings;
-        output.pub_dates = resolution.pub_dates;
-        output.query_api_errors = resolution.query_api_errors;
-        output.events = fetch_result.events;
-        output.source_signal_counts = fetch_result.source_signal_counts;
-        output.collected_links = fetch_result.collected_links;
-        output.expansion_queries = fetch_result.expansion_queries;
-        output
-    }
+    let mut output = ScrapeOutput::new();
+    output.url_mappings = resolution.url_mappings;
+    output.pub_dates = resolution.pub_dates;
+    output.query_api_errors = resolution.query_api_errors;
+    output.events = fetch_result.events;
+    output.source_signal_counts = fetch_result.source_signal_counts;
+    output.collected_links = fetch_result.collected_links;
+    output.expansion_queries = fetch_result.expansion_queries;
+    output
+}
 
-    /// Fetch and extract signals from resolved URLs in parallel.
-    /// Emits per-URL events (SignalsExtracted, FreshnessConfirmed, etc.).
-    pub async fn fetch_and_extract(
-        &self,
-        urls: &[String],
-        source_keys: &HashMap<String, Uuid>,
-        url_to_ck: &HashMap<String, String>,
-        actor_contexts: &HashMap<String, ActorContext>,
-        pub_dates: &HashMap<String, DateTime<Utc>>,
-    ) -> FetchExtractResult {
+/// Fetch and extract signals from resolved URLs in parallel.
+/// Emits per-URL events (SignalsExtracted, FreshnessConfirmed, etc.).
+pub(crate) async fn fetch_and_extract(
+    deps: &ScoutEngineDeps,
+    urls: &[String],
+    source_keys: &HashMap<String, Uuid>,
+    url_to_ck: &HashMap<String, String>,
+    actor_contexts: &HashMap<String, ActorContext>,
+    pub_dates: &HashMap<String, DateTime<Utc>>,
+) -> FetchExtractResult {
         let mut result = FetchExtractResult {
             events: Events::new(),
             source_signal_counts: HashMap::new(),
@@ -87,9 +87,9 @@ impl Scraper {
         }
 
         // Scrape + extract in parallel
-        let fetcher = self.fetcher.clone();
-        let store = self.store.clone();
-        let extractor = self.extractor.clone();
+        let fetcher = deps.fetcher.as_ref().expect("fetcher required").clone();
+        let store = deps.store.clone();
+        let extractor = deps.extractor.as_ref().expect("extractor required").clone();
         let pipeline_results: Vec<_> = stream::iter(urls.iter().cloned().map(|url| {
             let fetcher = fetcher.clone();
             let store = store.clone();
@@ -231,7 +231,7 @@ impl Scraper {
                 }
                 ScrapeOutcome::Unchanged => {
                     result.stats.urls_unchanged += 1;
-                    match refresh_url_signals_events(&*self.store, &url, now).await {
+                    match refresh_url_signals_events(&*store, &url, now).await {
                         Ok(events) if !events.is_empty() => {
                             info!(url, refreshed = events.len(), "Refreshed unchanged signals");
                             result.events.extend(events);
@@ -249,16 +249,16 @@ impl Scraper {
         result
     }
 
-    /// Fetch and extract signals for a single URL.
-    /// Used by the per-URL fan-out handler.
-    pub async fn fetch_and_extract_single(
-        &self,
-        url: &str,
-        source_id: Option<Uuid>,
-        url_to_ck: &HashMap<String, String>,
-        actor_contexts: &HashMap<String, ActorContext>,
-        pub_dates: &HashMap<String, DateTime<Utc>>,
-    ) -> SingleUrlResult {
+/// Fetch and extract signals for a single URL.
+/// Used by the per-URL fan-out handler.
+pub(crate) async fn fetch_and_extract_single(
+    deps: &ScoutEngineDeps,
+    url: &str,
+    source_id: Option<Uuid>,
+    url_to_ck: &HashMap<String, String>,
+    actor_contexts: &HashMap<String, ActorContext>,
+    pub_dates: &HashMap<String, DateTime<Utc>>,
+) -> SingleUrlResult {
         let mut result = SingleUrlResult {
             events: Events::new(),
             source_signal_counts: HashMap::new(),
@@ -272,7 +272,11 @@ impl Scraper {
 
         let clean_url = sanitize_url(url);
 
-        let (content, page_links) = match self.fetcher.page(url).await {
+    let fetcher = deps.fetcher.as_ref().expect("fetcher required");
+    let store = &deps.store;
+    let extractor = deps.extractor.as_ref().expect("extractor required");
+
+        let (content, page_links) = match fetcher.page(url).await {
             Ok(p) if !p.markdown.is_empty() => (p.markdown, p.links),
             Ok(p) => {
                 result.failed = true;
@@ -303,7 +307,7 @@ impl Scraper {
         }
 
         let hash = format!("{:x}", content_hash(&content));
-        match self.store.content_already_processed(&hash, &clean_url).await {
+        match store.content_already_processed(&hash, &clean_url).await {
             Ok(true) => {
                 info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
                 result.unchanged = true;
@@ -312,7 +316,7 @@ impl Scraper {
                     .cloned()
                     .unwrap_or_else(|| clean_url.clone());
                 let now = Utc::now();
-                match refresh_url_signals_events(&*self.store, &clean_url, now).await {
+                match refresh_url_signals_events(&**store, &clean_url, now).await {
                     Ok(events) if !events.is_empty() => {
                         info!(url = clean_url.as_str(), refreshed = events.len(), "Refreshed unchanged signals");
                         result.events.extend(events);
@@ -343,7 +347,7 @@ impl Scraper {
             {content}"
         );
 
-        match self.extractor.extract(&filtered_content, &clean_url).await {
+        match extractor.extract(&filtered_content, &clean_url).await {
             Ok(extraction) => {
                 result.scraped = true;
                 let ck = url_to_ck
@@ -407,4 +411,3 @@ impl Scraper {
 
         result
     }
-}

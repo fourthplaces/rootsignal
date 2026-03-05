@@ -24,7 +24,6 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::activities::Scraper;
 use crate::domains::scrape::activities::StatsDelta;
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
@@ -101,12 +100,6 @@ pub mod handlers {
         info!("=== Phase A: Find Problems ===");
         let deps = ctx.deps();
 
-        let phase = Scraper::new(
-            deps.store.clone(),
-            deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.fetcher.as_ref().expect("fetcher set").clone(),
-        );
-
         let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
@@ -127,7 +120,8 @@ pub mod handlers {
             .collect();
 
         let tension_web_refs: Vec<&rootsignal_common::SourceNode> = tension_web.iter().collect();
-        let resolution = phase.resolve_web_urls(
+        let resolution = activities::url_resolution::resolve_web_urls(
+            deps,
             &tension_web_refs,
             &state.url_to_canonical_key,
             deps.ai.as_deref(),
@@ -222,15 +216,11 @@ pub mod handlers {
         };
 
         let deps = ctx.deps();
-        let scraper = Scraper::new(
-            deps.store.clone(),
-            deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.fetcher.as_ref().expect("fetcher set").clone(),
-        );
 
         let (_, state) = ctx.singleton::<PipelineState>();
 
-        let single = scraper.fetch_and_extract_single(
+        let single = activities::web_scrape::fetch_and_extract_single(
+            deps,
             &url,
             source_id,
             &state.url_to_canonical_key,
@@ -392,11 +382,6 @@ pub mod handlers {
         };
 
         let deps = ctx.deps();
-        let scraper = Scraper::new(
-            deps.store.clone(),
-            deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.fetcher.as_ref().expect("fetcher set").clone(),
-        );
 
         let (_, state) = ctx.singleton::<PipelineState>();
 
@@ -408,7 +393,8 @@ pub mod handlers {
                 .map(|s| s.id)
         });
 
-        let single = scraper.scrape_single_social_source(
+        let single = activities::social_scrape::scrape_single_social_source(
+            deps,
             &canonical_key,
             &source_url,
             platform,
@@ -451,11 +437,6 @@ pub mod handlers {
         info!("Fetch topics for topic discovery");
 
         let deps = ctx.deps();
-        let phase = Scraper::new(
-            deps.store.clone(),
-            deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.fetcher.as_ref().expect("fetcher set").clone(),
-        );
 
         let (_, state) = ctx.singleton::<PipelineState>();
 
@@ -475,7 +456,8 @@ pub mod handlers {
             });
         } else {
             all_events.push(PipelineEvent::SocialTopicsConsumed);
-            let mut topic_output = phase.discover_from_topics(
+            let mut topic_output = activities::topic_discovery::discover_from_topics(
+                deps,
                 &all_social_topics,
                 &state.url_to_canonical_key,
                 &state.actor_contexts,
@@ -641,12 +623,6 @@ pub mod handlers {
         };
         let graph = GraphReader::new(graph_client.clone());
 
-        let phase = Scraper::new(
-            deps.store.clone(),
-            deps.extractor.as_ref().expect("extractor set").clone(),
-            deps.fetcher.as_ref().expect("fetcher set").clone(),
-        );
-
         let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
         let scheduled = state.scheduled.as_ref().expect("scheduled data stashed");
@@ -706,7 +682,8 @@ pub mod handlers {
 
         if !web_sources.is_empty() {
             info!(count = web_sources.len(), "Phase B sources (response + fresh discovery)");
-            let resolution = phase.resolve_web_urls(
+            let resolution = activities::url_resolution::resolve_web_urls(
+                deps,
                 &web_sources,
                 &state.url_to_canonical_key,
                 deps.ai.as_deref(),

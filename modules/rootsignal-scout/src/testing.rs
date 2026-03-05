@@ -1503,6 +1503,18 @@ pub fn test_scout_deps(
     )
 }
 
+/// Create a test ScoutEngineDeps pre-loaded with scrape deps (store + extractor + fetcher).
+pub fn test_scrape_deps(
+    store: Arc<dyn SignalReader>,
+    extractor: Arc<dyn crate::core::extractor::SignalExtractor>,
+    fetcher: Arc<dyn ContentFetcher>,
+) -> ScoutEngineDeps {
+    let mut deps = test_scout_deps(store);
+    deps.extractor = Some(extractor);
+    deps.fetcher = Some(fetcher);
+    deps
+}
+
 /// Create a minimal ArchivedSearchResults for testing.
 pub fn search_results(query: &str, urls: &[&str]) -> ArchivedSearchResults {
     ArchivedSearchResults {

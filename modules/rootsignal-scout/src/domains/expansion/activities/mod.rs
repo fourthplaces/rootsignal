@@ -12,8 +12,9 @@ use crate::core::aggregate::PipelineState;
 use ai_client::Agent;
 use crate::domains::discovery::activities::source_finder::SourceFinder;
 use crate::infra::embedder::TextEmbedder;
+use crate::core::engine::ScoutEngineDeps;
 use self::expansion::{Expansion, ExpansionOutput};
-use crate::domains::scrape::activities::{register_sources_events, Scraper, ScrapeOutput};
+use crate::domains::scrape::activities::{register_sources_events, ScrapeOutput};
 use crate::domains::scheduling::activities::budget::BudgetTracker;
 
 /// Output from the full expansion + end-of-run discovery activity.
@@ -31,7 +32,7 @@ pub struct ExpansionActivityOutput {
 /// Pure: reads from `state`, returns accumulated output.
 pub async fn expand_and_discover(
     expansion: &Expansion<'_>,
-    phase: Option<&Scraper>,
+    deps: Option<&ScoutEngineDeps>,
     state: &PipelineState,
     graph: &GraphReader,
     region_name: &str,
@@ -76,13 +77,13 @@ pub async fn expand_and_discover(
 
     // End-of-run topic discovery
     let topic_scrape = if !end_social_topics.is_empty() {
-        if let Some(phase) = phase {
+        if let Some(deps) = deps {
             info!(
                 count = end_social_topics.len(),
                 "Consuming end-of-run social topics"
             );
-            let topic_output = phase
-                .discover_from_topics(
+            let topic_output = crate::domains::scrape::activities::topic_discovery::discover_from_topics(
+                    deps,
                     &end_social_topics,
                     &state.url_to_canonical_key,
                     &state.actor_contexts,

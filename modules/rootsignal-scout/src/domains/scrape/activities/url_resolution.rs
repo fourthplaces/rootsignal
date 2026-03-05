@@ -9,25 +9,27 @@ use tracing::{info, warn};
 use ai_client::Agent;
 use rootsignal_common::{is_web_query, scraping_strategy, ScrapingStrategy, SourceNode};
 
+use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::activities::domain_filter;
 use crate::infra::util::sanitize_url;
 
-use super::scraper::Scraper;
 use super::types::UrlResolution;
 
-impl Scraper {
-    /// Resolve web sources to URLs: query resolution, HTML listing, RSS, page URLs.
-    /// Deduplicates and filters blocked URLs.
-    pub async fn resolve_web_urls(
-        &self,
-        sources: &[&SourceNode],
-        url_to_canonical_key: &HashMap<String, String>,
-        ai: Option<&dyn Agent>,
-        region_name: Option<&str>,
-    ) -> UrlResolution {
+/// Resolve web sources to URLs: query resolution, HTML listing, RSS, page URLs.
+/// Deduplicates and filters blocked URLs.
+pub(crate) async fn resolve_web_urls(
+    deps: &ScoutEngineDeps,
+    sources: &[&SourceNode],
+    url_to_canonical_key: &HashMap<String, String>,
+    ai: Option<&dyn Agent>,
+    region_name: Option<&str>,
+) -> UrlResolution {
         let mut url_mappings: HashMap<String, String> = HashMap::new();
         let mut pub_dates: HashMap<String, DateTime<Utc>> = HashMap::new();
         let mut query_api_errors: HashSet<String> = HashSet::new();
+    let fetcher = deps.fetcher.as_ref().expect("fetcher required");
+    let store = &deps.store;
+
         let mut phase_urls: Vec<String> = Vec::new();
 
         // Partition by behavior type
@@ -55,7 +57,7 @@ impl Scraper {
                 queries = api_queries.len(),
                 "Resolving web search queries..."
             );
-            let fetcher = self.fetcher.clone();
+            let fetcher = fetcher.clone();
             let query_inputs: Vec<_> = api_queries
                 .iter()
                 .map(|source| (source.canonical_key.clone(), source.canonical_value.clone()))
@@ -109,7 +111,7 @@ impl Scraper {
                 _ => None,
             };
             if let (Some(url), Some(pattern)) = (&source.url, link_pattern) {
-                let html = match self.fetcher.page(url).await {
+                let html = match fetcher.page(url).await {
                     Ok(page) => Some(page.raw_html),
                     Err(e) => {
                         warn!(url = url.as_str(), error = %e, "Query scrape failed");
@@ -145,7 +147,7 @@ impl Scraper {
             info!(feeds = rss_sources.len(), "Fetching RSS/Atom feeds...");
             for source in &rss_sources {
                 if let Some(ref feed_url) = source.url {
-                    let feed_result = self.fetcher.feed(feed_url).await;
+                    let feed_result = fetcher.feed(feed_url).await;
                     match feed_result {
                         Ok(archived) => {
                             for item in archived.items {
@@ -171,8 +173,7 @@ impl Scraper {
         phase_urls.dedup();
 
         // Filter blocked URLs (single batch query instead of N sequential checks)
-        let blocked = self
-            .store
+        let blocked = store
             .blocked_urls(&phase_urls)
             .await
             .unwrap_or_default();
@@ -194,7 +195,7 @@ impl Scraper {
                     &phase_urls,
                     region,
                     ai,
-                    &*self.store,
+                    &**store,
                 )
                 .await;
                 let before = phase_urls.len();
@@ -219,4 +220,3 @@ impl Scraper {
             source_count,
         }
     }
-}

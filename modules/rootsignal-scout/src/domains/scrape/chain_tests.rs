@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::core::extractor::ExtractionResult;
 use crate::core::aggregate::PipelineState;
-use crate::domains::scrape::activities::{ScrapeOutput, Scraper};
+use crate::domains::scrape::activities::ScrapeOutput;
 use crate::infra::util::sanitize_url;
 use crate::testing::*;
 use crate::traits::SignalReader;
@@ -117,17 +117,13 @@ async fn linktree_page_discovers_outbound_links() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = web_query_source(query);
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No signals from Linktree pages
@@ -208,17 +204,13 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // Signal created
@@ -259,17 +251,13 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No geo-filter — all signals stored
@@ -320,17 +308,13 @@ async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations
 
     let store = Arc::new(MockSignalReader::new());
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source_nodes: Vec<_> = urls.iter().map(|u| page_source(u)).collect();
     let sources: Vec<&_> = source_nodes.iter().collect();
     let mut ctx = PipelineState::from_sources(&source_nodes);
 
-    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // ONE signal, not three
@@ -388,11 +372,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
@@ -411,7 +391,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
         },
     );
 
-    let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // Signal stored (actor fallback gave it Minneapolis coords → survives geo filter)
@@ -464,11 +444,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
@@ -487,7 +463,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
         },
     );
 
-    let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No geo-filter — signal stored with actor location as fallback
@@ -528,11 +504,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
@@ -551,7 +523,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
         },
     );
 
-    let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -612,11 +584,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
     let sources: Vec<&_> = vec![&source];
@@ -635,7 +603,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
         },
     );
 
-    let output = phase.scrape_social_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // All three signals stored — no geo-filter rejection
@@ -692,17 +660,13 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
     let store = Arc::new(MockSignalReader::new().with_processed_hash(&hash, &clean_url));
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No new signals (extraction skipped)
@@ -789,17 +753,13 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     // --- Phase A: scrape the Linktree ---
-    let phase_a = Scraper::new(
-        store.clone(),
-        extractor.clone(),
-        fetcher.clone(),
-    );
+    let deps = test_scrape_deps(store.clone(), extractor.clone(), fetcher.clone());
 
     let linktree_source = page_source("https://linktr.ee/mplsmutualaid");
     let sources_a: Vec<&_> = vec![&linktree_source];
     let mut ctx = PipelineState::from_sources(&[linktree_source.clone()]);
 
-    let output = phase_a.scrape_web_sources(&sources_a, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources_a, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // After Phase A: localorg.org discovered in collected_links
@@ -825,17 +785,13 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     assert!(promoted_urls.contains(&"https://localorg.org/resources"));
 
     // --- Phase B: scrape the discovered org site ---
-    let phase_b = Scraper::new(
-        store.clone(),
-        extractor,
-        fetcher,
-    );
+    let deps_b = test_scrape_deps(store.clone(), extractor, fetcher);
 
     let org_source = page_source("https://localorg.org/resources");
     let sources_b: Vec<&_> = vec![&org_source];
     let mut ctx_b = PipelineState::from_sources(&[org_source.clone()]);
 
-    let output = phase_b.scrape_web_sources(&sources_b, &ctx_b.url_to_canonical_key, &ctx_b.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps_b, &sources_b, &ctx_b.url_to_canonical_key, &ctx_b.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx_b, &store).await;
 
     // Signal from Phase B
@@ -900,17 +856,13 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -945,17 +897,13 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -1003,17 +951,13 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = phase.scrape_web_sources(&sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
+    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -1063,18 +1007,14 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
     let store = Arc::new(MockSignalReader::new());
     let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
-    let phase = Scraper::new(
-        store.clone(),
-        Arc::new(extractor),
-        Arc::new(fetcher),
-    );
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = web_query_source(query);
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
     // Step 1: resolve URLs
-    let resolution = phase.resolve_web_urls(&sources, &ctx.url_to_canonical_key, None, None).await;
+    let resolution = super::activities::url_resolution::resolve_web_urls(&deps, &sources, &ctx.url_to_canonical_key, None, None).await;
     assert_eq!(resolution.urls.len(), 1, "search resolved one URL");
     assert!(resolution.query_api_errors.is_empty());
 
@@ -1087,7 +1027,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
         .iter()
         .map(|s| (s.canonical_key.clone(), s.id))
         .collect();
-    let result = phase.fetch_and_extract(
+    let result = super::activities::web_scrape::fetch_and_extract(&deps, 
         &resolution.urls,
         &source_keys,
         &ctx.url_to_canonical_key,

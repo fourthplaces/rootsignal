@@ -15,22 +15,21 @@ use rootsignal_common::{
 };
 use seesaw_core::Events;
 
+use crate::core::engine::ScoutEngineDeps;
 use crate::core::extractor::ResourceTag;
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
 
-use super::scraper::Scraper;
 use super::signal_events::store_signals_events;
 use super::types::{ScrapeOutput, SingleSocialResult, StatsDelta};
 
-impl Scraper {
-    /// Scrape social media accounts, feed posts through LLM extraction.
-    /// Returns accumulated `ScrapeOutput` with events and state updates.
-    pub async fn scrape_social_sources(
-        &self,
-        social_sources: &[&SourceNode],
-        url_to_canonical_key: &HashMap<String, String>,
-        actor_contexts: &HashMap<String, ActorContext>,
-    ) -> ScrapeOutput {
+/// Scrape social media accounts, feed posts through LLM extraction.
+/// Returns accumulated `ScrapeOutput` with events and state updates.
+pub(crate) async fn scrape_social_sources(
+    deps: &ScoutEngineDeps,
+    social_sources: &[&SourceNode],
+    url_to_canonical_key: &HashMap<String, String>,
+    actor_contexts: &HashMap<String, ActorContext>,
+) -> ScrapeOutput {
         let mut output = ScrapeOutput::new();
         type SocialResult = Option<(
             String,
@@ -191,8 +190,8 @@ impl Scraper {
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send>>> = Vec::new();
 
-        let fetcher = self.fetcher.clone();
-        let extractor = self.extractor.clone();
+        let fetcher = deps.fetcher.as_ref().expect("fetcher required").clone();
+        let extractor = deps.extractor.as_ref().expect("extractor required").clone();
         for (canonical_key, source_url, account) in &accounts {
             let canonical_key = canonical_key.clone();
             let source_url = source_url.clone();
@@ -404,18 +403,18 @@ impl Scraper {
         output
     }
 
-    /// Fetch and extract signals for a single social source.
-    /// Used by the per-source fan-out handler.
-    pub async fn scrape_single_social_source(
-        &self,
-        canonical_key: &str,
-        source_url: &str,
-        platform: SocialPlatform,
-        identifier: &str,
-        source_id: Option<Uuid>,
-        url_to_canonical_key: &HashMap<String, String>,
-        actor_contexts: &HashMap<String, ActorContext>,
-    ) -> SingleSocialResult {
+/// Fetch and extract signals for a single social source.
+/// Used by the per-source fan-out handler.
+pub(crate) async fn scrape_single_social_source(
+    deps: &ScoutEngineDeps,
+    canonical_key: &str,
+    source_url: &str,
+    platform: SocialPlatform,
+    identifier: &str,
+    source_id: Option<Uuid>,
+    url_to_canonical_key: &HashMap<String, String>,
+    actor_contexts: &HashMap<String, ActorContext>,
+) -> SingleSocialResult {
         let mut result = SingleSocialResult {
             events: Events::new(),
             source_signal_counts: HashMap::new(),
@@ -426,7 +425,10 @@ impl Scraper {
             stats_delta: StatsDelta::default(),
         };
 
-        let posts = match self.fetcher.posts(identifier, 20).await {
+    let fetcher = deps.fetcher.as_ref().expect("fetcher required");
+    let extractor = deps.extractor.as_ref().expect("extractor required");
+
+        let posts = match fetcher.posts(identifier, 20).await {
             Ok(posts) => posts,
             Err(e) => {
                 warn!(source_url, error = %e, "Social media scrape failed");
@@ -509,7 +511,7 @@ impl Scraper {
                     combined_text = format!("{prefix}{combined_text}");
                 }
                 combined_all.push_str(&combined_text);
-                match self.extractor.extract(&combined_text, source_url).await {
+                match extractor.extract(&combined_text, source_url).await {
                     Ok(r) => {
                         all_nodes.extend(r.nodes);
                         all_resource_tags.extend(r.resource_tags);
@@ -540,7 +542,7 @@ impl Scraper {
             } else if let Some(ref prefix) = firsthand_filter {
                 combined_text = format!("{prefix}{combined_text}");
             }
-            match self.extractor.extract(&combined_text, source_url).await {
+            match extractor.extract(&combined_text, source_url).await {
                 Ok(r) => (
                     combined_text,
                     r.nodes,
@@ -609,4 +611,3 @@ impl Scraper {
 
         result
     }
-}
