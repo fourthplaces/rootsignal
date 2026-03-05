@@ -31,6 +31,7 @@ fn stored_event(event: &Event) -> rootsignal_events::StoredEvent {
         correlation_id: None,
         aggregate_type: None,
         aggregate_id: None,
+        handler_id: None,
     }
 }
 
@@ -299,6 +300,7 @@ fn malformed_payload_returns_deserialize_error() {
         correlation_id: None,
         aggregate_type: None,
         aggregate_id: None,
+        handler_id: None,
     };
 
     let result = Event::from_payload(&stored.payload);

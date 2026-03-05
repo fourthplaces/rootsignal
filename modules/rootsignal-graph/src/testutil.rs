@@ -6,8 +6,6 @@ use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
 };
 use crate::{connect_graph, GraphClient};
-pub use neo4j_container as memgraph_container;
-
 
 const TEST_PASSWORD: &str = "testpassword";
 

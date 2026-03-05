@@ -1,5 +1,6 @@
 ## Rules
 
+- When a test failure reveals a production bug, STOP. Do not fix it silently or paper over it in the test. Present the finding to the user with full context — what the test exposed, what the production impact is, and what the fix options are. Wait for the user to evaluate and decide how to proceed. Tests exist to surface issues; discovered issues deserve deliberate decisions.
 - NEVER write, edit, or delete code unless the user explicitly gives consent. Always explain what you would change first and wait for approval before touching any files. This includes diagnostic exploration — always say what you're about to do and why before doing it.
 - When presenting a diagnosis or proposed fix, explain the FULL reasoning and get explicit "yes" before touching any file. No exceptions.
 - Tests MUST follow the pattern: MOCK → FUNCTION → OUTPUT. Set up mocks, call the real function/organ under test, assert the output. Do NOT take code out of context by manually calling internal functions step-by-step — that tests your understanding of the code, not the code itself. The organ does the wiring; tests only check what came out. If code cannot be tested this way (e.g. it takes concrete types instead of traits), refactor the code to make it testable — the testing constraint drives the architecture, not the other way around.

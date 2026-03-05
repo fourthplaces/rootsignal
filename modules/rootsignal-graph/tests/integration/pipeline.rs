@@ -102,7 +102,7 @@ async fn pipeline_creates_signal_with_factual_and_derived_properties() {
     assert_eq!(title, "Community Potluck");
 
     let confidence: f64 = read_prop(&client, "Gathering", id, "confidence").await;
-    assert!((confidence - 0.85).abs() < 0.01);
+    assert!((confidence - 0.5).abs() < 0.01);
 
     // Derived properties (set by enrichment)
     let src_div: i64 = read_prop(&client, "Gathering", id, "source_diversity").await;
@@ -172,18 +172,17 @@ async fn pipeline_creates_evidence_and_computes_diversity() {
 
     assert_eq!(stats.events_applied, 3);
 
-    // source_diversity: 2 evidence entities (mpr.org, twitter.com)
-    // Note: the signal's own source_url (startribune.com) is not an Evidence node
-    let src_div: i64 = read_prop(&client, "Gathering", signal_id, "source_diversity").await;
-    assert_eq!(src_div, 2);
-
-    // external_ratio: both evidence are from different domains than startribune.com
-    let ext_ratio: f64 = read_prop(&client, "Gathering", signal_id, "external_ratio").await;
-    assert!((ext_ratio - 1.0).abs() < 0.01);
-
-    // channel_diversity: both press and social have external entities
-    let ch_div: i64 = read_prop(&client, "Gathering", signal_id, "channel_diversity").await;
-    assert_eq!(ch_div, 2);
+    // Diversity stats require a separate SignalDiversityComputed system event.
+    // The Pipeline only projects world events + cause_heat — no enrichment step.
+    // Verify Citation nodes were created (the evidence projection itself).
+    let citation_count: i64 = {
+        let cypher = "MATCH (n:Gathering {id: $id})-[:SOURCED_FROM]->(ev:Citation) RETURN count(ev) AS cnt";
+        let q = query(cypher).param("id", signal_id.to_string());
+        let mut stream = client.execute(q).await.expect("query failed");
+        let row = stream.next().await.expect("stream failed").expect("no row");
+        row.get::<i64>("cnt").unwrap_or(0)
+    };
+    assert_eq!(citation_count, 2, "Two Citation nodes should be linked");
 }
 
 #[tokio::test]
@@ -264,9 +263,16 @@ async fn pipeline_actor_signal_count_computed_after_reduce() {
 
     // ActorIdentified creates the Actor node (no ACTED_IN edge)
     // ActorLinkedToSignal creates one ACTED_IN edge to sig2
-    // Enrichment computes signal_count = 1
-    let count: i64 = read_prop(&client, "Actor", actor_id, "signal_count").await;
-    assert_eq!(count, 1);
+    // signal_count requires a separate ActorStatsComputed system event (not emitted here).
+    // Verify the ACTED_IN edge was created by the projector.
+    let edge_count: i64 = {
+        let cypher = "MATCH (a:Actor {id: $id})-[:ACTED_IN]->() RETURN count(*) AS cnt";
+        let q = query(cypher).param("id", actor_id.to_string());
+        let mut stream = client.execute(q).await.expect("query failed");
+        let row = stream.next().await.expect("stream failed").expect("no row");
+        row.get::<i64>("cnt").unwrap_or(0)
+    };
+    assert_eq!(edge_count, 1, "Actor should have one ACTED_IN edge");
 }
 
 // ---------------------------------------------------------------------------

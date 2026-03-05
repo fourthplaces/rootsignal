@@ -57,6 +57,12 @@ fn neo4j_dt(dt: &chrono::DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
+/// Format a datetime N days ago for use in test Cypher.
+fn days_ago(n: i64) -> String {
+    let dt = Utc::now() - chrono::Duration::days(n);
+    dt.format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
 /// Build a 1024-dimensional dummy embedding as a Cypher list literal.
 /// Matches the dimension configured in the vector index migration.
 fn dummy_embedding() -> String {
@@ -1643,13 +1649,14 @@ async fn response_finder_targets_finds_unscouted_tensions() {
 
     // t1: never scouted, high confidence — should be found
     create_tension_for_response_finder(&client, t1, "ICE Enforcement Fear", 0.7, None).await;
-    // t2: scouted recently — should NOT be found
+    // t2: scouted recently (5 days ago, within 14-day window) — should NOT be found
+    let recent = days_ago(5);
     create_tension_for_response_finder(
         &client,
         t2,
         "Housing Crisis",
         0.8,
-        Some("2026-02-17T00:00:00"),
+        Some(&recent),
     )
     .await;
     // t3: low confidence (below 0.5) — should NOT be found
@@ -1976,13 +1983,14 @@ async fn gathering_finder_respects_scouted_timestamp() {
     let t1 = Uuid::new_v4();
 
     // Scouted 3 days ago — should NOT be found (7-day base window)
+    let recent = days_ago(3);
     create_tension_for_gathering_finder(
         &client,
         t1,
         "Recent",
         0.7,
         0.5,
-        Some("2026-02-15T00:00:00"),
+        Some(&recent),
         Some(0),
     )
     .await;
@@ -2006,13 +2014,14 @@ async fn gathering_finder_backoff_on_consecutive_misses() {
     let t1 = Uuid::new_v4();
 
     // Scouted 15 days ago with miss_count=2 — needs 21 days, so should NOT be found
+    let fifteen_days = days_ago(15);
     create_tension_for_gathering_finder(
         &client,
         t1,
         "Two misses",
         0.7,
         0.5,
-        Some("2026-02-03T00:00:00"),
+        Some(&fifteen_days),
         Some(2),
     )
     .await;
@@ -2035,7 +2044,7 @@ async fn gathering_finder_backoff_on_consecutive_misses() {
         "One miss",
         0.7,
         0.5,
-        Some("2026-02-03T00:00:00"),
+        Some(&fifteen_days),
         Some(1),
     )
     .await;

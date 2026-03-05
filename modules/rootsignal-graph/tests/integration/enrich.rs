@@ -130,9 +130,22 @@ async fn cause_heat_written_for_signals_with_embeddings() {
     client.run(q).await.expect("set diversity failed");
 
     // bbox covers the test lat/lng (44.9778, -93.2650)
-    rootsignal_graph::cause_heat::compute_cause_heat(&client, 0.3, 40.0, 50.0, -100.0, -80.0)
-        .await
-        .expect("cause_heat failed");
+    let scores =
+        rootsignal_graph::cause_heat::compute_cause_heat(&client, 0.3, 40.0, 50.0, -100.0, -80.0)
+            .await
+            .expect("cause_heat failed");
+
+    // compute_cause_heat returns scores — write them to the graph (as the projector would via CauseHeatComputed)
+    for score in &scores {
+        let cypher = format!(
+            "MATCH (n:{} {{id: $id}}) SET n.cause_heat = $heat",
+            score.label
+        );
+        let q = query(&cypher)
+            .param("id", score.signal_id.to_string())
+            .param("heat", score.cause_heat);
+        client.run(q).await.expect("write cause_heat failed");
+    }
 
     let heat1: f64 = read_prop(&client, "Concern", t1, "cause_heat").await;
     let heat2: f64 = read_prop(&client, "Concern", t2, "cause_heat").await;

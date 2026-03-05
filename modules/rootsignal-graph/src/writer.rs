@@ -759,7 +759,7 @@ impl GraphReader {
         // Also include never-scraped sources (they haven't had a chance to produce signals yet).
         let q = query(
             "MATCH (s:Source {active: true})
-             WHERE s.signals_produced = 0
+             WHERE (s.signals_produced = 0 AND s.last_scraped IS NULL)
                 OR EXISTS {
                     MATCH (n) WHERE n.source_url = s.canonical_value
                       AND n.lat >= $min_lat AND n.lat <= $max_lat
@@ -2728,6 +2728,18 @@ impl GraphReader {
             }
         }
 
+        // Clear implied_queries on collected signals so they aren't returned again
+        if !signal_ids.is_empty() {
+            let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
+            let q = query(
+                "UNWIND $ids AS sid
+                 MATCH (s {id: sid})
+                 SET s.implied_queries = null",
+            )
+            .param("ids", ids);
+            self.client().run(q).await?;
+        }
+
         Ok((all_queries, signal_ids))
     }
 
@@ -3678,6 +3690,8 @@ impl GraphStore {
                  r.description = $description,
                  r.embedding = $embedding,
                  r.signal_count = 1,
+                 r.sensitivity = 'general',
+                 r.confidence = 0.5,
                  r.created_at = datetime($now),
                  r.last_seen = datetime($now)
              ON MATCH SET
@@ -3798,7 +3812,7 @@ impl GraphStore {
         // Load all resources with embeddings
         let q = query(
             "MATCH (r:Resource)
-             WHERE r.embedding IS NOT NULL
+             WHERE r.embedding IS NOT NULL AND r.slug IS NOT NULL
              RETURN r.id AS id, r.slug AS slug, r.embedding AS emb, r.signal_count AS sc
              ORDER BY r.signal_count DESC",
         );

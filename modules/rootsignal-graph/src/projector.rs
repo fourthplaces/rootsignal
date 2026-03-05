@@ -170,6 +170,11 @@ impl GraphProjector {
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
+            // SourcesDiscovered is a proposal — the domain_filter handler decides
+            // which become SourceRegistered. SourceRejected is audit-only.
+            "discovery:sources_discovered" | "discovery:source_rejected" => {
+                Ok(ApplyResult::NoOp)
+            }
             _ => {
                 debug!(seq = event.seq, event_type = %event.event_type, "No-op (pipeline)");
                 Ok(ApplyResult::NoOp)
@@ -789,7 +794,8 @@ impl GraphProjector {
                 let label = node_type_label(node_type);
                 let q = query(&format!(
                     "MATCH (n:{label} {{id: $id}})
-                     SET n.last_confirmed_active = datetime($ts)"
+                     SET n.last_confirmed_active = datetime($ts),
+                         n.corroboration_count = coalesce(n.corroboration_count, 0) + 1"
                 ))
                 .param("id", signal_id.to_string())
                 .param("ts", format_dt_from_stored(event));
@@ -2856,6 +2862,7 @@ fn build_discovery_query(
              n.address = $address,
              n.lat = $lat,
              n.lng = $lng,
+             n.sensitivity = 'general',
              n.corroboration_count = 0,
              n.review_status = 'staged',
              n.created_by = $created_by,
