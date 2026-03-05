@@ -14,8 +14,6 @@ use crate::core::events::PipelinePhase;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-use rootsignal_common::telemetry_events::TelemetryEvent;
-
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_metrics_completed(e: &LifecycleEvent) -> bool {
@@ -42,17 +40,10 @@ pub mod handlers {
         ) {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
-                let mut skip = events![LifecycleEvent::PhaseCompleted {
+                ctx.logger.debug("Skipped signal expansion: missing region, graph_client, or budget");
+                return Ok(events![LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::SignalExpansion,
-                }];
-                skip.push(TelemetryEvent::SystemLog {
-                    message: "Skipped signal expansion: missing region, graph_client, or budget".into(),
-                    context: Some(serde_json::json!({
-                        "handler": "expansion:signal_expansion",
-                        "reason": "missing_deps",
-                    })),
-                });
-                return Ok(skip);
+                }]);
             }
         };
         let graph = GraphReader::new(graph_client.clone());

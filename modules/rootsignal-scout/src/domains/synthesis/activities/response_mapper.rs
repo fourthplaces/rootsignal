@@ -11,7 +11,6 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use rootsignal_common::system_events::SystemEvent;
-use rootsignal_common::telemetry_events::TelemetryEvent;
 use rootsignal_graph::GraphReader;
 
 use seesaw_core::Events;
@@ -110,18 +109,13 @@ pub async fn map_responses(
             }
         }
 
-        events.push(TelemetryEvent::SystemLog {
-            message: format!(
-                "LLM response mapping: \"{}\" — {}/{} candidates matched",
-                tension_title, verified, checked,
-            ),
-            context: Some(serde_json::json!({
-                "activity": "response_mapper",
-                "concern_id": concern_id.to_string(),
-                "candidates_checked": checked,
-                "candidates_matched": verified,
-            })),
-        });
+        tracing::debug!(
+            concern_id = %concern_id,
+            candidates_checked = checked,
+            candidates_matched = verified,
+            "LLM response mapping: \"{}\" — {}/{} candidates matched",
+            tension_title, verified, checked,
+        );
     }
 
     info!(
@@ -209,18 +203,13 @@ pub async fn map_single_tension(
         }
     }
 
-    events.push(TelemetryEvent::SystemLog {
-        message: format!(
-            "LLM response mapping: \"{}\" — {}/{} candidates matched",
-            tension_title, verified, checked,
-        ),
-        context: Some(serde_json::json!({
-            "activity": "response_mapper",
-            "concern_id": concern_id.to_string(),
-            "candidates_checked": checked,
-            "candidates_matched": verified,
-        })),
-    });
+    tracing::debug!(
+        concern_id = %concern_id,
+        candidates_checked = checked,
+        candidates_matched = verified,
+        "LLM response mapping: \"{}\" — {}/{} candidates matched",
+        tension_title, verified, checked,
+    );
 
     (events, edges_created)
 }

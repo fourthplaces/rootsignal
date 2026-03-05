@@ -21,8 +21,6 @@ use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfi
 use crate::domains::discovery::activities::{bootstrap, discover_expansion_sources};
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_common::system_events::SystemEvent;
-use rootsignal_common::telemetry_events::TelemetryEvent;
-
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_scout_run_requested(e: &LifecycleEvent) -> bool {
@@ -45,9 +43,50 @@ fn is_tension_scrape_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
+fn is_sources_discovered(e: &DiscoveryEvent) -> bool {
+    matches!(e, DiscoveryEvent::SourcesDiscovered { .. })
+}
+
 #[handlers]
 pub mod handlers {
     use super::*;
+
+    /// SourcesDiscovered → filter and gate source registration.
+    ///
+    /// Auto-accepts social/direct-action/query/admin sources.
+    /// LLM-filters web URL sources via `filter_domains_batch`.
+    /// Emits `SourceRegistered` (accepted) or `SourceRejected` (audit).
+    #[handle(on = DiscoveryEvent, id = "discovery:domain_filter", filter = is_sources_discovered)]
+    async fn domain_filter(
+        event: DiscoveryEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let DiscoveryEvent::SourcesDiscovered { sources, discovered_by } = event else {
+            unreachable!("filter guarantees SourcesDiscovered");
+        };
+
+        if sources.is_empty() {
+            return Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "discovery:domain_filter".into(),
+                reason: "empty sources batch".into(),
+            }]);
+        }
+
+        let deps = ctx.deps();
+        let region_name = deps.run_scope.region().map(|r| r.name.clone());
+        let ai = deps.ai.as_deref();
+
+        let events = activities::domain_filter_gate::filter_discovered_sources(
+            sources,
+            &discovered_by,
+            region_name.as_deref(),
+            ai,
+            &*deps.store,
+        )
+        .await;
+
+        Ok(events)
+    }
 
     /// ScoutRunRequested → seed sources when the region has none.
     #[handle(on = LifecycleEvent, id = "discovery:bootstrap", filter = is_scout_run_requested)]
@@ -241,12 +280,11 @@ pub mod handlers {
             }
         }
 
-        for (source, _) in promoted {
-            all_events.push(DiscoveryEvent::SourceDiscovered {
-                source,
-                discovered_by: "link_promoter".into(),
-            });
-        }
+        let promoted_sources: Vec<_> = promoted.into_iter().map(|(source, _)| source).collect();
+        all_events.push(DiscoveryEvent::SourcesDiscovered {
+            sources: promoted_sources,
+            discovered_by: "link_promoter".into(),
+        });
         for (canonical_key, sources_discovered) in credit {
             all_events.push(SystemEvent::SourceDiscoveryCredit {
                 canonical_key,
@@ -274,17 +312,10 @@ pub mod handlers {
         ) {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
-                let mut skip = events![LifecycleEvent::PhaseCompleted {
+                ctx.logger.debug("Skipped source expansion: missing region, graph_client, or budget");
+                return Ok(events![LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::SourceExpansion,
-                }];
-                skip.push(TelemetryEvent::SystemLog {
-                    message: "Skipped source expansion: missing region, graph_client, or budget".into(),
-                    context: Some(serde_json::json!({
-                        "handler": "discovery:source_expansion",
-                        "reason": "missing_deps",
-                    })),
-                });
-                return Ok(skip);
+                }]);
             }
         };
         let graph = GraphReader::new(graph_client.clone());

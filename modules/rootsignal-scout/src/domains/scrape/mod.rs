@@ -104,8 +104,6 @@ pub mod handlers {
             deps,
             &tension_web_refs,
             &state.url_to_canonical_key,
-            deps.ai.as_deref(),
-            deps.run_scope.region().map(|r| r.name.as_str()),
         ).await;
 
         let tension_web_keys = build_source_keys(&tension_web);
@@ -395,21 +393,10 @@ pub mod handlers {
         let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                let mut skip = events![LifecycleEvent::PhaseCompleted {
+                ctx.logger.debug("Skipped response scrape resolve: missing region or graph_client");
+                return Ok(events![LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::ResponseScrape,
-                }];
-                skip.push(TelemetryEvent::SystemLog {
-                    message: "Skipped response scrape resolve: missing region or graph_client".into(),
-                    context: Some(serde_json::json!({
-                        "handler": "scrape:resolve_response",
-                        "reason": "missing_deps",
-                        "missing": {
-                            "region": deps.run_scope.region().is_none(),
-                            "graph_client": deps.graph_client.is_none(),
-                        },
-                    })),
-                });
-                return Ok(skip);
+                }]);
             }
         };
         let graph = GraphReader::new(graph_client.clone());
@@ -468,8 +455,6 @@ pub mod handlers {
                 deps,
                 &web_sources,
                 &state.url_to_canonical_key,
-                deps.ai.as_deref(),
-                deps.run_scope.region().map(|r| r.name.as_str()),
             ).await;
 
             // Build source_keys from web sources for fetch handler

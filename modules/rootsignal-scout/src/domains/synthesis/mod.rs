@@ -16,8 +16,6 @@ use uuid::Uuid;
 use rootsignal_common::events::SystemEvent;
 use rootsignal_graph::GraphReader;
 
-use rootsignal_common::telemetry_events::TelemetryEvent;
-
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
@@ -130,13 +128,7 @@ pub mod handlers {
         if !budget.has_budget(
             OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER,
         ) {
-            out.push(TelemetryEvent::SystemLog {
-                message: "Skipped concern linker: insufficient budget".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:concern_linker",
-                    "reason": "budget_exhausted",
-                })),
-            });
+            ctx.logger.debug("Skipped concern linker: insufficient budget");
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ConcernLinker,
@@ -284,13 +276,7 @@ pub mod handlers {
         if !budget.has_budget(
             OperationCost::CLAUDE_HAIKU_RESPONSE_FINDER + OperationCost::SEARCH_RESPONSE_FINDER,
         ) {
-            out.push(TelemetryEvent::SystemLog {
-                message: "Skipped response finder: insufficient budget".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:response_finder",
-                    "reason": "budget_exhausted",
-                })),
-            });
+            ctx.logger.debug("Skipped response finder: insufficient budget");
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseFinder,
@@ -369,14 +355,16 @@ pub mod handlers {
             .collect();
         let results: Vec<_> = stream::iter(futures).buffer_unordered(3).collect().await;
 
+        let mut all_sources = Vec::new();
         for (target_events, target_sources, _target_stats) in results {
             out.extend(target_events);
-            for source in target_sources {
-                out.push(DiscoveryEvent::SourceDiscovered {
-                    source,
-                    discovered_by: "synthesis".into(),
-                });
-            }
+            all_sources.extend(target_sources);
+        }
+        if !all_sources.is_empty() {
+            out.push(DiscoveryEvent::SourcesDiscovered {
+                sources: all_sources,
+                discovered_by: "synthesis".into(),
+            });
         }
 
         out.push(SynthesisEvent::SynthesisRoleCompleted {
@@ -420,13 +408,7 @@ pub mod handlers {
         if !budget.has_budget(
             OperationCost::CLAUDE_HAIKU_GATHERING_FINDER + OperationCost::SEARCH_GATHERING_FINDER,
         ) {
-            out.push(TelemetryEvent::SystemLog {
-                message: "Skipped gathering finder: insufficient budget".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:gathering_finder",
-                    "reason": "budget_exhausted",
-                })),
-            });
+            ctx.logger.debug("Skipped gathering finder: insufficient budget");
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::GatheringFinder,
@@ -477,14 +459,16 @@ pub mod handlers {
             .collect();
         let results: Vec<_> = stream::iter(futures).buffer_unordered(3).collect().await;
 
+        let mut all_sources = Vec::new();
         for (target_events, target_sources, _target_stats) in results {
             out.extend(target_events);
-            for source in target_sources {
-                out.push(DiscoveryEvent::SourceDiscovered {
-                    source,
-                    discovered_by: "synthesis".into(),
-                });
-            }
+            all_sources.extend(target_sources);
+        }
+        if !all_sources.is_empty() {
+            out.push(DiscoveryEvent::SourcesDiscovered {
+                sources: all_sources,
+                discovered_by: "synthesis".into(),
+            });
         }
 
         out.push(SynthesisEvent::SynthesisRoleCompleted {
@@ -528,13 +512,7 @@ pub mod handlers {
         if !budget.has_budget(
             OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION,
         ) {
-            out.push(TelemetryEvent::SystemLog {
-                message: "Skipped investigation: insufficient budget".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:investigation",
-                    "reason": "budget_exhausted",
-                })),
-            });
+            ctx.logger.debug("Skipped investigation: insufficient budget");
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::Investigation,
@@ -627,13 +605,7 @@ pub mod handlers {
 
         let mut out = Events::new();
         if !budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
-            out.push(TelemetryEvent::SystemLog {
-                message: "Skipped response mapping: insufficient budget".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:response_mapping",
-                    "reason": "budget_exhausted",
-                })),
-            });
+            ctx.logger.debug("Skipped response mapping: insufficient budget");
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseMapping,
@@ -752,12 +724,10 @@ pub mod handlers {
         let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                return Ok(events![TelemetryEvent::SystemLog {
-                    message: "Skipped severity inference: missing region or graph_client".into(),
-                    context: Some(serde_json::json!({
-                        "handler": "synthesis:severity_inference",
-                        "reason": "missing_deps",
-                    })),
+                ctx.logger.debug("Skipped severity inference: missing region or graph_client");
+                return Ok(events![PipelineEvent::HandlerSkipped {
+                    handler_id: "synthesis:severity_inference".into(),
+                    reason: "missing region or graph_client".into(),
                 }]);
             }
         };
@@ -782,12 +752,10 @@ pub mod handlers {
             }
             Err(e) => {
                 warn!(error = %e, "Severity inference failed (non-fatal)");
-                Ok(events![TelemetryEvent::SystemLog {
-                    message: format!("Severity inference failed: {e}"),
-                    context: Some(serde_json::json!({
-                        "handler": "synthesis:severity_inference",
-                        "error": e.to_string(),
-                    })),
+                ctx.logger.debug(&format!("Severity inference failed: {e}"));
+                Ok(events![PipelineEvent::HandlerSkipped {
+                    handler_id: "synthesis:severity_inference".into(),
+                    reason: format!("severity inference failed: {e}"),
                 }])
             }
         }

@@ -3,7 +3,6 @@
 use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
-use rootsignal_common::telemetry_events::TelemetryEvent;
 use rootsignal_graph::GraphReader;
 
 use crate::core::engine::ScoutEngineDeps;
@@ -19,19 +18,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
     ) {
         (Some(g), Some(r), Some(p), Some(k)) => (g, r, p, k),
         _ => {
-            events.push(TelemetryEvent::SystemLog {
-                message: "Skipped supervisor: missing graph_client, region, pg_pool, or api_key".into(),
-                context: Some(serde_json::json!({
-                    "handler": "supervisor:supervise",
-                    "reason": "missing_deps",
-                    "missing": {
-                        "graph_client": deps.graph_client.is_none(),
-                        "region": deps.run_scope.region().is_none(),
-                        "pg_pool": deps.pg_pool.is_none(),
-                        "api_key": deps.anthropic_api_key.is_none(),
-                    },
-                })),
-            });
+            tracing::debug!("Skipped supervisor: missing graph_client, region, pg_pool, or api_key");
             return;
         }
     };
