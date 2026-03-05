@@ -55,7 +55,9 @@ type ScoutFinding = {
 type ScoutRun = {
   runId: string;
   region: string;
+  regionId: string | null;
   flowType: string | null;
+  sources: { id: string; label: string }[];
   startedAt: string;
   finishedAt: string | null;
 };
@@ -270,7 +272,23 @@ export function ScoutPage() {
     { key: "runId", label: "Run", render: (r) => (
       <Link to={`/scout-runs/${r.runId}`} className="text-blue-400 hover:underline font-mono text-xs">{r.runId.slice(0, 8)}</Link>
     )},
-    { key: "region", label: "Region", render: (r) => <span className="text-muted-foreground">{r.region || "-"}</span> },
+    { key: "area", label: "Area", render: (r) => {
+      if (r.sources.length > 0) {
+        return (
+          <span className="flex flex-wrap gap-1.5">
+            {r.sources.map((s) => (
+              <Link key={s.id} to={`/sources/${s.id}`} className="text-blue-400 hover:underline text-xs">
+                {s.label}
+              </Link>
+            ))}
+          </span>
+        );
+      }
+      if (r.regionId) {
+        return <Link to={`/scout/regions/${r.regionId}`} className="text-blue-400 hover:underline">{r.region}</Link>;
+      }
+      return <span className="text-muted-foreground">{r.region || "-"}</span>;
+    }},
     { key: "flowType", label: "Flow", render: (r) => r.flowType ? (
       <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{r.flowType}</span>
     ) : null },

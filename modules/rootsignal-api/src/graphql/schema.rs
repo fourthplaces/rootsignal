@@ -1573,6 +1573,36 @@ impl ScoutRun {
     async fn flow_type(&self) -> Option<&str> {
         self.row.flow_type.as_deref()
     }
+    /// Resolve source_ids to lightweight source briefs (id + label).
+    /// Empty for region-scoped runs.
+    async fn sources(&self, ctx: &Context<'_>) -> Result<Vec<RunSourceBrief>> {
+        let ids: Vec<Uuid> = self
+            .row
+            .source_ids
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| s.as_str().and_then(|s| s.parse::<Uuid>().ok()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let nodes = writer
+            .get_sources_by_ids(&ids)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load sources: {e}")))?;
+        Ok(nodes
+            .into_iter()
+            .map(|s| RunSourceBrief {
+                id: s.id.to_string(),
+                label: s.canonical_value.clone(),
+            })
+            .collect())
+    }
     async fn started_at(&self) -> DateTime<Utc> {
         self.row.started_at
     }
@@ -1593,6 +1623,12 @@ impl ScoutRun {
             .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
         Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
     }
+}
+
+#[derive(SimpleObject)]
+struct RunSourceBrief {
+    id: String,
+    label: String,
 }
 
 #[derive(SimpleObject)]

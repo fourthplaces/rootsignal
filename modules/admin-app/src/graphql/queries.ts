@@ -302,6 +302,7 @@ export const ADMIN_SCOUT_RUNS = gql`
       region
       regionId
       flowType
+      sources { id label }
       startedAt
       finishedAt
       stats {
