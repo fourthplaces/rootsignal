@@ -13,6 +13,8 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
+use futures::future::join_all;
+
 use ai_client::{Agent, Claude, Message, PromptBuilder};
 use rootsignal_common::SourceNode;
 
@@ -40,6 +42,11 @@ pub enum InvestigateRequest {
     #[serde(rename = "sources")]
     Sources {
         source_ids: Vec<Uuid>,
+        messages: Vec<ChatMessage>,
+    },
+    #[serde(rename = "scout_run")]
+    ScoutRun {
+        run_id: String,
         messages: Vec<ChatMessage>,
     },
 }
@@ -297,6 +304,9 @@ pub async fn investigate_handler(
             source_ids,
             messages,
         } => handle_sources_mode(state, pool, &api_key, source_ids, messages).await,
+        InvestigateRequest::ScoutRun { run_id, messages } => {
+            handle_run_mode(state, pool, &api_key, run_id, messages).await
+        }
     }
 }
 
@@ -431,6 +441,277 @@ async fn handle_sources_mode(
     );
 
     run_agent(claude, SOURCES_SYSTEM_PROMPT, &context, &chat_messages).await
+}
+
+// ---------------------------------------------------------------------------
+// Scout run mode — system prompt + context builder
+// ---------------------------------------------------------------------------
+
+const SCOUT_RUN_SYSTEM_PROMPT: &str = r#"You are a scout run investigation assistant for RootSignal, an event-sourced community intelligence platform. Your job is to help operators understand what a scout run did, why it made the decisions it made, and whether anything looks off.
+
+## What is a Scout Run?
+
+A scout run is a single execution of the scouting pipeline for a region. It scrapes web sources, extracts signals (gatherings, resources, concerns, etc.), deduplicates them against existing data, discovers new sources, and collects expansion queries for future runs.
+
+## Run Context
+
+You've been given:
+- **Run metadata**: region, timing, flow type, stats
+- **Event breakdown**: counts of key event types so you can see the shape of the run
+- **Sample events**: a selection of notable events (failures, rejections, discovered sources, signals created) so you have concrete data to discuss
+
+## Key Stats Explained
+
+- **urls_scraped**: How many source URLs were fetched
+- **signals_stored**: How many new signals made it into the graph
+- **signals_deduplicated**: How many signals were detected as duplicates of existing data
+- **expansion_sources_created**: How many new sources were discovered during this run
+- **expansion_queries_collected**: Search queries generated for future source discovery
+- **handler_failures**: Pipeline handler errors — non-zero means something broke
+
+## Your Tools
+
+You have the full investigation toolkit. The run's metadata, stats, event breakdown, and sample events are already loaded in context — no need to re-fetch them. Use tools to drill deeper:
+- `search_events` — find events by keyword (URLs, signal names, error messages)
+- `get_event` — load full payload of a specific event by seq number
+- `load_causal_tree` — trace the causal chain from any event
+- `get_signal` — inspect a signal node in the graph
+- `find_events_for_node` — find all events that touched a signal or source
+- `get_run_info` — compare against other runs (this run's info is already in context)
+- `get_source_info` — look up source metadata (weight, quality, production stats)
+- `fetch_url` — fetch a source page to see what it actually contains
+- `get_findings_for_node` — check if the supervisor flagged quality issues
+
+## How to Respond
+
+Talk like you're debriefing a colleague. Start with the big picture — was this a healthy run or a troubled one? Then highlight anything interesting:
+- Sources that produced nothing or failed
+- Signals that got rejected and why
+- New sources discovered and whether they look promising
+- Unusual patterns (e.g. high dedup rate, many failures, zero signals from a source that usually produces)
+
+Be conversational and direct. Mention seq numbers when they help trace specifics. Don't build tables unless asked — tell the story.
+
+If you spot something that looks like a bug, say so and offer to file a GitHub issue. Only call `create_github_issue` after the user explicitly confirms.
+"#;
+
+fn build_run_context(
+    run: &scout_run::ScoutRunRow,
+    variant_counts: &[(& str, i64)],
+    sample_events: &[(& str, Vec<scout_run::EventRow>)],
+) -> String {
+    let duration = run.finished_at.map(|f| {
+        let secs = (f - run.started_at).num_seconds();
+        if secs < 60 {
+            format!("{secs}s")
+        } else {
+            format!("{}m {}s", secs / 60, secs % 60)
+        }
+    });
+
+    let mut ctx = format!(
+        "## Scout Run\n\n\
+         - **run_id**: {}\n\
+         - **region**: {}\n\
+         - **flow_type**: {}\n\
+         - **started_at**: {}\n\
+         - **finished_at**: {}\n\
+         - **duration**: {}\n",
+        run.run_id,
+        run.region,
+        run.flow_type.as_deref().unwrap_or("default"),
+        run.started_at,
+        run.finished_at
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "still running".to_string()),
+        duration.unwrap_or_else(|| "running".to_string()),
+    );
+
+    // Stats
+    ctx.push_str("\n### Stats\n\n");
+    ctx.push_str(&format!(
+        "| Metric | Value |\n|--------|-------|\n\
+         | URLs scraped | {} |\n\
+         | Signals extracted | {} |\n\
+         | Signals stored | {} |\n\
+         | Signals deduplicated | {} |\n\
+         | Expansion sources created | {} |\n\
+         | Expansion queries collected | {} |\n\
+         | Handler failures | {} |\n",
+        run.stats.urls_scraped.unwrap_or(0),
+        run.stats.signals_extracted.unwrap_or(0),
+        run.stats.signals_stored.unwrap_or(0),
+        run.stats.signals_deduplicated.unwrap_or(0),
+        run.stats.expansion_sources_created.unwrap_or(0),
+        run.stats.expansion_queries_collected.unwrap_or(0),
+        run.stats.handler_failures.unwrap_or(0),
+    ));
+
+    // Input sources if present
+    if let Some(ref source_ids) = run.source_ids {
+        if let Some(arr) = source_ids.as_array() {
+            if !arr.is_empty() {
+                ctx.push_str("\n### Input Sources\n\n");
+                for id in arr {
+                    if let Some(s) = id.as_str() {
+                        ctx.push_str(&format!("- `{s}`\n"));
+                    }
+                }
+            }
+        }
+    }
+
+    // Event type breakdown
+    if !variant_counts.is_empty() {
+        ctx.push_str("\n### Event Breakdown\n\n");
+        ctx.push_str("| Event Type | Count |\n|------------|-------|\n");
+        for (variant, count) in variant_counts {
+            ctx.push_str(&format!("| {variant} | {count} |\n"));
+        }
+    }
+
+    // Sample events
+    for (label, events) in sample_events {
+        if events.is_empty() {
+            continue;
+        }
+        ctx.push_str(&format!("\n### Sample: {label}\n\n"));
+        ctx.push_str("| seq | name | summary |\n|-----|------|----------|\n");
+        for e in events {
+            let name =
+                json_str(&e.data, "type").unwrap_or_else(|| e.event_type.clone());
+            let summary = event_summary(&name, &e.data);
+            ctx.push_str(&format!(
+                "| {} | {} | {} |\n",
+                e.seq,
+                name,
+                summary.as_deref().unwrap_or("-"),
+            ));
+        }
+    }
+
+    ctx
+}
+
+/// Variants we count for the event breakdown table.
+const BREAKDOWN_VARIANTS: &[&str] = &[
+    "content_fetched",
+    "content_unchanged",
+    "content_fetch_failed",
+    "signals_extracted",
+    "new_signal_accepted",
+    "observation_rejected",
+    "cross_source_match_detected",
+    "same_source_reencountered",
+    "source_discovered",
+    "expansion_query_collected",
+    "handler_failed",
+    "handler_skipped",
+];
+
+/// Variants we sample (with small limits) to give the agent concrete data.
+const SAMPLE_VARIANTS: &[(&str, &str, i64)] = &[
+    ("Failures", "handler_failed", 10),
+    ("Fetch Failures", "content_fetch_failed", 10),
+    ("Rejections", "observation_rejected", 15),
+    ("Signals Created", "new_signal_accepted", 15),
+    ("Sources Discovered", "source_discovered", 15),
+    ("Dedup Matches", "cross_source_match_detected", 10),
+];
+
+async fn handle_run_mode(
+    state: Arc<AppState>,
+    pool: Arc<sqlx::PgPool>,
+    api_key: &str,
+    run_id: String,
+    chat_messages: Vec<ChatMessage>,
+) -> axum::response::Response {
+    // Load run metadata
+    let run = match scout_run::find_by_id(&pool, &run_id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, "Run not found").into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, run_id, "Failed to load scout run");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load run: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    // Count key event types (all queries in parallel)
+    let count_futures = BREAKDOWN_VARIANTS.iter().map(|variant| {
+        let pool = pool.clone();
+        let run_id = run_id.clone();
+        async move {
+            let count = scout_run::count_events_by_variant(&pool, &run_id, variant)
+                .await
+                .unwrap_or(0);
+            (*variant, count)
+        }
+    });
+    let variant_counts: Vec<(&str, i64)> = join_all(count_futures)
+        .await
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .collect();
+
+    // Sample notable events (all queries in parallel)
+    let sample_futures = SAMPLE_VARIANTS.iter().map(|(label, variant, limit)| {
+        let pool = pool.clone();
+        let run_id = run_id.clone();
+        async move {
+            let rows = scout_run::list_events_by_variant(&pool, &run_id, variant, *limit)
+                .await
+                .unwrap_or_default();
+            (*label, rows)
+        }
+    });
+    let sample_events: Vec<(&str, Vec<scout_run::EventRow>)> = join_all(sample_futures)
+        .await
+        .into_iter()
+        .filter(|(_, rows)| !rows.is_empty())
+        .collect();
+
+    let context = build_run_context(&run, &variant_counts, &sample_events);
+
+    // Build Claude agent with the full investigation toolkit
+    let mut claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+        .tool(LoadCausalTreeTool { pool: pool.clone() })
+        .tool(SearchEventsTool { pool: pool.clone() })
+        .tool(GetEventTool { pool: pool.clone() })
+        .tool(GetSignalTool {
+            reader: state.reader.clone(),
+        })
+        .tool(FindEventsForNodeTool { pool: pool.clone() })
+        .tool(GetRunInfoTool { pool })
+        .tool(FetchUrlTool)
+        .tool(GetFindingsForNodeTool {
+            reader: state.reader.clone(),
+        })
+        .tool(GetSourceInfoTool {
+            writer: state.writer.clone(),
+        });
+
+    if let (Some(token), Some(repo)) = (&state.config.github_token, &state.config.github_repo) {
+        claude = claude.tool(CreateGitHubIssueTool {
+            github_token: token.clone(),
+            github_repo: repo.clone(),
+        });
+    }
+
+    tracing::info!(
+        message_count = chat_messages.len(),
+        run_id = %run_id,
+        variant_counts = variant_counts.len(),
+        sample_sections = sample_events.len(),
+        "Starting scout run investigation"
+    );
+
+    run_agent(claude, SCOUT_RUN_SYSTEM_PROMPT, &context, &chat_messages).await
 }
 
 async fn run_agent(

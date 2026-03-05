@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery } from "@apollo/client";
 import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_OUTCOMES } from "@/graphql/queries";
+import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -74,6 +76,7 @@ function ShowingCount({ shown, total }: { shown: number; total: number }) {
 
 export function ScoutRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
+  const [investigating, setInvestigating] = useState(false);
 
   const { data, loading } = useQuery(ADMIN_SCOUT_RUN, {
     variables: { runId: runId ?? "" },
@@ -122,12 +125,20 @@ export function ScoutRunDetailPage() {
             <span className="text-xs px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/30">running</span>
           )}
         </div>
-        <Link
-          to={`/events?runId=${run.runId}`}
-          className="text-xs text-blue-400 hover:underline"
-        >
-          View Events &rarr;
-        </Link>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setInvestigating(true)}
+            className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-accent text-foreground transition-colors"
+          >
+            Investigate
+          </button>
+          <Link
+            to={`/events?runId=${run.runId}`}
+            className="text-xs text-blue-400 hover:underline"
+          >
+            View Events &rarr;
+          </Link>
+        </div>
       </div>
 
       {/* Timestamps */}
@@ -274,6 +285,27 @@ export function ScoutRunDetailPage() {
           )}
         </div>
       ) : null}
+
+      {/* Investigation drawer */}
+      {investigating && runId && (
+        <div className="fixed inset-0 z-50 flex">
+          <div
+            className="flex-1 bg-black/40"
+            onClick={() => setInvestigating(false)}
+          />
+          <div className="w-[520px] bg-card border-l border-border flex flex-col">
+            <InvestigateDrawer
+              key={runId}
+              investigation={{
+                mode: "scout_run",
+                runId,
+                runLabel: runId.slice(0, 8),
+              }}
+              onClose={() => setInvestigating(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

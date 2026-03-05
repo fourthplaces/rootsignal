@@ -55,12 +55,58 @@ type AdminEvent = {
 
 export type InvestigateMode =
   | { mode: "event"; event: AdminEvent }
-  | { mode: "sources"; sourceIds: string[]; sourceLabel: string };
+  | { mode: "sources"; sourceIds: string[]; sourceLabel: string }
+  | { mode: "scout_run"; runId: string; runLabel: string };
 
 type ChatMsg = {
   role: "user" | "assistant";
   content: string;
 };
+
+// ---------------------------------------------------------------------------
+// Mode config — all mode-specific behavior lives here
+// ---------------------------------------------------------------------------
+
+type ModeConfig = {
+  title: string;
+  subtitle: string;
+  autoMessage: string;
+  loadingLabel: string;
+  showSynthesis: boolean;
+  buildBody: (messages: ChatMsg[]) => Record<string, unknown>;
+};
+
+function getModeConfig(investigation: InvestigateMode): ModeConfig {
+  switch (investigation.mode) {
+    case "event":
+      return {
+        title: `Investigate: ${investigation.event.name}`,
+        subtitle: `seq=${investigation.event.seq} · ${investigation.event.layer}`,
+        autoMessage: "Investigate this event.",
+        loadingLabel: "Investigating...",
+        showSynthesis: true,
+        buildBody: (messages) => ({ mode: "event", seq: investigation.event.seq, messages }),
+      };
+    case "sources":
+      return {
+        title: `Auditing ${investigation.sourceLabel}`,
+        subtitle: `${investigation.sourceIds.length} source${investigation.sourceIds.length === 1 ? "" : "s"} selected`,
+        autoMessage: "Audit these sources. Give me a quick assessment of which ones look productive and which look like garbage.",
+        loadingLabel: "Auditing sources...",
+        showSynthesis: false,
+        buildBody: (messages) => ({ mode: "sources", source_ids: investigation.sourceIds, messages }),
+      };
+    case "scout_run":
+      return {
+        title: `Investigate Run ${investigation.runLabel}`,
+        subtitle: `run_id=${investigation.runId}`,
+        autoMessage: "Give me a quick summary of this run — what went well, what looks off, and anything worth investigating further.",
+        loadingLabel: "Investigating run...",
+        showSynthesis: false,
+        buildBody: (messages) => ({ mode: "scout_run", run_id: investigation.runId, messages }),
+      };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // SSE fetch helper
@@ -98,19 +144,8 @@ GraphQL endpoint: \`${API_BASE}/graphql\` (POST, Content-Type: application/json)
 - Include full field selections so the query is copy-pasteable as-is
 - Use the admin query names: adminCausalTree, adminEvents, adminScoutRunEvents, adminNodeEvents, signal, adminScoutRuns, supervisorFindings, adminRegionSources, etc.]`;
 
-function buildRequestBody(
-  investigation: InvestigateMode,
-  messages: ChatMsg[],
-): Record<string, unknown> {
-  if (investigation.mode === "event") {
-    return { mode: "event", seq: investigation.event.seq, messages };
-  }
-  return { mode: "sources", source_ids: investigation.sourceIds, messages };
-}
-
 async function streamInvestigation(
-  investigation: InvestigateMode,
-  messages: ChatMsg[],
+  body: Record<string, unknown>,
   onDelta: (text: string) => void,
   onDone: () => void,
   onError: (err: string) => void,
@@ -120,7 +155,7 @@ async function streamInvestigation(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify(buildRequestBody(investigation, messages)),
+    body: JSON.stringify(body),
     signal,
   });
 
@@ -184,32 +219,6 @@ async function streamInvestigation(
 }
 
 // ---------------------------------------------------------------------------
-// Mode helpers
-// ---------------------------------------------------------------------------
-
-function getTitle(investigation: InvestigateMode): string {
-  if (investigation.mode === "event") {
-    return `Investigate: ${investigation.event.name}`;
-  }
-  return `Auditing ${investigation.sourceLabel}`;
-}
-
-function getSubtitle(investigation: InvestigateMode): string {
-  if (investigation.mode === "event") {
-    const e = investigation.event;
-    return `seq=${e.seq} · ${e.layer}`;
-  }
-  return `${investigation.sourceIds.length} source${investigation.sourceIds.length === 1 ? "" : "s"} selected`;
-}
-
-function getAutoMessage(investigation: InvestigateMode): string {
-  if (investigation.mode === "event") {
-    return "Investigate this event.";
-  }
-  return "Audit these sources. Give me a quick assessment of which ones look productive and which look like garbage.";
-}
-
-// ---------------------------------------------------------------------------
 // InvestigateDrawer
 // ---------------------------------------------------------------------------
 
@@ -220,6 +229,7 @@ export function InvestigateDrawer({
   investigation: InvestigateMode;
   onClose: () => void;
 }) {
+  const config = getModeConfig(investigation);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -251,8 +261,7 @@ export function InvestigateDrawer({
       abortRef.current = controller;
 
       streamInvestigation(
-        investigation,
-        newMessages,
+        config.buildBody(newMessages),
         (text) => {
           setMessages((prev) => {
             const updated = [...prev];
@@ -284,12 +293,12 @@ export function InvestigateDrawer({
         controller.signal,
       );
     },
-    [investigation],
+    [config],
   );
 
   // Auto-send on mount
   useEffect(() => {
-    sendMessage(getAutoMessage(investigation), []);
+    sendMessage(config.autoMessage, []);
     return () => {
       abortRef.current?.abort();
       synthAbortRef.current?.abort();
@@ -311,7 +320,7 @@ export function InvestigateDrawer({
     }
   };
 
-  const showSynthesis = investigation.mode === "event";
+  const showSynthesis = config.showSynthesis;
 
   const copyIssue = useCallback(async () => {
     if (copyState !== "idle" || streaming || !showSynthesis) return;
@@ -328,8 +337,7 @@ export function InvestigateDrawer({
     try {
       let result = "";
       await streamInvestigation(
-        investigation,
-        synthMessages,
+        config.buildBody(synthMessages),
         (text) => { result += text; },
         async () => {
           try {
@@ -351,7 +359,7 @@ export function InvestigateDrawer({
     } catch {
       setCopyState("idle");
     }
-  }, [copyState, streaming, messages, investigation, showSynthesis]);
+  }, [copyState, streaming, messages, config, showSynthesis]);
 
   return (
     <div className="relative flex flex-col h-full">
@@ -359,10 +367,10 @@ export function InvestigateDrawer({
       <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-foreground truncate">
-            {getTitle(investigation)}
+            {config.title}
           </h2>
           <p className="text-[10px] text-muted-foreground">
-            {getSubtitle(investigation)}
+            {config.subtitle}
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -416,7 +424,7 @@ export function InvestigateDrawer({
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   <span className="text-xs">
-                    {investigation.mode === "event" ? "Investigating..." : "Auditing sources..."}
+                    {config.loadingLabel}
                   </span>
                 </div>
               )
