@@ -20,7 +20,7 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
     let (graph_client, ai, region, budget) = match (
         deps.graph_client.as_ref(),
         deps.ai.as_deref(),
-        deps.region.as_ref(),
+        deps.run_scope.region(),
         deps.budget.as_ref(),
     ) {
         (Some(g), Some(k), Some(r), Some(b)) => (g, k, r, b),

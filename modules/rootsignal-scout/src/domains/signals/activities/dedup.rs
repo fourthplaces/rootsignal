@@ -162,7 +162,7 @@ pub async fn deduplicate_extracted_batch(
     };
 
     // --- Layer 3: Vector dedup (cache + graph) ---
-    let (lat_delta, lng_delta) = match &deps.region {
+    let (lat_delta, lng_delta) = match deps.run_scope.region() {
         Some(r) => {
             let lat_d = r.radius_km / 111.0;
             let lng_d = r.radius_km / (111.0 * r.center_lat.to_radians().cos());
@@ -171,8 +171,8 @@ pub async fn deduplicate_extracted_batch(
         None => (90.0, 180.0), // global fallback
     };
     let (center_lat, center_lng) = deps
-        .region
-        .as_ref()
+        .run_scope
+        .region()
         .map(|r| (r.center_lat, r.center_lng))
         .unwrap_or((0.0, 0.0));
 

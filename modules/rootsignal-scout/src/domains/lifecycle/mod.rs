@@ -57,17 +57,21 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        // Requires graph_client + region — skip in tests
-        let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
-            (Some(r), Some(g)) => (r, g),
-            _ => return Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "lifecycle:schedule".into(),
-                reason: "missing region or graph_client (test environment)".into(),
-            }]),
+        // Branch on run modality
+        let output = match deps.run_scope.input_sources() {
+            Some(sources) => activities::schedule_input_sources(sources),
+            None => {
+                let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
+                    (Some(r), Some(g)) => (r, g),
+                    _ => return Ok(events![PipelineEvent::HandlerSkipped {
+                        handler_id: "lifecycle:schedule".into(),
+                        reason: "missing region or graph_client (test environment)".into(),
+                    }]),
+                };
+                let graph = GraphReader::new(graph_client.clone());
+                activities::schedule_sources(&graph, region).await
+            }
         };
-        let graph = GraphReader::new(graph_client.clone());
-
-        let output = activities::schedule_sources(&graph, region).await;
 
         let tension_count = output.tension_count;
         let response_count = output.response_count;

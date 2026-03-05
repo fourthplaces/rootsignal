@@ -31,7 +31,7 @@ pub async fn seed_sources_if_empty(
         None => return Ok(seesaw_core::Events::new()),
     };
 
-    let region = match &deps.region {
+    let region = match deps.run_scope.region() {
         Some(r) => r,
         None => return Ok(seesaw_core::Events::new()),
     };

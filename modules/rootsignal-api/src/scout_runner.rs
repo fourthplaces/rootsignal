@@ -153,12 +153,24 @@ impl ScoutRunner {
         });
     }
 
-    /// Spawn a scout-source flow: scrape specific sources, no region needed.
-    pub async fn run_scout_source(&self, source_ids: &[String], scope: &ScoutScope) {
+    /// Spawn a scout-source flow: scrape specific sources, with optional region context.
+    pub async fn run_scout_source(
+        &self,
+        source_ids: &[String],
+        sources: Vec<rootsignal_common::SourceNode>,
+        region: Option<rootsignal_common::RegionNode>,
+    ) {
         let deps = self.deps.clone();
         let source_ids_owned: Vec<String> = source_ids.to_vec();
-        let scope = scope.clone();
         let run_id = uuid::Uuid::new_v4().to_string();
+        let metadata_scope = region.as_ref()
+            .map(ScoutScope::from)
+            .unwrap_or(ScoutScope {
+                name: format!("sources:{}", source_ids.len()),
+                center_lat: 0.0,
+                center_lng: 0.0,
+                radius_km: 0.0,
+            });
 
         info!(source_count = source_ids_owned.len(), run_id = run_id.as_str(), "Spawning scout-source flow");
 
@@ -166,9 +178,9 @@ impl ScoutRunner {
             let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
             let source_ids_json = serde_json::to_value(&source_ids_owned).ok();
 
-            early_insert_flow_run(&deps, &run_id, None, "scout_source", source_ids_json.as_ref(), &scope).await;
+            early_insert_flow_run(&deps, &run_id, None, "scout_source", source_ids_json.as_ref(), &metadata_scope).await;
 
-            let engine = deps.build_scrape_engine(&scope, &run_id, None);
+            let engine = deps.build_source_engine(region.as_ref(), &run_id, sources);
             let result = engine
                 .emit(LifecycleEvent::EngineStarted { run_id: run_id.clone() })
                 .correlation_id(run_id_uuid)

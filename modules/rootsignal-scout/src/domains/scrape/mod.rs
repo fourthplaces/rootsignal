@@ -131,7 +131,7 @@ pub mod handlers {
             &tension_web_refs,
             &state.url_to_canonical_key,
             deps.ai.as_deref(),
-            deps.region.as_ref().map(|r| r.name.as_str()),
+            deps.run_scope.region().map(|r| r.name.as_str()),
         ).await;
 
         let mut all_events = Events::new();
@@ -619,7 +619,7 @@ pub mod handlers {
         let deps = ctx.deps();
 
         // Requires region + graph_client — skip in tests
-        let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
+        let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 let mut skip = events![LifecycleEvent::PhaseCompleted {
@@ -631,7 +631,7 @@ pub mod handlers {
                         "handler": "scrape:resolve_response",
                         "reason": "missing_deps",
                         "missing": {
-                            "region": deps.region.is_none(),
+                            "region": deps.run_scope.region().is_none(),
                             "graph_client": deps.graph_client.is_none(),
                         },
                     })),
@@ -710,7 +710,7 @@ pub mod handlers {
                 &web_sources,
                 &state.url_to_canonical_key,
                 deps.ai.as_deref(),
-                deps.region.as_ref().map(|r| r.name.as_str()),
+                deps.run_scope.region().map(|r| r.name.as_str()),
             ).await;
 
             all_events.push(PipelineEvent::UrlsResolvedAccumulated {

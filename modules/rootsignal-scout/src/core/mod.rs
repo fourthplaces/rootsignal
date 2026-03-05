@@ -8,6 +8,7 @@ pub mod extractor;
 pub mod pipeline_events;
 pub mod postgres_store;
 pub mod projection;
+pub mod run_scope;
 pub mod stats;
 
 #[cfg(test)]

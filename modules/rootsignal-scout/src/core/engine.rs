@@ -15,8 +15,10 @@
 use std::sync::Arc;
 
 use ai_client::Agent;
-use rootsignal_common::{EmbeddingLookup, ScoutScope};
+use rootsignal_common::EmbeddingLookup;
 use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector};
+
+use crate::core::run_scope::RunScope;
 use sqlx::PgPool;
 
 use crate::core::aggregate::pipeline_aggregators;
@@ -38,7 +40,7 @@ pub struct ScoutEngineDeps {
     // --- Fields from PipelineDeps (previously behind Arc<RwLock<Option>>) ---
     pub store: Arc<dyn SignalReader>,
     pub embedder: Arc<dyn TextEmbedder>,
-    pub region: Option<ScoutScope>,
+    pub run_scope: RunScope,
     pub fetcher: Option<Arc<dyn ContentFetcher>>,
     pub ai: Option<Arc<dyn Agent>>,
     /// Raw API key — only used by out-of-scope callers (supervisor, news_scanner)
@@ -74,7 +76,7 @@ impl ScoutEngineDeps {
         Self {
             store,
             embedder,
-            region: None,
+            run_scope: RunScope::Unscoped,
             fetcher: None,
             ai: None,
             anthropic_api_key: None,

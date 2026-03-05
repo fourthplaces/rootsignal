@@ -35,7 +35,7 @@ pub mod handlers {
 
         // Requires region + graph_client + budget — skip in tests
         let (region, graph_client, budget) = match (
-            deps.region.as_ref(),
+            deps.run_scope.region(),
             deps.graph_client.as_ref(),
             deps.budget.as_ref(),
         ) {

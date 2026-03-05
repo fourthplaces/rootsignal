@@ -404,14 +404,25 @@ impl MutationRoot {
                 return Ok(ScoutResult { success: false, message: Some("All requested sources are busy".into()) });
             }
         }
+
         let runner = require_runner(ctx)?;
-        let scope = ScoutScope {
-            center_lat: 0.0,
-            center_lng: 0.0,
-            radius_km: 0.0,
-            name: format!("sources:{}", source_ids.len()),
-        };
-        runner.run_scout_source(&source_ids, &scope).await;
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+
+        // Load actual SourceNodes so the engine has them at scheduling time
+        let uuids: Vec<Uuid> = source_ids.iter()
+            .filter_map(|id| Uuid::parse_str(id).ok())
+            .collect();
+        let sources = writer.get_sources_by_ids(&uuids).await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load sources: {e}")))?;
+        if sources.is_empty() {
+            return Ok(ScoutResult { success: false, message: Some("No valid sources found".into()) });
+        }
+
+        // Derive region from the first source's WATCHES edge (if any)
+        let region = writer.get_region_for_source(&source_ids[0]).await
+            .unwrap_or(None);
+
+        runner.run_scout_source(&source_ids, sources, region).await;
         Ok(ScoutResult {
             success: true,
             message: Some(format!("Scout started for {} sources", source_ids.len())),

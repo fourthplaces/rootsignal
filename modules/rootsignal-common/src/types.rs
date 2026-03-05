@@ -435,14 +435,14 @@ impl ScoutScope {
     }
 }
 
-// --- Region (persistent geographic area to watch) ---
+// --- RegionNode (persistent geographic area to watch) ---
 
 /// A persistent geographic region that scouts watch.
 /// Regions can nest: a parent region (e.g. "US") CONTAINS child regions (e.g. "Portland").
 /// Leaf regions have sources and can bootstrap/scrape/weave.
 /// Parent regions define a larger scope and can only weave (reading signals from all contained area).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Region {
+pub struct RegionNode {
     pub id: Uuid,
     pub name: String,
     pub center_lat: f64,
@@ -453,8 +453,11 @@ pub struct Region {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<&Region> for ScoutScope {
-    fn from(region: &Region) -> Self {
+/// Backward-compatible alias during migration.
+pub type Region = RegionNode;
+
+impl From<&RegionNode> for ScoutScope {
+    fn from(region: &RegionNode) -> Self {
         ScoutScope {
             center_lat: region.center_lat,
             center_lng: region.center_lng,

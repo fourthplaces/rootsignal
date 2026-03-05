@@ -59,7 +59,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
+        let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 let mut skip = events![EnrichmentEvent::EnrichmentRoleCompleted {
@@ -264,7 +264,7 @@ pub mod handlers {
         let deps = ctx.deps();
 
         // Requires graph_client + region — skip in tests
-        let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
+        let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 let mut skip = events![LifecycleEvent::MetricsCompleted];

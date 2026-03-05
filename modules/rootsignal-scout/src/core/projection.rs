@@ -103,13 +103,13 @@ pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
                 match lifecycle {
                     LifecycleEvent::EngineStarted { run_id } => {
                         let region = deps
-                            .region
-                            .as_ref()
+                            .run_scope
+                            .region()
                             .map(|r| r.name.as_str())
                             .unwrap_or("unknown");
                         let scope_json = deps
-                            .region
-                            .as_ref()
+                            .run_scope
+                            .region()
                             .and_then(|r| serde_json::to_value(r).ok());
                         sqlx::query(
                             "INSERT INTO scout_runs (run_id, region, task_id, scope, started_at) \

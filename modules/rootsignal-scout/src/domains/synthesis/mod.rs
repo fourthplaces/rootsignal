@@ -100,7 +100,7 @@ pub mod handlers {
         let deps = ctx.deps();
 
         // Guard: if deps are missing, skip synthesis entirely
-        if deps.region.is_none()
+        if deps.run_scope.region().is_none()
             || deps.graph_client.is_none()
             || deps.budget.is_none()
             || deps.archive.is_none()
@@ -114,7 +114,7 @@ pub mod handlers {
                     "handler": "synthesis:trigger",
                     "reason": "missing_deps",
                     "missing": {
-                        "region": deps.region.is_none(),
+                        "region": deps.run_scope.region().is_none(),
                         "graph_client": deps.graph_client.is_none(),
                         "budget": deps.budget.is_none(),
                         "archive": deps.archive.is_none(),
@@ -175,7 +175,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
@@ -277,7 +277,7 @@ pub mod handlers {
 
         let deps = ctx.deps();
 
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let ai = deps.ai.as_ref().expect("guarded by trigger");
         let archive = deps.archive.as_ref().expect("guarded by fan-out").clone();
@@ -409,7 +409,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
@@ -504,7 +504,7 @@ pub mod handlers {
 
         let deps = ctx.deps();
 
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let ai = deps.ai.as_ref().expect("guarded by trigger");
         let archive = deps.archive.as_ref().expect("guarded by fan-out").clone();
@@ -621,7 +621,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
@@ -716,7 +716,7 @@ pub mod handlers {
 
         let deps = ctx.deps();
 
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let ai = deps.ai.as_ref().expect("guarded by trigger");
         let archive = deps.archive.as_ref().expect("guarded by fan-out").clone();
@@ -806,7 +806,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
@@ -904,7 +904,7 @@ pub mod handlers {
 
         let deps = ctx.deps();
 
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let ai = deps.ai.as_ref().expect("guarded by trigger");
         let archive = deps.archive.as_ref().expect("guarded by fan-out").clone();
@@ -985,7 +985,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let budget = deps.budget.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
@@ -1067,7 +1067,7 @@ pub mod handlers {
         };
 
         let deps = ctx.deps();
-        let region = deps.region.as_ref().expect("guarded by trigger");
+        let region = deps.run_scope.region().expect("guarded by trigger");
         let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
         let ai = deps.ai.as_ref().expect("guarded by trigger");
         let graph = GraphReader::new(graph_client.clone());
@@ -1178,7 +1178,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let (region, graph_client) = match (deps.region.as_ref(), deps.graph_client.as_ref()) {
+        let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 return Ok(events![TelemetryEvent::SystemLog {

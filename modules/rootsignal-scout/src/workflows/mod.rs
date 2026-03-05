@@ -47,30 +47,25 @@ impl ScoutDeps {
         crate::store::build_signal_reader(self.graph_client.clone())
     }
 
-    /// Construct engine deps with all per-invocation resources.
+    // -----------------------------------------------------------------
+    // Base dep construction — single source of truth for per-run wiring
+    // -----------------------------------------------------------------
+
+    /// Wire all per-invocation infrastructure deps.
     ///
-    /// Shared helper for both engine variants. `spent_cents` seeds the budget
-    /// tracker so standalone workflows can carry forward prior spend.
-    fn build_engine_deps(
+    /// Returns `(deps, ai)` — callers add the scope-specific parts
+    /// (extractor, run_scope, task_id) on top.
+    fn build_base_deps(
         &self,
-        scope: &rootsignal_common::ScoutScope,
         run_id: &str,
         spent_cents: u64,
-        task_id: Option<&str>,
-    ) -> ScoutEngineDeps {
+    ) -> (ScoutEngineDeps, Arc<dyn ai_client::Agent>) {
         let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
         let embedder: Arc<dyn TextEmbedder> =
             Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
         let ai: Arc<dyn ai_client::Agent> = Arc::new(
             Claude::new(&self.anthropic_api_key, HAIKU_MODEL),
         );
-        let extractor: Arc<dyn crate::core::extractor::SignalExtractor> =
-            Arc::new(crate::core::extractor::Extractor::new(
-                ai.clone(),
-                scope.name.as_str(),
-                scope.center_lat,
-                scope.center_lng,
-            ));
         let archive = create_archive(self);
         let budget = Arc::new(
             crate::domains::scheduling::activities::budget::BudgetTracker::new_with_spent(
@@ -80,23 +75,47 @@ impl ScoutDeps {
         );
 
         let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
-        deps.region = Some(scope.clone());
-        deps.fetcher = Some(archive.clone() as Arc<dyn crate::traits::ContentFetcher>);
-        deps.ai = Some(ai);
+        deps.fetcher = Some(archive.clone() as Arc<dyn ContentFetcher>);
+        deps.ai = Some(ai.clone());
         deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
         deps.graph_client = Some(self.graph_client.clone());
-        deps.extractor = Some(extractor);
         deps.archive = Some(archive);
         deps.budget = Some(budget);
         deps.pg_pool = Some(self.pg_pool.clone());
+
+        (deps, ai)
+    }
+
+    /// Build an extractor scoped to a region (or neutral for unscoped runs).
+    fn make_extractor(
+        ai: &Arc<dyn ai_client::Agent>,
+        scope: Option<&rootsignal_common::ScoutScope>,
+    ) -> Arc<dyn crate::core::extractor::SignalExtractor> {
+        let (name, lat, lng) = match scope {
+            Some(s) => (s.name.as_str(), s.center_lat, s.center_lng),
+            None => ("Unscoped", 0.0, 0.0),
+        };
+        Arc::new(crate::core::extractor::Extractor::new(ai.clone(), name, lat, lng))
+    }
+
+    // -----------------------------------------------------------------
+    // Region-scoped builders (bootstrap, scrape, weave, full)
+    // -----------------------------------------------------------------
+
+    /// Construct engine deps for a region-scoped run.
+    fn build_region_deps(
+        &self,
+        scope: &rootsignal_common::ScoutScope,
+        run_id: &str,
+        spent_cents: u64,
+        task_id: Option<&str>,
+    ) -> ScoutEngineDeps {
+        use crate::core::run_scope::RunScope;
+
+        let (mut deps, ai) = self.build_base_deps(run_id, spent_cents);
+        deps.extractor = Some(Self::make_extractor(&ai, Some(scope)));
+        deps.run_scope = RunScope::Region(scope.clone());
         deps.task_id = task_id.map(String::from);
-
-        // Validate scrape-critical deps. build_engine_deps is the production
-        // entry point for both scrape and full engines — catch configuration
-        // errors here rather than panicking deep in the scrape phase.
-        assert!(deps.extractor.is_some(), "scrape engine requires extractor — set deps.extractor before calling build_engine()");
-        assert!(deps.fetcher.is_some(), "scrape engine requires fetcher — set deps.fetcher before calling build_engine()");
-
         deps
     }
 
@@ -110,38 +129,8 @@ impl ScoutDeps {
         run_id: &str,
         task_id: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_engine_deps(scope, run_id, 0, task_id);
-        let store = self.make_store(run_id);
-        engine::build_engine(deps, store)
-    }
-
-    /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
-    ///
-    /// Minimal deps: no scope/region, no extractor.
-    pub fn build_news_engine(&self, run_id: &str) -> ScoutEngine {
-        let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
-        let embedder: Arc<dyn TextEmbedder> =
-            Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
-        let archive = create_archive(self);
-        let budget = Arc::new(
-            crate::domains::scheduling::activities::budget::BudgetTracker::new(
-                self.daily_budget_cents,
-            ),
-        );
-
-        let ai: Arc<dyn ai_client::Agent> = Arc::new(
-            Claude::new(&self.anthropic_api_key, HAIKU_MODEL),
-        );
-
-        let mut deps = ScoutEngineDeps::new(store, embedder, run_id);
-        deps.ai = Some(ai);
-        deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
-        deps.graph_client = Some(self.graph_client.clone());
-        deps.archive = Some(archive);
-        deps.budget = Some(budget);
-        deps.pg_pool = Some(self.pg_pool.clone());
-        let store = self.make_store(run_id);
-        engine::build_news_engine(deps, store)
+        let deps = self.build_region_deps(scope, run_id, 0, task_id);
+        engine::build_engine(deps, self.make_store(run_id))
     }
 
     /// Build a full-chain engine: extends the scrape chain with
@@ -156,9 +145,8 @@ impl ScoutDeps {
         spent_cents: u64,
         task_id: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_engine_deps(scope, run_id, spent_cents, task_id);
-        let store = self.make_store(run_id);
-        engine::build_full_engine(deps, store)
+        let deps = self.build_region_deps(scope, run_id, spent_cents, task_id);
+        engine::build_full_engine(deps, self.make_store(run_id))
     }
 
     /// Build a weave-only engine: cross-signal synthesis at any region level.
@@ -170,22 +158,59 @@ impl ScoutDeps {
         run_id: &str,
         task_id: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_engine_deps(scope, run_id, 0, task_id);
-        let store = self.make_store(run_id);
-        engine::build_weave_engine(deps, store)
+        let deps = self.build_region_deps(scope, run_id, 0, task_id);
+        engine::build_weave_engine(deps, self.make_store(run_id))
     }
 
-    /// Build engine deps for resuming a crashed run. Same as `build_engine_deps`
-    /// but public and without the extractor/fetcher assertions (the engine already
-    /// has its handlers registered; we just need deps for the settle loop).
+    /// Build engine deps for resuming a crashed run.
     pub fn build_engine_deps_for_resume(
         &self,
         scope: &rootsignal_common::ScoutScope,
         run_id: &str,
         task_id: Option<&str>,
     ) -> ScoutEngineDeps {
-        self.build_engine_deps(scope, run_id, 0, task_id)
+        self.build_region_deps(scope, run_id, 0, task_id)
     }
+
+    // -----------------------------------------------------------------
+    // Source-targeted builder
+    // -----------------------------------------------------------------
+
+    /// Build a source-targeted engine: scrape specific input sources.
+    ///
+    /// When `region` is provided (via WATCHES edge), enrichment/expansion/synthesis
+    /// get geographic context. When None, those phases skip gracefully.
+    pub fn build_source_engine(
+        &self,
+        region: Option<&rootsignal_common::RegionNode>,
+        run_id: &str,
+        input_sources: Vec<rootsignal_common::SourceNode>,
+    ) -> ScoutEngine {
+        use crate::core::run_scope::RunScope;
+
+        let scope = region.map(rootsignal_common::ScoutScope::from);
+        let (mut deps, ai) = self.build_base_deps(run_id, 0);
+        deps.extractor = Some(Self::make_extractor(&ai, scope.as_ref()));
+        deps.run_scope = RunScope::Sources {
+            sources: input_sources,
+            region: scope,
+        };
+        engine::build_engine(deps, self.make_store(run_id))
+    }
+
+    // -----------------------------------------------------------------
+    // News engine (no region, no extractor)
+    // -----------------------------------------------------------------
+
+    /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
+    pub fn build_news_engine(&self, run_id: &str) -> ScoutEngine {
+        let (deps, _ai) = self.build_base_deps(run_id, 0);
+        engine::build_news_engine(deps, self.make_store(run_id))
+    }
+
+    // -----------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------
 
     /// Create a PostgresStore scoped to a run_id (used as correlation_id).
     fn make_store(&self, run_id: &str) -> Option<Arc<dyn seesaw_core::Store>> {

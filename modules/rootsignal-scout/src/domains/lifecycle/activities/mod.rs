@@ -50,6 +50,76 @@ pub async fn reap_expired(store: &dyn SignalReader) -> seesaw_core::Events {
     events
 }
 
+/// Schedule input sources directly (no graph, no cadence, no exploration).
+///
+/// All sources are scheduled unconditionally. Partitions by SourceRole into
+/// tension/response phase keys.
+pub fn schedule_input_sources(sources: &[SourceNode]) -> ScheduleOutput {
+    use rootsignal_common::SourceRole;
+
+    let scheduled_keys: HashSet<String> = sources
+        .iter()
+        .map(|s| s.canonical_key.clone())
+        .collect();
+
+    let mut tension_phase_keys = HashSet::new();
+    let mut response_phase_keys = HashSet::new();
+    for s in sources {
+        match s.source_role {
+            SourceRole::Response => {
+                response_phase_keys.insert(s.canonical_key.clone());
+            }
+            SourceRole::Concern => {
+                tension_phase_keys.insert(s.canonical_key.clone());
+            }
+            SourceRole::Mixed => {
+                tension_phase_keys.insert(s.canonical_key.clone());
+                response_phase_keys.insert(s.canonical_key.clone());
+            }
+        }
+    }
+
+    let tension_count = sources
+        .iter()
+        .filter(|s| tension_phase_keys.contains(&s.canonical_key))
+        .count() as u32;
+    let response_count = sources
+        .iter()
+        .filter(|s| response_phase_keys.contains(&s.canonical_key))
+        .count() as u32;
+
+    let mut url_mappings = HashMap::new();
+    for s in sources {
+        if let Some(ref url) = s.url {
+            url_mappings
+                .entry(sanitize_url(url))
+                .or_insert_with(|| s.canonical_key.clone());
+        }
+    }
+
+    info!(
+        sources = sources.len(),
+        tension = tension_count,
+        response = response_count,
+        "Scheduled input sources (direct)"
+    );
+
+    ScheduleOutput {
+        scheduled_data: ScheduledData {
+            all_sources: sources.to_vec(),
+            scheduled_sources: sources.to_vec(),
+            tension_phase_keys,
+            response_phase_keys,
+            scheduled_keys,
+            consumed_pin_ids: Vec::new(),
+        },
+        actor_contexts: HashMap::new(),
+        url_mappings,
+        tension_count,
+        response_count,
+    }
+}
+
 /// Load, boost, and schedule sources. Returns ScheduleOutput for state application.
 pub async fn schedule_sources(
     graph: &GraphReader,

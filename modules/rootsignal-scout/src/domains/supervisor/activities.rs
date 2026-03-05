@@ -13,7 +13,7 @@ use crate::core::engine::ScoutEngineDeps;
 pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events) {
     let (graph_client, region, pg_pool, api_key) = match (
         deps.graph_client.as_ref(),
-        deps.region.as_ref(),
+        deps.run_scope.region(),
         deps.pg_pool.as_ref(),
         deps.anthropic_api_key.as_deref(),
     ) {
@@ -26,7 +26,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
                     "reason": "missing_deps",
                     "missing": {
                         "graph_client": deps.graph_client.is_none(),
-                        "region": deps.region.is_none(),
+                        "region": deps.run_scope.region().is_none(),
                         "pg_pool": deps.pg_pool.is_none(),
                         "api_key": deps.anthropic_api_key.is_none(),
                     },

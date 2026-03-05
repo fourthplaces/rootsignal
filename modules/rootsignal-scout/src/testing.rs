@@ -1483,7 +1483,10 @@ pub fn test_engine_with_capture_for_store(
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         "test-run",
     );
-    deps.region = region;
+    deps.run_scope = match region {
+        Some(r) => crate::core::run_scope::RunScope::Region(r),
+        None => crate::core::run_scope::RunScope::Unscoped,
+    };
     deps.captured_events = Some(captured.clone());
     let engine = Arc::new(build_engine(deps, None));
     (engine, captured)
