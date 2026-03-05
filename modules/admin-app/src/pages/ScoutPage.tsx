@@ -277,7 +277,7 @@ export function ScoutPage() {
         return (
           <span className="flex flex-wrap gap-1.5">
             {r.sources.map((s) => (
-              <Link key={s.id} to={`/sources/${s.id}`} className="text-blue-400 hover:underline text-xs">
+              <Link key={s.id} to={`/scout/sources/${s.id}`} className="text-blue-400 hover:underline text-xs">
                 {s.label}
               </Link>
             ))}
