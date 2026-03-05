@@ -53,8 +53,11 @@ pub struct ScoutRunRow {
     pub run_id: String,
     pub region: String,
     pub started_at: DateTime<Utc>,
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
     pub stats: StatsJson,
+    pub region_id: Option<String>,
+    pub flow_type: Option<String>,
+    pub source_ids: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -64,21 +67,13 @@ pub struct ScoutRunRow {
 pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<Vec<ScoutRunRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            DateTime<Utc>,
-            DateTime<Utc>,
-            serde_json::Value,
-        ),
-    >(
+    let rows = sqlx::query(
         r#"
-        SELECT run_id, region, started_at, finished_at, stats
+        SELECT run_id, region, started_at, finished_at, stats,
+               region_id, flow_type, source_ids
         FROM scout_runs
         WHERE region = $1
-        ORDER BY finished_at DESC
+        ORDER BY started_at DESC
         LIMIT $2
         "#,
     )
@@ -87,22 +82,33 @@ pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<V
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(row_to_scout_run).collect())
+    Ok(rows.iter().map(row_to_scout_run).collect())
+}
+
+pub async fn list_recent(pool: &PgPool, limit: u32) -> Result<Vec<ScoutRunRow>> {
+    let limit = limit.min(100) as i64;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT run_id, region, started_at, finished_at, stats,
+               region_id, flow_type, source_ids
+        FROM scout_runs
+        ORDER BY started_at DESC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.iter().map(row_to_scout_run).collect())
 }
 
 pub async fn find_by_id(pool: &PgPool, run_id: &str) -> Result<Option<ScoutRunRow>> {
-    let row = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            DateTime<Utc>,
-            DateTime<Utc>,
-            serde_json::Value,
-        ),
-    >(
+    let row = sqlx::query(
         r#"
-        SELECT run_id, region, started_at, finished_at, stats
+        SELECT run_id, region, started_at, finished_at, stats,
+               region_id, flow_type, source_ids
         FROM scout_runs
         WHERE run_id = $1
         "#,
@@ -111,7 +117,7 @@ pub async fn find_by_id(pool: &PgPool, run_id: &str) -> Result<Option<ScoutRunRo
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(row_to_scout_run))
+    Ok(row.as_ref().map(row_to_scout_run))
 }
 
 /// List events for a run from the unified event store, ordered by sequence number.
@@ -309,6 +315,42 @@ pub async fn causal_flow(pool: &PgPool, run_id: &str) -> Result<Vec<EventRowFull
     .await?;
 
     Ok(rows.into_iter().map(row_to_event_full).collect())
+}
+
+// ---------------------------------------------------------------------------
+// Busy checks (uses scout_runs as implicit lock)
+// ---------------------------------------------------------------------------
+
+/// Check if a region has a running (non-stale) scout run.
+pub async fn is_region_busy(pool: &PgPool, region_id: &str) -> Result<bool> {
+    let (busy,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS(
+             SELECT 1 FROM scout_runs
+             WHERE region_id = $1
+               AND finished_at IS NULL
+               AND started_at >= now() - interval '30 minutes'
+         )",
+    )
+    .bind(region_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(busy)
+}
+
+/// Check if a specific source is being scouted in a running (non-stale) run.
+pub async fn is_source_busy(pool: &PgPool, source_id: &str) -> Result<bool> {
+    let (busy,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS(
+             SELECT 1 FROM scout_runs
+             WHERE source_ids @> $1::jsonb
+               AND finished_at IS NULL
+               AND started_at >= now() - interval '30 minutes'
+         )",
+    )
+    .bind(serde_json::json!([source_id]))
+    .fetch_one(pool)
+    .await?;
+    Ok(busy)
 }
 
 // ---------------------------------------------------------------------------
@@ -798,21 +840,16 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
     }
 }
 
-fn row_to_scout_run(
-    r: (
-        String,
-        String,
-        DateTime<Utc>,
-        DateTime<Utc>,
-        serde_json::Value,
-    ),
-) -> ScoutRunRow {
+fn row_to_scout_run(r: &sqlx::postgres::PgRow) -> ScoutRunRow {
     ScoutRunRow {
-        run_id: r.0,
-        region: r.1,
-        started_at: r.2,
-        finished_at: r.3,
-        stats: serde_json::from_value(r.4).unwrap_or_default(),
+        run_id: r.get("run_id"),
+        region: r.get("region"),
+        started_at: r.get("started_at"),
+        finished_at: r.get("finished_at"),
+        stats: serde_json::from_value(r.get::<serde_json::Value, _>("stats")).unwrap_or_default(),
+        region_id: r.get("region_id"),
+        flow_type: r.get("flow_type"),
+        source_ids: r.get("source_ids"),
     }
 }
 

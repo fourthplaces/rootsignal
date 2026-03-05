@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ME } from "@/graphql/queries";
 import { LOGOUT } from "@/graphql/mutations";
+import { useRegion } from "@/contexts/RegionContext";
 import {
   LayoutDashboard,
   Radar,
@@ -44,6 +45,7 @@ export function AdminLayout() {
   const [logout] = useMutation(LOGOUT);
 
   const [collapsed, toggleCollapsed] = useCollapsed();
+  const { regionId, regions, setRegionId } = useRegion();
 
   useEffect(() => {
     if (!loading && (!data?.me || error)) {
@@ -79,6 +81,19 @@ export function AdminLayout() {
             <p className="text-xs text-muted-foreground">Admin</p>
           )}
         </div>
+        {!collapsed && regions.length > 0 && (
+          <div className="px-3 py-2 border-b border-border">
+            <select
+              value={regionId ?? ""}
+              onChange={(e) => setRegionId(e.target.value)}
+              className="w-full px-2 py-1 rounded-md border border-input bg-background text-sm"
+            >
+              {regions.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <nav className="flex-1 p-2 space-y-0.5">
           {navItems.map((item) => (
             <NavLink

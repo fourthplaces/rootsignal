@@ -1,38 +1,38 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import {
-  ADMIN_SCOUT_TASKS,
+  ADMIN_REGIONS,
   SUPERVISOR_FINDINGS,
   SUPERVISOR_SUMMARY,
+  ADMIN_SCOUT_RUNS,
 } from "@/graphql/queries";
+import { useRegion } from "@/contexts/RegionContext";
 import {
-  RUN_SCOUT,
-  CREATE_SCOUT_TASK,
-  CANCEL_SCOUT_TASK,
+  CREATE_REGION,
+  DELETE_REGION,
+  RUN_SCRAPE,
+  RUN_BOOTSTRAP,
+  RUN_WEAVE,
+  CANCEL_RUN,
   DISMISS_FINDING,
-  STOP_SCOUT,
 } from "@/graphql/mutations";
 
-type Tab = "tasks" | "findings";
+type Tab = "regions" | "findings";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "tasks", label: "Tasks" },
+  { key: "regions", label: "Regions" },
   { key: "findings", label: "Findings" },
 ];
 
-type ScoutTask = {
+type Region = {
   id: string;
+  name: string;
   centerLat: number;
   centerLng: number;
   radiusKm: number;
-  context: string;
   geoTerms: string[];
-  priority: number;
-  source: string;
-  status: string;
-  phaseStatus: string;
+  isLeaf: boolean;
   createdAt: string;
-  completedAt: string | null;
 };
 
 type ScoutFinding = {
@@ -48,62 +48,19 @@ type ScoutFinding = {
   resolvedAt: string | null;
 };
 
+type ScoutRun = {
+  runId: string;
+  region: string;
+  flowType: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+};
+
 const SEVERITY_COLORS: Record<string, string> = {
   error: "bg-red-500/10 text-red-400 border-red-500/20",
   warning: "bg-amber-500/10 text-amber-400 border-amber-500/20",
   info: "bg-blue-500/10 text-blue-400 border-blue-500/20",
 };
-
-/** Human-readable label for a phase status string. */
-function phaseStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    idle: "Idle",
-    error: "Error",
-    cancelled: "Cancelled",
-    running_bootstrap: "Bootstrap",
-    bootstrap_complete: "Bootstrap Done",
-    running_scrape: "Scrape",
-    scrape_complete: "Scrape Done",
-    running_synthesis: "Synthesis",
-    synthesis_complete: "Synthesis Done",
-    running_situation_weaver: "Situation Weaver",
-    situation_weaver_complete: "Situation Weaver Done",
-    running_supervisor: "Supervisor",
-    complete: "Complete",
-  };
-  return labels[status] || status;
-}
-
-function phasePercent(phaseStatus: string): number {
-  switch (phaseStatus) {
-    case "running_bootstrap": return 10;
-    case "running_scrape":
-    case "running_synthesis": return 30;
-    case "running_situation_weaver": return 55;
-    case "running_supervisor": return 75;
-    case "complete": return 100;
-    default: return 0;
-  }
-}
-
-function PhaseProgress({ phaseStatus }: { phaseStatus: string }) {
-  const pct = phasePercent(phaseStatus);
-  if (pct === 0) return null;
-
-  return (
-    <div className="flex items-center gap-2 min-w-[140px]">
-      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-        <div
-          className="h-full rounded-full bg-green-500 transition-all duration-700 ease-out"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className="text-xs text-muted-foreground whitespace-nowrap">
-        {phaseStatusLabel(phaseStatus)}
-      </span>
-    </div>
-  );
-}
 
 const formatDate = (d: string) =>
   new Date(d).toLocaleDateString("en-US", {
@@ -116,118 +73,85 @@ const formatDate = (d: string) =>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MutationFn = (options?: any) => Promise<any>;
 
-function TaskRow({
-  task: t,
-  runScout,
-  stopScout,
-  onCancel,
+function RegionRow({
+  region: r,
+  onDelete,
   onRefetch,
 }: {
-  task: ScoutTask;
-  runScout: MutationFn;
-  stopScout: MutationFn;
-  onCancel: (id: string) => void;
+  region: Region;
+  onDelete: (id: string) => void;
   onRefetch: () => void;
 }) {
-  const [running, setRunning] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
+  const [runScrape] = useMutation(RUN_SCRAPE);
+  const [runBootstrap] = useMutation(RUN_BOOTSTRAP);
+  const [runWeave] = useMutation(RUN_WEAVE);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isRunning = t.phaseStatus.startsWith("running_");
-
-  const handleRun = async () => {
-    setRunning(true);
+  const runFlow = async (mutation: MutationFn, label: string) => {
+    setBusy(label);
     setError(null);
     try {
-      await runScout({ variables: { taskId: t.id } });
+      await mutation({ variables: { regionId: r.id } });
       onRefetch();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to run");
+      setError(err instanceof Error ? err.message : `Failed to ${label}`);
     } finally {
-      setRunning(false);
-    }
-  };
-
-  const handleCancelRun = async () => {
-    setCancelling(true);
-    setError(null);
-    try {
-      await stopScout({ variables: { taskId: t.id } });
-      onRefetch();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to cancel");
-    } finally {
-      setCancelling(false);
+      setBusy(null);
     }
   };
 
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/30">
-      <td className="px-4 py-2 max-w-[200px] truncate">
-        <Link to={`/scout/tasks/${t.id}`} className="text-blue-400 hover:underline">
-          {t.context}
+      <td className="px-4 py-2">
+        <Link to={`/scout/regions/${r.id}`} className="text-blue-400 hover:underline font-medium">
+          {r.name}
         </Link>
       </td>
       <td className="px-4 py-2 text-muted-foreground text-xs font-mono">
-        {t.centerLat.toFixed(3)}, {t.centerLng.toFixed(3)}
+        {r.centerLat.toFixed(3)}, {r.centerLng.toFixed(3)}
       </td>
-      <td className="px-4 py-2 text-right tabular-nums">{t.radiusKm}km</td>
-      <td className="px-4 py-2 text-right tabular-nums">{t.priority}</td>
-      <td className="px-4 py-2 text-muted-foreground">{t.source}</td>
+      <td className="px-4 py-2 text-right tabular-nums">{r.radiusKm}km</td>
       <td className="px-4 py-2">
-        {isRunning ? (
-          <PhaseProgress phaseStatus={t.phaseStatus} />
-        ) : (
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full w-fit ${
-              t.status === "pending"
-                ? "bg-amber-500/10 text-amber-400"
-                : t.phaseStatus === "complete"
-                  ? "bg-green-500/10 text-green-400"
-                  : t.phaseStatus === "error"
-                    ? "bg-red-500/10 text-red-400"
-                    : t.phaseStatus === "cancelled"
-                      ? "bg-orange-500/10 text-orange-400"
-                      : t.status === "cancelled"
-                        ? "bg-red-500/10 text-red-400"
-                        : "bg-secondary text-muted-foreground"
-            }`}
-          >
-            {t.phaseStatus === "complete" ? "Complete" : phaseStatusLabel(t.phaseStatus) || t.status}
-          </span>
-        )}
+        <span className={`text-xs px-2 py-0.5 rounded-full ${r.isLeaf ? "bg-green-500/10 text-green-400" : "bg-blue-500/10 text-blue-400"}`}>
+          {r.isLeaf ? "Leaf" : "Parent"}
+        </span>
+      </td>
+      <td className="px-4 py-2 text-muted-foreground text-xs">
+        {r.geoTerms.length > 0 ? r.geoTerms.join(", ") : "-"}
       </td>
       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-        {formatDate(t.createdAt)}
+        {formatDate(r.createdAt)}
       </td>
       <td className="px-4 py-2 text-right">
-        <div className="flex gap-1 justify-end items-center">
-          {t.status === "pending" && !isRunning && (
-            <>
-              <button
-                onClick={handleRun}
-                disabled={running}
-                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
-              >
-                {running ? "Starting..." : "Run"}
-              </button>
-              <button
-                onClick={() => onCancel(t.id)}
-                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-          {isRunning && (
-            <button
-              onClick={handleCancelRun}
-              disabled={cancelling}
-              className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-50"
-            >
-              {cancelling ? "Cancelling..." : "Cancel"}
-            </button>
-          )}
+        <div className="flex gap-1 justify-end items-center flex-wrap">
+          <button
+            onClick={() => runFlow(runBootstrap, "bootstrap")}
+            disabled={busy !== null}
+            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
+          >
+            {busy === "bootstrap" ? "..." : "Bootstrap"}
+          </button>
+          <button
+            onClick={() => runFlow(runScrape, "scrape")}
+            disabled={busy !== null}
+            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
+          >
+            {busy === "scrape" ? "..." : "Scrape"}
+          </button>
+          <button
+            onClick={() => runFlow(runWeave, "weave")}
+            disabled={busy !== null}
+            className="text-xs px-2 py-1 rounded border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 disabled:opacity-50"
+          >
+            {busy === "weave" ? "..." : "Weave"}
+          </button>
+          <button
+            onClick={() => onDelete(r.id)}
+            className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10"
+          >
+            Delete
+          </button>
         </div>
         {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
       </td>
@@ -299,54 +223,75 @@ function ScoutFindingRow({
 export function ScoutPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab");
-  const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "tasks") as Tab;
+  const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "regions") as Tab;
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: false });
 
-  // --- Tasks ---
-  const { data: tasksData, loading: tasksLoading, refetch: refetchTasks, startPolling, stopPolling } = useQuery(
-    ADMIN_SCOUT_TASKS,
-    { variables: { limit: 50 }, skip: tab !== "tasks" },
+  // --- Regions ---
+  const { data: regionsData, loading: regionsLoading, refetch: refetchRegions } = useQuery(
+    ADMIN_REGIONS,
+    { variables: { limit: 100 }, skip: tab !== "regions" },
   );
-  const tasks: ScoutTask[] = tasksData?.adminScoutTasks ?? [];
-  const hasRunningTask = tasks.some((t) => t.phaseStatus.startsWith("running_"));
-  useEffect(() => {
-    if (hasRunningTask) { startPolling(3000); } else { stopPolling(); }
-  }, [hasRunningTask, startPolling, stopPolling]);
-  const [createTask] = useMutation(CREATE_SCOUT_TASK);
-  const [cancelTask] = useMutation(CANCEL_SCOUT_TASK);
-  const [taskLocation, setTaskLocation] = useState("");
-  const [taskCreating, setTaskCreating] = useState(false);
-  const [taskError, setTaskError] = useState<string | null>(null);
+  const regions: Region[] = regionsData?.adminRegions ?? [];
+  const [createRegion] = useMutation(CREATE_REGION);
+  const [deleteRegion] = useMutation(DELETE_REGION);
 
-  const handleCreateTask = async (e: React.FormEvent) => {
+  // Create region form state
+  const [showCreate, setShowCreate] = useState(false);
+  const [formName, setFormName] = useState("");
+  const [formLat, setFormLat] = useState("");
+  const [formLng, setFormLng] = useState("");
+  const [formRadius, setFormRadius] = useState("20");
+  const [formGeoTerms, setFormGeoTerms] = useState("");
+  const [formIsLeaf, setFormIsLeaf] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!taskLocation.trim()) return;
-    setTaskCreating(true);
-    setTaskError(null);
+    setCreating(true);
+    setCreateError(null);
     try {
-      await createTask({
-        variables: { location: taskLocation.trim() },
+      await createRegion({
+        variables: {
+          name: formName.trim(),
+          centerLat: parseFloat(formLat),
+          centerLng: parseFloat(formLng),
+          radiusKm: parseFloat(formRadius),
+          geoTerms: formGeoTerms.trim() ? formGeoTerms.split(",").map((s) => s.trim()) : [],
+          isLeaf: formIsLeaf,
+        },
       });
-      setTaskLocation("");
-      refetchTasks();
+      setFormName("");
+      setFormLat("");
+      setFormLng("");
+      setFormRadius("20");
+      setFormGeoTerms("");
+      setShowCreate(false);
+      refetchRegions();
     } catch (err: unknown) {
-      setTaskError(err instanceof Error ? err.message : "Failed to create task");
+      setCreateError(err instanceof Error ? err.message : "Failed to create region");
     } finally {
-      setTaskCreating(false);
+      setCreating(false);
     }
   };
 
-  const handleCancelTask = async (id: string) => {
-    await cancelTask({ variables: { id } });
-    refetchTasks();
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this region?")) return;
+    await deleteRegion({ variables: { id } });
+    refetchRegions();
   };
 
-  // --- Task actions ---
-  const [runScout] = useMutation(RUN_SCOUT);
-  const [stopScout] = useMutation(STOP_SCOUT);
+  // --- Recent runs ---
+  const { data: runsData } = useQuery(ADMIN_SCOUT_RUNS, {
+    variables: { limit: 10 },
+    skip: tab !== "regions",
+  });
+  const runs: ScoutRun[] = runsData?.adminScoutRuns ?? [];
+  const [cancelRun] = useMutation(CANCEL_RUN);
 
   // --- Findings ---
-  const region = "twincities";
+  const { regionName } = useRegion();
+  const region = regionName || "twincities";
   const [findingsStatusFilter, setFindingsStatusFilter] = useState<string | undefined>(undefined);
   const [findingsSeverityFilter, setFindingsSeverityFilter] = useState<string | undefined>(undefined);
   const [findingsTypeFilter, setFindingsTypeFilter] = useState<string | undefined>(undefined);
@@ -401,62 +346,178 @@ export function ScoutPage() {
         ))}
       </div>
 
-      {/* Tasks tab */}
-      {tab === "tasks" && (
-        <div>
-          <form onSubmit={handleCreateTask} className="mb-4 flex gap-2 items-center">
-            <input
-              type="text"
-              value={taskLocation}
-              onChange={(e) => { setTaskLocation(e.target.value); setTaskError(null); }}
-              placeholder="Location (e.g. Austin, TX)"
-              className="flex-1 max-w-xs px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-              required
-            />
+      {/* Regions tab */}
+      {tab === "regions" && (
+        <div className="space-y-4">
+          <div className="flex gap-2 items-center">
             <button
-              type="submit"
-              disabled={taskCreating || !taskLocation.trim()}
-              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
+              onClick={() => setShowCreate(!showCreate)}
+              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
             >
-              {taskCreating ? "Creating..." : "Create Task"}
+              {showCreate ? "Cancel" : "Create Region"}
             </button>
-            {taskError && (
-              <span className="text-sm text-red-400">{taskError}</span>
-            )}
-          </form>
+          </div>
 
-          {tasksLoading ? (
-            <p className="text-muted-foreground">Loading tasks...</p>
-          ) : tasks.length === 0 ? (
-            <p className="text-muted-foreground">No scout tasks.</p>
+          {showCreate && (
+            <form onSubmit={handleCreate} className="rounded-lg border border-border p-4 space-y-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <input
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="Name (e.g. Portland)"
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+                  required
+                />
+                <input
+                  type="number"
+                  step="any"
+                  value={formLat}
+                  onChange={(e) => setFormLat(e.target.value)}
+                  placeholder="Latitude"
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+                  required
+                />
+                <input
+                  type="number"
+                  step="any"
+                  value={formLng}
+                  onChange={(e) => setFormLng(e.target.value)}
+                  placeholder="Longitude"
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+                  required
+                />
+                <input
+                  type="number"
+                  step="any"
+                  value={formRadius}
+                  onChange={(e) => setFormRadius(e.target.value)}
+                  placeholder="Radius (km)"
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  value={formGeoTerms}
+                  onChange={(e) => setFormGeoTerms(e.target.value)}
+                  placeholder="Geo terms (comma-separated)"
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+                />
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={formIsLeaf}
+                    onChange={(e) => setFormIsLeaf(e.target.checked)}
+                    className="rounded"
+                  />
+                  Leaf region (has sources)
+                </label>
+              </div>
+              <div className="flex gap-2 items-center">
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {creating ? "Creating..." : "Create"}
+                </button>
+                {createError && <span className="text-sm text-red-400">{createError}</span>}
+              </div>
+            </form>
+          )}
+
+          {regionsLoading ? (
+            <p className="text-muted-foreground">Loading regions...</p>
+          ) : regions.length === 0 ? (
+            <p className="text-muted-foreground">No regions configured.</p>
           ) : (
             <div className="rounded-lg border border-border overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/50">
-                    <th className="text-left px-4 py-2 font-medium">Context</th>
+                    <th className="text-left px-4 py-2 font-medium">Name</th>
                     <th className="text-left px-4 py-2 font-medium">Center</th>
                     <th className="text-right px-4 py-2 font-medium">Radius</th>
-                    <th className="text-right px-4 py-2 font-medium">Priority</th>
-                    <th className="text-left px-4 py-2 font-medium">Source</th>
-                    <th className="text-left px-4 py-2 font-medium">Status</th>
+                    <th className="text-left px-4 py-2 font-medium">Type</th>
+                    <th className="text-left px-4 py-2 font-medium">Geo Terms</th>
                     <th className="text-left px-4 py-2 font-medium">Created</th>
-                    <th className="text-right px-4 py-2 font-medium"></th>
+                    <th className="text-right px-4 py-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tasks.map((t) => (
-                    <TaskRow
-                      key={t.id}
-                      task={t}
-                      runScout={runScout}
-                      stopScout={stopScout}
-                      onCancel={handleCancelTask}
-                      onRefetch={refetchTasks}
+                  {regions.map((r) => (
+                    <RegionRow
+                      key={r.id}
+                      region={r}
+                      onDelete={handleDelete}
+                      onRefetch={refetchRegions}
                     />
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Recent runs */}
+          {runs.length > 0 && (
+            <div>
+              <h2 className="text-sm font-medium text-muted-foreground mb-2">Recent Runs</h2>
+              <div className="rounded-lg border border-border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50">
+                      <th className="text-left px-4 py-2 font-medium">Run</th>
+                      <th className="text-left px-4 py-2 font-medium">Region</th>
+                      <th className="text-left px-4 py-2 font-medium">Flow</th>
+                      <th className="text-left px-4 py-2 font-medium">Started</th>
+                      <th className="text-left px-4 py-2 font-medium">Status</th>
+                      <th className="text-right px-4 py-2 font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runs.map((run) => (
+                      <tr key={run.runId} className="border-b border-border last:border-0 hover:bg-muted/30">
+                        <td className="px-4 py-2">
+                          <Link to={`/scout-runs/${run.runId}`} className="text-blue-400 hover:underline font-mono text-xs">
+                            {run.runId.slice(0, 8)}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2 text-muted-foreground">{run.region || "-"}</td>
+                        <td className="px-4 py-2">
+                          {run.flowType && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
+                              {run.flowType}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+                          {formatDate(run.startedAt)}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className={`text-xs ${run.finishedAt ? "text-green-400" : "text-amber-400"}`}>
+                            {run.finishedAt ? "Completed" : "Running"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {!run.finishedAt && (
+                            <button
+                              onClick={async () => {
+                                await cancelRun({ variables: { runId: run.runId } });
+                                refetchRegions();
+                              }}
+                              className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

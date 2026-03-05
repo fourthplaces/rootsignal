@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useParams, Link } from "react-router";
-import { useQuery } from "@apollo/client";
+import { useQuery, useMutation } from "@apollo/client";
 import { SOURCE_DETAIL } from "@/graphql/queries";
+import { RUN_SCOUT_SOURCE } from "@/graphql/mutations";
 
 const formatDate = (d: string | null | undefined) => {
   if (!d) return "Never";
@@ -178,6 +180,9 @@ export function SourceDetailPage() {
   const { data, loading } = useQuery(SOURCE_DETAIL, {
     variables: { id },
   });
+  const [runScoutSource] = useMutation(RUN_SCOUT_SOURCE);
+  const [scouting, setScouting] = useState(false);
+  const [scoutMsg, setScoutMsg] = useState<string | null>(null);
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
@@ -238,12 +243,31 @@ export function SourceDetailPage() {
               </svg>
             </a>
           )}
+          <button
+            onClick={async () => {
+              setScouting(true);
+              setScoutMsg(null);
+              try {
+                const res = await runScoutSource({ variables: { sourceIds: [id] } });
+                setScoutMsg(res.data?.runScoutSource?.message ?? "Scout started");
+              } catch (err: unknown) {
+                setScoutMsg(err instanceof Error ? err.message : "Failed to scout");
+              } finally {
+                setScouting(false);
+              }
+            }}
+            disabled={scouting}
+            className="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors disabled:opacity-50"
+          >
+            {scouting ? "Scouting..." : "Scout"}
+          </button>
           <Link
             to={`/events?q=${encodeURIComponent(source.canonicalValue)}`}
             className="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
           >
             View Events
           </Link>
+          {scoutMsg && <span className="text-xs text-muted-foreground">{scoutMsg}</span>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">

@@ -456,7 +456,7 @@ impl Tool for GetRunInfoTool {
                 run_id: Some(r.run_id),
                 region: Some(r.region),
                 started_at: Some(r.started_at.to_rfc3339()),
-                finished_at: Some(r.finished_at.to_rfc3339()),
+                finished_at: r.finished_at.map(|t| t.to_rfc3339()),
                 urls_scraped: r.stats.urls_scraped,
                 signals_extracted: r.stats.signals_extracted,
                 signals_stored: r.stats.signals_stored,

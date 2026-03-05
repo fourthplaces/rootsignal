@@ -9,12 +9,12 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    Config, DiscoveryMethod, ScoutScope, SourceNode, SourceRole,
+    Config, DiscoveryMethod, Region, ScoutScope, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphStore;
 use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
 use crate::jwt::{self, JwtService};
-use crate::scout_runner::{ScoutRunner, ScoutPhase};
+use crate::scout_runner::ScoutRunner;
 use super::context::AdminGuard;
 
 
@@ -239,161 +239,199 @@ impl MutationRoot {
         })
     }
 
-    /// Run scout for a task. Loads task by ID, derives scope, spawns seesaw engine.
+    // --- Region CRUD ---
+
+    /// Create a new region.
     #[graphql(guard = "AdminGuard")]
-    async fn run_scout(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
-        let config = ctx.data_unchecked::<Arc<Config>>();
-
-        // Check API keys
-        if config.anthropic_api_key.is_empty()
-            || config.voyage_api_key.is_empty()
-            || config.serper_api_key.is_empty()
-        {
-            return Ok(ScoutResult {
-                success: false,
-                message: Some("Scout API keys not configured".to_string()),
-            });
-        }
-
-        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let runner = require_runner(ctx)?;
-
-        // Load the task
-        let task = writer
-            .get_scout_task(&task_id)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to load task: {e}")))?
-            .ok_or_else(|| async_graphql::Error::new(format!("Scout task {task_id} not found")))?;
-
-        // Concurrency guard: reject if another task for the same region is already running
-        let running = writer
-            .is_region_task_running(&task.context)
-            .await
-            .map_err(|e| {
-                async_graphql::Error::new(format!("Failed to check running status: {e}"))
-            })?;
-        if running {
-            return Ok(ScoutResult {
-                success: false,
-                message: Some("Another task for this region is already running".to_string()),
-            });
-        }
-
-        let scope = ScoutScope::from(&task);
-
-        runner.run_scout(&task_id, &scope).await;
-
-        Ok(ScoutResult {
-            success: true,
-            message: Some(format!("Scout started for {}", task.context)),
-        })
-    }
-
-    /// Run an individual scout workflow phase for a task.
-    #[graphql(guard = "AdminGuard")]
-    async fn run_scout_phase(
+    async fn create_region(
         &self,
         ctx: &Context<'_>,
-        phase: super::types::ScoutPhase,
-        task_id: String,
-    ) -> Result<ScoutResult> {
-        let config = ctx.data_unchecked::<Arc<Config>>();
-
-        if config.anthropic_api_key.is_empty()
-            || config.voyage_api_key.is_empty()
-            || config.serper_api_key.is_empty()
-        {
-            return Ok(ScoutResult {
-                success: false,
-                message: Some("Scout API keys not configured".to_string()),
-            });
-        }
-
+        name: String,
+        center_lat: f64,
+        center_lng: f64,
+        radius_km: f64,
+        #[graphql(default)] geo_terms: Vec<String>,
+        #[graphql(default = true)] is_leaf: bool,
+    ) -> Result<super::types::GqlRegion> {
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
-        let runner = require_runner(ctx)?;
 
-        let runner_phase: ScoutPhase = match phase {
-            super::types::ScoutPhase::Bootstrap => ScoutPhase::Bootstrap,
-            super::types::ScoutPhase::Scrape => ScoutPhase::Scrape,
-            super::types::ScoutPhase::Synthesis => ScoutPhase::Synthesis,
-            super::types::ScoutPhase::SituationWeaver => ScoutPhase::SituationWeaver,
-            super::types::ScoutPhase::Supervisor => ScoutPhase::Supervisor,
+        let region = rootsignal_common::Region {
+            id: Uuid::new_v4(),
+            name,
+            center_lat,
+            center_lng,
+            radius_km,
+            geo_terms,
+            is_leaf,
+            created_at: chrono::Utc::now(),
         };
 
-        // Load the task
-        let task = writer
-            .get_scout_task(&task_id)
+        writer
+            .upsert_region(&region)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to load task: {e}")))?
-            .ok_or_else(|| async_graphql::Error::new(format!("Scout task {task_id} not found")))?;
+            .map_err(|e| async_graphql::Error::new(format!("Failed to create region: {e}")))?;
 
-        // Concurrency guard
-        let running = writer
-            .is_region_task_running(&task.context)
+        Ok(super::types::GqlRegion::from_region(region))
+    }
+
+    /// Delete a region.
+    #[graphql(guard = "AdminGuard")]
+    async fn delete_region(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        writer
+            .delete_region(&id)
             .await
-            .map_err(|e| {
-                async_graphql::Error::new(format!("Failed to check running status: {e}"))
-            })?;
-        if running {
-            return Ok(ScoutResult {
-                success: false,
-                message: Some("Another task for this region is already running".to_string()),
-            });
+            .map_err(|e| async_graphql::Error::new(format!("Failed to delete region: {e}")))
+    }
+
+    /// Add a WATCHES edge from a region to a source.
+    #[graphql(guard = "AdminGuard")]
+    async fn add_region_source(
+        &self,
+        ctx: &Context<'_>,
+        region_id: String,
+        source_id: String,
+    ) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        writer
+            .add_region_source(&region_id, &source_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to add source: {e}")))?;
+        Ok(true)
+    }
+
+    /// Remove a WATCHES edge from a region to a source.
+    #[graphql(guard = "AdminGuard")]
+    async fn remove_region_source(
+        &self,
+        ctx: &Context<'_>,
+        region_id: String,
+        source_id: String,
+    ) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        writer
+            .remove_region_source(&region_id, &source_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to remove source: {e}")))?;
+        Ok(true)
+    }
+
+    /// Nest a child region under a parent region (CONTAINS edge).
+    #[graphql(guard = "AdminGuard")]
+    async fn nest_region(
+        &self,
+        ctx: &Context<'_>,
+        parent_id: String,
+        child_id: String,
+    ) -> Result<bool> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        writer
+            .nest_region(&parent_id, &child_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to nest region: {e}")))?;
+        Ok(true)
+    }
+
+    // --- Flow-based scout operations ---
+
+    /// Run a bootstrap flow for a region: discover sources.
+    #[graphql(guard = "AdminGuard")]
+    async fn run_bootstrap(&self, ctx: &Context<'_>, region_id: String) -> Result<ScoutResult> {
+        let (runner, region) = load_region_for_flow(ctx, &region_id).await?;
+        if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
+            if crate::db::scout_run::is_region_busy(pool, &region_id).await.unwrap_or(false) {
+                return Ok(ScoutResult { success: false, message: Some(format!("Region {} is busy", region.name)) });
+            }
         }
-
-        let scope = ScoutScope::from(&task);
-
-        runner.run_phase(runner_phase, &task_id, &scope).await;
-
+        let scope = ScoutScope::from(&region);
+        runner.run_bootstrap(&region_id, &scope).await;
         Ok(ScoutResult {
             success: true,
-            message: Some(format!(
-                "{:?} started for {}",
-                phase, task.context
-            )),
+            message: Some(format!("Bootstrap started for {}", region.name)),
         })
     }
 
-    /// Stop a running scout by setting its cancellation flag.
+    /// Run a scrape flow for a region: auto-bootstraps if no sources, then scrapes.
     #[graphql(guard = "AdminGuard")]
-    async fn stop_scout(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
-        let runner = require_runner(ctx)?;
+    async fn run_scrape(&self, ctx: &Context<'_>, region_id: String) -> Result<ScoutResult> {
+        let (runner, region) = load_region_for_flow(ctx, &region_id).await?;
+        if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
+            if crate::db::scout_run::is_region_busy(pool, &region_id).await.unwrap_or(false) {
+                return Ok(ScoutResult { success: false, message: Some(format!("Region {} is busy", region.name)) });
+            }
+        }
+        let scope = ScoutScope::from(&region);
+        runner.run_scrape(&region_id, &scope).await;
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Scrape started for {}", region.name)),
+        })
+    }
 
-        if runner.cancel(&task_id).await {
+    /// Run a weave flow for a region: cross-signal synthesis.
+    #[graphql(guard = "AdminGuard")]
+    async fn run_weave(&self, ctx: &Context<'_>, region_id: String) -> Result<ScoutResult> {
+        let (runner, region) = load_region_for_flow(ctx, &region_id).await?;
+        if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
+            if crate::db::scout_run::is_region_busy(pool, &region_id).await.unwrap_or(false) {
+                return Ok(ScoutResult { success: false, message: Some(format!("Region {} is busy", region.name)) });
+            }
+        }
+        let scope = ScoutScope::from(&region);
+        runner.run_weave(&region_id, &scope).await;
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Weave started for {}", region.name)),
+        })
+    }
+
+    /// Run a scout-source flow: scrape specific sources.
+    #[graphql(guard = "AdminGuard")]
+    async fn run_scout_source(
+        &self,
+        ctx: &Context<'_>,
+        source_ids: Vec<String>,
+    ) -> Result<ScoutResult> {
+        if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
+            let mut busy_ids = Vec::new();
+            for sid in &source_ids {
+                if crate::db::scout_run::is_source_busy(pool, sid).await.unwrap_or(false) {
+                    busy_ids.push(sid.clone());
+                }
+            }
+            if busy_ids.len() == source_ids.len() {
+                return Ok(ScoutResult { success: false, message: Some("All requested sources are busy".into()) });
+            }
+        }
+        let runner = require_runner(ctx)?;
+        let scope = ScoutScope {
+            center_lat: 0.0,
+            center_lng: 0.0,
+            radius_km: 0.0,
+            name: format!("sources:{}", source_ids.len()),
+        };
+        runner.run_scout_source(&source_ids, &scope).await;
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Scout started for {} sources", source_ids.len())),
+        })
+    }
+
+    /// Cancel a running run by run_id.
+    #[graphql(guard = "AdminGuard")]
+    async fn cancel_run(&self, ctx: &Context<'_>, run_id: String) -> Result<ScoutResult> {
+        let runner = require_runner(ctx)?;
+        if runner.cancel_run(&run_id).await {
             Ok(ScoutResult {
                 success: true,
-                message: Some(format!("Cancel signal sent for task {task_id}")),
+                message: Some(format!("Cancel signal sent for run {run_id}")),
             })
         } else {
             Ok(ScoutResult {
                 success: false,
-                message: Some(format!("No running task found for {task_id}")),
+                message: Some(format!("No active run found for {run_id}")),
             })
         }
-    }
-
-    /// Reset a stuck scout task status to idle.
-    #[graphql(guard = "AdminGuard")]
-    async fn reset_scout_status(&self, ctx: &Context<'_>, task_id: String) -> Result<ScoutResult> {
-        use rootsignal_common::events::SystemEvent;
-
-        info!(task_id = task_id.as_str(), "Scout status reset requested");
-
-        let engine = require_engine(ctx)?;
-        engine
-            .emit(SystemEvent::TaskPhaseTransitioned {
-                task_id: task_id.clone(),
-                phase: String::new(),
-                status: "idle".to_string(),
-            })
-            .settled()
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to reset: {e}")))?;
-
-        Ok(ScoutResult {
-            success: true,
-            message: Some("Status reset to idle".to_string()),
-        })
     }
 
     /// Public source submission (rate-limited, no auth required).
@@ -538,63 +576,6 @@ impl MutationRoot {
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to dismiss finding: {e}")))?;
-        Ok(true)
-    }
-
-    /// Create a new scout task (manual demand signal). Geocodes the location server-side.
-    #[graphql(guard = "AdminGuard")]
-    async fn create_scout_task(
-        &self,
-        ctx: &Context<'_>,
-        location: String,
-        radius_km: Option<f64>,
-        priority: Option<f64>,
-    ) -> Result<String> {
-        use rootsignal_common::events::SystemEvent;
-
-        let (lat, lng, display_name) = geocode_location(&location)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Geocoding failed: {e}")))?;
-
-        // Extract geo_terms from the display_name (comma-separated parts)
-        let geo_terms: Vec<String> = display_name
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        let task_id = Uuid::new_v4();
-        let engine = require_engine(ctx)?;
-        engine
-            .emit(SystemEvent::ScoutTaskCreated {
-                task_id,
-                center_lat: lat,
-                center_lng: lng,
-                radius_km: radius_km.unwrap_or(30.0),
-                context: display_name,
-                geo_terms,
-                priority: priority.unwrap_or(1.0),
-                source: "manual".to_string(),
-            })
-            .settled()
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to create scout task: {e}")))?;
-        Ok(task_id.to_string())
-    }
-
-    /// Cancel a scout task.
-    #[graphql(guard = "AdminGuard")]
-    async fn cancel_scout_task(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
-        use rootsignal_common::events::SystemEvent;
-
-        let engine = require_engine(ctx)?;
-        engine
-            .emit(SystemEvent::ScoutTaskCancelled {
-                task_id: id,
-            })
-            .settled()
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to cancel scout task: {e}")))?;
         Ok(true)
     }
 
@@ -823,6 +804,31 @@ fn require_runner<'a>(ctx: &'a Context<'_>) -> Result<&'a ScoutRunner> {
         .ok_or_else(|| {
             async_graphql::Error::new("Scout runner not configured (Postgres required)")
         })
+}
+
+/// Load a region and runner for flow mutations. Checks API keys.
+async fn load_region_for_flow<'a>(
+    ctx: &'a Context<'_>,
+    region_id: &str,
+) -> Result<(&'a ScoutRunner, Region)> {
+    let config = ctx.data_unchecked::<Arc<Config>>();
+    if config.anthropic_api_key.is_empty()
+        || config.voyage_api_key.is_empty()
+        || config.serper_api_key.is_empty()
+    {
+        return Err(async_graphql::Error::new("Scout API keys not configured"));
+    }
+
+    let runner = require_runner(ctx)?;
+    let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+
+    let region = writer
+        .get_region(region_id)
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to load region: {e}")))?
+        .ok_or_else(|| async_graphql::Error::new(format!("Region {region_id} not found")))?;
+
+    Ok((runner, region))
 }
 
 #[derive(serde::Deserialize)]

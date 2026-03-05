@@ -132,21 +132,32 @@ export const ADMIN_REGION_SOURCES = gql`
   }
 `;
 
-export const ADMIN_SCOUT_TASKS = gql`
-  query AdminScoutTasks($status: String, $limit: Int) {
-    adminScoutTasks(status: $status, limit: $limit) {
+export const ADMIN_REGIONS = gql`
+  query AdminRegions($leafOnly: Boolean, $limit: Int) {
+    adminRegions(leafOnly: $leafOnly, limit: $limit) {
       id
+      name
       centerLat
       centerLng
       radiusKm
-      context
       geoTerms
-      priority
-      source
-      status
-      phaseStatus
+      isLeaf
       createdAt
-      completedAt
+    }
+  }
+`;
+
+export const ADMIN_REGION = gql`
+  query AdminRegion($id: String!) {
+    adminRegion(id: $id) {
+      id
+      name
+      centerLat
+      centerLng
+      radiusKm
+      geoTerms
+      isLeaf
+      createdAt
     }
   }
 `;
@@ -285,10 +296,12 @@ export const ALL_TAGS = gql`
 `;
 
 export const ADMIN_SCOUT_RUNS = gql`
-  query AdminScoutRuns($region: String!, $limit: Int) {
+  query AdminScoutRuns($region: String, $limit: Int) {
     adminScoutRuns(region: $region, limit: $limit) {
       runId
       region
+      regionId
+      flowType
       startedAt
       finishedAt
       stats {
@@ -424,6 +437,23 @@ export const SUPERVISOR_SUMMARY = gql`
         label
         count
       }
+    }
+  }
+`;
+
+export const ADMIN_REGION_SOURCES_BY_REGION = gql`
+  query AdminRegionSourcesByRegion($regionId: String!) {
+    adminRegionSourcesByRegion(regionId: $regionId) {
+      id
+      url
+      canonicalValue
+      sourceLabel
+      weight
+      effectiveWeight
+      discoveryMethod
+      lastScraped
+      signalsProduced
+      active
     }
   }
 `;

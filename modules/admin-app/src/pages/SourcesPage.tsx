@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_REGION_SOURCES } from "@/graphql/queries";
-import { ADD_SOURCE, UPDATE_SOURCE, DELETE_SOURCE } from "@/graphql/mutations";
+import { ADD_SOURCE, UPDATE_SOURCE, DELETE_SOURCE, RUN_SCOUT_SOURCE } from "@/graphql/mutations";
 import { DataTable, type Column } from "@/components/DataTable";
 import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 
@@ -248,6 +248,7 @@ export function SourcesPage() {
   const [updateSource] = useMutation(UPDATE_SOURCE);
   const [deleteSource] = useMutation(DELETE_SOURCE);
   const [addSource] = useMutation(ADD_SOURCE);
+  const [runScoutSource] = useMutation(RUN_SCOUT_SOURCE);
 
   // Add source form
   const [showAdd, setShowAdd] = useState(false);
@@ -671,6 +672,16 @@ export function SourcesPage() {
         }
         renderRowSuffix={(s) => (
           <td className="px-4 py-2 text-right space-x-2">
+            <button
+              onClick={async () => {
+                try {
+                  await runScoutSource({ variables: { sourceIds: [s.id] } });
+                } catch { /* error shown by Apollo */ }
+              }}
+              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            >
+              Scout
+            </button>
             <Link
               to={`/events?q=${encodeURIComponent(s.canonicalValue)}`}
               className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"

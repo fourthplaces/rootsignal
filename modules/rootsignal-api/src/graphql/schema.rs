@@ -254,7 +254,25 @@ impl QueryRoot {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
         let pub_reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+
+        let is_running_fut = async {
+            if let Some(pool) = pool {
+                let (running,): (bool,) = sqlx::query_as(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM scout_runs
+                         WHERE finished_at IS NULL
+                           AND started_at >= now() - interval '30 minutes'
+                     )",
+                )
+                .fetch_one(pool)
+                .await?;
+                Ok::<bool, sqlx::Error>(running)
+            } else {
+                Ok(false)
+            }
+        };
 
         let (
             total_signals,
@@ -289,7 +307,7 @@ impl QueryRoot {
             writer.get_gap_type_stats(),
             writer.get_active_sources(),
             writer.count_due_sources(),
-            writer.is_region_task_running(&region),
+            is_running_fut,
         );
 
         let sources = sources.unwrap_or_default();
@@ -452,6 +470,39 @@ impl QueryRoot {
             .collect())
     }
 
+    /// List sources watched by a specific region.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_region_sources_by_region(&self, ctx: &Context<'_>, region_id: String) -> Result<Vec<AdminSource>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let sources = writer.list_region_sources(&region_id).await?;
+        Ok(sources
+            .iter()
+            .map(|s| {
+                let effective_weight = s.weight * s.quality_penalty;
+                let cadence = s.cadence_hours.unwrap_or_else(|| {
+                    rootsignal_scout::domains::scheduling::activities::scheduler::cadence_hours_for_weight(
+                        effective_weight,
+                    )
+                });
+                let source_label = source_label_from_value(s.value());
+                AdminSource {
+                    id: s.id,
+                    url: s.url.clone().unwrap_or_default(),
+                    canonical_value: s.canonical_value.clone(),
+                    source_label,
+                    weight: s.weight,
+                    quality_penalty: s.quality_penalty,
+                    effective_weight,
+                    discovery_method: format!("{:?}", s.discovery_method),
+                    last_scraped: s.last_scraped,
+                    cadence_hours: cadence as f64,
+                    signals_produced: s.signals_produced,
+                    active: s.active,
+                }
+            })
+            .collect())
+    }
+
     /// Full detail for a single source, including recent signals and discovery tree.
     #[graphql(guard = "AdminGuard")]
     async fn source_detail(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<AdminSourceDetail>> {
@@ -532,8 +583,27 @@ impl QueryRoot {
         region_slug: String,
     ) -> Result<RegionScoutStatus> {
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+
+        let is_running_fut = async {
+            if let Some(pool) = pool {
+                let (running,): (bool,) = sqlx::query_as(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM scout_runs
+                         WHERE finished_at IS NULL
+                           AND started_at >= now() - interval '30 minutes'
+                     )",
+                )
+                .fetch_one(pool)
+                .await?;
+                Ok::<bool, sqlx::Error>(running)
+            } else {
+                Ok(false)
+            }
+        };
+
         let (running, due) = tokio::join!(
-            writer.is_region_task_running(&region_slug),
+            is_running_fut,
             writer.count_due_sources(),
         );
 
@@ -578,12 +648,12 @@ impl QueryRoot {
             .collect())
     }
 
-    /// List recent scout runs for a region.
+    /// List recent scout runs, optionally filtered by region.
     #[graphql(guard = "AdminGuard")]
     async fn admin_scout_runs(
         &self,
         ctx: &Context<'_>,
-        region: String,
+        region: Option<String>,
         limit: Option<u32>,
     ) -> Result<Vec<ScoutRun>> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
@@ -592,9 +662,12 @@ impl QueryRoot {
             .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
         let limit = limit.unwrap_or(20).min(100);
 
-        let rows = crate::db::scout_run::list_by_region(pool, &region, limit)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query scout runs: {e}")))?;
+        let rows = if let Some(ref region) = region {
+            crate::db::scout_run::list_by_region(pool, region, limit).await
+        } else {
+            crate::db::scout_run::list_recent(pool, limit).await
+        }
+        .map_err(|e| async_graphql::Error::new(format!("Failed to query scout runs: {e}")))?;
 
         Ok(rows.into_iter().map(ScoutRun::from).collect())
     }
@@ -804,22 +877,56 @@ impl QueryRoot {
         })
     }
 
-    /// List scout tasks, optionally filtered by status.
+    // ========== Region queries ==========
+
+    /// List regions, optionally filtered by leaf status.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_scout_tasks(
+    async fn admin_regions(
         &self,
         ctx: &Context<'_>,
-        status: Option<String>,
+        leaf_only: Option<bool>,
         limit: Option<i32>,
-    ) -> Result<Vec<GqlScoutTask>> {
+    ) -> Result<Vec<GqlRegion>> {
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let lim = limit.unwrap_or(50).min(200) as u32;
-        let tasks = writer
-            .list_scout_tasks(status.as_deref(), lim)
+        let regions = writer
+            .list_regions(leaf_only, lim)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to list scout tasks: {e}")))?;
+            .map_err(|e| async_graphql::Error::new(format!("Failed to list regions: {e}")))?;
 
-        Ok(tasks.into_iter().map(GqlScoutTask::from_task).collect())
+        Ok(regions.into_iter().map(GqlRegion::from_region).collect())
+    }
+
+    /// Get a single region by ID.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_region(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> Result<Option<GqlRegion>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let region = writer
+            .get_region(&id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to get region: {e}")))?;
+
+        Ok(region.map(GqlRegion::from_region))
+    }
+
+    /// List child regions of a parent.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_region_children(
+        &self,
+        ctx: &Context<'_>,
+        parent_id: String,
+    ) -> Result<Vec<GqlRegion>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let children = writer
+            .list_child_regions(&parent_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to list children: {e}")))?;
+
+        Ok(children.into_iter().map(GqlRegion::from_region).collect())
     }
 
     // ========== Archive queries ==========
@@ -1448,10 +1555,16 @@ impl ScoutRun {
     async fn region(&self) -> &str {
         &self.row.region
     }
+    async fn region_id(&self) -> Option<&str> {
+        self.row.region_id.as_deref()
+    }
+    async fn flow_type(&self) -> Option<&str> {
+        self.row.flow_type.as_deref()
+    }
     async fn started_at(&self) -> DateTime<Utc> {
         self.row.started_at
     }
-    async fn finished_at(&self) -> DateTime<Utc> {
+    async fn finished_at(&self) -> Option<DateTime<Utc>> {
         self.row.finished_at
     }
     async fn stats(&self) -> ScoutRunStats {
