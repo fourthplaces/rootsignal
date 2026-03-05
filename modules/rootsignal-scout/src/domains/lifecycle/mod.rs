@@ -15,8 +15,8 @@ use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use events::LifecycleEvent;
 
-fn is_engine_started(e: &LifecycleEvent) -> bool {
-    matches!(e, LifecycleEvent::EngineStarted { .. })
+fn is_scout_run_requested(e: &LifecycleEvent) -> bool {
+    matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
 fn is_reap_completed(e: &LifecycleEvent) -> bool {
@@ -35,8 +35,8 @@ fn is_supervisor_completed(e: &LifecycleEvent) -> bool {
 pub mod handlers {
     use super::*;
 
-    /// EngineStarted → reap expired signals, emit PhaseCompleted(ReapExpired).
-    #[handle(on = LifecycleEvent, id = "lifecycle:reap", filter = is_engine_started)]
+    /// ScoutRunRequested → reap expired signals, emit PhaseCompleted(ReapExpired).
+    #[handle(on = LifecycleEvent, id = "lifecycle:reap", filter = is_scout_run_requested)]
     async fn reap(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -73,18 +73,13 @@ pub mod handlers {
             }
         };
 
-        let tension_count = output.tension_count;
-        let response_count = output.response_count;
-
         Ok(events![
-            PipelineEvent::ScheduleResolved {
+            LifecycleEvent::SourcesScheduled {
+                tension_count: output.tension_count,
+                response_count: output.response_count,
                 scheduled_data: output.scheduled_data,
                 actor_contexts: output.actor_contexts,
                 url_mappings: output.url_mappings,
-            },
-            LifecycleEvent::SourcesScheduled {
-                tension_count,
-                response_count,
             },
         ])
     }

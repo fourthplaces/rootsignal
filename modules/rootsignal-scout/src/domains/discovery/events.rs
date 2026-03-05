@@ -20,6 +20,10 @@ pub enum DiscoveryEvent {
     SocialTopicCollected {
         topic: String,
     },
+    /// Bulk social topics discovered during mid-run source expansion.
+    SocialTopicsDiscovered {
+        topics: Vec<String>,
+    },
 }
 
 impl DiscoveryEvent {
@@ -33,6 +37,7 @@ impl DiscoveryEvent {
             Self::LinksPromoted { .. } => "links_promoted",
             Self::ExpansionQueryCollected { .. } => "expansion_query_collected",
             Self::SocialTopicCollected { .. } => "social_topic_collected",
+            Self::SocialTopicsDiscovered { .. } => "social_topics_discovered",
         };
         format!("discovery:{variant}")
     }

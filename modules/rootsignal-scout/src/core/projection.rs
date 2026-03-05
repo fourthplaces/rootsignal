@@ -83,7 +83,7 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
 
 /// Priority-2 handler: maintain the `scout_runs` lookup table.
 ///
-/// On `EngineStarted`: INSERT a new row.
+/// On `ScoutRunRequested`: INSERT a new row.
 /// On `RunCompleted`: UPDATE with finished_at and stats JSONB.
 pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
     on_any()
@@ -101,7 +101,7 @@ pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
                 };
 
                 match lifecycle {
-                    LifecycleEvent::EngineStarted { run_id } => {
+                    LifecycleEvent::ScoutRunRequested { run_id } => {
                         let region = deps
                             .run_scope
                             .region()

@@ -8,6 +8,7 @@ pub mod util;
 mod completion_tests;
 
 use anyhow::Result;
+use futures::stream::{self, StreamExt};
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -36,10 +37,6 @@ fn is_signal_expansion_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-fn is_synthesis_triggered(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::SynthesisTriggered { .. })
-}
-
 fn is_synthesis_role_completed(e: &SynthesisEvent) -> bool {
     matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. })
 }
@@ -52,95 +49,31 @@ fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-// Per-target filter functions
-fn is_concern_linker_target_requested(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::ConcernLinkerTargetRequested { .. })
-}
-fn is_concern_linker_target_completed(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::ConcernLinkerTargetCompleted { .. })
-}
-fn is_response_finder_target_requested(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::ResponseFinderTargetRequested { .. })
-}
-fn is_response_finder_target_completed(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::ResponseFinderTargetCompleted { .. })
-}
-fn is_gathering_finder_target_requested(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::GatheringFinderTargetRequested { .. })
-}
-fn is_gathering_finder_target_completed(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::GatheringFinderTargetCompleted { .. })
-}
-fn is_investigation_target_requested(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::InvestigationTargetRequested { .. })
-}
-fn is_investigation_target_completed(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::InvestigationTargetCompleted { .. })
-}
-fn is_response_mapping_target_requested(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::ResponseMappingTargetRequested { .. })
-}
-fn is_response_mapping_target_completed(e: &SynthesisEvent) -> bool {
-    matches!(e, SynthesisEvent::ResponseMappingTargetCompleted { .. })
-}
-
 #[handlers]
 pub mod handlers {
     use super::*;
 
     // ---------------------------------------------------------------
-    // Trigger: PhaseCompleted(SignalExpansion) → SynthesisTriggered
+    // Similarity: single graph-wide operation, not atomized
     // ---------------------------------------------------------------
 
-    #[handle(on = LifecycleEvent, id = "synthesis:trigger", filter = is_signal_expansion_completed)]
-    async fn trigger(
+    #[handle(on = LifecycleEvent, id = "synthesis:similarity", filter = is_signal_expansion_completed)]
+    async fn similarity(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-
-        // Guard: if deps are missing, skip synthesis entirely
-        if deps.run_scope.region().is_none()
-            || deps.graph_client.is_none()
-            || deps.budget.is_none()
-            || deps.archive.is_none()
-        {
-            let mut skip = events![LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::Synthesis,
-            }];
-            skip.push(TelemetryEvent::SystemLog {
-                message: "Skipped entire synthesis phase: missing deps".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:trigger",
-                    "reason": "missing_deps",
-                    "missing": {
-                        "region": deps.run_scope.region().is_none(),
-                        "graph_client": deps.graph_client.is_none(),
-                        "budget": deps.budget.is_none(),
-                        "archive": deps.archive.is_none(),
-                    },
-                })),
-            });
-            return Ok(skip);
-        }
-
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
-        info!("Synthesis triggered, dispatching to role handlers");
-        Ok(events![SynthesisEvent::SynthesisTriggered { run_id }])
-    }
 
-    // ---------------------------------------------------------------
-    // Similarity: unchanged (single graph-wide operation, not atomized)
-    // ---------------------------------------------------------------
-
-    #[handle(on = SynthesisEvent, id = "synthesis:similarity", filter = is_synthesis_triggered)]
-    async fn similarity(
-        event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let run_id = event.run_id();
-        let deps = ctx.deps();
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
+        let graph_client = match deps.graph_client.as_ref() {
+            Some(g) => g,
+            None => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::Similarity,
+                }]);
+            }
+        };
 
         info!("Building similarity edges...");
         match rootsignal_graph::similarity::compute_edges(graph_client).await {
@@ -165,35 +98,33 @@ pub mod handlers {
     }
 
     // ===============================================================
-    // ConcernLinker: fan-out → per-target → completion check
+    // ConcernLinker: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = SynthesisEvent, id = "synthesis:fan_out_concern_linker", filter = is_synthesis_triggered)]
-    async fn fan_out_concern_linker(
-        event: SynthesisEvent,
+    #[handle(on = LifecycleEvent, id = "synthesis:concern_linker", filter = is_signal_expansion_completed)]
+    async fn concern_linker(
+        _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let graph = GraphReader::new(graph_client.clone());
+        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        if deps.archive.is_none() {
-            let mut skip = events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::ConcernLinker,
-            }];
-            skip.push(TelemetryEvent::SystemLog {
-                message: "Skipped concern linker: missing archive".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_concern_linker",
-                    "reason": "missing_deps",
-                })),
-            });
-            return Ok(skip);
-        }
+        let (region, graph_client, budget, archive) = match (
+            deps.run_scope.region(),
+            deps.graph_client.as_ref(),
+            deps.budget.as_ref(),
+            deps.archive.as_ref(),
+        ) {
+            (Some(r), Some(g), Some(b), Some(a)) => (r, g, b, a.clone()),
+            _ => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::ConcernLinker,
+                }]);
+            }
+        };
+
+        let graph = GraphReader::new(graph_client.clone());
 
         let mut out = Events::new();
         if !budget.has_budget(
@@ -202,7 +133,7 @@ pub mod handlers {
             out.push(TelemetryEvent::SystemLog {
                 message: "Skipped concern linker: insufficient budget".into(),
                 context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_concern_linker",
+                    "handler": "synthesis:concern_linker",
                     "reason": "budget_exhausted",
                 })),
             });
@@ -243,40 +174,9 @@ pub mod handlers {
             return Ok(out);
         }
 
-        let count = targets.len() as u32;
-        info!(count, "Dispatching concern linker targets");
+        info!(count = targets.len(), "Processing concern linker targets");
 
-        for target in &targets {
-            out.push(SynthesisEvent::ConcernLinkerTargetRequested {
-                run_id,
-                signal_id: target.signal_id,
-                signal_title: target.title.clone(),
-                signal_type: target.label.clone(),
-                source_url: target.source_url.clone(),
-            });
-        }
-
-        Ok(out)
-    }
-
-    #[handle(on = SynthesisEvent, id = "synthesis:process_concern_linker_target", filter = is_concern_linker_target_requested)]
-    async fn process_concern_linker_target(
-        event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (run_id, signal_id) = match &event {
-            SynthesisEvent::ConcernLinkerTargetRequested { run_id, signal_id, .. } => (*run_id, *signal_id),
-            _ => unreachable!(),
-        };
-
-        let deps = ctx.deps();
-
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let ai = deps.ai.as_ref().expect("guarded by trigger");
-        let archive = deps.archive.as_ref().expect("guarded by fan-out").clone();
-        let graph = GraphReader::new(graph_client.clone());
-
+        let ai = deps.ai.as_ref().expect("ai required for synthesis");
         let tl = activities::concern_linker::ConcernLinker::new(
             &graph,
             archive,
@@ -286,26 +186,7 @@ pub mod handlers {
             deps.run_id.clone(),
         );
 
-        // Re-fetch targets from graph to find this specific one
-        let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-        let targets = graph
-            .find_tension_linker_targets(10, min_lat, max_lat, min_lng, max_lng)
-            .await
-            .unwrap_or_default();
-
-        let target = targets.iter().find(|t| t.signal_id == signal_id);
-        let Some(target) = target else {
-            warn!(%signal_id, "Concern linker target not found in graph, skipping");
-            return Ok(events![SynthesisEvent::ConcernLinkerTargetCompleted {
-                run_id,
-                signal_id,
-                outcome: "not_found".to_string(),
-                tensions_discovered: 0,
-                edges_created: 0,
-            }]);
-        };
-
-        // Load landscapes (shared context)
+        // Load shared landscapes once for all targets
         let tension_landscape = match graph
             .get_tension_landscape(min_lat, max_lat, min_lng, max_lng)
             .await
@@ -352,76 +233,52 @@ pub mod handlers {
             }
         };
 
-        let (target_events, target_stats) = tl
-            .process_single_target(target, &tension_landscape, &situation_landscape)
-            .await;
+        let futures: Vec<_> = targets
+            .iter()
+            .map(|target| tl.process_single_target(target, &tension_landscape, &situation_landscape))
+            .collect();
+        let results: Vec<_> = stream::iter(futures).buffer_unordered(5).collect().await;
 
-        let mut out = target_events;
-        out.push(SynthesisEvent::ConcernLinkerTargetCompleted {
+        for (target_events, _target_stats) in results {
+            out.extend(target_events);
+        }
+
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
-            signal_id,
-            outcome: target_stats.outcome,
-            tensions_discovered: target_stats.tensions_discovered,
-            edges_created: target_stats.edges_created,
+            role: SynthesisRole::ConcernLinker,
         });
 
         Ok(out)
     }
 
-    #[handle(on = SynthesisEvent, id = "synthesis:check_concern_linker_complete", filter = is_concern_linker_target_completed)]
-    async fn check_concern_linker_complete(
-        _event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (_, state) = ctx.singleton::<PipelineState>();
-        let total = state.synthesis_role_totals.get(&SynthesisRole::ConcernLinker).copied().unwrap_or(0);
-        let completed = state.synthesis_role_completed.get(&SynthesisRole::ConcernLinker).copied().unwrap_or(0);
-
-        if completed >= total && total > 0 {
-            let run_id = Uuid::parse_str(&ctx.deps().run_id).unwrap_or_else(|_| Uuid::new_v4());
-            info!(total, completed, "All concern linker targets complete");
-            Ok(events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::ConcernLinker,
-            }])
-        } else {
-            Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "synthesis:check_concern_linker_complete".into(),
-                reason: format!("waiting for ConcernLinker: {completed}/{total} targets complete"),
-            }])
-        }
-    }
-
     // ===============================================================
-    // ResponseFinder: fan-out → per-target → completion check
+    // ResponseFinder: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = SynthesisEvent, id = "synthesis:fan_out_response_finder", filter = is_synthesis_triggered)]
-    async fn fan_out_response_finder(
-        event: SynthesisEvent,
+    #[handle(on = LifecycleEvent, id = "synthesis:response_finder", filter = is_signal_expansion_completed)]
+    async fn response_finder(
+        _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let graph = GraphReader::new(graph_client.clone());
+        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        if deps.archive.is_none() {
-            let mut skip = events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::ResponseFinder,
-            }];
-            skip.push(TelemetryEvent::SystemLog {
-                message: "Skipped response finder: missing archive".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_response_finder",
-                    "reason": "missing_deps",
-                })),
-            });
-            return Ok(skip);
-        }
+        let (region, graph_client, budget, archive) = match (
+            deps.run_scope.region(),
+            deps.graph_client.as_ref(),
+            deps.budget.as_ref(),
+            deps.archive.as_ref(),
+        ) {
+            (Some(r), Some(g), Some(b), Some(a)) => (r, g, b, a.clone()),
+            _ => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::ResponseFinder,
+                }]);
+            }
+        };
+
+        let graph = GraphReader::new(graph_client.clone());
 
         let mut out = Events::new();
         if !budget.has_budget(
@@ -430,7 +287,7 @@ pub mod handlers {
             out.push(TelemetryEvent::SystemLog {
                 message: "Skipped response finder: insufficient budget".into(),
                 context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_response_finder",
+                    "handler": "synthesis:response_finder",
                     "reason": "budget_exhausted",
                 })),
             });
@@ -466,38 +323,9 @@ pub mod handlers {
             return Ok(out);
         }
 
-        let count = targets.len() as u32;
-        info!(count, "Dispatching response finder targets");
+        info!(count = targets.len(), "Processing response finder targets");
 
-        for target in &targets {
-            out.push(SynthesisEvent::ResponseFinderTargetRequested {
-                run_id,
-                concern_id: target.concern_id,
-                concern_title: target.title.clone(),
-            });
-        }
-
-        Ok(out)
-    }
-
-    #[handle(on = SynthesisEvent, id = "synthesis:process_response_finder_target", filter = is_response_finder_target_requested)]
-    async fn process_response_finder_target(
-        event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (run_id, concern_id) = match &event {
-            SynthesisEvent::ResponseFinderTargetRequested { run_id, concern_id, .. } => (*run_id, *concern_id),
-            _ => unreachable!(),
-        };
-
-        let deps = ctx.deps();
-
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let ai = deps.ai.as_ref().expect("guarded by trigger");
-        let archive = deps.archive.as_ref().expect("guarded by fan-out").clone();
-        let graph = GraphReader::new(graph_client.clone());
-
+        let ai = deps.ai.as_ref().expect("ai required for synthesis");
         let rf = activities::response_finder::ResponseFinder::new(
             &graph,
             archive,
@@ -507,25 +335,7 @@ pub mod handlers {
             deps.run_id.clone(),
         );
 
-        // Re-fetch targets from graph to find this specific one
-        let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-        let targets = graph
-            .find_response_finder_targets(5, min_lat, max_lat, min_lng, max_lng)
-            .await
-            .unwrap_or_default();
-
-        let target = targets.iter().find(|t| t.concern_id == concern_id);
-        let Some(target) = target else {
-            warn!(%concern_id, "Response finder target not found in graph, skipping");
-            return Ok(events![SynthesisEvent::ResponseFinderTargetCompleted {
-                run_id,
-                concern_id,
-                responses_discovered: 0,
-                edges_created: 0,
-            }]);
-        };
-
-        // Load situation context
+        // Load situation context once for all targets
         let situation_context = match graph.get_situation_landscape(15).await {
             Ok(situations) => {
                 situations
@@ -553,81 +363,58 @@ pub mod handlers {
             }
         };
 
-        let (target_events, target_sources, target_stats) = rf
-            .process_single_target(target, &situation_context)
-            .await;
+        let futures: Vec<_> = targets
+            .iter()
+            .map(|target| rf.process_single_target(target, &situation_context))
+            .collect();
+        let results: Vec<_> = stream::iter(futures).buffer_unordered(3).collect().await;
 
-        let mut out = target_events;
-        for source in target_sources {
-            out.push(DiscoveryEvent::SourceDiscovered {
-                source,
-                discovered_by: "synthesis".into(),
-            });
+        for (target_events, target_sources, _target_stats) in results {
+            out.extend(target_events);
+            for source in target_sources {
+                out.push(DiscoveryEvent::SourceDiscovered {
+                    source,
+                    discovered_by: "synthesis".into(),
+                });
+            }
         }
-        out.push(SynthesisEvent::ResponseFinderTargetCompleted {
+
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
-            concern_id,
-            responses_discovered: target_stats.inner.responses_discovered,
-            edges_created: target_stats.inner.edges_created,
+            role: SynthesisRole::ResponseFinder,
         });
 
         Ok(out)
     }
 
-    #[handle(on = SynthesisEvent, id = "synthesis:check_response_finder_complete", filter = is_response_finder_target_completed)]
-    async fn check_response_finder_complete(
-        _event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (_, state) = ctx.singleton::<PipelineState>();
-        let total = state.synthesis_role_totals.get(&SynthesisRole::ResponseFinder).copied().unwrap_or(0);
-        let completed = state.synthesis_role_completed.get(&SynthesisRole::ResponseFinder).copied().unwrap_or(0);
-
-        if completed >= total && total > 0 {
-            let run_id = Uuid::parse_str(&ctx.deps().run_id).unwrap_or_else(|_| Uuid::new_v4());
-            info!(total, completed, "All response finder targets complete");
-            Ok(events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::ResponseFinder,
-            }])
-        } else {
-            Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "synthesis:check_response_finder_complete".into(),
-                reason: format!("waiting for ResponseFinder: {completed}/{total} targets complete"),
-            }])
-        }
-    }
-
     // ===============================================================
-    // GatheringFinder: fan-out → per-target → completion check
+    // GatheringFinder: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = SynthesisEvent, id = "synthesis:fan_out_gathering_finder", filter = is_synthesis_triggered)]
-    async fn fan_out_gathering_finder(
-        event: SynthesisEvent,
+    #[handle(on = LifecycleEvent, id = "synthesis:gathering_finder", filter = is_signal_expansion_completed)]
+    async fn gathering_finder(
+        _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let graph = GraphReader::new(graph_client.clone());
+        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        if deps.archive.is_none() {
-            let mut skip = events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::GatheringFinder,
-            }];
-            skip.push(TelemetryEvent::SystemLog {
-                message: "Skipped gathering finder: missing archive".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_gathering_finder",
-                    "reason": "missing_deps",
-                })),
-            });
-            return Ok(skip);
-        }
+        let (region, graph_client, budget, archive) = match (
+            deps.run_scope.region(),
+            deps.graph_client.as_ref(),
+            deps.budget.as_ref(),
+            deps.archive.as_ref(),
+        ) {
+            (Some(r), Some(g), Some(b), Some(a)) => (r, g, b, a.clone()),
+            _ => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::GatheringFinder,
+                }]);
+            }
+        };
+
+        let graph = GraphReader::new(graph_client.clone());
 
         let mut out = Events::new();
         if !budget.has_budget(
@@ -636,7 +423,7 @@ pub mod handlers {
             out.push(TelemetryEvent::SystemLog {
                 message: "Skipped gathering finder: insufficient budget".into(),
                 context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_gathering_finder",
+                    "handler": "synthesis:gathering_finder",
                     "reason": "budget_exhausted",
                 })),
             });
@@ -672,38 +459,9 @@ pub mod handlers {
             return Ok(out);
         }
 
-        let count = targets.len() as u32;
-        info!(count, "Dispatching gathering finder targets");
+        info!(count = targets.len(), "Processing gathering finder targets");
 
-        for target in &targets {
-            out.push(SynthesisEvent::GatheringFinderTargetRequested {
-                run_id,
-                concern_id: target.concern_id,
-                concern_title: target.title.clone(),
-            });
-        }
-
-        Ok(out)
-    }
-
-    #[handle(on = SynthesisEvent, id = "synthesis:process_gathering_finder_target", filter = is_gathering_finder_target_requested)]
-    async fn process_gathering_finder_target(
-        event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (run_id, concern_id) = match &event {
-            SynthesisEvent::GatheringFinderTargetRequested { run_id, concern_id, .. } => (*run_id, *concern_id),
-            _ => unreachable!(),
-        };
-
-        let deps = ctx.deps();
-
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let ai = deps.ai.as_ref().expect("guarded by trigger");
-        let archive = deps.archive.as_ref().expect("guarded by fan-out").clone();
-        let graph = GraphReader::new(graph_client.clone());
-
+        let ai = deps.ai.as_ref().expect("ai required for synthesis");
         let gf_deps = activities::gathering_finder::GatheringFinderDeps::new(
             &graph,
             archive,
@@ -713,100 +471,58 @@ pub mod handlers {
             deps.run_id.clone(),
         );
 
-        // Re-fetch targets from graph to find this specific one
-        let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-        let targets = graph
-            .find_gathering_finder_targets(5, min_lat, max_lat, min_lng, max_lng)
-            .await
-            .unwrap_or_default();
+        let futures: Vec<_> = targets
+            .iter()
+            .map(|target| activities::gathering_finder::investigate_single_target(&gf_deps, target))
+            .collect();
+        let results: Vec<_> = stream::iter(futures).buffer_unordered(3).collect().await;
 
-        let target = targets.iter().find(|t| t.concern_id == concern_id);
-        let Some(target) = target else {
-            warn!(%concern_id, "Gathering finder target not found in graph, skipping");
-            return Ok(events![SynthesisEvent::GatheringFinderTargetCompleted {
-                run_id,
-                concern_id,
-                gatherings_discovered: 0,
-                no_gravity: false,
-                edges_created: 0,
-            }]);
-        };
-
-        let (target_events, target_sources, target_stats) =
-            activities::gathering_finder::investigate_single_target(&gf_deps, target).await;
-
-        let mut out = target_events;
-        for source in target_sources {
-            out.push(DiscoveryEvent::SourceDiscovered {
-                source,
-                discovered_by: "synthesis".into(),
-            });
+        for (target_events, target_sources, _target_stats) in results {
+            out.extend(target_events);
+            for source in target_sources {
+                out.push(DiscoveryEvent::SourceDiscovered {
+                    source,
+                    discovered_by: "synthesis".into(),
+                });
+            }
         }
-        out.push(SynthesisEvent::GatheringFinderTargetCompleted {
+
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
-            concern_id,
-            gatherings_discovered: target_stats.gatherings_discovered,
-            no_gravity: target_stats.no_gravity,
-            edges_created: target_stats.edges_created,
+            role: SynthesisRole::GatheringFinder,
         });
 
         Ok(out)
     }
 
-    #[handle(on = SynthesisEvent, id = "synthesis:check_gathering_finder_complete", filter = is_gathering_finder_target_completed)]
-    async fn check_gathering_finder_complete(
-        _event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (_, state) = ctx.singleton::<PipelineState>();
-        let total = state.synthesis_role_totals.get(&SynthesisRole::GatheringFinder).copied().unwrap_or(0);
-        let completed = state.synthesis_role_completed.get(&SynthesisRole::GatheringFinder).copied().unwrap_or(0);
-
-        if completed >= total && total > 0 {
-            let run_id = Uuid::parse_str(&ctx.deps().run_id).unwrap_or_else(|_| Uuid::new_v4());
-            info!(total, completed, "All gathering finder targets complete");
-            Ok(events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::GatheringFinder,
-            }])
-        } else {
-            Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "synthesis:check_gathering_finder_complete".into(),
-                reason: format!("waiting for GatheringFinder: {completed}/{total} targets complete"),
-            }])
-        }
-    }
-
     // ===============================================================
-    // Investigation: fan-out → per-target → completion check
+    // Investigation: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = SynthesisEvent, id = "synthesis:fan_out_investigation", filter = is_synthesis_triggered)]
-    async fn fan_out_investigation(
-        event: SynthesisEvent,
+    #[handle(on = LifecycleEvent, id = "synthesis:investigation", filter = is_signal_expansion_completed)]
+    async fn investigation(
+        _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let budget = deps.budget.as_ref().expect("guarded by trigger");
-        let graph = GraphReader::new(graph_client.clone());
+        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        if deps.archive.is_none() {
-            let mut skip = events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::Investigation,
-            }];
-            skip.push(TelemetryEvent::SystemLog {
-                message: "Skipped investigation: missing archive".into(),
-                context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_investigation",
-                    "reason": "missing_deps",
-                })),
-            });
-            return Ok(skip);
-        }
+        let (region, graph_client, budget, archive) = match (
+            deps.run_scope.region(),
+            deps.graph_client.as_ref(),
+            deps.budget.as_ref(),
+            deps.archive.as_ref(),
+        ) {
+            (Some(r), Some(g), Some(b), Some(a)) => (r, g, b, a.clone()),
+            _ => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::Investigation,
+                }]);
+            }
+        };
+
+        let graph = GraphReader::new(graph_client.clone());
 
         let mut out = Events::new();
         if !budget.has_budget(
@@ -815,7 +531,7 @@ pub mod handlers {
             out.push(TelemetryEvent::SystemLog {
                 message: "Skipped investigation: insufficient budget".into(),
                 context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_investigation",
+                    "handler": "synthesis:investigation",
                     "reason": "budget_exhausted",
                 })),
             });
@@ -853,39 +569,9 @@ pub mod handlers {
             return Ok(out);
         }
 
-        let count = targets.len() as u32;
-        info!(count, "Dispatching investigation targets");
+        info!(count = targets.len(), "Processing investigation targets");
 
-        for target in &targets {
-            out.push(SynthesisEvent::InvestigationTargetRequested {
-                run_id,
-                signal_id: target.signal_id,
-                signal_title: target.title.clone(),
-                signal_type: target.node_type.to_string(),
-            });
-        }
-
-        Ok(out)
-    }
-
-    #[handle(on = SynthesisEvent, id = "synthesis:process_investigation_target", filter = is_investigation_target_requested)]
-    async fn process_investigation_target(
-        event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (run_id, signal_id) = match &event {
-            SynthesisEvent::InvestigationTargetRequested { run_id, signal_id, .. } => (*run_id, *signal_id),
-            _ => unreachable!(),
-        };
-
-        let deps = ctx.deps();
-
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let ai = deps.ai.as_ref().expect("guarded by trigger");
-        let archive = deps.archive.as_ref().expect("guarded by fan-out").clone();
-        let graph = GraphReader::new(graph_client.clone());
-
+        let ai = deps.ai.as_ref().expect("ai required for synthesis");
         let investigator = activities::investigator::Investigator::new(
             &graph,
             archive,
@@ -893,77 +579,50 @@ pub mod handlers {
             region,
         );
 
-        // Re-fetch targets from graph to find this specific one
-        let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-        let targets = graph
-            .find_investigation_targets(min_lat, max_lat, min_lng, max_lng)
-            .await
-            .unwrap_or_default();
+        let futures: Vec<_> = targets
+            .iter()
+            .map(|target| investigator.investigate_single_signal(target))
+            .collect();
+        let results: Vec<_> = stream::iter(futures).buffer_unordered(4).collect().await;
 
-        let target = targets.iter().find(|t| t.signal_id == signal_id);
-        let Some(target) = target else {
-            warn!(%signal_id, "Investigation target not found in graph, skipping");
-            return Ok(events![SynthesisEvent::InvestigationTargetCompleted {
-                run_id,
-                signal_id,
-                evidence_created: 0,
-                confidence_adjusted: false,
-            }]);
-        };
+        for (target_events, _target_stats) in results {
+            out.extend(target_events);
+        }
 
-        let (target_events, target_stats) = investigator
-            .investigate_single_signal(target)
-            .await;
-
-        let mut out = target_events;
-        out.push(SynthesisEvent::InvestigationTargetCompleted {
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
-            signal_id,
-            evidence_created: target_stats.evidence_created,
-            confidence_adjusted: target_stats.confidence_adjusted,
+            role: SynthesisRole::Investigation,
         });
 
         Ok(out)
     }
 
-    #[handle(on = SynthesisEvent, id = "synthesis:check_investigation_complete", filter = is_investigation_target_completed)]
-    async fn check_investigation_complete(
-        _event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (_, state) = ctx.singleton::<PipelineState>();
-        let total = state.synthesis_role_totals.get(&SynthesisRole::Investigation).copied().unwrap_or(0);
-        let completed = state.synthesis_role_completed.get(&SynthesisRole::Investigation).copied().unwrap_or(0);
-
-        if completed >= total && total > 0 {
-            let run_id = Uuid::parse_str(&ctx.deps().run_id).unwrap_or_else(|_| Uuid::new_v4());
-            info!(total, completed, "All investigation targets complete");
-            Ok(events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::Investigation,
-            }])
-        } else {
-            Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "synthesis:check_investigation_complete".into(),
-                reason: format!("waiting for Investigation: {completed}/{total} targets complete"),
-            }])
-        }
-    }
-
     // ===============================================================
-    // ResponseMapping: fan-out → per-target → completion check
+    // ResponseMapping: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = SynthesisEvent, id = "synthesis:fan_out_response_mapping", filter = is_synthesis_triggered)]
-    async fn fan_out_response_mapping(
-        event: SynthesisEvent,
+    #[handle(on = LifecycleEvent, id = "synthesis:response_mapping", filter = is_signal_expansion_completed)]
+    async fn response_mapping(
+        _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let run_id = event.run_id();
         let deps = ctx.deps();
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let budget = deps.budget.as_ref().expect("guarded by trigger");
+        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+
+        let (region, graph_client, budget) = match (
+            deps.run_scope.region(),
+            deps.graph_client.as_ref(),
+            deps.budget.as_ref(),
+        ) {
+            (Some(r), Some(g), Some(b)) => (r, g, b),
+            _ => {
+                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
+                    run_id,
+                    role: SynthesisRole::ResponseMapping,
+                }]);
+            }
+        };
+
         let graph = GraphReader::new(graph_client.clone());
 
         let mut out = Events::new();
@@ -971,7 +630,7 @@ pub mod handlers {
             out.push(TelemetryEvent::SystemLog {
                 message: "Skipped response mapping: insufficient budget".into(),
                 context: Some(serde_json::json!({
-                    "handler": "synthesis:fan_out_response_mapping",
+                    "handler": "synthesis:response_mapping",
                     "reason": "budget_exhausted",
                 })),
             });
@@ -1007,103 +666,37 @@ pub mod handlers {
             return Ok(out);
         }
 
-        let count = tensions.len() as u32;
-        info!(count, "Dispatching response mapping targets");
+        info!(count = tensions.len(), "Processing response mapping targets");
 
-        // We need to get tension titles for the events
-        for (concern_id, _embedding) in &tensions {
-            let title = match graph.get_signal_info(*concern_id).await {
-                Ok(Some((t, _))) => t,
-                _ => format!("tension-{}", concern_id),
-            };
-            out.push(SynthesisEvent::ResponseMappingTargetRequested {
-                run_id,
-                concern_id: *concern_id,
-                concern_title: title,
-            });
+        let ai = deps.ai.as_ref().expect("ai required for synthesis");
+
+        let futures: Vec<_> = tensions
+            .iter()
+            .map(|(concern_id, embedding)| {
+                activities::response_mapper::map_single_tension(
+                    &graph,
+                    ai.as_ref(),
+                    *concern_id,
+                    embedding,
+                    min_lat,
+                    max_lat,
+                    min_lng,
+                    max_lng,
+                )
+            })
+            .collect();
+        let results: Vec<_> = stream::iter(futures).buffer_unordered(5).collect().await;
+
+        for (target_events, _edges_created) in results {
+            out.extend(target_events);
         }
 
-        Ok(out)
-    }
-
-    #[handle(on = SynthesisEvent, id = "synthesis:process_response_mapping_target", filter = is_response_mapping_target_requested)]
-    async fn process_response_mapping_target(
-        event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (run_id, concern_id) = match &event {
-            SynthesisEvent::ResponseMappingTargetRequested { run_id, concern_id, .. } => (*run_id, *concern_id),
-            _ => unreachable!(),
-        };
-
-        let deps = ctx.deps();
-        let region = deps.run_scope.region().expect("guarded by trigger");
-        let graph_client = deps.graph_client.as_ref().expect("guarded by trigger");
-        let ai = deps.ai.as_ref().expect("guarded by trigger");
-        let graph = GraphReader::new(graph_client.clone());
-
-        let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-
-        // Re-fetch the tension embedding for this specific one
-        let tensions = graph
-            .get_active_tensions(min_lat, max_lat, min_lng, max_lng)
-            .await
-            .unwrap_or_default();
-
-        let tension_embedding = tensions.iter().find(|(id, _)| *id == concern_id);
-        let Some((_id, embedding)) = tension_embedding else {
-            warn!(%concern_id, "Response mapping target not found, skipping");
-            return Ok(events![SynthesisEvent::ResponseMappingTargetCompleted {
-                run_id,
-                concern_id,
-                edges_created: 0,
-            }]);
-        };
-
-        let (target_events, edges_created) = activities::response_mapper::map_single_tension(
-            &graph,
-            ai.as_ref(),
-            concern_id,
-            embedding,
-            min_lat,
-            max_lat,
-            min_lng,
-            max_lng,
-        )
-        .await;
-
-        let mut out = target_events;
-        out.push(SynthesisEvent::ResponseMappingTargetCompleted {
+        out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
-            concern_id,
-            edges_created,
+            role: SynthesisRole::ResponseMapping,
         });
 
         Ok(out)
-    }
-
-    #[handle(on = SynthesisEvent, id = "synthesis:check_response_mapping_complete", filter = is_response_mapping_target_completed)]
-    async fn check_response_mapping_complete(
-        _event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (_, state) = ctx.singleton::<PipelineState>();
-        let total = state.synthesis_role_totals.get(&SynthesisRole::ResponseMapping).copied().unwrap_or(0);
-        let completed = state.synthesis_role_completed.get(&SynthesisRole::ResponseMapping).copied().unwrap_or(0);
-
-        if completed >= total && total > 0 {
-            let run_id = Uuid::parse_str(&ctx.deps().run_id).unwrap_or_else(|_| Uuid::new_v4());
-            info!(total, completed, "All response mapping targets complete");
-            Ok(events![SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::ResponseMapping,
-            }])
-        } else {
-            Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "synthesis:check_response_mapping_complete".into(),
-                reason: format!("waiting for ResponseMapping: {completed}/{total} targets complete"),
-            }])
-        }
     }
 
     // ---------------------------------------------------------------
@@ -1116,6 +709,14 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let (_, state) = ctx.singleton::<PipelineState>();
+
+        // Idempotency: if this phase already completed, skip
+        if state.completed_phases.contains(&PipelinePhase::Synthesis) {
+            return Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "synthesis:phase_complete".into(),
+                reason: "Synthesis already completed".into(),
+            }]);
+        }
 
         if state
             .completed_synthesis_roles

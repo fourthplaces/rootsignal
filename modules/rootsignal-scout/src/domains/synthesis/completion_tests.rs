@@ -96,7 +96,8 @@ async fn sixth_synthesis_role_emits_phase_completed() {
 #[tokio::test]
 async fn missing_deps_skips_synthesis_with_immediate_phase_completed() {
     let store = Arc::new(MockSignalReader::new());
-    // No region, no graph_client, no budget — trigger should bail
+    // No region, no graph_client, no budget — each handler guards its own deps
+    // and emits SynthesisRoleCompleted (fact: "completed with nothing to do")
     let (engine, captured) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         None,
@@ -112,12 +113,13 @@ async fn missing_deps_skips_synthesis_with_immediate_phase_completed() {
 
     assert!(
         has_phase_completed_synthesis(&captured),
-        "Trigger should emit PhaseCompleted(Synthesis) when deps are missing"
+        "PhaseCompleted(Synthesis) should fire when all handlers skip due to missing deps"
     );
 
     let state = engine.singleton::<PipelineState>();
-    assert!(
-        state.completed_synthesis_roles.is_empty(),
-        "No synthesis roles should complete when deps are missing"
+    assert_eq!(
+        state.completed_synthesis_roles.len(),
+        6,
+        "All 6 roles should complete (each handler emits RoleCompleted even when skipping)"
     );
 }

@@ -162,7 +162,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
-    // scout_runs table maintenance (INSERT on EngineStarted, UPDATE on RunCompleted)
+    // scout_runs table maintenance (INSERT on ScoutRunRequested, UPDATE on RunCompleted)
     engine = engine.with_handler(projection::scout_runs_handler());
     engine = engine.with_handler(projection::system_log_handler());
 
@@ -236,7 +236,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
-    // scout_runs table maintenance (INSERT on EngineStarted, UPDATE on RunCompleted)
+    // scout_runs table maintenance (INSERT on ScoutRunRequested, UPDATE on RunCompleted)
     engine = engine.with_handler(projection::scout_runs_handler());
     engine = engine.with_handler(projection::system_log_handler());
 
@@ -396,7 +396,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
-    // scout_runs table maintenance (INSERT on EngineStarted, UPDATE on RunCompleted)
+    // scout_runs table maintenance (INSERT on ScoutRunRequested, UPDATE on RunCompleted)
     engine = engine.with_handler(projection::scout_runs_handler());
     engine = engine.with_handler(projection::system_log_handler());
 

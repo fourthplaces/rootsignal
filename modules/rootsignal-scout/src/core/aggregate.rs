@@ -14,11 +14,13 @@ use uuid::Uuid;
 
 use rootsignal_common::Node;
 
-use crate::core::events::FreshnessBucket;
+use crate::core::events::{FreshnessBucket, PipelinePhase};
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::scrape::events::ScrapeRole;
 use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
+use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
+use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::core::stats::ScoutStats;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::scrape::events::ScrapeEvent;
@@ -26,14 +28,6 @@ use crate::domains::signals::events::SignalEvent;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
 use crate::core::extractor::ResourceTag;
-/// Per-role accumulated stats for ScrapeRoleCompleted emission.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct RoleStats {
-    pub urls_scraped: u32,
-    pub urls_unchanged: u32,
-    pub urls_failed: u32,
-    pub signals_extracted: u32,
-}
 
 /// Scheduling data passed between schedule_handler and scrape handlers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,33 +99,17 @@ pub struct PipelineState {
     #[serde(default)]
     pub completed_scrape_roles: HashSet<ScrapeRole>,
 
-    /// Per-role total URL count (set by fan-out handlers).
-    #[serde(default)]
-    pub role_url_totals: HashMap<ScrapeRole, u32>,
-
-    /// Per-role completed URL count (incremented by UrlScrapeCompleted / SocialSourceCompleted).
-    #[serde(default)]
-    pub role_urls_completed: HashMap<ScrapeRole, u32>,
-
-    /// Per-role accumulated stats for ScrapeRoleCompleted emission.
-    #[serde(default)]
-    pub role_stats: HashMap<ScrapeRole, RoleStats>,
-
     /// Synthesis roles completed, for phase-completion tracking.
     #[serde(default)]
     pub completed_synthesis_roles: HashSet<SynthesisRole>,
 
-    /// Per-role total target count (set by fan-out handlers).
-    #[serde(default)]
-    pub synthesis_role_totals: HashMap<SynthesisRole, u32>,
-
-    /// Per-role completed target count (incremented by *TargetCompleted).
-    #[serde(default)]
-    pub synthesis_role_completed: HashMap<SynthesisRole, u32>,
-
     /// Enrichment roles completed, for phase-completion tracking.
     #[serde(default)]
     pub completed_enrichment_roles: HashSet<EnrichmentRole>,
+
+    /// Pipeline phases already completed — guards phase_complete handlers against duplicates.
+    #[serde(default)]
+    pub completed_phases: HashSet<PipelinePhase>,
 }
 
 /// A batch of extracted nodes for a single URL, carried on `SignalsExtracted`
@@ -184,13 +162,9 @@ impl PipelineState {
             scheduled: None,
             social_topics: Vec::new(),
             completed_scrape_roles: HashSet::new(),
-            role_url_totals: HashMap::new(),
-            role_urls_completed: HashMap::new(),
-            role_stats: HashMap::new(),
             completed_synthesis_roles: HashSet::new(),
-            synthesis_role_totals: HashMap::new(),
-            synthesis_role_completed: HashMap::new(),
             completed_enrichment_roles: HashSet::new(),
+            completed_phases: HashSet::new(),
         }
     }
 
@@ -253,44 +227,28 @@ impl PipelineState {
                 });
             }
             ScrapeEvent::ExtractionFailed { .. } => {}
-            ScrapeEvent::SourcesResolved { web_role, web_urls, url_mappings, pub_dates, query_api_errors, .. } => {
-                self.role_url_totals.insert(*web_role, web_urls.len() as u32);
+            ScrapeEvent::SourcesResolved { url_mappings, pub_dates, query_api_errors, .. } => {
                 self.url_to_canonical_key.extend(url_mappings.clone());
                 self.url_to_pub_date.extend(pub_dates.clone());
                 self.query_api_errors.extend(query_api_errors.clone());
             }
-            ScrapeEvent::UrlFetchRequested { .. } => {}
-            ScrapeEvent::UrlScrapeCompleted {
+            ScrapeEvent::ScrapeRoleCompleted {
                 role,
-                scraped,
-                unchanged,
-                failed,
-                signals_extracted,
+                source_signal_counts,
+                collected_links,
+                expansion_queries,
+                stats_delta,
                 ..
             } => {
-                *self.role_urls_completed.entry(*role).or_default() += 1;
-                let stats = self.role_stats.entry(*role).or_default();
-                if *scraped { stats.urls_scraped += 1; }
-                if *unchanged { stats.urls_unchanged += 1; }
-                if *failed { stats.urls_failed += 1; }
-                stats.signals_extracted += signals_extracted;
-            }
-            ScrapeEvent::SocialSourceRequested { role, .. } => {
-                // Increment total for social sources (each request adds 1)
-                *self.role_url_totals.entry(*role).or_default() += 1;
-            }
-            ScrapeEvent::SocialSourceCompleted {
-                role,
-                signals_extracted,
-                ..
-            } => {
-                *self.role_urls_completed.entry(*role).or_default() += 1;
-                let stats = self.role_stats.entry(*role).or_default();
-                stats.urls_scraped += 1;
-                stats.signals_extracted += signals_extracted;
-            }
-            ScrapeEvent::ScrapeRoleCompleted { role, .. } => {
                 self.completed_scrape_roles.insert(*role);
+                for (k, v) in source_signal_counts {
+                    *self.source_signal_counts.entry(k.clone()).or_default() += v;
+                }
+                self.collected_links.extend(collected_links.clone());
+                self.expansion_queries.extend(expansion_queries.clone());
+                self.stats.social_media_posts += stats_delta.social_media_posts;
+                self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
+                self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
                 if *role == ScrapeRole::TopicDiscovery {
                     self.social_topics.clear();
                     self.social_expansion_topics.clear();
@@ -362,47 +320,37 @@ impl PipelineState {
                 self.social_expansion_topics.push(topic.clone());
                 self.stats.expansion_social_topics_queued += 1;
             }
+            DiscoveryEvent::SocialTopicsDiscovered { topics } => {
+                self.social_topics = topics.clone();
+            }
         }
     }
 
     /// Apply a synthesis domain event.
     pub fn apply_synthesis(&mut self, event: &SynthesisEvent) {
         match event {
-            SynthesisEvent::SynthesisTriggered { .. } => {}
             SynthesisEvent::SynthesisRoleCompleted { role, .. } => {
                 self.completed_synthesis_roles.insert(*role);
             }
-            // Per-target requested events set role totals (replaces SynthesisTargetsDispatched)
-            SynthesisEvent::ConcernLinkerTargetRequested { .. } => {
-                *self.synthesis_role_totals.entry(SynthesisRole::ConcernLinker).or_default() += 1;
-            }
-            SynthesisEvent::ResponseFinderTargetRequested { .. } => {
-                *self.synthesis_role_totals.entry(SynthesisRole::ResponseFinder).or_default() += 1;
-            }
-            SynthesisEvent::GatheringFinderTargetRequested { .. } => {
-                *self.synthesis_role_totals.entry(SynthesisRole::GatheringFinder).or_default() += 1;
-            }
-            SynthesisEvent::InvestigationTargetRequested { .. } => {
-                *self.synthesis_role_totals.entry(SynthesisRole::Investigation).or_default() += 1;
-            }
-            SynthesisEvent::ResponseMappingTargetRequested { .. } => {
-                *self.synthesis_role_totals.entry(SynthesisRole::ResponseMapping).or_default() += 1;
-            }
-            // Per-target completed events increment completed count
-            SynthesisEvent::ConcernLinkerTargetCompleted { .. } => {
-                *self.synthesis_role_completed.entry(SynthesisRole::ConcernLinker).or_default() += 1;
-            }
-            SynthesisEvent::ResponseFinderTargetCompleted { .. } => {
-                *self.synthesis_role_completed.entry(SynthesisRole::ResponseFinder).or_default() += 1;
-            }
-            SynthesisEvent::GatheringFinderTargetCompleted { .. } => {
-                *self.synthesis_role_completed.entry(SynthesisRole::GatheringFinder).or_default() += 1;
-            }
-            SynthesisEvent::InvestigationTargetCompleted { .. } => {
-                *self.synthesis_role_completed.entry(SynthesisRole::Investigation).or_default() += 1;
-            }
-            SynthesisEvent::ResponseMappingTargetCompleted { .. } => {
-                *self.synthesis_role_completed.entry(SynthesisRole::ResponseMapping).or_default() += 1;
+        }
+    }
+
+    /// Apply an expansion domain event.
+    pub fn apply_expansion(&mut self, event: &ExpansionEvent) {
+        match event {
+            ExpansionEvent::ExpansionCompleted {
+                social_expansion_topics,
+                expansion_deferred_expanded,
+                expansion_queries_collected,
+                expansion_sources_created,
+                expansion_social_topics_queued,
+            } => {
+                self.social_expansion_topics
+                    .extend(social_expansion_topics.clone());
+                self.stats.expansion_deferred_expanded = *expansion_deferred_expanded;
+                self.stats.expansion_queries_collected = *expansion_queries_collected;
+                self.stats.expansion_sources_created = *expansion_sources_created;
+                self.stats.expansion_social_topics_queued = *expansion_social_topics_queued;
             }
         }
     }
@@ -416,7 +364,25 @@ impl PipelineState {
         }
     }
 
-    // LifecycleEvent is a no-op for aggregate state.
+    /// Apply a lifecycle domain event.
+    pub fn apply_lifecycle(&mut self, event: &LifecycleEvent) {
+        match event {
+            LifecycleEvent::PhaseCompleted { phase } => {
+                self.completed_phases.insert(phase.clone());
+            }
+            LifecycleEvent::SourcesScheduled {
+                scheduled_data,
+                actor_contexts,
+                url_mappings,
+                ..
+            } => {
+                self.actor_contexts.extend(actor_contexts.clone());
+                self.url_to_canonical_key.extend(url_mappings.clone());
+                self.scheduled = Some(scheduled_data.clone());
+            }
+            _ => {}
+        }
+    }
 
     // -----------------------------------------------------------------
     // Apply accumulated outputs from pure activity functions
@@ -437,79 +403,12 @@ impl PipelineState {
         self.stats.discovery_accounts_found += output.stats_delta.discovery_accounts_found;
     }
 
-    /// Apply accumulated expansion output to pipeline state.
-    pub fn apply_expansion_output(&mut self, output: crate::domains::expansion::activities::expansion::ExpansionOutput) {
-        self.social_expansion_topics
-            .extend(output.social_expansion_topics);
-        self.stats.expansion_deferred_expanded = output.expansion_deferred_expanded;
-        self.stats.expansion_queries_collected = output.expansion_queries_collected;
-        self.stats.expansion_sources_created = output.expansion_sources_created;
-        self.stats.expansion_social_topics_queued = output.expansion_social_topics_queued;
-    }
-
-    /// Apply schedule output: stash scheduled data, actor contexts, URL mappings.
-    pub fn apply_schedule_output(&mut self, output: ScheduleOutput) {
-        self.actor_contexts.extend(output.actor_contexts);
-        self.url_to_canonical_key.extend(output.url_mappings);
-        self.scheduled = Some(output.scheduled_data);
-    }
-
     /// Apply a pipeline event to aggregate state.
     pub fn apply_pipeline(&mut self, event: &PipelineEvent) {
         match event {
-            PipelineEvent::ScheduleResolved {
-                scheduled_data,
-                actor_contexts,
-                url_mappings,
-            } => {
-                self.actor_contexts.extend(actor_contexts.clone());
-                self.url_to_canonical_key.extend(url_mappings.clone());
-                self.scheduled = Some(scheduled_data.clone());
-            }
-            PipelineEvent::ExpansionAccumulated {
-                social_expansion_topics,
-                expansion_deferred_expanded,
-                expansion_queries_collected,
-                expansion_sources_created,
-                expansion_social_topics_queued,
-            } => {
-                self.social_expansion_topics
-                    .extend(social_expansion_topics.clone());
-                self.stats.expansion_deferred_expanded = *expansion_deferred_expanded;
-                self.stats.expansion_queries_collected = *expansion_queries_collected;
-                self.stats.expansion_sources_created = *expansion_sources_created;
-                self.stats.expansion_social_topics_queued = *expansion_social_topics_queued;
-            }
-            PipelineEvent::SocialTopicsCollected { topics } => {
-                self.social_topics = topics.clone();
-            }
             PipelineEvent::HandlerSkipped { .. } => {}
             PipelineEvent::HandlerFailed { .. } => {
                 self.stats.handler_failures += 1;
-            }
-            PipelineEvent::UrlsResolvedAccumulated {
-                url_mappings,
-                pub_dates,
-                query_api_errors,
-            } => {
-                self.url_to_canonical_key.extend(url_mappings.clone());
-                self.query_api_errors.extend(query_api_errors.clone());
-                self.url_to_pub_date.extend(pub_dates.clone());
-            }
-            PipelineEvent::ScrapeResultAccumulated {
-                source_signal_counts,
-                collected_links,
-                expansion_queries,
-                stats_delta,
-            } => {
-                for (k, v) in source_signal_counts {
-                    *self.source_signal_counts.entry(k.clone()).or_default() += v;
-                }
-                self.collected_links.extend(collected_links.clone());
-                self.expansion_queries.extend(expansion_queries.clone());
-                self.stats.social_media_posts += stats_delta.social_media_posts;
-                self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
-                self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
             }
         }
     }
@@ -551,6 +450,14 @@ pub mod pipeline_aggregators {
 
     fn on_enrichment(state: &mut PipelineState, event: EnrichmentEvent) {
         state.apply_enrichment(&event);
+    }
+
+    fn on_expansion(state: &mut PipelineState, event: ExpansionEvent) {
+        state.apply_expansion(&event);
+    }
+
+    fn on_lifecycle(state: &mut PipelineState, event: LifecycleEvent) {
+        state.apply_lifecycle(&event);
     }
 }
 

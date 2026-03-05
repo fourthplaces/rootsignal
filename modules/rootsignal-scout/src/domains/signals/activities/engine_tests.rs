@@ -16,6 +16,7 @@ use crate::core::aggregate::{ExtractedBatch, PendingNode};
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::testing::*;
 use chrono::Utc;
+use uuid::Uuid;
 use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
 use seesaw_core::AnyEvent;
@@ -309,12 +310,17 @@ async fn link_promotion_promotes_links_on_phase_completed() {
         Some(mpls_region()),
     );
 
-    // Seed collected links via PipelineEvent (simulates links found during scraping)
-    use crate::core::pipeline_events::PipelineEvent;
-    use crate::domains::scrape::activities::StatsDelta;
+    // Seed collected links via ScrapeRoleCompleted (simulates links found during scraping)
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
     engine
-        .emit(PipelineEvent::ScrapeResultAccumulated {
+        .emit(ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: ScrapeRole::TensionWeb,
+            urls_scraped: 0,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: 0,
             source_signal_counts: HashMap::new(),
             collected_links: vec![
                 CollectedLink {
@@ -327,7 +333,7 @@ async fn link_promotion_promotes_links_on_phase_completed() {
                 },
             ],
             expansion_queries: vec![],
-            stats_delta: StatsDelta::default(),
+            stats_delta: Default::default(),
         })
         .settled()
         .await

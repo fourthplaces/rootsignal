@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 // Supporting types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelinePhase {
     ReapExpired,

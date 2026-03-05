@@ -1,12 +1,14 @@
 //! Scrape domain events: content fetching, extraction, social scraping.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::core::events::FreshnessBucket;
+use crate::domains::enrichment::activities::link_promoter::CollectedLink;
+use crate::domains::scrape::activities::StatsDelta;
 
 /// Sub-phase role within a scrape phase (tension or response).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -69,59 +71,18 @@ pub enum ScrapeEvent {
         url: String,
         discovered_on: String,
     },
-    /// Web URLs resolved — triggers fetch+extract handler.
-    WebUrlsResolved {
+    /// Sources resolved for a scrape phase — triggers scrape_web, scrape_social, fetch_topics.
+    SourcesResolved {
         run_id: Uuid,
-        role: ScrapeRole,
-        urls: Vec<String>,
+        web_role: ScrapeRole,
+        web_urls: Vec<String>,
         /// canonical_key → source_id, populated by the resolve handler so
         /// downstream fetch handlers don't re-derive it from sources.
-        source_keys: HashMap<String, Uuid>,
-        source_count: u32,
-    },
-    /// Social scrape triggered — handler reads sources from scheduled state.
-    SocialScrapeTriggered {
-        run_id: Uuid,
-        role: ScrapeRole,
-    },
-    /// Topic discovery triggered — handler reads topics from PipelineState.
-    TopicDiscoveryTriggered {
-        run_id: Uuid,
-    },
-    /// Individual URL dispatched for fetch+extract. Emitted by fan-out handler.
-    UrlFetchRequested {
-        run_id: Uuid,
-        role: ScrapeRole,
-        url: String,
-        canonical_key: String,
-        source_id: Option<Uuid>,
-    },
-    /// Individual URL completed (success, unchanged, or failed).
-    UrlScrapeCompleted {
-        run_id: Uuid,
-        role: ScrapeRole,
-        url: String,
-        scraped: bool,
-        unchanged: bool,
-        failed: bool,
-        signals_extracted: u32,
-    },
-    /// Individual social source dispatched for fetch+extract.
-    SocialSourceRequested {
-        run_id: Uuid,
-        role: ScrapeRole,
-        canonical_key: String,
-        source_url: String,
-        platform: String,
-        identifier: String,
-    },
-    /// Individual social source completed.
-    SocialSourceCompleted {
-        run_id: Uuid,
-        role: ScrapeRole,
-        canonical_key: String,
-        posts_fetched: u32,
-        signals_extracted: u32,
+        web_source_keys: HashMap<String, Uuid>,
+        web_source_count: u32,
+        url_mappings: HashMap<String, String>,
+        pub_dates: HashMap<String, DateTime<Utc>>,
+        query_api_errors: HashSet<String>,
     },
     /// A scrape sub-phase completed fetch+extract.
     ScrapeRoleCompleted {
@@ -131,6 +92,18 @@ pub enum ScrapeEvent {
         urls_unchanged: u32,
         urls_failed: u32,
         signals_extracted: u32,
+        /// Accumulated per-source signal counts from this role's scrape.
+        #[serde(default)]
+        source_signal_counts: HashMap<String, u32>,
+        /// Links collected during this role's scrape for promotion.
+        #[serde(default)]
+        collected_links: Vec<CollectedLink>,
+        /// Expansion queries extracted from signals during this role's scrape.
+        #[serde(default)]
+        expansion_queries: Vec<String>,
+        /// Social/discovery stats delta from this role's scrape.
+        #[serde(default)]
+        stats_delta: StatsDelta,
     },
 }
 
@@ -145,13 +118,7 @@ impl ScrapeEvent {
             | Self::SocialPostsFetched { run_id, .. }
             | Self::FreshnessRecorded { run_id, .. }
             | Self::LinkCollected { run_id, .. }
-            | Self::WebUrlsResolved { run_id, .. }
-            | Self::SocialScrapeTriggered { run_id, .. }
-            | Self::TopicDiscoveryTriggered { run_id, .. }
-            | Self::UrlFetchRequested { run_id, .. }
-            | Self::UrlScrapeCompleted { run_id, .. }
-            | Self::SocialSourceRequested { run_id, .. }
-            | Self::SocialSourceCompleted { run_id, .. }
+            | Self::SourcesResolved { run_id, .. }
             | Self::ScrapeRoleCompleted { run_id, .. } => *run_id,
         }
     }

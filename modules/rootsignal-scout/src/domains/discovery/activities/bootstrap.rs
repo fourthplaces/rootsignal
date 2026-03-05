@@ -1,6 +1,6 @@
-//! EngineStarted handler — seeds sources when the region is empty.
+//! Bootstrap handler — seeds sources when the region is empty.
 //!
-//! When `EngineStarted` is dispatched, this handler checks if sources exist
+//! When `ScoutRunRequested` is dispatched, this handler checks if sources exist
 //! for the region. If empty, it generates seed queries and platform sources
 //! via LLM, returning `SourceDiscovered` events for each.
 
@@ -16,7 +16,7 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::PipelineState;
 use crate::domains::discovery::events::DiscoveryEvent;
 
-/// Handle the EngineStarted event: seed sources if region is empty.
+/// Handle the ScoutRunRequested event: seed sources if region is empty.
 pub async fn seed_sources_if_empty(
     _state: &PipelineState,
     deps: &ScoutEngineDeps,
@@ -38,7 +38,7 @@ pub async fn seed_sources_if_empty(
 
     info!(
         region = region.name.as_str(),
-        "No sources found — seeding from EngineStarted"
+        "No sources found — seeding from ScoutRunRequested"
     );
 
     let seed_sources = generate_seed_queries(ai, region).await?;

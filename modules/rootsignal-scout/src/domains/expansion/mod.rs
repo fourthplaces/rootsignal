@@ -1,6 +1,7 @@
 // Signal Expansion domain: follow implied queries to discover additional signals.
 
 pub mod activities;
+pub mod events;
 
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
@@ -10,8 +11,9 @@ use rootsignal_graph::GraphReader;
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
-use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::expansion::activities::expansion::Expansion;
+use crate::domains::expansion::events::ExpansionEvent;
+use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::domains::lifecycle::events::LifecycleEvent;
@@ -72,7 +74,7 @@ pub mod handlers {
 
         // Emit pipeline events instead of direct state writes
         let mut all_events = output.events;
-        all_events.push(PipelineEvent::ExpansionAccumulated {
+        all_events.push(ExpansionEvent::ExpansionCompleted {
             social_expansion_topics: output.expansion.social_expansion_topics,
             expansion_deferred_expanded: output.expansion.expansion_deferred_expanded,
             expansion_queries_collected: output.expansion.expansion_queries_collected,
@@ -81,12 +83,24 @@ pub mod handlers {
         });
         if let Some(mut topic_scrape) = output.topic_scrape {
             let scrape_events = topic_scrape.take_events();
-            all_events.push(PipelineEvent::UrlsResolvedAccumulated {
+            let run_id = uuid::Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+            all_events.push(ScrapeEvent::SourcesResolved {
+                run_id,
+                web_role: ScrapeRole::TopicDiscovery,
+                web_urls: Vec::new(),
+                web_source_keys: Default::default(),
+                web_source_count: 0,
                 url_mappings: topic_scrape.url_mappings,
                 pub_dates: topic_scrape.pub_dates,
                 query_api_errors: topic_scrape.query_api_errors,
             });
-            all_events.push(PipelineEvent::ScrapeResultAccumulated {
+            all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+                run_id,
+                role: ScrapeRole::TopicDiscovery,
+                urls_scraped: 0,
+                urls_unchanged: 0,
+                urls_failed: 0,
+                signals_extracted: 0,
                 source_signal_counts: topic_scrape.source_signal_counts,
                 collected_links: topic_scrape.collected_links,
                 expansion_queries: topic_scrape.expansion_queries,

@@ -233,6 +233,14 @@ pub mod handlers {
     ) -> Result<Events> {
         let (_, state) = ctx.singleton::<PipelineState>();
 
+        // Idempotency: if this phase already completed, skip
+        if state.completed_phases.contains(&PipelinePhase::ActorEnrichment) {
+            return Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "enrichment:phase_complete".into(),
+                reason: "ActorEnrichment already completed".into(),
+            }]);
+        }
+
         if state
             .completed_enrichment_roles
             .is_superset(&all_enrichment_roles())

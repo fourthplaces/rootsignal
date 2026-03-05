@@ -24,8 +24,8 @@ use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_engine_started(e: &LifecycleEvent) -> bool {
-    matches!(e, LifecycleEvent::EngineStarted { .. })
+fn is_scout_run_requested(e: &LifecycleEvent) -> bool {
+    matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
 fn is_scrape_or_expansion_completed(e: &LifecycleEvent) -> bool {
@@ -48,8 +48,8 @@ fn is_tension_scrape_completed(e: &LifecycleEvent) -> bool {
 pub mod handlers {
     use super::*;
 
-    /// EngineStarted → seed sources when the region has none.
-    #[handle(on = LifecycleEvent, id = "discovery:bootstrap", filter = is_engine_started)]
+    /// ScoutRunRequested → seed sources when the region has none.
+    #[handle(on = LifecycleEvent, id = "discovery:bootstrap", filter = is_scout_run_requested)]
     async fn bootstrap(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -197,10 +197,9 @@ pub mod handlers {
         )
         .await;
 
-        // Emit social topics as event instead of direct state write
         let mut all_events = output.events;
         if !output.social_topics.is_empty() {
-            all_events.push(PipelineEvent::SocialTopicsCollected {
+            all_events.push(DiscoveryEvent::SocialTopicsDiscovered {
                 topics: output.social_topics,
             });
         }
