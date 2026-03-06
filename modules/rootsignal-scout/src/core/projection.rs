@@ -1,22 +1,25 @@
-//! Infrastructure handlers: project events to Neo4j, maintain scout_runs table.
+//! Infrastructure projections: project events to Neo4j, maintain scout_runs table.
 //!
 //! Persistence is handled by seesaw's unified `Store` trait via
 //! `PostgresStore`. Aggregator state is handled by seesaw's
 //! registered aggregators (priority 1).
 //!
-//! Priority-2 handlers here:
-//! - `neo4j_projection_handler` — project events to Neo4j graph
-//! - `scout_runs_handler` — maintain the scout_runs lookup table
+//! Projections here:
+//! - `neo4j_projection_handler` — project events to Neo4j graph (Handler, needs priority control)
+//! - `scout_runs_projection` — maintain the scout_runs lookup table
+//! - `system_log_projection` — print SystemLog events to stdout
 
 use std::sync::Arc;
 
 use chrono::Utc;
 use rootsignal_graph::GraphProjector;
-use seesaw_core::{events, on_any, AnyEvent, Context, Events, Handler};
+use seesaw_core::{events, on_any, project, AnyEvent, Context, Events, Handler, Projection};
+use tracing::info;
 
 use rootsignal_common::events::{Event, EventDomain, Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
@@ -27,7 +30,7 @@ use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::SignalEvent;
 use crate::domains::situation_weaving::events::SituationWeavingEvent;
 use crate::domains::supervisor::events::SupervisorEvent;
-use crate::domains::synthesis::events::SynthesisEvent;
+use crate::domains::synthesis::events::{all_synthesis_roles, SynthesisEvent};
 
 // Priority-0: event persistence — handled by seesaw's unified Store (PostgresStore in production).
 // Priority-1: aggregate state — handled by seesaw aggregators.
@@ -155,94 +158,103 @@ fn classify_event(
     }
 }
 
-/// Priority-2 handler: maintain the `scout_runs` lookup table.
+/// Detect terminal events that mean a run is finished.
 ///
-/// On `ScoutRunRequested`: INSERT a new row.
-/// On `RunCompleted`: UPDATE with finished_at and stats JSONB.
-pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
-    on_any()
-        .id("scout_runs_projection")
-        .priority(2)
-        .then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
-            async move {
-                let Some(lifecycle) = event.downcast_ref::<LifecycleEvent>() else {
-                    return Ok(events![]);
-                };
+/// Terminal events are domain facts — the projection observes them
+/// and writes stats to the scout_runs table.
+fn is_terminal_event(event: &AnyEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if event.downcast_ref::<ScrapeEvent>()
+        .is_some_and(|e| matches!(e, ScrapeEvent::ResponseScrapeSkipped { .. }))
+    { return true; }
 
-                let deps = ctx.deps();
-                let Some(pool) = &deps.pg_pool else {
-                    return Ok(events![]);
-                };
+    if event.downcast_ref::<SynthesisEvent>()
+        .is_some_and(|e| matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. }))
+    {
+        let (_, state) = ctx.singleton::<PipelineState>();
+        if state.completed_synthesis_roles.is_superset(&all_synthesis_roles()) {
+            return true;
+        }
+    }
 
-                match lifecycle {
-                    LifecycleEvent::ScoutRunRequested { run_id, scope } => {
-                        let region = scope
-                            .region()
-                            .map(|r| r.name.as_str())
-                            .unwrap_or("unknown");
-                        let scope_json = scope
-                            .region()
-                            .and_then(|r| serde_json::to_value(r).ok());
-                        sqlx::query(
-                            "INSERT INTO scout_runs (run_id, region, scope, started_at) \
-                             VALUES ($1, $2, $3, now()) \
-                             ON CONFLICT (run_id) DO NOTHING",
-                        )
-                        .bind(run_id.to_string())
-                        .bind(region)
-                        .bind(&scope_json)
-                        .execute(pool)
-                        .await?;
-                    }
-                    LifecycleEvent::RunCompleted { stats } => {
-                        let stats_json = serde_json::to_value(stats)?;
-                        sqlx::query(
-                            "UPDATE scout_runs SET finished_at = now(), stats = $2 \
-                             WHERE run_id = $1",
-                        )
-                        .bind(deps.run_id.to_string())
-                        .bind(stats_json)
-                        .execute(pool)
-                        .await?;
-                    }
-                    _ => {}
-                }
+    if event.downcast_ref::<SupervisorEvent>()
+        .is_some_and(|e| matches!(e, SupervisorEvent::SupervisionCompleted | SupervisorEvent::NothingToSupervise { .. }))
+    { return true; }
 
-                if let Some(scrape) = event.downcast_ref::<ScrapeEvent>() {
-                    if matches!(scrape, ScrapeEvent::ResponseScrapeSkipped { .. }) {
-                        let (_, state) = ctx.singleton::<PipelineState>();
-                        let stats_json = serde_json::to_value(&state.stats)?;
-                        sqlx::query(
-                            "UPDATE scout_runs SET finished_at = now(), stats = $2 \
-                             WHERE run_id = $1",
-                        )
-                        .bind(deps.run_id.to_string())
-                        .bind(stats_json)
-                        .execute(pool)
-                        .await?;
-                    }
-                }
-
-                Ok(events![])
-            }
-        })
+    false
 }
 
-/// Priority-2 handler: print SystemLog events to stdout via tracing.
-pub fn system_log_handler() -> Handler<ScoutEngineDeps> {
-    on_any()
-        .id("system_log_stdout")
-        .priority(2)
-        .then(move |event: AnyEvent, _ctx: Context<ScoutEngineDeps>| {
-            async move {
-                if let Some(TelemetryEvent::SystemLog { message, .. }) =
-                    event.downcast_ref::<TelemetryEvent>()
-                {
-                    tracing::info!(target: "system_log", "{}", message);
+/// Projection: maintain the `scout_runs` lookup table.
+///
+/// On `ScoutRunRequested`: INSERT a new row.
+/// On terminal events: UPDATE with stats JSONB (finished_at handled by post_settle_cleanup).
+pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
+    project("scout_runs_projection").then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
+        async move {
+            // INSERT on ScoutRunRequested
+            if let Some(LifecycleEvent::ScoutRunRequested { run_id, scope }) = event.downcast_ref::<LifecycleEvent>() {
+                let deps = ctx.deps();
+                if let Some(pool) = &deps.pg_pool {
+                    let region = scope
+                        .region()
+                        .map(|r| r.name.as_str())
+                        .unwrap_or("unknown");
+                    let scope_json = scope
+                        .region()
+                        .and_then(|r| serde_json::to_value(r).ok());
+                    sqlx::query(
+                        "INSERT INTO scout_runs (run_id, region, scope, started_at) \
+                         VALUES ($1, $2, $3, now()) \
+                         ON CONFLICT (run_id) DO NOTHING",
+                    )
+                    .bind(run_id.to_string())
+                    .bind(region)
+                    .bind(&scope_json)
+                    .execute(pool)
+                    .await?;
                 }
-                Ok(events![])
+                return Ok(());
             }
-        })
+
+            // UPDATE stats on terminal events
+            if is_terminal_event(&event, &ctx) {
+                let deps = ctx.deps();
+
+                if let Some(ref budget) = deps.budget {
+                    budget.log_status();
+                }
+
+                let (_, state) = ctx.singleton::<PipelineState>();
+                info!("{}", state.stats);
+
+                if let Some(pool) = &deps.pg_pool {
+                    let stats_json = serde_json::to_value(&state.stats)?;
+                    sqlx::query(
+                        "UPDATE scout_runs SET stats = $2 WHERE run_id = $1",
+                    )
+                    .bind(deps.run_id.to_string())
+                    .bind(stats_json)
+                    .execute(pool)
+                    .await?;
+                }
+            }
+
+            Ok(())
+        }
+    })
+}
+
+/// Projection: print SystemLog events to stdout via tracing.
+pub fn system_log_projection() -> Projection<ScoutEngineDeps> {
+    project("system_log_stdout").then(move |event: AnyEvent, _ctx: Context<ScoutEngineDeps>| {
+        async move {
+            if let Some(TelemetryEvent::SystemLog { message, .. }) =
+                event.downcast_ref::<TelemetryEvent>()
+            {
+                tracing::info!(target: "system_log", "{}", message);
+            }
+            Ok(())
+        }
+    })
 }
 
 /// Test-only handler: capture every event into a shared Vec for inspection.

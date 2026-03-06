@@ -3,10 +3,10 @@
 //! Three engine variants share the same deps and infrastructure handlers:
 //!
 //! - **Scrape engine** (`build_engine`): reap → schedule → scrape → enrichment →
-//!   expansion → synthesis → finalize. Used by standalone scrape/bootstrap workflows.
+//!   expansion → synthesis. Used by standalone scrape/bootstrap workflows.
 //!
 //! - **Full engine** (`build_full_engine`): extends the scrape chain with
-//!   situation_weaving → supervisor before finalize. Used by full_run and
+//!   situation_weaving → supervisor. Used by full_run and
 //!   standalone synthesis/situation_weaver/supervisor workflows.
 //!
 //! - **News engine** (`build_news_engine`): NewsScanRequested → scan RSS → extract signals.
@@ -57,7 +57,7 @@ pub struct ScoutEngineDeps {
     pub captured_events: Option<Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>>,
     /// Budget tracker for LLM/API cost tracking.
     pub budget: Option<Arc<crate::domains::scheduling::activities::budget::BudgetTracker>>,
-    /// Postgres connection pool — used by finalize handler to save run stats.
+    /// Postgres connection pool — used by projections to save run stats.
     pub pg_pool: Option<PgPool>,
     /// Archive for web search/page reading in synthesis finders.
     pub archive: Option<Arc<rootsignal_archive::Archive>>,
@@ -95,10 +95,10 @@ pub type SeesawEngine = seesaw_core::Engine<ScoutEngineDeps>;
 pub type ScoutEngine = SeesawEngine;
 
 /// Build a scrape-chain engine: reap → schedule → scrape → enrichment →
-/// expansion → synthesis → finalize.
+/// expansion → synthesis.
 ///
-/// Finalize triggers when all synthesis roles complete. Does NOT include
-/// situation_weaving or supervisor handlers.
+/// Terminal event: last SynthesisRoleCompleted (all 6 done).
+/// Does NOT include situation_weaving or supervisor handlers.
 ///
 /// When `seesaw_store` is provided, it replaces the default in-memory store
 /// for durable crash recovery. Pass `None` for tests.
@@ -131,10 +131,6 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
         .with_handlers(enrichment::handlers::handlers())
         .with_handlers(expansion::handlers::handlers())
         .with_handlers(synthesis::handlers::handlers())
-        // Scrape chain finalize — triggers when all synthesis roles complete
-        .with_handler(lifecycle::__seesaw_effect_finalize_scrape_run())
-        // ResponseScrapeSkipped is terminal — skip enrichment/expansion/synthesis, finalize directly
-        .with_handler(lifecycle::__seesaw_effect_finalize_on_scrape_skip())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),
@@ -158,9 +154,9 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
-    // scout_runs table maintenance (INSERT on ScoutRunRequested, UPDATE on RunCompleted)
-    engine = engine.with_handler(projection::scout_runs_handler());
-    engine = engine.with_handler(projection::system_log_handler());
+    // Infrastructure projections
+    engine = engine.with_projection(projection::scout_runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -171,9 +167,9 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
 }
 
 /// Build a full-chain engine: extends the scrape chain with situation_weaving →
-/// supervisor → finalize.
+/// supervisor.
 ///
-/// Finalize triggers on SupervisionCompleted or NothingToSupervise.
+/// Terminal events: SupervisionCompleted or NothingToSupervise.
 pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
@@ -205,10 +201,6 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         .with_handlers(synthesis::handlers::handlers())
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
-        // Full chain finalize — triggers on SupervisionCompleted/NothingToSupervise
-        .with_handler(lifecycle::__seesaw_effect_finalize_full_run())
-        // ResponseScrapeSkipped is terminal — skip enrichment/expansion/synthesis, finalize directly
-        .with_handler(lifecycle::__seesaw_effect_finalize_on_scrape_skip())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),
@@ -232,9 +224,9 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
-    // scout_runs table maintenance (INSERT on ScoutRunRequested, UPDATE on RunCompleted)
-    engine = engine.with_handler(projection::scout_runs_handler());
-    engine = engine.with_handler(projection::system_log_handler());
+    // Infrastructure projections
+    engine = engine.with_projection(projection::scout_runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -249,7 +241,11 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
 /// Includes: lifecycle, signals, synthesis, situation_weaving, supervisor.
 /// Excludes: scrape, discovery, enrichment, expansion (those are scrape-time only).
 ///
-/// Finalize triggers on SupervisionCompleted or NothingToSupervise.
+/// Terminal events: SupervisionCompleted or NothingToSupervise.
+///
+/// NOTE: Weave engine is non-functional until a proper weave kickoff event
+/// is designed (separate PR). The old `start_weave` trampoline that emitted
+/// fake ExpansionCompleted has been deleted.
 pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
@@ -276,10 +272,6 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn se
         .with_handlers(synthesis::handlers::handlers())
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
-        // Weave kickoff — emits ExpansionCompleted on ScoutRunRequested
-        .with_handler(lifecycle::__seesaw_effect_start_weave())
-        // Full chain finalize — triggers on SupervisionCompleted/NothingToSupervise
-        .with_handler(lifecycle::__seesaw_effect_finalize_full_run())
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),
             source_event_type: info.source_event_type.clone(),
@@ -301,8 +293,8 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn se
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
-    engine = engine.with_handler(projection::scout_runs_handler());
-    engine = engine.with_handler(projection::system_log_handler());
+    engine = engine.with_projection(projection::scout_runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
 
     if let Some(sink) = capture_sink {
         engine = engine.with_handler(projection::capture_handler(sink));
@@ -341,8 +333,8 @@ pub fn build_infra_only_engine(
             "schema_v": 1
         }))
         .with_handler(projection::neo4j_projection_handler(projector))
-        .with_handler(projection::scout_runs_handler())
-        .with_handler(projection::system_log_handler())
+        .with_projection(projection::scout_runs_projection())
+        .with_projection(projection::system_log_projection())
 }
 
 /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
@@ -384,9 +376,8 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
-    // scout_runs table maintenance (INSERT on ScoutRunRequested, UPDATE on RunCompleted)
-    engine = engine.with_handler(projection::scout_runs_handler());
-    engine = engine.with_handler(projection::system_log_handler());
+    engine = engine.with_projection(projection::scout_runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
 
     if let Some(sink) = capture_sink {
         engine = engine.with_handler(projection::capture_handler(sink));

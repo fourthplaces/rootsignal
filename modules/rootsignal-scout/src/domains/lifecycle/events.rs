@@ -1,4 +1,4 @@
-//! Lifecycle domain events: engine start, run completion.
+//! Lifecycle domain events: engine start, source preparation.
 
 use std::collections::{HashMap, HashSet};
 
@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 use crate::core::aggregate::SourcePlan;
 use crate::core::run_scope::RunScope;
-use crate::core::stats::ScoutStats;
 use rootsignal_common::types::ActorContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,9 +31,6 @@ pub enum LifecycleEvent {
         pub_dates: HashMap<String, DateTime<Utc>>,
         query_api_errors: HashSet<String>,
     },
-    RunCompleted {
-        stats: ScoutStats,
-    },
     MetricsCompleted,
     NewsScanRequested,
 }
@@ -44,7 +40,6 @@ impl LifecycleEvent {
         let variant = match self {
             Self::ScoutRunRequested { .. } => "scout_run_requested",
             Self::SourcesPrepared { .. } => "sources_prepared",
-            Self::RunCompleted { .. } => "run_completed",
             Self::MetricsCompleted => "metrics_completed",
             Self::NewsScanRequested => "news_scan_requested",
         };
