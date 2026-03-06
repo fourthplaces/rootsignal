@@ -44,7 +44,6 @@ pub(crate) async fn discover_from_topics(
 
         let known_urls: HashSet<String> = url_to_canonical_key.keys().cloned().collect();
 
-        // Load existing sources for dedup across all platforms
         let existing_sources = store.get_active_sources().await.unwrap_or_default();
         let existing_canonical_values: HashSet<String> = existing_sources
             .iter()
@@ -59,7 +58,6 @@ pub(crate) async fn discover_from_topics(
             .map(|t| t.as_str())
             .collect();
 
-        // Search each social platform with the same topics
         let platform_urls: &[(&str, &str)] = &[
             ("instagram", "https://www.instagram.com/topics"),
             ("x", "https://x.com/topics"),
@@ -93,7 +91,6 @@ pub(crate) async fn discover_from_topics(
 
             output.stats_delta.discovery_posts_found += discovered_posts.len() as u32;
 
-            // Group posts by author
             let mut by_author: HashMap<String, Vec<&rootsignal_common::Post>> = HashMap::new();
             for post in &discovered_posts {
                 if let Some(ref author) = post.author {
@@ -122,7 +119,6 @@ pub(crate) async fn discover_from_topics(
                     break;
                 }
 
-                // Platform-aware source URL
                 let source_url = match platform_name {
                     "instagram" => format!("https://www.instagram.com/{username}/"),
                     "x" => format!("https://x.com/{username}"),
@@ -131,12 +127,10 @@ pub(crate) async fn discover_from_topics(
                     _ => continue,
                 };
 
-                // Skip already-known sources
                 if existing_canonical_values.contains(&username.to_string()) {
                     continue;
                 }
 
-                // Concatenate post content for extraction
                 let combined_text: String = posts
                     .iter()
                     .enumerate()
@@ -149,7 +143,6 @@ pub(crate) async fn discover_from_topics(
                     continue;
                 }
 
-                // Extract signals via LLM
                 let result = match extractor.extract(&combined_text, &source_url).await {
                     Ok(r) => r,
                     Err(e) => {
@@ -159,10 +152,9 @@ pub(crate) async fn discover_from_topics(
                 };
 
                 if result.nodes.is_empty() {
-                    continue; // No signal found — don't follow this person
+                    continue;
                 }
 
-                // Build extracted batch for dedup downstream
                 let author_actors: HashMap<Uuid, String> =
                     result.author_actors.into_iter().collect();
 
@@ -206,7 +198,6 @@ pub(crate) async fn discover_from_topics(
                     }
                 }
 
-                // Create a Source node with correct platform type
                 let cv = rootsignal_common::canonical_value(&source_url);
                 let ck = canonical_value(&source_url);
                 let gap_context = format!(

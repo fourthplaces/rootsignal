@@ -162,7 +162,6 @@ pub async fn wire_signal_edges(
 
     let mut events = events![];
 
-    // PRODUCED_BY edge (signal → source) via event
     if let Some(sid) = ctx.source_id {
         events = events.add(WorldEvent::SignalLinkedToSource {
             signal_id: node_id,
@@ -200,7 +199,6 @@ pub async fn wire_signal_edges(
         });
     }
 
-    // Signal tags via event
     if !ctx.signal_tags.is_empty() {
         events = events.add(SystemEvent::SignalTagged {
             signal_id: node_id,
@@ -246,7 +244,6 @@ async fn resolve_author_actor(
 ) -> Result<Events> {
     let canonical_key = rootsignal_common::canonical_value(source_url);
 
-    // Read-only: check if actor already exists
     let actor_id = match deps.store.find_actor_by_canonical_key(&canonical_key).await {
         Ok(Some(id)) => id,
         Ok(None) => {
@@ -284,7 +281,6 @@ async fn resolve_author_actor(
         }
     };
 
-    // Existing actor — just link to signal
     events = events.add(SystemEvent::ActorLinkedToSignal {
         actor_id,
         signal_id,

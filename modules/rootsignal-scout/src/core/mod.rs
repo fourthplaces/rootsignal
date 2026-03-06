@@ -1,5 +1,3 @@
-// Core engine types: aggregate, events, stats, engine, projection.
-
 pub mod aggregate;
 pub mod embedding_cache;
 pub mod engine;

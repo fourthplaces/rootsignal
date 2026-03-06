@@ -36,7 +36,6 @@ pub(crate) async fn scrape_web_sources(
 ) -> ScrapeOutput {
     let resolution = super::url_resolution::resolve_web_urls(deps, sources, url_to_canonical_key).await;
 
-    // Build merged url_to_ck for fetch_and_extract
     let mut url_to_ck = url_to_canonical_key.clone();
     url_to_ck.extend(resolution.url_mappings.iter().map(|(k, v)| (k.clone(), v.clone())));
 
@@ -90,7 +89,6 @@ pub(crate) async fn fetch_and_extract(
             return result;
         }
 
-        // Scrape + extract in parallel
         let fetcher = deps.fetcher.as_ref().expect("fetcher required").clone();
         let store = deps.store.clone();
         let extractor = deps.extractor.as_ref().expect("extractor required").clone();
@@ -160,10 +158,8 @@ pub(crate) async fn fetch_and_extract(
         .collect()
         .await;
 
-        // Process results
         let now = Utc::now();
         for (url, outcome, page_links) in pipeline_results {
-            // Extract outbound links for promotion as new sources
             let discovered = link_promoter::extract_links(&page_links, false);
             for link_url in discovered {
                 result.collected_links.push(CollectedLink {
@@ -187,11 +183,9 @@ pub(crate) async fn fetch_and_extract(
                 } => {
                     result.stats.urls_scraped += 1;
 
-                    // Stash content preview for downstream page triage
                     let preview: String = content.chars().take(500).collect();
                     result.page_previews.insert(url.clone(), preview);
 
-                    // Collect implied queries from Concern + HelpRequest nodes
                     let implied = super::shared::collect_implied_queries(&nodes);
                     result.expansion_queries.extend(implied);
 
@@ -204,12 +198,10 @@ pub(crate) async fn fetch_and_extract(
 
                     let source_id = source_keys.get(&ck).copied();
 
-                    // Score quality, populate from/about locations, remove Evidence nodes
                     let actor_ctx = actor_contexts.get(&ck);
                     let nodes = score_and_filter(nodes, &url, actor_ctx);
 
                     if !nodes.is_empty() {
-                        // Within-batch dedup by (normalized_title, node_type)
                         let nodes = batch_title_dedup(nodes);
 
                         let canonical_key = url_to_ck

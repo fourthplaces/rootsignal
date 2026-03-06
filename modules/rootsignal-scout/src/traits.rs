@@ -19,10 +19,6 @@ use rootsignal_common::types::{
 };
 use rootsignal_graph::DuplicateMatch;
 
-// ---------------------------------------------------------------------------
-// ContentFetcher — replaces Arc<Archive>
-// ---------------------------------------------------------------------------
-
 #[async_trait]
 pub trait ContentFetcher: Send + Sync {
     /// Fetch and render a web page to markdown.

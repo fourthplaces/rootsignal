@@ -28,7 +28,6 @@ pub(crate) async fn resolve_web_urls(
 
         let mut phase_urls: Vec<String> = Vec::new();
 
-        // Partition by behavior type
         let query_sources: Vec<&&SourceNode> = sources
             .iter()
             .filter(|s| {
@@ -43,7 +42,6 @@ pub(crate) async fn resolve_web_urls(
             .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::WebPage))
             .collect();
 
-        // Resolve query sources → URLs
         let api_queries: Vec<&&&SourceNode> = query_sources
             .iter()
             .filter(|s| is_web_query(s.value()))
@@ -91,7 +89,6 @@ pub(crate) async fn resolve_web_urls(
             }
         }
 
-        // HTML-based queries
         let html_queries: Vec<&&&SourceNode> = query_sources
             .iter()
             .filter(|s| {
@@ -127,14 +124,12 @@ pub(crate) async fn resolve_web_urls(
             }
         }
 
-        // Add page source URLs directly
         for source in &page_sources {
             if let Some(ref url) = source.url {
                 phase_urls.push(url.clone());
             }
         }
 
-        // RSS feeds — fetch feed XML, extract article URLs
         let rss_sources: Vec<&&SourceNode> = sources
             .iter()
             .filter(|s| matches!(scraping_strategy(s.value()), ScrapingStrategy::Rss))
@@ -164,7 +159,6 @@ pub(crate) async fn resolve_web_urls(
             }
         }
 
-        // Deduplicate
         phase_urls.sort();
         phase_urls.dedup();
 

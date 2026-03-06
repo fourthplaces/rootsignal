@@ -209,7 +209,6 @@ impl Store for PostgresStore {
     }
 
     async fn reclaim_stale(&self) -> Result<()> {
-        // Reset stale `processing` events back to `pending`
         sqlx::query(
             "UPDATE seesaw_events SET status = 'pending' \
              WHERE correlation_id = $1 AND status = 'processing'",
@@ -218,7 +217,6 @@ impl Store for PostgresStore {
         .execute(&self.pool)
         .await?;
 
-        // Reset stale `running` effects back to `pending`
         sqlx::query(
             "UPDATE seesaw_effect_executions SET status = 'pending', updated_at = now() \
              WHERE correlation_id = $1 AND status = 'running'",
@@ -238,7 +236,6 @@ impl Store for PostgresStore {
     ) -> Result<Option<Vec<JoinEntry>>> {
         let mut tx = self.pool.begin().await?;
 
-        // Upsert window
         let timeout_at = params
             .join_window_timeout_seconds
             .map(|secs| params.source_created_at + chrono::Duration::seconds(secs as i64));
@@ -257,7 +254,6 @@ impl Store for PostgresStore {
         .execute(&mut *tx)
         .await?;
 
-        // Insert entry
         sqlx::query(
             "INSERT INTO seesaw_join_entries \
              (join_handler_id, correlation_id, batch_id, batch_index, \
@@ -277,7 +273,6 @@ impl Store for PostgresStore {
         .execute(&mut *tx)
         .await?;
 
-        // Count entries
         let (count,) = sqlx::query_as::<_, (i64,)>(
             "SELECT COUNT(*) FROM seesaw_join_entries \
              WHERE join_handler_id = $1 AND correlation_id = $2 AND batch_id = $3",

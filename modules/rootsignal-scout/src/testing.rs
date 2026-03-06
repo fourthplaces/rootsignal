@@ -29,10 +29,6 @@ use crate::core::extractor::{ExtractionResult, SignalExtractor};
 use crate::infra::embedder::TextEmbedder;
 use crate::traits::{ContentFetcher, SignalReader};
 
-// ---------------------------------------------------------------------------
-// Test constants
-// ---------------------------------------------------------------------------
-
 /// Standard embedding dimension for test vectors.
 pub const TEST_EMBEDDING_DIM: usize = 64;
 
@@ -44,10 +40,6 @@ pub const DULUTH: (f64, f64) = (46.7867, -92.1005);
 pub const NYC: (f64, f64) = (40.7128, -74.0060);
 /// Dallas, TX coordinates.
 pub const DALLAS: (f64, f64) = (32.7767, -96.7970);
-
-// ---------------------------------------------------------------------------
-// MockFetcher
-// ---------------------------------------------------------------------------
 
 /// HashMap-based content fetcher. Returns `Err` for unregistered URLs.
 /// Builder pattern: `.on_page()`, `.on_search()`, `.on_posts()`, `.on_feed()`.

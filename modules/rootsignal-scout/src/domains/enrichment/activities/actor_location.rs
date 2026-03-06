@@ -44,15 +44,12 @@ pub fn triangulate_actor_location(
 ) -> Option<ActorLocation> {
     let cutoff = Utc::now() - chrono::Duration::days(max_age_days as i64);
 
-    // Filter to recent signals only
     let recent: Vec<&SignalLocation> = signals.iter().filter(|s| s.observed_at >= cutoff).collect();
 
-    // No recent signals and no bio — preserve current location
     if recent.is_empty() && bio_location.is_none() {
         return current.cloned();
     }
 
-    // Count votes per location name
     let mut votes: std::collections::HashMap<&str, (usize, f64, f64)> =
         std::collections::HashMap::new();
     for s in &recent {
@@ -73,7 +70,6 @@ pub fn triangulate_actor_location(
         entry.0 += 1;
     }
 
-    // Find the mode (most frequent location)
     let total_votes: usize = votes.values().map(|(c, _, _)| c).sum();
     if total_votes < 2 {
         return current.cloned();
@@ -86,9 +82,7 @@ pub fn triangulate_actor_location(
     let is_tie = sorted.len() > 1 && sorted[1].1 .0 == *top_count;
 
     if is_tie {
-        // Tie → preserve current location (inertia)
         if let Some(cur) = current {
-            // If current location is one of the tied leaders, keep it
             if sorted
                 .iter()
                 .any(|(name, (count, _, _))| *count == *top_count && *name == cur.name.as_str())
@@ -96,7 +90,6 @@ pub fn triangulate_actor_location(
                 return Some(cur.clone());
             }
         }
-        // No current location or current not in tie — pick the top (arbitrary but deterministic)
     }
 
     Some(ActorLocation {

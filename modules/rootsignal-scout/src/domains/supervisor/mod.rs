@@ -1,5 +1,3 @@
-// Supervisor domain: issue detection, duplicate merging, cause heat.
-
 pub mod activities;
 
 use anyhow::Result;

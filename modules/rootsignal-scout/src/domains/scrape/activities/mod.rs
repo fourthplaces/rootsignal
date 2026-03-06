@@ -11,7 +11,6 @@ pub(crate) mod types;
 pub(crate) mod url_resolution;
 pub(crate) mod web_scrape;
 
-// Re-exports for external consumers.
 pub(crate) use signal_events::register_sources_events;
 pub(crate) use types::{
     FetchExtractResult, FetchExtractStats, ScrapeOutput, StatsDelta, UrlExtraction, UrlResolution,

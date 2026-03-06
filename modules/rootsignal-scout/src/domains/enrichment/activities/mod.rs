@@ -1,5 +1,3 @@
-// Enrichment activities: actor extraction, location, quality, diversity, etc.
-
 pub mod actor_extractor;
 pub mod actor_location;
 pub mod actor_stats;

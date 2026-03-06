@@ -142,23 +142,19 @@ pub fn extract_links(page_links: &[String], permissive: bool) -> Vec<String> {
     for link in page_links {
         let trimmed = link.trim();
 
-        // Skip non-content schemes
         if SKIP_PREFIXES.iter().any(|p| trimmed.starts_with(p)) {
             continue;
         }
 
-        // Must be http(s)
         if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
             continue;
         }
 
-        // Skip non-content file extensions
         let path_lower = trimmed.split('?').next().unwrap_or(trimmed).to_lowercase();
         if SKIP_EXTENSIONS.iter().any(|ext| path_lower.ends_with(ext)) {
             continue;
         }
 
-        // Skip blocked infrastructure domains
         if let Some(host) = extract_host(&path_lower) {
             let is_always_blocked = ALWAYS_BLOCKED_DOMAINS
                 .iter()
@@ -176,7 +172,6 @@ pub fn extract_links(page_links: &[String], permissive: bool) -> Vec<String> {
             }
         }
 
-        // Skip legal/privacy/infrastructure path patterns
         if SKIP_PATH_SEGMENTS.iter().any(|seg| path_lower.contains(seg)) {
             continue;
         }

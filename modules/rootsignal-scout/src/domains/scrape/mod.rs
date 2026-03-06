@@ -1,5 +1,3 @@
-// Scrape domain: tension and response scrape phase handlers.
-
 pub mod activities;
 pub mod events;
 
@@ -86,7 +84,6 @@ pub mod handlers {
 
         let plan = state.source_plan.as_ref().expect("source plan stashed");
 
-        // Resolve tension web sources
         let tension_web: Vec<rootsignal_common::SourceNode> = plan
             .selected_sources
             .iter()
@@ -361,7 +358,6 @@ pub mod handlers {
 
         let (_, state) = ctx.singleton::<PipelineState>();
 
-        // Determine which phase this role belongs to and its expected roles
         let (phase, expected_roles) = match role {
             ScrapeRole::TensionWeb | ScrapeRole::TensionSocial => {
                 (PipelinePhase::TensionScrape, tension_roles())
@@ -371,7 +367,6 @@ pub mod handlers {
             }
         };
 
-        // Idempotency: if this phase already completed, skip
         if state.completed_phases.contains(&phase) {
             return Ok(events![PipelineEvent::HandlerSkipped {
                 handler_id: "scrape:phase_complete".into(),
@@ -379,7 +374,6 @@ pub mod handlers {
             }]);
         }
 
-        // Check if all expected roles are complete (including this one, which was just applied)
         if state.completed_scrape_roles.is_superset(&expected_roles) {
             info!(?phase, "All scrape roles complete, emitting PhaseCompleted");
             let mut out = events![LifecycleEvent::PhaseCompleted { phase }];
@@ -425,7 +419,7 @@ pub mod handlers {
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
         let plan = state.source_plan.as_ref().expect("source plan stashed");
 
-        // Reload sources from graph to pick up mid-run discoveries
+        // Reload from graph — picks up sources discovered mid-run by link promotion
         let fresh_sources = match graph
             .get_sources_for_region(region.center_lat, region.center_lng, region.radius_km)
             .await
@@ -447,7 +441,6 @@ pub mod handlers {
             .cloned()
             .collect();
 
-        // Build fresh URL mappings
         let mut fresh_url_mappings = std::collections::HashMap::new();
         for s in &fresh_sources {
             if let Some(ref url) = s.url {
@@ -460,7 +453,6 @@ pub mod handlers {
 
         let mut all_events = Events::new();
 
-        // Resolve web URLs for response phase
         let web_sources: Vec<&rootsignal_common::SourceNode> = phase_b_sources
             .iter()
             .filter(|s| !matches!(
@@ -477,7 +469,6 @@ pub mod handlers {
                 &state.url_to_canonical_key,
             ).await;
 
-            // Build source_keys from web sources for fetch handler
             let web_source_nodes: Vec<rootsignal_common::SourceNode> = phase_b_sources
                 .iter()
                 .filter(|s| !matches!(
@@ -488,7 +479,6 @@ pub mod handlers {
                 .collect();
             let web_source_keys = build_source_keys(&web_source_nodes);
 
-            // Merge fresh URL mappings into resolution so SourcesResolved carries everything
             resolution.url_mappings.extend(fresh_url_mappings);
 
             all_events.push(ScrapeEvent::SourcesResolved {

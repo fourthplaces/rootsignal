@@ -150,7 +150,6 @@ pub(crate) async fn scrape_social_sources(
             "Scraping social media..."
         );
 
-        // Build actor context prefixes for known actor sources
         let actor_prefixes: HashMap<String, String> = accounts
             .iter()
             .filter_map(|(ck, _, _)| {
@@ -216,10 +215,8 @@ pub(crate) async fn scrape_social_sources(
                 };
                 let post_count = posts.len();
 
-                // Find the most recent published_at for published_at fallback
                 let newest_published_at = posts.iter().filter_map(|p| p.published_at).max();
 
-                // Collect @mentions from posts
                 let source_mentions: Vec<String> = posts
                     .iter()
                     .flat_map(|p| p.mentions.iter().cloned())
@@ -350,7 +347,6 @@ pub(crate) async fn scrape_social_sources(
                 super::shared::apply_published_at_fallback(&mut nodes, pub_at);
             }
 
-            // Accumulate mentions as URLs for promotion (capped per source)
             for handle in mentions.into_iter().take(promotion_config.max_per_source) {
                 let mention_url = link_promoter::platform_url(&result_platform, &handle);
                 output.collected_links.push(CollectedLink {
@@ -359,12 +355,10 @@ pub(crate) async fn scrape_social_sources(
                 });
             }
 
-            // Collect implied queries from Concern/HelpRequest social signals
             output.expansion_queries.extend(super::shared::collect_implied_queries(&nodes));
             output.stats_delta.social_media_posts += post_count as u32;
             let source_id = ck_to_source_id.get(&canonical_key).copied();
 
-            // Score quality, populate from/about locations, remove Evidence nodes
             let ck_for_fallback = url_to_canonical_key
                 .get(&source_url)
                 .cloned()
