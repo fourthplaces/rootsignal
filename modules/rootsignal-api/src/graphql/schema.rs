@@ -1348,6 +1348,31 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    /// Fetch handler gate descriptions for a run, keyed by handler_id.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_handler_descriptions(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<Vec<HandlerDescription>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::handler_descriptions(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load handler descriptions: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| HandlerDescription {
+                handler_id: r.handler_id,
+                blocks: r.description,
+            })
+            .collect())
+    }
 }
 
 // ========== Admin GQL Types ==========
@@ -1651,6 +1676,14 @@ struct HandlerLog {
     message: String,
     data: Option<serde_json::Value>,
     logged_at: DateTime<Utc>,
+}
+
+// ========== Handler Description Types ==========
+
+#[derive(SimpleObject)]
+struct HandlerDescription {
+    handler_id: String,
+    blocks: serde_json::Value,
 }
 
 // ========== Scout Run Types ==========

@@ -82,18 +82,13 @@ function HandlerNode({
     }
   }, [isHighlighted]);
 
-  const handleOpenLogs = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    // Find the run_id from the first child event (all share same run)
-    const runId = children[0]?.runId ?? null;
-    setLogsFilter({ eventId: parentEventId, handlerId, runId });
-  }, [setLogsFilter, parentEventId, handlerId, children]);
-
   const handleClick = useCallback(() => {
     if (flowRunId) {
       setFlowSelection({ kind: "handler", handlerId });
     }
-  }, [flowRunId, setFlowSelection, handlerId]);
+    const runId = children[0]?.runId ?? null;
+    setLogsFilter({ eventId: parentEventId, handlerId, runId });
+  }, [flowRunId, setFlowSelection, setLogsFilter, parentEventId, handlerId, children]);
 
   return (
     <div className={depth > 0 ? "pl-6" : ""}>
@@ -125,13 +120,6 @@ function HandlerNode({
                 ({children.length})
               </span>
             )}
-          </button>
-          <button
-            onClick={handleOpenLogs}
-            className="ml-auto text-[10px] px-1.5 py-0.5 rounded hover:bg-accent shrink-0 text-muted-foreground hover:text-foreground"
-            title="Open handler logs in Logs panel"
-          >
-            logs
           </button>
         </div>
       </div>

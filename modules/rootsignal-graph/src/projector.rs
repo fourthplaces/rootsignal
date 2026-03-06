@@ -203,9 +203,7 @@ impl GraphProjector {
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
-            // SourcesDiscovered is a proposal — the domain_filter handler decides
-            // which become SourcesRegistered. SourceRejected is audit-only.
-            "discovery:sources_discovered" | "discovery:source_rejected" => {
+            "discovery:sources_discovered" => {
                 Ok(ApplyResult::NoOp)
             }
             _ => {

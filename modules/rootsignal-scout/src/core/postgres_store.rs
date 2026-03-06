@@ -637,6 +637,44 @@ impl Store for PostgresStore {
             dead_lettered: dead_lettered as usize,
         })
     }
+
+    // ── Handler descriptions ──────────────────────────────────────────
+
+    async fn set_handler_descriptions(
+        &self,
+        correlation_id: Uuid,
+        descriptions: std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        for (handler_id, data) in descriptions {
+            sqlx::query(
+                "INSERT INTO seesaw_handler_descriptions \
+                 (correlation_id, handler_id, description, updated_at) \
+                 VALUES ($1, $2, $3, now()) \
+                 ON CONFLICT (correlation_id, handler_id) \
+                 DO UPDATE SET description = EXCLUDED.description, updated_at = now()",
+            )
+            .bind(correlation_id)
+            .bind(&handler_id)
+            .bind(&data)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn get_handler_descriptions(
+        &self,
+        correlation_id: Uuid,
+    ) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+        let rows = sqlx::query_as::<_, (String, serde_json::Value)>(
+            "SELECT handler_id, description FROM seesaw_handler_descriptions \
+             WHERE correlation_id = $1",
+        )
+        .bind(correlation_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
 }
 
 // ── Private helpers ─────────────────────────────────────────────────

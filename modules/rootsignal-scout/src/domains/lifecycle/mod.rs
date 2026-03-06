@@ -10,6 +10,8 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 use uuid::Uuid;
 
+use rootsignal_common::{Block, ChecklistItem};
+
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::expansion::events::ExpansionEvent;
@@ -147,8 +149,41 @@ async fn finalize_impl(ctx: Context<ScoutEngineDeps>) -> Result<Events> {
     Ok(events![LifecycleEvent::RunCompleted { stats }])
 }
 
+fn describe_finalize_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
+    let (_, state) = ctx.singleton::<PipelineState>();
+    let all = all_synthesis_roles();
+    let done = &state.completed_synthesis_roles;
+    vec![
+        Block::Checklist {
+            label: "Synthesis roles".into(),
+            items: all.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: done.contains(r),
+            }).collect(),
+        },
+    ]
+}
+
+fn describe_finalize_full_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
+    let (_, state) = ctx.singleton::<PipelineState>();
+    let all = all_synthesis_roles();
+    let done = &state.completed_synthesis_roles;
+    vec![
+        Block::Checklist {
+            label: "Synthesis roles".into(),
+            items: all.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: done.contains(r),
+            }).collect(),
+        },
+        Block::Label {
+            text: "Waiting for weaving + supervision".into(),
+        },
+    ]
+}
+
 /// Finalize handler for the scrape chain: triggers when all synthesis roles done.
-#[handle(on = SynthesisEvent, id = "lifecycle:finalize_scrape_run", filter = all_synthesis_done)]
+#[handle(on = SynthesisEvent, id = "lifecycle:finalize_scrape_run", filter = all_synthesis_done, describe = describe_finalize_gate)]
 pub async fn finalize_scrape_run(
     _event: SynthesisEvent,
     ctx: Context<ScoutEngineDeps>,
@@ -157,7 +192,7 @@ pub async fn finalize_scrape_run(
 }
 
 /// Finalize handler for the full chain: triggers on SupervisionCompleted or NothingToSupervise.
-#[handle(on = SupervisorEvent, id = "lifecycle:finalize_full_run", filter = is_supervision_done)]
+#[handle(on = SupervisorEvent, id = "lifecycle:finalize_full_run", filter = is_supervision_done, describe = describe_finalize_full_gate)]
 pub async fn finalize_full_run(
     _event: SupervisorEvent,
     ctx: Context<ScoutEngineDeps>,

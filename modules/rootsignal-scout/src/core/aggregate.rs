@@ -314,7 +314,6 @@ impl PipelineState {
                     self.page_previews.clear();
                 }
             }
-            DiscoveryEvent::SourceRejected { .. } => {}
             DiscoveryEvent::ExpansionQueryCollected { query, .. } => {
                 self.expansion_queries.push(query.clone());
                 self.stats.expansion_queries_collected += 1;

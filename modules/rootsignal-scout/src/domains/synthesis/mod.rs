@@ -16,6 +16,8 @@ use uuid::Uuid;
 use rootsignal_common::events::SystemEvent;
 
 
+use rootsignal_common::{Block, ChecklistItem};
+
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::discovery::events::DiscoveryEvent;
@@ -35,6 +37,42 @@ fn all_synthesis_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> boo
     state.completed_synthesis_roles.is_superset(&all_synthesis_roles())
 }
 
+fn describe_synthesis_progress(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
+    let (_, state) = ctx.singleton::<PipelineState>();
+    let all = all_synthesis_roles();
+    let done = &state.completed_synthesis_roles;
+    let completed = done.len() as u32;
+    let total = all.len() as u32;
+    vec![
+        Block::Checklist {
+            label: "Synthesis roles".into(),
+            items: all.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: done.contains(r),
+            }).collect(),
+        },
+        Block::Progress {
+            label: "Overall".into(),
+            fraction: if total > 0 { completed as f32 / total as f32 } else { 0.0 },
+        },
+    ]
+}
+
+fn describe_synthesis_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
+    let (_, state) = ctx.singleton::<PipelineState>();
+    let all = all_synthesis_roles();
+    let done = &state.completed_synthesis_roles;
+    vec![
+        Block::Checklist {
+            label: "Synthesis roles".into(),
+            items: all.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: done.contains(r),
+            }).collect(),
+        },
+    ]
+}
+
 #[handlers]
 pub mod handlers {
     use super::*;
@@ -43,7 +81,7 @@ pub mod handlers {
     // Similarity: single graph-wide operation, not atomized
     // ---------------------------------------------------------------
 
-    #[handle(on = ExpansionEvent, id = "synthesis:compute_similarity", filter = is_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:compute_similarity", filter = is_expansion_completed, describe = describe_synthesis_progress)]
     async fn compute_similarity(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -87,7 +125,7 @@ pub mod handlers {
     // ConcernLinker: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:link_concerns", filter = is_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:link_concerns", filter = is_expansion_completed, describe = describe_synthesis_progress)]
     async fn link_concerns(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -236,7 +274,7 @@ pub mod handlers {
     // ResponseFinder: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:find_responses", filter = is_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:find_responses", filter = is_expansion_completed, describe = describe_synthesis_progress)]
     async fn find_responses(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -370,7 +408,7 @@ pub mod handlers {
     // GatheringFinder: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:find_gatherings", filter = is_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:find_gatherings", filter = is_expansion_completed, describe = describe_synthesis_progress)]
     async fn find_gatherings(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -476,7 +514,7 @@ pub mod handlers {
     // Investigation: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:investigate_signals", filter = is_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:investigate_signals", filter = is_expansion_completed, describe = describe_synthesis_progress)]
     async fn investigate_signals(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -573,7 +611,7 @@ pub mod handlers {
     // ResponseMapping: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:map_responses", filter = is_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:map_responses", filter = is_expansion_completed, describe = describe_synthesis_progress)]
     async fn map_responses(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -672,7 +710,7 @@ pub mod handlers {
 
     /// All synthesis roles done → re-evaluate Notice severity now that
     /// EVIDENCE_OF edges have been projected to Neo4j by the graph projector.
-    #[handle(on = SynthesisEvent, id = "synthesis:infer_severity", filter = all_synthesis_done)]
+    #[handle(on = SynthesisEvent, id = "synthesis:infer_severity", filter = all_synthesis_done, describe = describe_synthesis_gate)]
     async fn infer_severity(
         _event: SynthesisEvent,
         ctx: Context<ScoutEngineDeps>,

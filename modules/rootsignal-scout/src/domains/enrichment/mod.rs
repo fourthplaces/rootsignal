@@ -12,6 +12,8 @@ use tracing::info;
 
 
 
+use rootsignal_common::{Block, ChecklistItem};
+
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::events::{
@@ -66,6 +68,30 @@ fn all_enrichment_done(e: &EnrichmentEvent, ctx: &Context<ScoutEngineDeps>) -> b
     state.completed_enrichment_roles.is_superset(&all_enrichment_roles())
 }
 
+fn describe_enrichment_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
+    let (_, state) = ctx.singleton::<PipelineState>();
+    let expected = response_roles();
+    let scrape_done = &state.completed_scrape_roles;
+    let enrichment_done = &state.completed_enrichment_roles;
+    let all = all_enrichment_roles();
+    vec![
+        Block::Checklist {
+            label: "Scrape prerequisites".into(),
+            items: expected.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: scrape_done.contains(r),
+            }).collect(),
+        },
+        Block::Checklist {
+            label: "Enrichment roles".into(),
+            items: all.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: enrichment_done.contains(r),
+            }).collect(),
+        },
+    ]
+}
+
 #[handlers]
 pub mod handlers {
     use super::*;
@@ -75,7 +101,7 @@ pub mod handlers {
     // ---------------------------------------------------------------
 
     /// Pin cleanup + actor extraction → EnrichmentRoleCompleted(ActorExtraction)
-    #[handle(on = ScrapeEvent, id = "enrichment:extract_actors", filter = response_done_actor_extraction_pending)]
+    #[handle(on = ScrapeEvent, id = "enrichment:extract_actors", filter = response_done_actor_extraction_pending, describe = describe_enrichment_gate)]
     async fn extract_actors(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -136,7 +162,7 @@ pub mod handlers {
     }
 
     /// Diversity metrics → EnrichmentRoleCompleted(Diversity)
-    #[handle(on = ScrapeEvent, id = "enrichment:score_diversity", filter = response_done_diversity_pending)]
+    #[handle(on = ScrapeEvent, id = "enrichment:score_diversity", filter = response_done_diversity_pending, describe = describe_enrichment_gate)]
     async fn score_diversity(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -162,7 +188,7 @@ pub mod handlers {
     }
 
     /// Actor stats → EnrichmentRoleCompleted(ActorStats)
-    #[handle(on = ScrapeEvent, id = "enrichment:compute_actor_stats", filter = response_done_actor_stats_pending)]
+    #[handle(on = ScrapeEvent, id = "enrichment:compute_actor_stats", filter = response_done_actor_stats_pending, describe = describe_enrichment_gate)]
     async fn compute_actor_stats(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -188,7 +214,7 @@ pub mod handlers {
     }
 
     /// Actor location triangulation → EnrichmentRoleCompleted(ActorLocation)
-    #[handle(on = ScrapeEvent, id = "enrichment:resolve_actor_locations", filter = response_done_actor_location_pending)]
+    #[handle(on = ScrapeEvent, id = "enrichment:resolve_actor_locations", filter = response_done_actor_location_pending, describe = describe_enrichment_gate)]
     async fn resolve_actor_locations(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -221,7 +247,7 @@ pub mod handlers {
     // ---------------------------------------------------------------
 
     /// All enrichment roles done → update source weights/cadence, emit MetricsCompleted.
-    #[handle(on = EnrichmentEvent, id = "enrichment:update_source_weights", filter = all_enrichment_done)]
+    #[handle(on = EnrichmentEvent, id = "enrichment:update_source_weights", filter = all_enrichment_done, describe = describe_enrichment_gate)]
     async fn update_source_weights(
         _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,

@@ -34,7 +34,8 @@ struct DomainVerdict {
 
 const DOMAIN_FILTER_SYSTEM: &str = "\
 You evaluate whether web domains are likely to contain current, firsthand \
-community signals for a specific region.\n\n\
+community signals. When a target region is specified, prefer domains with \
+local relevance to that area.\n\n\
 ACCEPT domains that host:\n\
 - Local journalism, community newspapers, radio/TV stations\n\
 - Local government services, meetings, public records\n\
@@ -42,9 +43,9 @@ ACCEPT domains that host:\n\
 - Local event listings from regional organizers\n\n\
 REJECT domains that are:\n\
 - Web archives or historical snapshots (archive.org, archive-it.org, wayback machine)\n\
-- Federal/national government sites without a regional office for the target area \
+- Federal/national government sites with no regional presence \
 (e.g. loc.gov, si.edu, nps.gov, nasa.gov)\n\
-- Foreign government sites unrelated to the target region\n\
+- Foreign government sites unrelated to the context\n\
 - National/international aggregators with no local desk\n\
 - E-commerce platforms, SaaS marketing, developer docs\n\
 - Content farms, SEO spam, coupon/deal sites\n\n\
@@ -64,7 +65,7 @@ fn normalize_domain(domain: &str) -> String {
 /// as accepted). On LLM error the full list is returned (fail-open).
 pub async fn filter_domains_batch(
     urls: &[String],
-    region_name: &str,
+    region_name: Option<&str>,
     ai: &dyn Agent,
     _store: &dyn SignalReader,
     logger: &Logger,
@@ -102,7 +103,8 @@ pub async fn filter_domains_batch(
     let mut verdicts: HashMap<String, bool> = cached;
 
     if !unchecked.is_empty() {
-        logger.info(format!("LLM domain filter: evaluating {} unique domains for {region_name}", unchecked.len()));
+        let region_label = region_name.unwrap_or("General");
+        logger.info(format!("LLM domain filter: evaluating {} unique domains for {region_label}", unchecked.len()));
 
         let domain_list = unchecked
             .iter()
@@ -110,7 +112,10 @@ pub async fn filter_domains_batch(
             .collect::<Vec<_>>()
             .join("\n");
 
-        let prompt = format!("Region: {region_name}\n\nDomains to evaluate:\n{domain_list}");
+        let prompt = match region_name {
+            Some(region) => format!("Region: {region}\n\nDomains to evaluate:\n{domain_list}"),
+            None => format!("Domains to evaluate:\n{domain_list}"),
+        };
 
         match ai_extract::<DomainFilterResponse>(ai, DOMAIN_FILTER_SYSTEM, &prompt)
             .await

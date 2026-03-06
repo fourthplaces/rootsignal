@@ -15,7 +15,7 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 use uuid::Uuid;
 
-
+use rootsignal_common::Block;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -41,6 +41,20 @@ fn is_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool
 
 fn is_response_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, ScrapeEvent::SourcesResolved { web_role: ScrapeRole::ResponseWeb, .. })
+}
+
+fn describe_resolve_new_source_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
+    let (_, state) = ctx.singleton::<PipelineState>();
+    vec![
+        Block::Status {
+            label: "Source expansion".into(),
+            state: if state.source_expansion_completed {
+                rootsignal_common::State::Done
+            } else {
+                rootsignal_common::State::Waiting
+            },
+        },
+    ]
 }
 
 /// Build source_keys (canonical_key → source_id) from filtered sources.
@@ -369,7 +383,7 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourceExpansionCompleted or SourceExpansionSkipped → resolve response URLs.
-    #[handle(on = DiscoveryEvent, id = "scrape:resolve_new_source", filter = is_source_expansion_done)]
+    #[handle(on = DiscoveryEvent, id = "scrape:resolve_new_source", filter = is_source_expansion_done, describe = describe_resolve_new_source_gate)]
     async fn resolve_new_source(
         _event: DiscoveryEvent,
         ctx: Context<ScoutEngineDeps>,

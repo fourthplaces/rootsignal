@@ -12,11 +12,6 @@ pub enum DiscoveryEvent {
         sources: Vec<SourceNode>,
         discovered_by: String,
     },
-    /// Audit trail: a proposed source was rejected by the domain filter.
-    SourceRejected {
-        source: SourceNode,
-        reason: String,
-    },
     ExpansionQueryCollected {
         query: String,
         source_url: String,
@@ -38,13 +33,12 @@ pub enum DiscoveryEvent {
 
 impl DiscoveryEvent {
     pub fn is_projectable(&self) -> bool {
-        false // SourcesDiscovered is a proposal; SourceRejected is audit-only
+        false
     }
 
     pub fn event_type_str(&self) -> String {
         let variant = match self {
             Self::SourcesDiscovered { .. } => "sources_discovered",
-            Self::SourceRejected { .. } => "source_rejected",
             Self::ExpansionQueryCollected { .. } => "expansion_query_collected",
             Self::SocialTopicCollected { .. } => "social_topic_collected",
             Self::SocialTopicsDiscovered { .. } => "social_topics_discovered",

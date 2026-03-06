@@ -36,144 +36,106 @@ impl Default for PromotionConfig {
     }
 }
 
-const SKIP_PREFIXES: &[&str] = &["mailto:", "tel:", "javascript:", "#", "data:"];
+// ---------------------------------------------------------------------------
+// Pass 2 — Static asset gate
+// ---------------------------------------------------------------------------
 
-const SKIP_EXTENSIONS: &[&str] = &[
-    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".woff", ".woff2", ".ico", ".webp",
-    ".mp3", ".mp4",
+const STATIC_EXTENSIONS: &[&str] = &[
+    ".css", ".js", ".json", ".xml", ".webmanifest", ".map",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".avif",
+    ".woff", ".woff2", ".ttf", ".eot",
+    ".mp3", ".mp4", ".webm", ".ogg",
+    ".pdf", ".zip", ".gz", ".tar",
+    ".txt", ".csv", ".rss", ".atom",
 ];
 
-/// URL path segments that indicate legal/infrastructure pages with no community value.
-const SKIP_PATH_SEGMENTS: &[&str] = &[
-    "/privacy", "/legal", "/terms", "/policy", "/tos",
-    "/cookie", "/consent", "/gdpr", "/compliance",
-    "/account", "/signin", "/login", "/signup",
-    "/feed/", "/rss/", "/atom/", "/xmlrpc", "/wp-json", "/wp-admin",
-    "/wp-content/plugins", "/wp-includes", "/cgi-bin/", "/embed/", "/oembed",
+const ASSET_PATH_PATTERNS: &[&str] = &[
+    "/_next/", "/static/", "/assets/", "/dist/", "/build/",
+    "/wp-includes/", "/wp-content/plugins/", "/wp-content/themes/",
+    "/cdn-cgi/", "/wp-json/", "/xmlrpc", "/cgi-bin/",
 ];
 
-/// Pure infrastructure domains — blocked even in permissive mode.
-/// Never contain community content.
-const ALWAYS_BLOCKED_DOMAINS: &[&str] = &[
-    // CDN / analytics
-    "googleapis.com",
-    "gstatic.com",
-    "googlesyndication.com",
-    "googletagmanager.com",
-    "google-analytics.com",
-    "doubleclick.net",
-    "cloudflare.com",
-    // Web standards / specs
-    "ietf.org",
-    "w3.org",
-    "iana.org",
-    // Ontologies / metadata
-    "purl.org",
-    "dublincore.org",
-    "schema.org",
-    "ogp.me",
-    "xmlns.com",
-    "rdfs.org",
-    // Licenses
-    "creativecommons.org",
-    "opensource.org",
-    // Library / archive standards
-    "loc.gov",
-    "getty.edu",
-    // Identity infrastructure
-    "openid.net",
-    "myopenid.com",
-    // HTML head boilerplate blogs
-    "meyerweb.com",
-    "tantek.com",
-    "photomatt.net",
-    // CDN / hosting
-    "cdn.jsdelivr.net",
-    "unpkg.com",
-    "bootstrapcdn.com",
-    "maxcdn.bootstrapcdn.com",
-    "fontawesome.com",
-    "fonts.google.com",
-    "gravatar.com",
-    "wp.com",
-    "wordpress.org",
-    // Monitoring
-    "segment.com",
-    "hotjar.com",
-    "newrelic.com",
-    "sentry.io",
+// ---------------------------------------------------------------------------
+// Pass 3 — Infrastructure host gate
+// ---------------------------------------------------------------------------
+
+const INFRA_SUBDOMAIN_PREFIXES: &[&str] = &[
+    "assets.", "static.", "cdn.", "api.", "fonts.", "analytics.",
+    "accounts.", "login.", "auth.",
 ];
 
-/// Major platforms — blocked in strict mode, allowed in permissive mode.
-/// Could be legit links on known-good pages.
-const STRICT_ONLY_BLOCKED_DOMAINS: &[&str] = &[
-    "google.com",
-    "youtube.com",
-    "youtu.be",
-    "facebook.com",
-    "apple.com",
-    "microsoft.com",
-    "amazon.com",
-    "wordpress.com",
-    "wikipedia.org",
+const INFRA_DOMAINS: &[&str] = &[
+    "googleapis.com", "gstatic.com", "googletagmanager.com",
+    "google-analytics.com", "doubleclick.net", "cloudflare.com",
+    "cdn.jsdelivr.net", "unpkg.com", "bootstrapcdn.com", "fontawesome.com",
+    "w3.org", "ietf.org", "iana.org", "schema.org", "ogp.me", "xmlns.com",
+    "purl.org", "dublincore.org", "rdfs.org",
+    "segment.com", "hotjar.com", "newrelic.com", "sentry.io",
 ];
 
 
-/// Extract the host from a lowercased URL, stripping `www.` prefix.
+/// Extract the host from a lowercased URL, stripping `www.` prefix and port.
 fn extract_host(url_lower: &str) -> Option<&str> {
     let after_scheme = url_lower.strip_prefix("https://")
         .or_else(|| url_lower.strip_prefix("http://"))?;
     let host = after_scheme.split('/').next()?;
-    let host = host.split(':').next()?; // strip port
+    let host = host.split(':').next()?;
     Some(host.strip_prefix("www.").unwrap_or(host))
 }
 
-/// Extract all content-worthy URLs from a list of page links.
+fn is_infra_domain(host: &str) -> bool {
+    INFRA_DOMAINS.iter().any(|d| host == *d || host.ends_with(&format!(".{d}")))
+}
+
+fn is_infra_subdomain(host: &str) -> bool {
+    INFRA_SUBDOMAIN_PREFIXES.iter().any(|prefix| host.starts_with(prefix))
+}
+
+/// Percent-decode a path for pattern matching.
+/// Only decodes `%2F` and similar path-relevant sequences.
+fn decode_path(path: &str) -> String {
+    percent_encoding::percent_decode_str(path)
+        .decode_utf8_lossy()
+        .to_lowercase()
+}
+
+/// Three-pass structural filter for URLs discovered during scraping.
 ///
-/// Filters out non-content URLs by scheme prefix and file extension,
-/// strips tracking parameters, and deduplicates by `canonical_value()`.
+/// Pass 1 — Scheme gate: only http/https.
+/// Pass 2 — Static asset gate: file extensions and build-tooling paths.
+/// Pass 3 — Infrastructure host gate: infra subdomains and universal infra domains.
 ///
-/// - `permissive: false` (strict) — applies both domain tiers + all path segments.
-/// - `permissive: true` — applies only `ALWAYS_BLOCKED_DOMAINS` + all path segments.
-pub fn extract_links(page_links: &[String], permissive: bool) -> Vec<String> {
+/// Then: sanitize tracking params, dedup by canonical_value.
+pub fn extract_links(page_links: &[String]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut results = Vec::new();
 
     for link in page_links {
         let trimmed = link.trim();
 
-        if SKIP_PREFIXES.iter().any(|p| trimmed.starts_with(p)) {
-            continue;
-        }
-
+        // Pass 1 — Scheme gate
         if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
             continue;
         }
 
-        let path_lower = trimmed.split('?').next().unwrap_or(trimmed).to_lowercase();
-        if SKIP_EXTENSIONS.iter().any(|ext| path_lower.ends_with(ext)) {
+        let url_lower = trimmed.to_lowercase();
+
+        // Pass 2 — Static asset gate
+        let path = url_lower.split('?').next().unwrap_or(&url_lower);
+        let decoded_path = decode_path(path);
+
+        if STATIC_EXTENSIONS.iter().any(|ext| decoded_path.ends_with(ext)) {
+            continue;
+        }
+        if ASSET_PATH_PATTERNS.iter().any(|pat| decoded_path.contains(pat)) {
             continue;
         }
 
-        if let Some(host) = extract_host(&path_lower) {
-            let is_always_blocked = ALWAYS_BLOCKED_DOMAINS
-                .iter()
-                .any(|d| host == *d || host.ends_with(&format!(".{d}")));
-            if is_always_blocked {
+        // Pass 3 — Infrastructure host gate
+        if let Some(host) = extract_host(&url_lower) {
+            if is_infra_subdomain(host) || is_infra_domain(host) {
                 continue;
             }
-            if !permissive {
-                let is_strict_blocked = STRICT_ONLY_BLOCKED_DOMAINS
-                    .iter()
-                    .any(|d| host == *d || host.ends_with(&format!(".{d}")));
-                if is_strict_blocked {
-                    continue;
-                }
-            }
-        }
-
-        if SKIP_PATH_SEGMENTS.iter().any(|seg| path_lower.contains(seg)) {
-            continue;
         }
 
         let cleaned = sanitize_url(trimmed);
@@ -416,89 +378,153 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Pass 1 — Scheme gate
+    // -----------------------------------------------------------------------
+
     #[test]
-    fn test_non_content_filtering() {
+    fn non_http_schemes_rejected() {
         let links = vec![
             "mailto:test@example.com".to_string(),
             "javascript:void(0)".to_string(),
             "tel:+15551234567".to_string(),
             "#anchor".to_string(),
             "data:text/html,<h1>hi</h1>".to_string(),
+            "ftp://files.example.com/doc".to_string(),
+        ];
+        assert!(extract_links(&links).is_empty());
+    }
+
+    #[test]
+    fn http_and_https_accepted() {
+        let links = vec![
+            "http://example.com/page".to_string(),
+            "https://example.com/other".to_string(),
+        ];
+        assert_eq!(extract_links(&links).len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Pass 2 — Static asset gate
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn static_file_extensions_rejected() {
+        let links = vec![
             "https://example.com/style.css".to_string(),
             "https://example.com/app.js".to_string(),
+            "https://example.com/data.json".to_string(),
+            "https://example.com/manifest.webmanifest".to_string(),
             "https://example.com/logo.png".to_string(),
             "https://example.com/photo.jpg".to_string(),
+            "https://example.com/icon.svg".to_string(),
             "https://example.com/font.woff2".to_string(),
+            "https://example.com/font.ttf".to_string(),
+            "https://example.com/song.mp3".to_string(),
+            "https://example.com/video.mp4".to_string(),
+            "https://example.com/clip.webm".to_string(),
+            "https://example.com/report.pdf".to_string(),
+            "https://example.com/archive.zip".to_string(),
+            "https://example.com/robots.txt".to_string(),
+            "https://example.com/data.csv".to_string(),
+            "https://example.com/feed.rss".to_string(),
+            "https://example.com/feed.atom".to_string(),
             "https://example.com/real-page".to_string(),
         ];
-        let results = extract_links(&links, false);
+        let results = extract_links(&links);
         assert_eq!(results.len(), 1);
         assert!(results[0].contains("real-page"));
     }
 
     #[test]
-    fn test_tracking_param_stripping_via_sanitize_url() {
-        // extract_links delegates to sanitize_url for tracking param removal
+    fn extension_check_ignores_query_string() {
         let links = vec![
-            "https://example.com/page?utm_source=ig&utm_medium=social&fbclid=abc123&important=yes"
-                .to_string(),
+            "https://example.com/page?file=style.css".to_string(),
         ];
-        let results = extract_links(&links, false);
-        assert_eq!(results.len(), 1);
-        assert!(results[0].contains("important=yes"));
-        assert!(!results[0].contains("utm_source"));
-        assert!(!results[0].contains("fbclid"));
+        assert_eq!(extract_links(&links).len(), 1, "query param with .css should not be blocked");
     }
 
     #[test]
-    fn test_tracking_params_all_removed() {
-        let links = vec!["https://example.com/page?utm_source=ig&fbclid=abc".to_string()];
-        let results = extract_links(&links, false);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0], "https://example.com/page");
-    }
-
-    #[test]
-    fn test_dedup_same_url_different_tracking() {
+    fn asset_path_patterns_rejected() {
         let links = vec![
-            "https://example.com/page?utm_source=ig".to_string(),
-            "https://example.com/page?utm_source=twitter".to_string(),
-            "https://example.com/page".to_string(),
+            "https://example.com/_next/static/chunks/main.js".to_string(),
+            "https://example.com/static/images/header.png".to_string(),
+            "https://example.com/assets/logo.svg".to_string(),
+            "https://example.com/dist/bundle.js".to_string(),
+            "https://example.com/build/output.css".to_string(),
+            "https://example.com/wp-includes/js/jquery.js".to_string(),
+            "https://example.com/wp-content/plugins/akismet/readme.txt".to_string(),
+            "https://example.com/wp-content/themes/flavor/style.css".to_string(),
+            "https://example.com/cdn-cgi/l/email-protection".to_string(),
+            "https://example.com/wp-json/wp/v2/posts".to_string(),
+            "https://example.com/xmlrpc.php".to_string(),
+            "https://example.com/cgi-bin/script.pl".to_string(),
+            "https://example.com/real-page".to_string(),
         ];
-        let results = extract_links(&links, false);
+        let results = extract_links(&links);
         assert_eq!(results.len(), 1);
+        assert!(results[0].contains("real-page"));
     }
 
     #[test]
-    fn privacy_and_legal_urls_are_blocked() {
+    fn percent_encoded_paths_still_caught() {
         let links = vec![
-            "https://example.com/privacy".to_string(),
-            "https://example.com/privacy-policy".to_string(),
-            "https://example.com/legal/terms".to_string(),
-            "https://example.com/tos".to_string(),
-            "https://example.com/cookie-policy".to_string(),
-            "https://example.com/gdpr".to_string(),
-            "https://example.com/real-content".to_string(),
+            "https://example.com/%2Fstatic%2Fmain.js".to_string(),
+            "https://example.com/_next%2Fstatic%2Fchunk.js".to_string(),
         ];
-        let results = extract_links(&links, false);
+        assert!(extract_links(&links).is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Pass 3 — Infrastructure host gate
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn infra_subdomain_prefixes_rejected() {
+        let links = vec![
+            "https://assets.example.com/page".to_string(),
+            "https://static.example.com/page".to_string(),
+            "https://cdn.example.com/page".to_string(),
+            "https://api.example.com/v1/data".to_string(),
+            "https://fonts.example.com/roboto".to_string(),
+            "https://analytics.example.com/dashboard".to_string(),
+            "https://accounts.example.com/login".to_string(),
+            "https://login.example.com/sso".to_string(),
+            "https://auth.example.com/oauth".to_string(),
+            "https://example.com/real-page".to_string(),
+        ];
+        let results = extract_links(&links);
         assert_eq!(results.len(), 1);
-        assert!(results[0].contains("real-content"));
+        assert!(results[0].contains("real-page"));
     }
 
     #[test]
-    fn blocked_domains_are_filtered() {
+    fn infra_domains_rejected() {
         let links = vec![
-            "https://www.google.com/policies/privacy/".to_string(),
-            "https://kids.youtube.com/privacynotice".to_string(),
-            "https://accounts.google.com/signin".to_string(),
             "https://fonts.googleapis.com/css".to_string(),
-            "https://www.facebook.com/settings".to_string(),
+            "https://www.gstatic.com/images/branding".to_string(),
+            "https://www.googletagmanager.com/gtag/js".to_string(),
             "https://cloudflare.com/cdn-cgi/something".to_string(),
+            "https://cdn.jsdelivr.net/npm/bootstrap@5".to_string(),
+            "https://schema.org/Organization".to_string(),
+            "https://www.w3.org/TR/html5/".to_string(),
+            "https://purl.org/dc/elements/1.1/".to_string(),
+            "https://sentry.io/for/javascript/".to_string(),
             "https://localcommunity.org/events".to_string(),
         ];
-        let results = extract_links(&links, false);
+        let results = extract_links(&links);
         assert_eq!(results.len(), 1);
         assert!(results[0].contains("localcommunity.org"));
+    }
+
+    #[test]
+    fn infra_domain_match_is_exact_not_substring() {
+        let links = vec![
+            "https://marketsegment.com/community".to_string(),
+            "https://theschema.org/about".to_string(),
+        ];
+        let results = extract_links(&links);
+        assert_eq!(results.len(), 2, "substring matches must not trigger infra domain block");
     }
 
     #[test]
@@ -508,71 +534,12 @@ mod tests {
         assert_eq!(extract_host("https://sub.google.com/"), Some("sub.google.com"));
     }
 
-    #[test]
-    fn test_mixed_linktree_page() {
-        let links = vec![
-            "https://instagram.com/mutual_aid_mpls".to_string(),
-            "https://x.com/mpls_aid".to_string(),
-            "https://docs.google.com/document/d/1abc/edit".to_string(), // blocked: google.com
-            "https://gofundme.com/f/help-my-family".to_string(),
-            "https://www.eventbrite.com/e/community-dinner-123".to_string(),
-            "https://anotherorg.org/resources".to_string(),
-            "https://example.com/flyer.pdf".to_string(),
-            "mailto:contact@org.com".to_string(), // blocked: mailto
-        ];
-        let results = extract_links(&links, false);
-        // google.com blocked by domain filter, mailto blocked by scheme filter
-        assert_eq!(results.len(), 6);
-    }
-
-    #[test]
-    fn test_non_http_schemes_skipped() {
-        let links = vec![
-            "data:text/html,test".to_string(),
-            "tel:5551234".to_string(),
-            "#section-2".to_string(),
-            "ftp://files.example.com/doc".to_string(),
-        ];
-        let results = extract_links(&links, false);
-        assert!(results.is_empty());
-    }
-
     // -----------------------------------------------------------------------
-    // URL normalization: canonical_value vs sanitize_url
-    //
-    // canonical_value (rootsignal-common) — identity key for sources/dedup.
-    //   Preserves ALL query params. Intentionally different from sanitize_url.
-    //
-    // sanitize_url (scout::infra::util) — the single URL cleaner for scout.
-    //   Strips tracking params (utm_*, fbclid, gclid, si, source, etc.).
+    // Semantic URLs now pass through (LLM filter decides)
     // -----------------------------------------------------------------------
 
     #[test]
-    fn web_standards_boilerplate_urls_are_blocked() {
-        let links = vec![
-            "https://www.ietf.org/rfc/rfc2396.txt".to_string(),
-            "https://purl.org/dc/elements/1.1/".to_string(),
-            "https://dublincore.org/specifications/".to_string(),
-            "https://creativecommons.org/licenses/by/4.0/".to_string(),
-            "https://www.w3.org/TR/html5/".to_string(),
-            "https://schema.org/Organization".to_string(),
-            "https://ogp.me/ns#".to_string(),
-            "https://xmlns.com/foaf/0.1/".to_string(),
-            "https://loc.gov/standards/mods/".to_string(),
-            "https://openid.net/specs/".to_string(),
-            "https://meyerweb.com/eric/tools/css/reset/".to_string(),
-            "https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css".to_string(),
-            "https://fonts.google.com/specimen/Roboto".to_string(),
-            "https://sentry.io/for/javascript/".to_string(),
-            "https://localcommunity.org/events".to_string(),
-        ];
-        let results = extract_links(&links, false);
-        assert_eq!(results.len(), 1);
-        assert!(results[0].contains("localcommunity.org"));
-    }
-
-    #[test]
-    fn permissive_mode_allows_major_platforms() {
+    fn major_platforms_pass_through_to_llm_filter() {
         let links = vec![
             "https://www.google.com/maps/place/Community+Center".to_string(),
             "https://youtube.com/watch?v=abc123".to_string(),
@@ -580,23 +547,94 @@ mod tests {
             "https://wikipedia.org/wiki/My_Town".to_string(),
             "https://wordpress.com/my-community-blog".to_string(),
         ];
-        let results = extract_links(&links, true);
-        assert_eq!(results.len(), 5, "Permissive mode should allow major platforms");
+        assert_eq!(extract_links(&links).len(), 5);
     }
 
     #[test]
-    fn strict_mode_blocks_major_platforms() {
+    fn privacy_and_legal_pages_pass_through_to_llm_filter() {
         let links = vec![
-            "https://www.google.com/maps/place/Community+Center".to_string(),
-            "https://youtube.com/watch?v=abc123".to_string(),
-            "https://facebook.com/localgroup".to_string(),
-            "https://wikipedia.org/wiki/My_Town".to_string(),
-            "https://localcommunity.org/events".to_string(),
+            "https://example.com/privacy".to_string(),
+            "https://example.com/terms".to_string(),
+            "https://example.com/legal/policy".to_string(),
         ];
-        let results = extract_links(&links, false);
-        assert_eq!(results.len(), 1, "Strict mode should block major platforms");
-        assert!(results[0].contains("localcommunity.org"));
+        assert_eq!(extract_links(&links).len(), 3);
     }
+
+    // -----------------------------------------------------------------------
+    // Integration — real Linktree-style page
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn linktree_page_junk_filtered_content_preserved() {
+        let links = vec![
+            // Kept: real community sources
+            "https://instagram.com/mutual_aid_mpls".to_string(),
+            "https://x.com/mpls_aid".to_string(),
+            "https://gofundme.com/f/help-my-family".to_string(),
+            "https://www.eventbrite.com/e/community-dinner-123".to_string(),
+            "https://anotherorg.org/resources".to_string(),
+            "https://docs.google.com/document/d/1abc/edit".to_string(),
+            // Rejected: scheme
+            "mailto:contact@org.com".to_string(),
+            // Rejected: static asset
+            "https://example.com/flyer.pdf".to_string(),
+            "https://example.com/manifest.webmanifest".to_string(),
+            "https://example.com/style.css".to_string(),
+            // Rejected: infra host
+            "https://fonts.googleapis.com/css2?family=Inter".to_string(),
+            "https://cdn.example.com/image.png".to_string(),
+            "https://accounts.google.com/signin".to_string(),
+        ];
+        let results = extract_links(&links);
+        let urls: Vec<&str> = results.iter().map(|s| s.as_str()).collect();
+
+        assert!(urls.iter().any(|u| u.contains("instagram.com")));
+        assert!(urls.iter().any(|u| u.contains("x.com")));
+        assert!(urls.iter().any(|u| u.contains("gofundme.com")));
+        assert!(urls.iter().any(|u| u.contains("eventbrite.com")));
+        assert!(urls.iter().any(|u| u.contains("anotherorg.org")));
+        assert!(urls.iter().any(|u| u.contains("docs.google.com")));
+        assert_eq!(results.len(), 6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Sanitize + dedup
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tracking_params_stripped() {
+        let links = vec![
+            "https://example.com/page?utm_source=ig&utm_medium=social&fbclid=abc123&important=yes"
+                .to_string(),
+        ];
+        let results = extract_links(&links);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].contains("important=yes"));
+        assert!(!results[0].contains("utm_source"));
+        assert!(!results[0].contains("fbclid"));
+    }
+
+    #[test]
+    fn tracking_only_query_string_removed_entirely() {
+        let links = vec!["https://example.com/page?utm_source=ig&fbclid=abc".to_string()];
+        let results = extract_links(&links);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], "https://example.com/page");
+    }
+
+    #[test]
+    fn duplicate_urls_with_different_tracking_collapsed() {
+        let links = vec![
+            "https://example.com/page?utm_source=ig".to_string(),
+            "https://example.com/page?utm_source=twitter".to_string(),
+            "https://example.com/page".to_string(),
+        ];
+        assert_eq!(extract_links(&links).len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // canonical_value vs sanitize_url — documenting the distinction
+    // -----------------------------------------------------------------------
 
     #[test]
     fn canonical_value_preserves_tracking_params_sanitize_url_strips_them() {
@@ -607,23 +645,11 @@ mod tests {
         let cv = canonical_value(url);
         let sanitized = sanitize_url(url);
 
-        // canonical_value: identity key — preserves everything
-        assert!(
-            cv.contains("utm_source"),
-            "canonical_value preserves tracking params"
-        );
+        assert!(cv.contains("utm_source"), "canonical_value preserves tracking params");
         assert!(cv.contains("si="), "canonical_value preserves si param");
-
-        // sanitize_url: strips tracking params, keeps the rest
-        assert!(
-            !sanitized.contains("utm_source"),
-            "sanitize_url strips utm params"
-        );
+        assert!(!sanitized.contains("utm_source"), "sanitize_url strips utm params");
         assert!(!sanitized.contains("si="), "sanitize_url strips si param");
-        assert!(
-            sanitized.contains("important=yes"),
-            "sanitize_url keeps non-tracking params"
-        );
+        assert!(sanitized.contains("important=yes"), "sanitize_url keeps non-tracking params");
     }
 }
 

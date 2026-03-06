@@ -180,7 +180,7 @@ async fn process_results(
     let now = Utc::now();
 
     for (url, outcome, page_links) in pipeline_results {
-        let discovered = link_promoter::extract_links(&page_links, false);
+        let discovered = link_promoter::extract_links(&page_links);
         for link_url in discovered {
             result.collected_links.push(CollectedLink {
                 url: link_url,

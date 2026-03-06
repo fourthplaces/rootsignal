@@ -9,6 +9,8 @@ use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 
+use rootsignal_common::{Block, ChecklistItem};
+
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::discovery::activities::link_promotion;
@@ -59,6 +61,58 @@ fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngine
         && !state.source_expansion_completed
 }
 
+fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
+    let (_, state) = ctx.singleton::<PipelineState>();
+    let tension = tension_roles();
+    let response = response_roles();
+    let done = &state.completed_scrape_roles;
+    let link_count = state.collected_links.len() as u32;
+    vec![
+        Block::Checklist {
+            label: "Tension scrape".into(),
+            items: tension.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: done.contains(r),
+            }).collect(),
+        },
+        Block::Checklist {
+            label: "Response scrape".into(),
+            items: response.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: done.contains(r),
+            }).collect(),
+        },
+        Block::Counter {
+            label: "Collected links".into(),
+            value: link_count,
+            total: link_count,
+        },
+    ]
+}
+
+fn describe_expansion_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
+    let (_, state) = ctx.singleton::<PipelineState>();
+    let tension = tension_roles();
+    let done = &state.completed_scrape_roles;
+    vec![
+        Block::Checklist {
+            label: "Tension scrape".into(),
+            items: tension.iter().map(|r| ChecklistItem {
+                text: format!("{r:?}"),
+                done: done.contains(r),
+            }).collect(),
+        },
+        Block::Status {
+            label: "Source expansion".into(),
+            state: if state.source_expansion_completed {
+                rootsignal_common::State::Done
+            } else {
+                rootsignal_common::State::Waiting
+            },
+        },
+    ]
+}
+
 #[handlers]
 pub mod handlers {
     use super::*;
@@ -67,7 +121,7 @@ pub mod handlers {
     ///
     /// Auto-accepts social/direct-action/query/admin sources.
     /// LLM-filters web URL sources via `filter_domains_batch`.
-    /// Emits `SourcesRegistered` (accepted) or `SourceRejected` (audit).
+    /// Emits `SourcesRegistered` for accepted sources; rejections are logged.
     #[handle(on = [DiscoveryEvent::SourcesDiscovered], id = "discovery:filter_domains", extract(sources, discovered_by))]
     async fn filter_domains(
         sources: Vec<rootsignal_common::SourceNode>,
@@ -116,7 +170,7 @@ pub mod handlers {
     /// - Social handles: promoted from ALL pages (unchanged behavior)
     /// - Content links: promoted only from "productive" pages (signal_count > 0)
     ///   or pages that pass lightweight LLM triage
-    #[handle(on = ScrapeEvent, id = "discovery:promote_links", filter = should_promote_links)]
+    #[handle(on = ScrapeEvent, id = "discovery:promote_links", filter = should_promote_links, describe = describe_promote_links_gate)]
     async fn promote_links(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -138,7 +192,7 @@ pub mod handlers {
 
     /// Scrape completed → expand source pool when tension roles done.
     /// Emits SourceExpansionCompleted or SourceExpansionSkipped.
-    #[handle(on = ScrapeEvent, id = "discovery:expand_sources", filter = tension_done_expansion_pending)]
+    #[handle(on = ScrapeEvent, id = "discovery:expand_sources", filter = tension_done_expansion_pending, describe = describe_expansion_gate)]
     async fn expand_sources(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,

@@ -3,7 +3,7 @@
 //! Every `SourcesDiscovered` event passes through this handler.
 //! Sources are either auto-accepted (social, direct-action, query, admin)
 //! or LLM-filtered via `filter_domains_batch`. Accepted sources emit
-//! `SystemEvent::SourcesRegistered`; rejected ones emit `DiscoveryEvent::SourceRejected`.
+//! `SystemEvent::SourcesRegistered`; rejected ones are logged.
 
 use ai_client::Agent;
 use seesaw_core::{Events, Logger};
@@ -11,14 +11,14 @@ use seesaw_core::{Events, Logger};
 use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::types::{channel_type, ChannelType, SourceNode};
 
-use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::domain_filter;
 use crate::traits::SignalReader;
 
 /// Filter a batch of proposed sources. Trusted origins and structurally-known
 /// channel types bypass the LLM; web URLs go through `filter_domains_batch`.
+/// Region is optional context that enriches the filter prompt — not a gate.
 ///
-/// Fail-open: if AI or region is unavailable, all sources are accepted.
+/// Fail-open: if AI is unavailable, all sources are accepted.
 pub async fn filter_discovered_sources(
     sources: Vec<SourceNode>,
     discovered_by: &str,
@@ -54,15 +54,15 @@ pub async fn filter_discovered_sources(
 
     // LLM filter for web URL sources
     if !needs_filter.is_empty() {
-        match (ai, region_name) {
-            (Some(ai), Some(region)) => {
+        match ai {
+            Some(ai) => {
                 let urls: Vec<String> = needs_filter
                     .iter()
                     .filter_map(|s| s.url.clone())
                     .collect();
 
                 let accepted_urls = domain_filter::filter_domains_batch(
-                    &urls, region, ai, store, logger,
+                    &urls, region_name, ai, store, logger,
                 )
                 .await;
 
@@ -80,10 +80,10 @@ pub async fn filter_discovered_sources(
                         accepted.push(source);
                     } else {
                         rejected_count += 1;
-                        events.push(DiscoveryEvent::SourceRejected {
-                            source,
-                            reason: "Domain rejected by LLM filter".into(),
-                        });
+                        logger.debug(format!(
+                            "Source rejected by LLM filter: {}",
+                            source.url.as_deref().unwrap_or(&source.canonical_key),
+                        ));
                     }
                 }
 
@@ -94,10 +94,10 @@ pub async fn filter_discovered_sources(
                     ));
                 }
             }
-            _ => {
+            None => {
                 let count = needs_filter.len();
                 accepted.extend(needs_filter);
-                logger.info(format!("No AI or region — auto-accepting all {count} sources"));
+                logger.info(format!("No AI available — auto-accepting all {count} sources"));
             }
         }
     }

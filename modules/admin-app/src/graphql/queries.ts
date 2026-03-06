@@ -914,6 +914,15 @@ export const ADMIN_HANDLER_LOGS_BY_RUN = gql`
   }
 `;
 
+export const ADMIN_HANDLER_DESCRIPTIONS = gql`
+  query AdminHandlerDescriptions($runId: String!) {
+    adminHandlerDescriptions(runId: $runId) {
+      handlerId
+      blocks
+    }
+  }
+`;
+
 export const EVENTS_SUBSCRIPTION = gql`
   subscription Events($lastSeq: Int) {
     events(lastSeq: $lastSeq) {

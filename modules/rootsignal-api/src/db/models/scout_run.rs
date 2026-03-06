@@ -1053,6 +1053,36 @@ pub async fn handler_logs_by_run(
         .collect())
 }
 
+pub struct HandlerDescriptionRow {
+    pub handler_id: String,
+    pub description: serde_json::Value,
+}
+
+pub async fn handler_descriptions(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<Vec<HandlerDescriptionRow>> {
+    let correlation_id = Uuid::parse_str(run_id)
+        .map_err(|e| anyhow::anyhow!("Invalid run_id as UUID: {e}"))?;
+
+    let rows = sqlx::query_as::<_, (String, serde_json::Value)>(
+        "SELECT handler_id, description \
+         FROM seesaw_handler_descriptions \
+         WHERE correlation_id = $1",
+    )
+    .bind(correlation_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(handler_id, description)| HandlerDescriptionRow {
+            handler_id,
+            description,
+        })
+        .collect())
+}
+
 fn row_to_event_full(r: sqlx::postgres::PgRow) -> EventRowFull {
     EventRowFull {
         id: r.get("id"),
