@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import type { Components } from "react-markdown";
 import { X, Send, Loader2, Wand, Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -49,12 +49,13 @@ type AdminEvent = {
   parentId: string | null;
   correlationId: string | null;
   runId: string | null;
+  handlerId: string | null;
   summary: string | null;
   payload: string;
 };
 
 export type InvestigateMode =
-  | { mode: "event"; event: AdminEvent }
+  | { mode: "event"; event: AdminEvent; treeEvents?: AdminEvent[] }
   | { mode: "sources"; sourceIds: string[]; sourceLabel: string }
   | { mode: "scout_run"; runId: string; runLabel: string };
 
@@ -114,7 +115,12 @@ function getModeConfig(investigation: InvestigateMode): ModeConfig {
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
-const SYNTHESIS_PROMPT = `Based on our investigation, generate a detailed problem report I can hand to a developer (Claude Code) who has full access to the codebase but has NOT seen any of these events.
+function buildSynthesisPrompt(causalChain: string | null): string {
+  const chainSection = causalChain
+    ? `\n### Causal Chain\nThe following is the full causal tree for this event — read it like a stack trace showing what triggered what:\n\n\`\`\`\n${causalChain}\n\`\`\`\n`
+    : "";
+
+  return `Based on our investigation, generate a detailed problem report I can hand to a developer (Claude Code) who has full access to the codebase but has NOT seen any of these events.
 
 Output ONLY the report below — no preamble, no explanation, no wrapper.
 
@@ -123,7 +129,7 @@ Format:
 
 ### What Was Observed
 [Describe the symptoms in plain language — what happened that shouldn't have, or what didn't happen that should have. Be specific and vivid.]
-
+${chainSection}
 ### Evidence Trail
 [Key event data — seq numbers, timestamps, relevant payload fields, signal IDs. Walk through the causal chain so the developer can trace it. Quote exact values from payloads where they matter.]
 
@@ -153,6 +159,7 @@ curl -s --cookie "auth=\$AUTH" "${API_BASE}/api/debug-context?run_id=<RUN_ID>"
 \`\`\`
 
 [Replace the placeholder values above with the actual IDs from the investigation. Only include commands relevant to this specific issue.]`;
+}
 
 async function streamInvestigation(
   body: Record<string, unknown>,
@@ -246,6 +253,98 @@ function copyToClipboard(text: string): boolean {
   const ok = document.execCommand("copy");
   document.body.removeChild(ta);
   return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Causal chain formatter — renders the tree as an indented text trace
+// ---------------------------------------------------------------------------
+
+function compactPayloadText(raw: string, maxLen = 100): string {
+  try {
+    const obj = JSON.parse(raw);
+    if (typeof obj !== "object" || obj === null) return raw.slice(0, maxLen);
+    const entries = Object.entries(obj).filter(([k]) => k !== "type");
+    if (entries.length === 0) return "{}";
+    const parts: string[] = [];
+    let len = 2;
+    for (const [k, v] of entries) {
+      const val =
+        typeof v === "string"
+          ? v.length > 60 ? `"${v.slice(0, 57)}…"` : `"${v}"`
+          : JSON.stringify(v);
+      const part = `${k}: ${val}`;
+      if (len + part.length + 2 > maxLen) { parts.push("…"); break; }
+      parts.push(part);
+      len += part.length + 2;
+    }
+    return `{ ${parts.join(", ")} }`;
+  } catch {
+    return raw.slice(0, maxLen);
+  }
+}
+
+function formatCausalChain(events: AdminEvent[]): string {
+  if (!events.length) return "";
+
+  const childrenMap = new Map<string, AdminEvent[]>();
+  const roots: AdminEvent[] = [];
+  const idSet = new Set(events.map(e => e.id).filter(Boolean));
+
+  for (const evt of events) {
+    if (evt.parentId == null || !idSet.has(evt.parentId)) {
+      roots.push(evt);
+    } else {
+      const siblings = childrenMap.get(evt.parentId!) ?? [];
+      siblings.push(evt);
+      childrenMap.set(evt.parentId!, siblings);
+    }
+  }
+
+  roots.sort((a, b) => a.seq - b.seq);
+
+  const lines: string[] = [];
+
+  function renderEvent(evt: AdminEvent, prefix: string, isLast: boolean) {
+    const connector = prefix === "" ? "" : isLast ? "└─ " : "├─ ";
+    const payload = compactPayloadText(evt.payload);
+    lines.push(`${prefix}${connector}${evt.name} (seq=${evt.seq}, ${evt.layer}) ${payload}`);
+
+    const children = evt.id ? (childrenMap.get(evt.id) ?? []) : [];
+    // Group children by handler_id
+    const handlerGroups = new Map<string, AdminEvent[]>();
+    const direct: AdminEvent[] = [];
+    for (const child of children) {
+      if (child.handlerId) {
+        const group = handlerGroups.get(child.handlerId) ?? [];
+        group.push(child);
+        handlerGroups.set(child.handlerId, group);
+      } else {
+        direct.push(child);
+      }
+    }
+
+    const items: ({ type: "direct"; evt: AdminEvent } | { type: "handler"; id: string; evts: AdminEvent[] })[] = [
+      ...direct.map(e => ({ type: "direct" as const, evt: e })),
+      ...[...handlerGroups.entries()].map(([id, evts]) => ({ type: "handler" as const, id, evts })),
+    ];
+
+    const childPrefix = prefix === "" ? "" : prefix + (isLast ? "   " : "│  ");
+
+    items.forEach((item, i) => {
+      const last = i === items.length - 1;
+      if (item.type === "direct") {
+        renderEvent(item.evt, childPrefix, last);
+      } else {
+        const hConnector = last ? "└─ " : "├─ ";
+        lines.push(`${childPrefix}${hConnector}[${item.id}]`);
+        const hPrefix = childPrefix + (last ? "   " : "│  ");
+        item.evts.forEach((e, j) => renderEvent(e, hPrefix, j === item.evts.length - 1));
+      }
+    });
+  }
+
+  roots.forEach((root, i) => renderEvent(root, "", i === roots.length - 1));
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -352,13 +451,18 @@ export function InvestigateDrawer({
 
   const showSynthesis = config.showSynthesis;
 
+  const causalChain = useMemo(() => {
+    if (investigation.mode !== "event" || !investigation.treeEvents?.length) return null;
+    return formatCausalChain(investigation.treeEvents);
+  }, [investigation]);
+
   const copyIssue = useCallback(async () => {
     if (copyState !== "idle" || streaming || !showSynthesis) return;
     setCopyState("loading");
 
     const synthMessages: ChatMsg[] = [
       ...messages,
-      { role: "user", content: SYNTHESIS_PROMPT },
+      { role: "user", content: buildSynthesisPrompt(causalChain) },
     ];
 
     const controller = new AbortController();
@@ -388,7 +492,7 @@ export function InvestigateDrawer({
     } catch {
       setCopyState("idle");
     }
-  }, [copyState, streaming, messages, config, showSynthesis]);
+  }, [copyState, streaming, messages, config, showSynthesis, causalChain]);
 
   return (
     <div className="relative flex flex-col h-full">

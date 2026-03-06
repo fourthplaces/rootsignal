@@ -2,7 +2,7 @@ import { useEventsPaneContext } from "../EventsPaneContext";
 import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 
 export function InvestigatePane() {
-  const { investigateEvent } = useEventsPaneContext();
+  const { investigateEvent, treeEvents } = useEventsPaneContext();
 
   if (!investigateEvent) {
     return (
@@ -15,7 +15,7 @@ export function InvestigatePane() {
   return (
     <InvestigateDrawer
       key={investigateEvent.seq}
-      investigation={{ mode: "event", event: investigateEvent }}
+      investigation={{ mode: "event", event: investigateEvent, treeEvents: treeEvents ?? undefined }}
       onClose={() => {
         // Tab close (X) is the primary close mechanism.
         // This onClose is kept for the internal close button which
