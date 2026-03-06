@@ -17,7 +17,7 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 use uuid::Uuid;
 
-use rootsignal_graph::GraphReader;
+
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -30,8 +30,8 @@ use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
-fn is_sources_scheduled(e: &LifecycleEvent) -> bool {
-    matches!(e, LifecycleEvent::SourcesScheduled { .. })
+fn is_sources_prepared(e: &LifecycleEvent) -> bool {
+    matches!(e, LifecycleEvent::SourcesPrepared { .. })
 }
 
 fn is_source_expansion_completed(e: &LifecycleEvent) -> bool {
@@ -72,8 +72,8 @@ fn build_source_keys(sources: &[rootsignal_common::SourceNode]) -> HashMap<Strin
 pub mod handlers {
     use super::*;
 
-    /// SourcesScheduled → resolve tension URLs, emit SourcesResolved.
-    #[handle(on = LifecycleEvent, id = "scrape:resolve_tension", filter = is_sources_scheduled)]
+    /// SourcesPrepared → resolve tension URLs, emit SourcesResolved.
+    #[handle(on = LifecycleEvent, id = "scrape:resolve_tension", filter = is_sources_prepared)]
     async fn resolve_tension(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -84,14 +84,14 @@ pub mod handlers {
         let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        let scheduled = state.scheduled.as_ref().expect("scheduled data stashed");
+        let plan = state.source_plan.as_ref().expect("source plan stashed");
 
         // Resolve tension web sources
-        let tension_web: Vec<rootsignal_common::SourceNode> = scheduled
-            .scheduled_sources
+        let tension_web: Vec<rootsignal_common::SourceNode> = plan
+            .selected_sources
             .iter()
             .filter(|s| {
-                scheduled.tension_phase_keys.contains(&s.canonical_key)
+                plan.tension_phase_keys.contains(&s.canonical_key)
                     && !matches!(
                         rootsignal_common::scraping_strategy(s.value()),
                         rootsignal_common::ScrapingStrategy::Social(_)
@@ -207,26 +207,26 @@ pub mod handlers {
 
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
-        let scheduled = state.scheduled.as_ref().expect("scheduled data stashed");
+        let plan = state.source_plan.as_ref().expect("source plan stashed");
 
         let social_sources: Vec<&rootsignal_common::SourceNode> = if matches!(role, ScrapeRole::TensionSocial) {
-            scheduled.scheduled_sources
+            plan.selected_sources
                 .iter()
                 .filter(|s| {
                     matches!(
                         rootsignal_common::scraping_strategy(s.value()),
                         rootsignal_common::ScrapingStrategy::Social(_)
-                    ) && scheduled.tension_phase_keys.contains(&s.canonical_key)
+                    ) && plan.tension_phase_keys.contains(&s.canonical_key)
                 })
                 .collect()
         } else {
-            scheduled.scheduled_sources
+            plan.selected_sources
                 .iter()
                 .filter(|s| {
                     matches!(
                         rootsignal_common::scraping_strategy(s.value()),
                         rootsignal_common::ScrapingStrategy::Social(_)
-                    ) && scheduled.response_phase_keys.contains(&s.canonical_key)
+                    ) && plan.response_phase_keys.contains(&s.canonical_key)
                 })
                 .collect()
         };
@@ -410,21 +410,20 @@ pub mod handlers {
         info!("=== Phase B: Find Responses ===");
         let deps = ctx.deps();
 
-        // Requires region + graph_client — skip in tests
-        let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
+        // Requires region + graph — skip in tests
+        let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                ctx.logger.debug("Skipped response scrape resolve: missing region or graph_client");
+                ctx.logger.debug("Skipped response scrape resolve: missing region or graph");
                 return Ok(events![LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::ResponseScrape,
                 }]);
             }
         };
-        let graph = GraphReader::new(graph_client.clone());
 
         let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
-        let scheduled = state.scheduled.as_ref().expect("scheduled data stashed");
+        let plan = state.source_plan.as_ref().expect("source plan stashed");
 
         // Reload sources from graph to pick up mid-run discoveries
         let fresh_sources = match graph
@@ -438,12 +437,12 @@ pub mod handlers {
             }
         };
 
-        // Phase B: originally-scheduled response + never-scraped fresh discovery
+        // Phase B: originally-selected response + never-scraped fresh discovery
         let phase_b_sources: Vec<rootsignal_common::SourceNode> = fresh_sources
             .iter()
             .filter(|s| {
-                scheduled.response_phase_keys.contains(&s.canonical_key)
-                    || (s.last_scraped.is_none() && !scheduled.scheduled_keys.contains(&s.canonical_key))
+                plan.response_phase_keys.contains(&s.canonical_key)
+                    || (s.last_scraped.is_none() && !plan.selected_keys.contains(&s.canonical_key))
             })
             .cloned()
             .collect();

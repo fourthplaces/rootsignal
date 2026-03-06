@@ -28,6 +28,7 @@ use scout_runner::ScoutRunner;
 
 
 mod db;
+mod debug_context;
 mod event_broadcast;
 mod event_cache;
 mod graphql;
@@ -327,6 +328,8 @@ async fn main() -> Result<()> {
         )
         // AI investigation (SSE streaming)
         .route("/api/investigate", post(investigate::investigate_handler))
+        // Debug context (markdown dump for Claude Code)
+        .route("/api/debug-context", get(debug_context::debug_context_handler))
         // Health check
         .route("/", get(|| async { "ok" }))
         .with_state(state)

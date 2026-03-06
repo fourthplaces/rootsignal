@@ -14,13 +14,18 @@ use chrono::Utc;
 use rootsignal_graph::GraphProjector;
 use seesaw_core::{events, on_any, AnyEvent, Context, Events, Handler};
 
-use rootsignal_common::events::{Event, Eventlike, SystemEvent, WorldEvent};
+use rootsignal_common::events::{Event, EventDomain, Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
+use crate::domains::enrichment::events::EnrichmentEvent;
+use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::scrape::events::ScrapeEvent;
+use crate::domains::signals::events::SignalEvent;
+use crate::domains::synthesis::events::SynthesisEvent;
 
 // Priority-0: event persistence — handled by seesaw's unified Store (PostgresStore in production).
 // Priority-1: aggregate state — handled by seesaw aggregators.
@@ -28,7 +33,8 @@ use crate::domains::lifecycle::events::LifecycleEvent;
 /// Priority-2 handler: project events to Neo4j graph.
 ///
 /// Captures `GraphProjector` via closure — not on `ScoutEngineDeps`.
-/// Only processes projectable events (World, System, and select Discovery events).
+/// Routes events by `EventDomain` — exhaustive match ensures compile-time
+/// safety when new domains are added.
 pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngineDeps> {
     let projector = Arc::new(projector);
     on_any()
@@ -37,25 +43,27 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
         .then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
             let projector = projector.clone();
             async move {
-                let (event_type, payload) =
-                    if let Some(e) = event.downcast_ref::<WorldEvent>() {
-                        (e.event_type().to_string(), Event::World(e.clone()).to_payload())
-                    } else if let Some(e) = event.downcast_ref::<SystemEvent>() {
-                        (e.event_type().to_string(), Event::System(e.clone()).to_payload())
-                    } else if let Some(e) = event.downcast_ref::<DiscoveryEvent>() {
-                        if !e.is_projectable() {
-                            return Ok(events![]);
-                        }
-                        (e.event_type_str(), e.to_persist_payload())
-                    } else if let Some(e) = event.downcast_ref::<PipelineEvent>() {
-                        if !e.is_projectable() {
-                            return Ok(events![]);
-                        }
-                        ("PipelineEvent".to_string(), e.to_persist_payload())
-                    } else {
-                        tracing::debug!("neo4j_projection: skipping unhandled event type");
-                        return Ok(events![]);
-                    };
+                // Classify the event into its domain. Each arm is explicit —
+                // adding a new EventDomain variant without handling it here
+                // will fail to compile.
+                let (domain, event_type, payload) = classify_event(&event);
+
+                // Exhaustive match — no wildcard. Mirrors GraphProjector::project().
+                match domain {
+                    EventDomain::Fact => {}
+                    EventDomain::Discovery | EventDomain::Pipeline => {}
+                    EventDomain::Scrape => return Ok(events![]),
+                    EventDomain::Signal => return Ok(events![]),
+                    EventDomain::Lifecycle => return Ok(events![]),
+                    EventDomain::Enrichment => return Ok(events![]),
+                    EventDomain::Expansion => return Ok(events![]),
+                    EventDomain::Synthesis => return Ok(events![]),
+                }
+
+                let (event_type, payload) = match (event_type, payload) {
+                    (Some(t), Some(p)) => (t, p),
+                    _ => return Ok(events![]),
+                };
 
                 let deps = ctx.deps();
                 let stored = rootsignal_events::StoredEvent {
@@ -79,6 +87,64 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                 Ok(events![])
             }
         })
+}
+
+/// Classify a live event into its domain, event_type string, and payload.
+///
+/// Returns `(domain, Option<event_type>, Option<payload>)`.
+/// For non-projectable events within a projectable domain, event_type/payload
+/// are None (the handler skips them).
+fn classify_event(
+    event: &AnyEvent,
+) -> (EventDomain, Option<String>, Option<serde_json::Value>) {
+    if let Some(e) = event.downcast_ref::<WorldEvent>() {
+        (
+            EventDomain::Fact,
+            Some(e.event_type().to_string()),
+            Some(Event::World(e.clone()).to_payload()),
+        )
+    } else if let Some(e) = event.downcast_ref::<SystemEvent>() {
+        (
+            EventDomain::Fact,
+            Some(e.event_type().to_string()),
+            Some(Event::System(e.clone()).to_payload()),
+        )
+    } else if let Some(e) = event.downcast_ref::<TelemetryEvent>() {
+        (
+            EventDomain::Fact,
+            Some(e.event_type().to_string()),
+            Some(Event::Telemetry(e.clone()).to_payload()),
+        )
+    } else if let Some(e) = event.downcast_ref::<DiscoveryEvent>() {
+        if e.is_projectable() {
+            (EventDomain::Discovery, Some(e.event_type_str()), Some(e.to_persist_payload()))
+        } else {
+            (EventDomain::Discovery, None, None)
+        }
+    } else if let Some(e) = event.downcast_ref::<PipelineEvent>() {
+        if e.is_projectable() {
+            (EventDomain::Pipeline, Some(e.event_type_str()), Some(e.to_persist_payload()))
+        } else {
+            (EventDomain::Pipeline, None, None)
+        }
+    } else if event.downcast_ref::<ScrapeEvent>().is_some() {
+        (EventDomain::Scrape, None, None)
+    } else if event.downcast_ref::<SignalEvent>().is_some() {
+        (EventDomain::Signal, None, None)
+    } else if event.downcast_ref::<LifecycleEvent>().is_some() {
+        (EventDomain::Lifecycle, None, None)
+    } else if event.downcast_ref::<EnrichmentEvent>().is_some() {
+        (EventDomain::Enrichment, None, None)
+    } else if event.downcast_ref::<ExpansionEvent>().is_some() {
+        (EventDomain::Expansion, None, None)
+    } else if event.downcast_ref::<SynthesisEvent>().is_some() {
+        (EventDomain::Synthesis, None, None)
+    } else {
+        // Genuinely unknown event type — log at debug, not warn.
+        // If this fires frequently, a new event type needs adding above.
+        tracing::debug!("neo4j_projection: unrecognized event type (not in any known domain)");
+        (EventDomain::Fact, None, None)
+    }
 }
 
 /// Priority-2 handler: maintain the `scout_runs` lookup table.

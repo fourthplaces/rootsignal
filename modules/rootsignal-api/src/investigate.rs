@@ -126,7 +126,7 @@ fn truncate_payload(json: &str) -> String {
     }
 }
 
-fn build_event_context(
+pub(crate) fn build_event_context(
     event: &scout_run::EventRowFull,
     tree: &[scout_run::EventRowFull],
 ) -> String {
@@ -495,7 +495,7 @@ Be conversational and direct. Mention seq numbers when they help trace specifics
 If you spot something that looks like a bug, say so and offer to file a GitHub issue. Only call `create_github_issue` after the user explicitly confirms.
 "#;
 
-fn build_run_context(
+pub(crate) fn build_run_context(
     run: &scout_run::ScoutRunRow,
     variant_counts: &[(& str, i64)],
     sample_events: &[(& str, Vec<scout_run::EventRow>)],
@@ -594,7 +594,7 @@ fn build_run_context(
 }
 
 /// Variants we count for the event breakdown table.
-const BREAKDOWN_VARIANTS: &[&str] = &[
+pub(crate) const BREAKDOWN_VARIANTS: &[&str] = &[
     "content_fetched",
     "content_unchanged",
     "content_fetch_failed",
@@ -613,7 +613,7 @@ const BREAKDOWN_VARIANTS: &[&str] = &[
 ];
 
 /// Variants we sample (with small limits) to give the agent concrete data.
-const SAMPLE_VARIANTS: &[(&str, &str, i64)] = &[
+pub(crate) const SAMPLE_VARIANTS: &[(&str, &str, i64)] = &[
     ("Failures", "handler_failed", 10),
     ("Fetch Failures", "content_fetch_failed", 10),
     ("Rejections", "observation_rejected", 15),

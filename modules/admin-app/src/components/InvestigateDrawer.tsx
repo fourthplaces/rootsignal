@@ -136,13 +136,23 @@ Format:
 ### Impact
 [What downstream effects did this cause? Were signals misclassified, duplicated, dropped, corrupted? What is the blast radius?]
 
-### Investigation Queries
-GraphQL endpoint: \`${API_BASE}/graphql\` (POST, Content-Type: application/json)
+### Debug Context
+API base: \`${API_BASE}\`
 
-[Generate 2-5 GraphQL queries that let a developer inspect the data relevant to this issue. Use the exact seq numbers, signal IDs, node IDs, and run IDs from the investigation. Each query should:
-- Have a short comment explaining what it reveals
-- Include full field selections so the query is copy-pasteable as-is
-- Use the admin query names: adminCausalTree, adminEvents, adminScoutRunEvents, adminNodeEvents, signal, adminScoutRuns, supervisorFindings, adminRegionSources, etc.]`;
+[Generate 2-4 curl commands that let a developer fetch live debug data for this issue. Use the exact seq numbers, signal IDs, node IDs, and run IDs from the investigation. Each command should have a short comment explaining what it reveals. Examples:]
+
+\`\`\`bash
+# Causal tree and payload for the root event
+curl -s --cookie "auth=\$AUTH" "${API_BASE}/api/debug-context?seq=<SEQ>"
+
+# Signal data + events that touched it + findings
+curl -s --cookie "auth=\$AUTH" "${API_BASE}/api/debug-context?node_id=<UUID>"
+
+# Full run overview with stats and sample events
+curl -s --cookie "auth=\$AUTH" "${API_BASE}/api/debug-context?run_id=<RUN_ID>"
+\`\`\`
+
+[Replace the placeholder values above with the actual IDs from the investigation. Only include commands relevant to this specific issue.]`;
 
 async function streamInvestigation(
   body: Record<string, unknown>,

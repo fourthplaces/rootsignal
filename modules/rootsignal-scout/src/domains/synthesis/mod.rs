@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::events::SystemEvent;
-use rootsignal_graph::GraphReader;
+
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -63,7 +63,7 @@ pub mod handlers {
         let deps = ctx.deps();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        let graph_client = match deps.graph_client.as_ref() {
+        let graph = match deps.graph.as_ref() {
             Some(g) => g,
             None => {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
@@ -75,7 +75,7 @@ pub mod handlers {
         };
 
         info!("Building similarity edges...");
-        match rootsignal_graph::similarity::compute_edges(graph_client).await {
+        match rootsignal_graph::similarity::compute_edges(graph.client()).await {
             Ok(edges) => {
                 info!(edges = edges.len(), "Similarity edges computed");
                 let mut out = Events::new();
@@ -110,9 +110,9 @@ pub mod handlers {
         let deps = ctx.deps();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        let (region, graph_client, budget, archive) = match (
+        let (region, graph, budget, archive) = match (
             deps.run_scope.region(),
-            deps.graph_client.as_ref(),
+            deps.graph.as_ref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
@@ -126,7 +126,7 @@ pub mod handlers {
             }
         };
 
-        let graph = GraphReader::new(graph_client.clone());
+
 
         let mut out = Events::new();
         if !budget.has_budget(
@@ -177,7 +177,7 @@ pub mod handlers {
 
         let ai = deps.ai.as_ref().expect("ai required for synthesis");
         let tl = activities::concern_linker::ConcernLinker::new(
-            &graph,
+            graph,
             archive,
             &*deps.embedder,
             ai.as_ref(),
@@ -263,9 +263,9 @@ pub mod handlers {
         let deps = ctx.deps();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        let (region, graph_client, budget, archive) = match (
+        let (region, graph, budget, archive) = match (
             deps.run_scope.region(),
-            deps.graph_client.as_ref(),
+            deps.graph.as_ref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
@@ -279,7 +279,7 @@ pub mod handlers {
             }
         };
 
-        let graph = GraphReader::new(graph_client.clone());
+
 
         let mut out = Events::new();
         if !budget.has_budget(
@@ -325,7 +325,7 @@ pub mod handlers {
 
         let ai = deps.ai.as_ref().expect("ai required for synthesis");
         let rf = activities::response_finder::ResponseFinder::new(
-            &graph,
+            graph,
             archive,
             &*deps.embedder,
             ai.as_ref(),
@@ -394,9 +394,9 @@ pub mod handlers {
         let deps = ctx.deps();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        let (region, graph_client, budget, archive) = match (
+        let (region, graph, budget, archive) = match (
             deps.run_scope.region(),
-            deps.graph_client.as_ref(),
+            deps.graph.as_ref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
@@ -410,7 +410,7 @@ pub mod handlers {
             }
         };
 
-        let graph = GraphReader::new(graph_client.clone());
+
 
         let mut out = Events::new();
         if !budget.has_budget(
@@ -456,7 +456,7 @@ pub mod handlers {
 
         let ai = deps.ai.as_ref().expect("ai required for synthesis");
         let gf_deps = activities::gathering_finder::GatheringFinderDeps::new(
-            &graph,
+            graph,
             archive,
             &*deps.embedder,
             ai.as_ref(),
@@ -497,9 +497,9 @@ pub mod handlers {
         let deps = ctx.deps();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        let (region, graph_client, budget, archive) = match (
+        let (region, graph, budget, archive) = match (
             deps.run_scope.region(),
-            deps.graph_client.as_ref(),
+            deps.graph.as_ref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
@@ -513,7 +513,7 @@ pub mod handlers {
             }
         };
 
-        let graph = GraphReader::new(graph_client.clone());
+
 
         let mut out = Events::new();
         if !budget.has_budget(
@@ -561,7 +561,7 @@ pub mod handlers {
 
         let ai = deps.ai.as_ref().expect("ai required for synthesis");
         let investigator = activities::investigator::Investigator::new(
-            &graph,
+            graph,
             archive,
             ai.as_ref(),
             region,
@@ -598,9 +598,9 @@ pub mod handlers {
         let deps = ctx.deps();
         let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
 
-        let (region, graph_client, budget) = match (
+        let (region, graph, budget) = match (
             deps.run_scope.region(),
-            deps.graph_client.as_ref(),
+            deps.graph.as_ref(),
             deps.budget.as_ref(),
         ) {
             (Some(r), Some(g), Some(b)) => (r, g, b),
@@ -613,7 +613,7 @@ pub mod handlers {
             }
         };
 
-        let graph = GraphReader::new(graph_client.clone());
+
 
         let mut out = Events::new();
         if !budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
@@ -661,7 +661,7 @@ pub mod handlers {
             .iter()
             .map(|(concern_id, embedding)| {
                 activities::response_mapper::map_single_tension(
-                    &graph,
+                    graph,
                     ai.as_ref(),
                     *concern_id,
                     embedding,
@@ -745,22 +745,21 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
+        let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                ctx.logger.debug("Skipped severity inference: missing region or graph_client");
+                ctx.logger.debug("Skipped severity inference: missing region or graph");
                 return Ok(events![PipelineEvent::HandlerSkipped {
                     handler_id: "synthesis:severity_inference".into(),
-                    reason: "missing region or graph_client".into(),
+                    reason: "missing region or graph".into(),
                 }]);
             }
         };
 
-        let graph = GraphReader::new(graph_client.clone());
         let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
         match rootsignal_graph::severity_inference::compute_severity_inference(
-            &graph, min_lat, max_lat, min_lng, max_lng,
+            graph, min_lat, max_lat, min_lng, max_lng,
         )
         .await
         {

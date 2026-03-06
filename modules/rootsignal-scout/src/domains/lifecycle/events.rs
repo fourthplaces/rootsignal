@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::aggregate::ScheduledData;
+use crate::core::aggregate::SourcePlan;
 use crate::core::events::PipelinePhase;
 use crate::core::stats::ScoutStats;
 use rootsignal_common::types::ActorContext;
@@ -21,10 +21,10 @@ pub enum LifecycleEvent {
     PhaseCompleted {
         phase: PipelinePhase,
     },
-    SourcesScheduled {
+    SourcesPrepared {
         tension_count: u32,
         response_count: u32,
-        scheduled_data: ScheduledData,
+        source_plan: SourcePlan,
         actor_contexts: HashMap<String, ActorContext>,
         url_mappings: HashMap<String, String>,
     },
@@ -41,7 +41,7 @@ impl LifecycleEvent {
             Self::ScoutRunRequested { .. } => "scout_run_requested",
             Self::PhaseStarted { .. } => "phase_started",
             Self::PhaseCompleted { .. } => "phase_completed",
-            Self::SourcesScheduled { .. } => "sources_scheduled",
+            Self::SourcesPrepared { .. } => "sources_prepared",
             Self::RunCompleted { .. } => "run_completed",
             Self::MetricsCompleted => "metrics_completed",
             Self::NewsScanRequested => "news_scan_requested",

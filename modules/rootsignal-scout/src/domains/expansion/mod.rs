@@ -6,7 +6,7 @@ pub mod events;
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 
-use rootsignal_graph::GraphReader;
+
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -32,23 +32,22 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        // Requires region + graph_client + budget — skip in tests
-        let (region, graph_client, budget) = match (
+        // Requires region + graph + budget — skip in tests
+        let (region, graph, budget) = match (
             deps.run_scope.region(),
-            deps.graph_client.as_ref(),
+            deps.graph.as_ref(),
             deps.budget.as_ref(),
         ) {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
-                ctx.logger.debug("Skipped signal expansion: missing region, graph_client, or budget");
+                ctx.logger.debug("Skipped signal expansion: missing region, graph, or budget");
                 return Ok(events![LifecycleEvent::PhaseCompleted {
                     phase: PipelinePhase::SignalExpansion,
                 }]);
             }
         };
-        let graph = GraphReader::new(graph_client.clone());
 
-        let expansion = Expansion::new(&graph, &*deps.embedder, &region.name);
+        let expansion = Expansion::new(graph, &*deps.embedder, &region.name);
 
         let (_, state) = ctx.singleton::<PipelineState>();
         let output = activities::expand_and_discover(

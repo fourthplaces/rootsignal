@@ -2,7 +2,7 @@ pub mod event_sourced;
 
 use std::sync::Arc;
 
-use rootsignal_graph::{GraphClient, GraphStore};
+use rootsignal_graph::{GraphClient, GraphReader, GraphStore};
 use sqlx::PgPool;
 
 use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
@@ -66,7 +66,7 @@ impl EngineFactory {
                     Arc::new(build_signal_reader(graph_client.clone())) as Arc<dyn SignalReader>;
                 let embedder = Arc::new(NoOpEmbedder) as Arc<dyn TextEmbedder>;
                 let mut deps = ScoutEngineDeps::new(signal_reader, embedder, run_id);
-                deps.graph_client = Some(graph_client.clone());
+                deps.graph = Some(GraphReader::new(graph_client.clone()));
                 deps.pg_pool = Some(pg_pool.clone());
                 let store = Arc::new(crate::core::postgres_store::PostgresStore::new(pg_pool.clone(), run_uuid))
                     as Arc<dyn seesaw_core::Store>;

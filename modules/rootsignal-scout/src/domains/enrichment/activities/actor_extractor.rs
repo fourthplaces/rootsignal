@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ActorType;
-use rootsignal_graph::{query, GraphClient};
+use rootsignal_graph::{query, GraphReader};
 
 use crate::traits::SignalReader;
 
@@ -69,7 +69,7 @@ If a signal mentions no extractable actors, simply omit it. Return an empty acto
 /// Find signals with no ACTED_IN edges and extract actors from their text via LLM.
 pub async fn run_actor_extraction(
     store: &dyn SignalReader,
-    client: &GraphClient,
+    graph: &GraphReader,
     ai: &dyn Agent,
     min_lat: f64,
     max_lat: f64,
@@ -78,7 +78,7 @@ pub async fn run_actor_extraction(
 ) -> (ActorExtractorStats, seesaw_core::Events) {
     match try_extract_actors(
         store,
-        client,
+        graph,
         ai,
         min_lat,
         max_lat,
@@ -97,7 +97,7 @@ pub async fn run_actor_extraction(
 
 async fn try_extract_actors(
     store: &dyn SignalReader,
-    client: &GraphClient,
+    graph: &GraphReader,
     ai: &dyn Agent,
     min_lat: f64,
     max_lat: f64,
@@ -123,7 +123,7 @@ async fn try_extract_actors(
     .param("min_lng", min_lng)
     .param("max_lng", max_lng);
 
-    let mut stream = client.execute(q).await?;
+    let mut stream = graph.client().execute(q).await?;
     let mut signals: Vec<SignalInfo> = Vec::new();
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();

@@ -84,21 +84,52 @@ impl GraphProjector {
     }
 
     /// Project a single fact to the graph. Idempotent.
+    ///
+    /// Routes by `EventDomain` — Rust forces exhaustive match arms, so adding
+    /// a new domain variant produces a compile error here until handled.
     pub async fn project(&self, event: &StoredEvent) -> Result<ApplyResult> {
-        // Pipeline/discovery events: only source_discovered needs projection.
-        if event.event_type.starts_with("pipeline:")
-            || event.event_type.starts_with("discovery:")
-        {
-            return self.project_pipeline(event).await;
-        }
+        use rootsignal_common::events::EventDomain;
 
+        let domain = match EventDomain::from_event_type(&event.event_type) {
+            Some(d) => d,
+            None => {
+                warn!(
+                    seq = event.seq,
+                    event_type = event.event_type,
+                    "Unknown event domain — update EventDomain enum"
+                );
+                return Ok(ApplyResult::DeserializeError(format!(
+                    "unknown event domain: {}",
+                    event.event_type
+                )));
+            }
+        };
+
+        // Exhaustive match — no wildcard. Adding a new EventDomain variant
+        // will fail to compile here until the projector handles it.
+        match domain {
+            EventDomain::Fact => self.project_fact(event).await,
+            EventDomain::Discovery | EventDomain::Pipeline => {
+                self.project_pipeline(event).await
+            }
+            EventDomain::Scrape => Ok(ApplyResult::NoOp),
+            EventDomain::Signal => Ok(ApplyResult::NoOp),
+            EventDomain::Lifecycle => Ok(ApplyResult::NoOp),
+            EventDomain::Enrichment => Ok(ApplyResult::NoOp),
+            EventDomain::Expansion => Ok(ApplyResult::NoOp),
+            EventDomain::Synthesis => Ok(ApplyResult::NoOp),
+        }
+    }
+
+    /// Project a World/System/Telemetry fact event to the graph.
+    async fn project_fact(&self, event: &StoredEvent) -> Result<ApplyResult> {
         let mut payload = event.payload.clone();
         rootsignal_events::upcast(&event.event_type, event.schema_v, &mut payload);
 
         let parsed = match Event::from_payload(&payload) {
             Ok(e) => e,
             Err(e) => {
-                warn!(seq = event.seq, error = %e, "Failed to deserialize event payload");
+                warn!(seq = event.seq, error = %e, "Failed to deserialize fact event payload");
                 return Ok(ApplyResult::DeserializeError(e.to_string()));
             }
         };

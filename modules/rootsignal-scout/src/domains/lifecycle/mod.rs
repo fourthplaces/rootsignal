@@ -7,7 +7,7 @@ use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 
-use rootsignal_graph::GraphReader;
+
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -19,8 +19,8 @@ fn is_scout_run_requested(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
-fn is_reap_completed(e: &LifecycleEvent) -> bool {
-    matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::ReapExpired))
+fn is_find_stale_completed(e: &LifecycleEvent) -> bool {
+    matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::FindStale))
 }
 
 fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
@@ -35,23 +35,23 @@ fn is_supervisor_completed(e: &LifecycleEvent) -> bool {
 pub mod handlers {
     use super::*;
 
-    /// ScoutRunRequested → reap expired signals, emit PhaseCompleted(ReapExpired).
-    #[handle(on = LifecycleEvent, id = "lifecycle:reap", filter = is_scout_run_requested)]
-    async fn reap(
+    /// ScoutRunRequested → find stale signals, emit PhaseCompleted(FindStale).
+    #[handle(on = LifecycleEvent, id = "lifecycle:find_stale", filter = is_scout_run_requested)]
+    async fn find_stale(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let mut events = activities::reap_expired(&*deps.store).await;
+        let mut events = activities::find_stale_signals(&*deps.store).await;
         events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::ReapExpired,
+            phase: PipelinePhase::FindStale,
         });
         Ok(events)
     }
 
-    /// PhaseCompleted(ReapExpired) → load + schedule sources, stash in state, emit SourcesScheduled.
-    #[handle(on = LifecycleEvent, id = "lifecycle:schedule", filter = is_reap_completed)]
-    async fn schedule(
+    /// PhaseCompleted(FindStale) → load + select sources, stash plan in state, emit SourcesPrepared.
+    #[handle(on = LifecycleEvent, id = "lifecycle:prepare_sources", filter = is_find_stale_completed)]
+    async fn prepare_sources(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -59,25 +59,24 @@ pub mod handlers {
 
         // Branch on run modality
         let output = match deps.run_scope.input_sources() {
-            Some(sources) => activities::schedule_input_sources(sources),
+            Some(sources) => activities::prepare_input_sources(sources),
             None => {
-                let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
+                let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
                     (Some(r), Some(g)) => (r, g),
                     _ => return Ok(events![PipelineEvent::HandlerSkipped {
-                        handler_id: "lifecycle:schedule".into(),
-                        reason: "missing region or graph_client (test environment)".into(),
+                        handler_id: "lifecycle:prepare_sources".into(),
+                        reason: "missing region or graph (test environment)".into(),
                     }]),
                 };
-                let graph = GraphReader::new(graph_client.clone());
-                activities::schedule_sources(&graph, region).await
+                activities::prepare_sources(graph, region).await
             }
         };
 
         Ok(events![
-            LifecycleEvent::SourcesScheduled {
+            LifecycleEvent::SourcesPrepared {
                 tension_count: output.tension_count,
                 response_count: output.response_count,
-                scheduled_data: output.scheduled_data,
+                source_plan: output.source_plan,
                 actor_contexts: output.actor_contexts,
                 url_mappings: output.url_mappings,
             },

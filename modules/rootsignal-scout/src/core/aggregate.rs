@@ -29,20 +29,20 @@ use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
 use crate::core::extractor::ResourceTag;
 
-/// Scheduling data passed between schedule_handler and scrape handlers.
+/// Source plan for this run: which sources to process and how they're partitioned.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScheduledData {
+pub struct SourcePlan {
     pub all_sources: Vec<SourceNode>,
-    pub scheduled_sources: Vec<SourceNode>,
+    pub selected_sources: Vec<SourceNode>,
     pub tension_phase_keys: HashSet<String>,
     pub response_phase_keys: HashSet<String>,
-    pub scheduled_keys: HashSet<String>,
+    pub selected_keys: HashSet<String>,
     pub consumed_pin_ids: Vec<Uuid>,
 }
 
-/// Accumulated output from the schedule phase.
-pub struct ScheduleOutput {
-    pub scheduled_data: ScheduledData,
+/// Output from source preparation: the plan plus context maps.
+pub struct SourcePlanOutput {
+    pub source_plan: SourcePlan,
     pub actor_contexts: HashMap<String, ActorContext>,
     pub url_mappings: HashMap<String, String>,
     pub tension_count: u32,
@@ -94,8 +94,8 @@ pub struct PipelineState {
     #[serde(default)]
     pub synthesis_discovered_sources: Vec<rootsignal_common::SourceNode>,
 
-    /// Scheduling data stashed by schedule_handler, consumed by scrape handlers.
-    pub scheduled: Option<ScheduledData>,
+    /// Source plan stashed by prepare_sources, consumed by scrape handlers.
+    pub source_plan: Option<SourcePlan>,
 
     /// Social topics collected during mid-run discovery, consumed by response scrape.
     pub social_topics: Vec<String>,
@@ -166,7 +166,7 @@ impl PipelineState {
             wiring_contexts: HashMap::new(),
             scrape_discovered_sources: Vec::new(),
             synthesis_discovered_sources: Vec::new(),
-            scheduled: None,
+            source_plan: None,
             social_topics: Vec::new(),
             completed_scrape_roles: HashSet::new(),
             completed_synthesis_roles: HashSet::new(),
@@ -343,15 +343,15 @@ impl PipelineState {
             LifecycleEvent::PhaseCompleted { phase } => {
                 self.completed_phases.insert(phase.clone());
             }
-            LifecycleEvent::SourcesScheduled {
-                scheduled_data,
+            LifecycleEvent::SourcesPrepared {
+                source_plan,
                 actor_contexts,
                 url_mappings,
                 ..
             } => {
                 self.actor_contexts.extend(actor_contexts.clone());
                 self.url_to_canonical_key.extend(url_mappings.clone());
-                self.scheduled = Some(scheduled_data.clone());
+                self.source_plan = Some(source_plan.clone());
             }
             _ => {}
         }

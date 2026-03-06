@@ -10,54 +10,54 @@ use rootsignal_common::types::NodeType;
 use rootsignal_common::{is_web_query, DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphReader;
 
-use crate::core::aggregate::{ScheduleOutput, ScheduledData};
+use crate::core::aggregate::{SourcePlan, SourcePlanOutput};
 use crate::domains::scheduling::activities::scheduler::{self as scheduler, schedule_web_queries};
 use crate::infra::util::sanitize_url;
 use crate::traits::SignalReader;
 
-/// Reap expired signals, return EntityExpired events.
-pub async fn reap_expired(store: &dyn SignalReader) -> seesaw_core::Events {
-    let expired = match store.find_expired_signals().await {
-        Ok(e) => e,
+/// Find signals that have gone stale and emit SignalsExpired events (batched by type).
+pub async fn find_stale_signals(store: &dyn SignalReader) -> seesaw_core::Events {
+    let stale = match store.find_expired_signals().await {
+        Ok(s) => s,
         Err(e) => {
-            warn!(error = %e, "Failed to find expired signals, continuing");
+            warn!(error = %e, "Failed to find stale signals, continuing");
             return seesaw_core::Events::new();
         }
     };
 
+    if stale.is_empty() {
+        return seesaw_core::Events::new();
+    }
+
+    // Group by (node_type, reason) → one event per group
+    let mut groups: HashMap<(NodeType, String), Vec<Uuid>> = HashMap::new();
+    for (signal_id, node_type, reason) in &stale {
+        groups
+            .entry((*node_type, reason.clone()))
+            .or_default()
+            .push(*signal_id);
+    }
+
     let mut events = seesaw_core::Events::new();
-    let mut gatherings = 0u64;
-    let mut needs = 0u64;
-    let mut stale = 0u64;
-
-    for (signal_id, node_type, reason) in &expired {
-        events.push(SystemEvent::EntityExpired {
-            signal_id: *signal_id,
-            node_type: *node_type,
-            reason: reason.clone(),
+    for ((node_type, reason), signal_ids) in groups {
+        info!(node_type = ?node_type, reason, count = signal_ids.len(), "Stale signals found");
+        events.push(SystemEvent::SignalsExpired {
+            signal_ids,
+            node_type,
+            reason,
         });
-        match node_type {
-            NodeType::Gathering => gatherings += 1,
-            NodeType::HelpRequest => needs += 1,
-            _ => stale += 1,
-        }
     }
-
-    if gatherings + needs + stale > 0 {
-        info!(gatherings, needs, stale, "Expired signals removed");
-    }
-
     events
 }
 
-/// Schedule input sources directly (no graph, no cadence, no exploration).
+/// Prepare input sources directly (no graph, no cadence, no exploration).
 ///
-/// All sources are scheduled unconditionally. Partitions by SourceRole into
+/// All sources are selected unconditionally. Partitions by SourceRole into
 /// tension/response phase keys.
-pub fn schedule_input_sources(sources: &[SourceNode]) -> ScheduleOutput {
+pub fn prepare_input_sources(sources: &[SourceNode]) -> SourcePlanOutput {
     use rootsignal_common::SourceRole;
 
-    let scheduled_keys: HashSet<String> = sources
+    let selected_keys: HashSet<String> = sources
         .iter()
         .map(|s| s.canonical_key.clone())
         .collect();
@@ -101,16 +101,16 @@ pub fn schedule_input_sources(sources: &[SourceNode]) -> ScheduleOutput {
         sources = sources.len(),
         tension = tension_count,
         response = response_count,
-        "Scheduled input sources (direct)"
+        "Prepared input sources (direct)"
     );
 
-    ScheduleOutput {
-        scheduled_data: ScheduledData {
+    SourcePlanOutput {
+        source_plan: SourcePlan {
             all_sources: sources.to_vec(),
-            scheduled_sources: sources.to_vec(),
+            selected_sources: sources.to_vec(),
             tension_phase_keys,
             response_phase_keys,
-            scheduled_keys,
+            selected_keys,
             consumed_pin_ids: Vec::new(),
         },
         actor_contexts: HashMap::new(),
@@ -120,11 +120,11 @@ pub fn schedule_input_sources(sources: &[SourceNode]) -> ScheduleOutput {
     }
 }
 
-/// Load, boost, and schedule sources. Returns ScheduleOutput for state application.
-pub async fn schedule_sources(
+/// Load, select, and prepare sources for this run. Returns the source plan.
+pub async fn prepare_sources(
     graph: &GraphReader,
     region: &rootsignal_common::ScoutScope,
-) -> ScheduleOutput {
+) -> SourcePlanOutput {
     // Load sources
     let mut all_sources = match graph
         .get_sources_for_region(region.center_lat, region.center_lng, region.radius_km)
@@ -216,63 +216,63 @@ pub async fn schedule_sources(
         }
     };
 
-    // Schedule sources
-    let now_schedule = Utc::now();
-    let schedule = scheduler::schedule(&all_sources, now_schedule);
-    let scheduled_keys: HashSet<String> = schedule
+    // Select sources by cadence + exploration rules
+    let now_ts = Utc::now();
+    let selection = scheduler::schedule(&all_sources, now_ts);
+    let selected_keys: HashSet<String> = selection
         .scheduled
         .iter()
-        .chain(schedule.exploration.iter())
+        .chain(selection.exploration.iter())
         .map(|s| s.canonical_key.clone())
         .collect();
 
     let tension_phase_keys: HashSet<String> =
-        schedule.tension_phase.iter().cloned().collect();
+        selection.tension_phase.iter().cloned().collect();
     let response_phase_keys: HashSet<String> =
-        schedule.response_phase.iter().cloned().collect();
+        selection.response_phase.iter().cloned().collect();
 
     info!(
-        scheduled = schedule.scheduled.len(),
-        exploration = schedule.exploration.len(),
-        skipped = schedule.skipped,
+        selected = selection.scheduled.len(),
+        exploration = selection.exploration.len(),
+        skipped = selection.skipped,
         tension_phase = tension_phase_keys.len(),
         response_phase = response_phase_keys.len(),
-        "Source scheduling complete"
+        "Source selection complete"
     );
 
-    // Web query tiered scheduling
-    let wq_schedule = schedule_web_queries(
+    // Web query tiered selection
+    let wq_selection = schedule_web_queries(
         &all_sources,
         0,
-        now_schedule,
+        now_ts,
     );
-    let wq_scheduled_keys: HashSet<String> =
-        wq_schedule.scheduled.into_iter().collect();
+    let wq_selected_keys: HashSet<String> =
+        wq_selection.scheduled.into_iter().collect();
 
-    let scheduled_sources: Vec<SourceNode> = all_sources
+    let selected_sources: Vec<SourceNode> = all_sources
         .iter()
         .filter(|s| {
-            if !scheduled_keys.contains(&s.canonical_key) {
+            if !selected_keys.contains(&s.canonical_key) {
                 return false;
             }
             if !is_web_query(&s.canonical_value) {
                 return true;
             }
-            wq_scheduled_keys.contains(&s.canonical_key)
+            wq_selected_keys.contains(&s.canonical_key)
         })
         .cloned()
         .collect();
 
-    let tension_count = scheduled_sources
+    let tension_count = selected_sources
         .iter()
         .filter(|s| tension_phase_keys.contains(&s.canonical_key))
         .count() as u32;
-    let response_count = scheduled_sources
+    let response_count = selected_sources
         .iter()
         .filter(|s| response_phase_keys.contains(&s.canonical_key))
         .count() as u32;
 
-    // Populate actor contexts for location fallback
+    // Build actor contexts for location fallback
     let mut actor_contexts = HashMap::new();
     for (actor, sources) in &actor_pairs {
         let actor_ctx = rootsignal_common::ActorContext {
@@ -298,13 +298,13 @@ pub async fn schedule_sources(
         }
     }
 
-    ScheduleOutput {
-        scheduled_data: ScheduledData {
+    SourcePlanOutput {
+        source_plan: SourcePlan {
             all_sources,
-            scheduled_sources,
+            selected_sources,
             tension_phase_keys,
             response_phase_keys,
-            scheduled_keys,
+            selected_keys,
             consumed_pin_ids,
         },
         actor_contexts,

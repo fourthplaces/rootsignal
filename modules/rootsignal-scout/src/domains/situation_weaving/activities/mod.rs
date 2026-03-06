@@ -8,8 +8,6 @@ pub mod weave;
 use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
-use rootsignal_graph::GraphReader;
-
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::scheduling::activities::budget::OperationCost;
 
@@ -17,8 +15,8 @@ use crate::domains::scheduling::activities::budget::OperationCost;
 pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
     let mut events = seesaw_core::Events::new();
 
-    let (graph_client, ai, region, budget) = match (
-        deps.graph_client.as_ref(),
+    let (graph, ai, region, budget) = match (
+        deps.graph.as_ref(),
         deps.ai.as_deref(),
         deps.run_scope.region(),
         deps.budget.as_ref(),
@@ -26,13 +24,11 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
         (Some(g), Some(k), Some(r), Some(b)) => (g, k, r, b),
         _ => return events,
     };
-
-    let graph = GraphReader::new(graph_client.clone());
     let run_id = deps.run_id.clone();
 
     // Phase 1: Discover unassigned signals
     info!("Starting situation weaving...");
-    let signals = match discover::discover_signals(&graph, &run_id).await {
+    let signals = match discover::discover_signals(graph, &run_id).await {
         Ok(s) => s,
         Err(e) => {
             warn!(error = %e, "Signal discovery failed");
@@ -60,7 +56,7 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
     }
 
     // Phase 2: Load candidates
-    let candidates = match discover::load_candidates(&graph).await {
+    let candidates = match discover::load_candidates(graph).await {
         Ok(c) => c,
         Err(e) => {
             warn!(error = %e, "Candidate loading failed");
@@ -105,11 +101,11 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
     }
 
     // Phase 5: Recompute temperature for affected situations
-    match discover::find_affected_situations(&graph, &run_id).await {
+    match discover::find_affected_situations(graph, &run_id).await {
         Ok(affected) => {
             for sit_id in &affected {
                 match rootsignal_graph::situation_temperature::compute_temperature_events(
-                    graph_client,
+                    graph.client(),
                     sit_id,
                 )
                 .await
@@ -135,7 +131,7 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
     }
 
     // Phase 6: Post-hoc dispatch verification
-    match weave::verify_dispatches(&graph).await {
+    match weave::verify_dispatches(graph).await {
         Ok(verification_events) => {
             total_stats.dispatches_flagged = verification_events.len() as u32;
             for e in verification_events {

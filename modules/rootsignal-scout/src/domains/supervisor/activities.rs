@@ -3,27 +3,24 @@
 use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
-use rootsignal_graph::GraphReader;
-
 use crate::core::engine::ScoutEngineDeps;
 
 /// Run supervisor: issue detection, merge duplicates, cause heat.
 /// Returns events (e.g. DuplicateTensionMerged) for the caller to dispatch.
 pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events) {
-    let (graph_client, region, pg_pool, api_key) = match (
-        deps.graph_client.as_ref(),
+    let (gr, region, pg_pool, api_key) = match (
+        deps.graph.as_ref(),
         deps.run_scope.region(),
         deps.pg_pool.as_ref(),
         deps.anthropic_api_key.as_deref(),
     ) {
         (Some(g), Some(r), Some(p), Some(k)) => (g, r, p, k),
         _ => {
-            tracing::debug!("Skipped supervisor: missing graph_client, region, pg_pool, or api_key");
+            tracing::debug!("Skipped supervisor: missing graph, region, pg_pool, or api_key");
             return;
         }
     };
 
-    let graph = GraphReader::new(graph_client.clone());
     let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
     // 1. Run supervisor checks — collects events from auto_fix, echo, source_penalty
@@ -31,7 +28,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
         Box::new(rootsignal_scout_supervisor::notify::noop::NoopBackend);
 
     let supervisor = rootsignal_scout_supervisor::supervisor::Supervisor::new(
-        graph_client.clone(),
+        gr.client().clone(),
         pg_pool.clone(),
         region.clone(),
         api_key.to_string(),
@@ -49,7 +46,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
     }
 
     // 2. Merge duplicate tensions (before heat computation)
-    match graph
+    match gr
         .find_duplicate_tension_pairs(0.85, min_lat, max_lat, min_lng, max_lng)
         .await
     {
@@ -70,7 +67,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
 
     // 3. Compute cause heat — push CauseHeatComputed for non-empty scores
     match rootsignal_graph::cause_heat::compute_cause_heat(
-        graph_client,
+        gr.client(),
         0.7,
         min_lat,
         max_lat,

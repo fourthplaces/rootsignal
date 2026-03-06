@@ -369,6 +369,64 @@ impl Event {
 }
 
 // ---------------------------------------------------------------------------
+// EventDomain — compile-time exhaustive routing for projectors/handlers
+// ---------------------------------------------------------------------------
+
+/// Domain classification for event routing.
+///
+/// Every event belongs to exactly one domain. Projectors and handlers match on
+/// this enum — Rust forces exhaustive arms, so adding a new domain variant
+/// produces compile errors wherever routing decisions are made.
+///
+/// Unprefixed events (World, System, Telemetry) are classified as `Fact`.
+/// Domain-coordination events use a `"domain:variant"` string prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EventDomain {
+    /// World, System, or Telemetry fact — projectable to the graph.
+    Fact,
+    /// `discovery:*` — source proposals, link promotion, topic collection.
+    Discovery,
+    /// `scrape:*` — URL resolution, fetch/extract coordination.
+    Scrape,
+    /// `signal:*` — dedup verdicts, signal creation, edge wiring.
+    Signal,
+    /// `lifecycle:*` — run start/end, phase transitions, scheduling.
+    Lifecycle,
+    /// `enrichment:*` — actor extraction, diversity, post-scrape enrichment.
+    Enrichment,
+    /// `expansion:*` — mid-run source expansion.
+    Expansion,
+    /// `pipeline:*` — handler-skip/fail bookkeeping.
+    Pipeline,
+    /// `synthesis:*` — cross-signal analysis, response mapping.
+    Synthesis,
+}
+
+impl EventDomain {
+    /// Parse the domain from an `event_type` string (as stored in the event store).
+    ///
+    /// Returns `None` for genuinely unknown prefixes — callers should warn on
+    /// `None` since it indicates a new domain was added without updating this enum.
+    pub fn from_event_type(event_type: &str) -> Option<Self> {
+        match event_type.split_once(':') {
+            Some((prefix, _)) => match prefix {
+                "discovery" => Some(Self::Discovery),
+                "scrape" => Some(Self::Scrape),
+                "signal" => Some(Self::Signal),
+                "lifecycle" => Some(Self::Lifecycle),
+                "enrichment" => Some(Self::Enrichment),
+                "expansion" => Some(Self::Expansion),
+                "pipeline" => Some(Self::Pipeline),
+                "synthesis" => Some(Self::Synthesis),
+                _ => None,
+            },
+            // No colon → unprefixed fact event (World/System/Telemetry)
+            None => Some(Self::Fact),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Convenience constructors for ergonomic wrapping
 // ---------------------------------------------------------------------------
 

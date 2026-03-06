@@ -10,7 +10,7 @@ use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 
-use rootsignal_graph::GraphReader;
+
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -57,10 +57,10 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
+        let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                ctx.logger.debug("Skipped actor extraction: missing region or graph_client");
+                ctx.logger.debug("Skipped actor extraction: missing region or graph");
                 return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
                     role: EnrichmentRole::ActorExtraction,
                 }]);
@@ -70,7 +70,7 @@ pub mod handlers {
         let consumed_pin_ids = {
             let (_, state) = ctx.singleton::<PipelineState>();
             state
-                .scheduled
+                .source_plan
                 .as_ref()
                 .map(|s| s.consumed_pin_ids.clone())
                 .unwrap_or_default()
@@ -92,7 +92,7 @@ pub mod handlers {
         let (actor_stats, actor_events) =
             activities::actor_extractor::run_actor_extraction(
                 &*deps.store,
-                graph_client,
+                graph,
                 ai.as_ref(),
                 min_lat,
                 max_lat,
@@ -117,10 +117,10 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let graph_client = match deps.graph_client.as_ref() {
+        let graph = match deps.graph.as_ref() {
             Some(g) => g,
             None => {
-                ctx.logger.debug("Skipped diversity metrics: missing graph_client");
+                ctx.logger.debug("Skipped diversity metrics: missing graph");
                 return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
                     role: EnrichmentRole::Diversity,
                 }]);
@@ -128,8 +128,7 @@ pub mod handlers {
         };
 
         info!("=== Diversity Metrics ===");
-        let reader = GraphReader::new(graph_client.clone());
-        let mut all_events = activities::diversity::compute_diversity_events(&reader, &[]).await;
+        let mut all_events = activities::diversity::compute_diversity_events(graph, &[]).await;
         all_events.push(EnrichmentEvent::EnrichmentRoleCompleted {
             role: EnrichmentRole::Diversity,
         });
@@ -144,10 +143,10 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let graph_client = match deps.graph_client.as_ref() {
+        let graph = match deps.graph.as_ref() {
             Some(g) => g,
             None => {
-                ctx.logger.debug("Skipped actor stats: missing graph_client");
+                ctx.logger.debug("Skipped actor stats: missing graph");
                 return Ok(events![EnrichmentEvent::EnrichmentRoleCompleted {
                     role: EnrichmentRole::ActorStats,
                 }]);
@@ -155,8 +154,7 @@ pub mod handlers {
         };
 
         info!("=== Actor Stats ===");
-        let reader = GraphReader::new(graph_client.clone());
-        let mut all_events = activities::actor_stats::compute_actor_stats_events(&reader).await;
+        let mut all_events = activities::actor_stats::compute_actor_stats_events(graph).await;
         all_events.push(EnrichmentEvent::EnrichmentRoleCompleted {
             role: EnrichmentRole::ActorStats,
         });
@@ -241,19 +239,18 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        // Requires graph_client + region — skip in tests
-        let (region, graph_client) = match (deps.run_scope.region(), deps.graph_client.as_ref()) {
+        // Requires graph + region — skip in tests
+        let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                ctx.logger.debug("Skipped source metrics: missing region or graph_client");
+                ctx.logger.debug("Skipped source metrics: missing region or graph");
                 return Ok(events![LifecycleEvent::MetricsCompleted]);
             }
         };
-        let graph = GraphReader::new(graph_client.clone());
 
         let (_, state) = ctx.singleton::<PipelineState>();
         let all_sources = state
-            .scheduled
+            .source_plan
             .as_ref()
             .map(|s| s.all_sources.clone())
             .unwrap_or_default();
@@ -261,7 +258,7 @@ pub mod handlers {
         let query_api_errors = state.query_api_errors.clone();
 
         let metric_events = activities::compute_source_metrics(
-            &graph,
+            graph,
             &region.name,
             &all_sources,
             &source_signal_counts,

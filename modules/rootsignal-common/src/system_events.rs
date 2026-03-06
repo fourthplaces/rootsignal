@@ -54,9 +54,10 @@ pub enum SystemEvent {
         reason: String,
     },
 
-    /// Soft-delete — sets `expired = true` on the node (no fact disappears).
-    EntityExpired {
-        signal_id: Uuid,
+    /// Batch of signals marked expired — sets `expired = true` on each node.
+    /// Grouped by (node_type, reason): past gatherings, stale help requests, stale announcements.
+    SignalsExpired {
+        signal_ids: Vec<Uuid>,
         node_type: NodeType,
         reason: String,
     },
