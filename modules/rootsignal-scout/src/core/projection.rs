@@ -76,7 +76,7 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                     event_type,
                     parent_seq: None,
                     caused_by_seq: None,
-                    run_id: Some(deps.run_id.clone()),
+                    run_id: Some(deps.run_id.to_string()),
                     actor: None,
                     payload,
                     schema_v: 1,
@@ -190,7 +190,7 @@ pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
                              VALUES ($1, $2, $3, $4, now()) \
                              ON CONFLICT (run_id) DO NOTHING",
                         )
-                        .bind(run_id)
+                        .bind(run_id.to_string())
                         .bind(region)
                         .bind(deps.task_id.as_deref())
                         .bind(&scope_json)
@@ -203,7 +203,7 @@ pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
                             "UPDATE scout_runs SET finished_at = now(), stats = $2 \
                              WHERE run_id = $1",
                         )
-                        .bind(&deps.run_id)
+                        .bind(deps.run_id.to_string())
                         .bind(stats_json)
                         .execute(pool)
                         .await?;

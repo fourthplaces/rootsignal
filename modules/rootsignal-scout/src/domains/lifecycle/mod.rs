@@ -160,7 +160,7 @@ mod tests {
         let mut deps = ScoutEngineDeps::new(
             Arc::new(crate::testing::MockSignalReader::new()),
             Arc::new(crate::infra::embedder::NoOpEmbedder),
-            "test",
+            uuid::Uuid::new_v4(),
         );
         deps.task_id = task_id.map(String::from);
         deps.captured_events = Some(sink.clone());

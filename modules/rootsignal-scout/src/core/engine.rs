@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 
+use uuid::Uuid;
 use ai_client::Agent;
 use rootsignal_common::EmbeddingLookup;
 use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector, GraphReader};
@@ -52,7 +53,7 @@ pub struct ScoutEngineDeps {
     pub embed_cache: EmbeddingCache,
     // --- Engine infrastructure ---
     /// Current run ID for event tagging.
-    pub run_id: String,
+    pub run_id: Uuid,
     /// Test-only: capture all dispatched events for inspection.
     /// None in production, Some in tests that need event inspection.
     pub captured_events: Option<Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>>,
@@ -71,7 +72,7 @@ impl ScoutEngineDeps {
     pub fn new(
         store: Arc<dyn SignalReader>,
         embedder: Arc<dyn TextEmbedder>,
-        run_id: impl Into<String>,
+        run_id: Uuid,
     ) -> Self {
         Self {
             store,
@@ -83,7 +84,7 @@ impl ScoutEngineDeps {
             graph: None,
             extractor: None,
             embed_cache: EmbeddingCache::new(),
-            run_id: run_id.into(),
+            run_id,
             captured_events: None,
             budget: None,
             pg_pool: None,
@@ -124,7 +125,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
         }
         projector
     });
-    let run_id = deps.run_id.clone();
+    let run_id = deps.run_id;
 
     let mut engine = seesaw_core::Engine::new(deps)
         // Aggregators — PipelineState maintained by seesaw
@@ -194,7 +195,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         }
         projector
     });
-    let run_id = deps.run_id.clone();
+    let run_id = deps.run_id;
 
     let mut engine = seesaw_core::Engine::new(deps)
         // Aggregators — PipelineState maintained by seesaw
@@ -268,7 +269,7 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn se
         }
         projector
     });
-    let run_id = deps.run_id.clone();
+    let run_id = deps.run_id;
 
     let mut engine = seesaw_core::Engine::new(deps)
         .with_aggregators(pipeline_aggregators::aggregators())
@@ -320,20 +321,11 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn se
 pub fn build_infra_only_engine(
     pg_pool: PgPool,
     graph_client: GraphClient,
-    run_id: Option<&str>,
+    run_id: Option<Uuid>,
 ) -> SeesawEngine {
-    let (run_id, run_uuid) = match run_id {
-        Some(id) => {
-            let uuid = uuid::Uuid::parse_str(id).unwrap_or_else(|_| uuid::Uuid::new_v4());
-            (id.to_string(), uuid)
-        }
-        None => {
-            let uuid = uuid::Uuid::new_v4();
-            (format!("infra-{uuid}"), uuid)
-        }
-    };
+    let run_id = run_id.unwrap_or_else(Uuid::new_v4);
 
-    let store = Arc::new(PostgresStore::new(pg_pool.clone(), run_uuid))
+    let store = Arc::new(PostgresStore::new(pg_pool.clone(), run_id))
         as Arc<dyn seesaw_core::Store>;
 
     let projector = GraphProjector::new(graph_client.clone());
@@ -341,7 +333,7 @@ pub fn build_infra_only_engine(
     let deps = ScoutEngineDeps::new(
         Arc::new(crate::traits::NoOpSignalReader),
         Arc::new(crate::infra::embedder::NoOpEmbedder),
-        &run_id,
+        run_id,
     );
 
     seesaw_core::Engine::new(deps)
@@ -375,7 +367,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         }
         projector
     });
-    let run_id = deps.run_id.clone();
+    let run_id = deps.run_id;
 
     let mut engine = seesaw_core::Engine::new(deps)
         .with_handlers(news_scanning::handlers::handlers());

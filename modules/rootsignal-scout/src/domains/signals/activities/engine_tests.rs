@@ -1053,7 +1053,7 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
     // INPUT: one event kicks off the entire causal chain
     engine
         .emit(LifecycleEvent::ScoutRunRequested {
-            run_id: "test-run".to_string(),
+            run_id: Uuid::new_v4(),
         })
         .settled()
         .await

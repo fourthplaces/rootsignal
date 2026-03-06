@@ -1508,7 +1508,7 @@ pub fn test_engine_for_store_with_embedder(
     embedder: Arc<dyn TextEmbedder>,
 ) -> Arc<ScoutEngine> {
     Arc::new(build_engine(
-        ScoutEngineDeps::new(store, embedder, "test-run"),
+        ScoutEngineDeps::new(store, embedder, Uuid::new_v4()),
         None,
     ))
 }
@@ -1536,7 +1536,7 @@ pub fn test_engine_with_capture_for_store(
     let mut deps = ScoutEngineDeps::new(
         store,
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        "test-run",
+        Uuid::new_v4(),
     );
     deps.run_scope = match region {
         Some(r) => crate::core::run_scope::RunScope::Region(r),
@@ -1560,7 +1560,7 @@ pub fn test_engine_with_ai(
     let mut deps = ScoutEngineDeps::new(
         store,
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        "test-run",
+        Uuid::new_v4(),
     );
     deps.run_scope = match region {
         Some(r) => crate::core::run_scope::RunScope::Region(r),
@@ -1596,7 +1596,7 @@ pub fn test_engine_for_source_run(
     let mut deps = ScoutEngineDeps::new(
         store,
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        "test-run",
+        Uuid::new_v4(),
     );
     deps.run_scope = crate::core::run_scope::RunScope::Sources {
         sources,
@@ -1617,7 +1617,7 @@ pub fn test_scout_deps(
     ScoutEngineDeps::new(
         store,
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
-        "test-run",
+        Uuid::new_v4(),
     )
 }
 

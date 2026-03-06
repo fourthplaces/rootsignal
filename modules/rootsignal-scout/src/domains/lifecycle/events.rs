@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use uuid::Uuid;
+
 use crate::core::aggregate::SourcePlan;
 use crate::core::stats::ScoutStats;
 use rootsignal_common::types::ActorContext;
@@ -12,7 +14,7 @@ use rootsignal_common::types::ActorContext;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LifecycleEvent {
     ScoutRunRequested {
-        run_id: String,
+        run_id: Uuid,
     },
     SourcesPrepared {
         tension_count: u32,

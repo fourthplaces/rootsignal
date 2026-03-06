@@ -23,7 +23,7 @@ mod engine_tests {
         let deps = ScoutEngineDeps::new(
             Arc::new(crate::testing::MockSignalReader::new()),
             Arc::new(crate::infra::embedder::NoOpEmbedder),
-            "test",
+            uuid::Uuid::new_v4(),
         );
         let engine = build_engine(deps, None);
 

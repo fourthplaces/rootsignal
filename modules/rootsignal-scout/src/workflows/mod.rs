@@ -57,7 +57,7 @@ impl ScoutDeps {
     /// (extractor, run_scope, task_id) on top.
     fn build_base_deps(
         &self,
-        run_id: &str,
+        run_id: Uuid,
         spent_cents: u64,
     ) -> (ScoutEngineDeps, Arc<dyn ai_client::Agent>) {
         let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
@@ -106,7 +106,7 @@ impl ScoutDeps {
     fn build_region_deps(
         &self,
         scope: &rootsignal_common::ScoutScope,
-        run_id: &str,
+        run_id: Uuid,
         spent_cents: u64,
         task_id: Option<&str>,
     ) -> ScoutEngineDeps {
@@ -126,7 +126,7 @@ impl ScoutDeps {
     pub fn build_scrape_engine(
         &self,
         scope: &rootsignal_common::ScoutScope,
-        run_id: &str,
+        run_id: Uuid,
         task_id: Option<&str>,
     ) -> ScoutEngine {
         let deps = self.build_region_deps(scope, run_id, 0, task_id);
@@ -141,7 +141,7 @@ impl ScoutDeps {
     pub fn build_full_engine(
         &self,
         scope: &rootsignal_common::ScoutScope,
-        run_id: &str,
+        run_id: Uuid,
         spent_cents: u64,
         task_id: Option<&str>,
     ) -> ScoutEngine {
@@ -155,7 +155,7 @@ impl ScoutDeps {
     pub fn build_weave_engine(
         &self,
         scope: &rootsignal_common::ScoutScope,
-        run_id: &str,
+        run_id: Uuid,
         task_id: Option<&str>,
     ) -> ScoutEngine {
         let deps = self.build_region_deps(scope, run_id, 0, task_id);
@@ -166,7 +166,7 @@ impl ScoutDeps {
     pub fn build_engine_deps_for_resume(
         &self,
         scope: &rootsignal_common::ScoutScope,
-        run_id: &str,
+        run_id: Uuid,
         task_id: Option<&str>,
     ) -> ScoutEngineDeps {
         self.build_region_deps(scope, run_id, 0, task_id)
@@ -183,7 +183,7 @@ impl ScoutDeps {
     pub fn build_source_engine(
         &self,
         region: Option<&rootsignal_common::RegionNode>,
-        run_id: &str,
+        run_id: Uuid,
         input_sources: Vec<rootsignal_common::SourceNode>,
     ) -> ScoutEngine {
         use crate::core::run_scope::RunScope;
@@ -203,7 +203,7 @@ impl ScoutDeps {
     // -----------------------------------------------------------------
 
     /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
-    pub fn build_news_engine(&self, run_id: &str) -> ScoutEngine {
+    pub fn build_news_engine(&self, run_id: Uuid) -> ScoutEngine {
         let (deps, _ai) = self.build_base_deps(run_id, 0);
         engine::build_news_engine(deps, self.make_store(run_id))
     }
@@ -213,9 +213,8 @@ impl ScoutDeps {
     // -----------------------------------------------------------------
 
     /// Create a PostgresStore scoped to a run_id (used as correlation_id).
-    fn make_store(&self, run_id: &str) -> Option<Arc<dyn seesaw_core::Store>> {
-        let run_uuid = Uuid::parse_str(run_id).unwrap_or_else(|_| Uuid::new_v4());
-        Some(Arc::new(PostgresStore::new(self.pg_pool.clone(), run_uuid)) as Arc<dyn seesaw_core::Store>)
+    fn make_store(&self, run_id: Uuid) -> Option<Arc<dyn seesaw_core::Store>> {
+        Some(Arc::new(PostgresStore::new(self.pg_pool.clone(), run_id)) as Arc<dyn seesaw_core::Store>)
     }
 
     /// Convenience constructor from Config — keeps API-side construction clean.

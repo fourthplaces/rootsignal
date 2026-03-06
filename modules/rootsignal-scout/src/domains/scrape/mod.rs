@@ -63,7 +63,7 @@ pub mod handlers {
         let deps = ctx.deps();
 
         let (_, state) = ctx.singleton::<PipelineState>();
-        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        let run_id = deps.run_id;
 
         let plan = state.source_plan.as_ref().expect("source plan stashed");
 
@@ -336,7 +336,7 @@ pub mod handlers {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped response scrape resolve: missing region or graph");
-                let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+                let run_id = deps.run_id;
                 // Emit empty role completions for all 3 response roles so enrichment gates pass
                 return Ok(events![
                     ScrapeEvent::ScrapeRoleCompleted {
@@ -386,7 +386,7 @@ pub mod handlers {
         };
 
         let (_, state) = ctx.singleton::<PipelineState>();
-        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        let run_id = deps.run_id;
         let plan = state.source_plan.as_ref().expect("source plan stashed");
 
         // Reload from graph — picks up sources discovered mid-run by link promotion

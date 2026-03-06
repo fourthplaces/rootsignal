@@ -34,17 +34,16 @@ impl ScoutRunner {
     /// Spawn a news scan (global, no region).
     pub async fn run_news_scan(&self) {
         let deps = self.deps.clone();
-        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_id = uuid::Uuid::new_v4();
 
         info!("Spawning news scan");
 
         tokio::spawn(async move {
-            let engine = deps.build_news_engine(&run_id);
+            let engine = deps.build_news_engine(run_id);
 
-            let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
             if let Err(e) = engine
                 .emit(LifecycleEvent::NewsScanRequested)
-                .correlation_id(run_id_uuid)
+                .correlation_id(run_id)
                 .settled()
                 .await
             {
@@ -62,19 +61,17 @@ impl ScoutRunner {
         let deps = self.deps.clone();
         let region_id = region_id.to_string();
         let scope = scope.clone();
-        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_id = uuid::Uuid::new_v4();
 
-        info!(region_id = region_id.as_str(), run_id = run_id.as_str(), "Spawning bootstrap flow");
+        info!(region_id = region_id.as_str(), %run_id, "Spawning bootstrap flow");
 
         tokio::spawn(async move {
-            let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
+            early_insert_flow_run(&deps, run_id, Some(&region_id), "bootstrap", None, &scope).await;
 
-            early_insert_flow_run(&deps, &run_id, Some(&region_id), "bootstrap", None, &scope).await;
-
-            let engine = deps.build_scrape_engine(&scope, &run_id, None);
+            let engine = deps.build_scrape_engine(&scope, run_id, None);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id: run_id.clone() })
-                .correlation_id(run_id_uuid)
+                .emit(LifecycleEvent::ScoutRunRequested { run_id })
+                .correlation_id(run_id)
                 .settled()
                 .await;
 
@@ -84,7 +81,7 @@ impl ScoutRunner {
                 info!(region_id = region_id.as_str(), "Bootstrap flow completed");
             }
 
-            post_settle_cleanup(&deps, run_id_uuid, None).await;
+            post_settle_cleanup(&deps, run_id).await;
         });
     }
 
@@ -93,19 +90,17 @@ impl ScoutRunner {
         let deps = self.deps.clone();
         let region_id = region_id.to_string();
         let scope = scope.clone();
-        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_id = uuid::Uuid::new_v4();
 
-        info!(region_id = region_id.as_str(), run_id = run_id.as_str(), "Spawning scrape flow");
+        info!(region_id = region_id.as_str(), %run_id, "Spawning scrape flow");
 
         tokio::spawn(async move {
-            let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
+            early_insert_flow_run(&deps, run_id, Some(&region_id), "scrape", None, &scope).await;
 
-            early_insert_flow_run(&deps, &run_id, Some(&region_id), "scrape", None, &scope).await;
-
-            let engine = deps.build_scrape_engine(&scope, &run_id, None);
+            let engine = deps.build_scrape_engine(&scope, run_id, None);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id: run_id.clone() })
-                .correlation_id(run_id_uuid)
+                .emit(LifecycleEvent::ScoutRunRequested { run_id })
+                .correlation_id(run_id)
                 .settled()
                 .await;
 
@@ -115,7 +110,7 @@ impl ScoutRunner {
                 info!(region_id = region_id.as_str(), "Scrape flow completed");
             }
 
-            post_settle_cleanup(&deps, run_id_uuid, None).await;
+            post_settle_cleanup(&deps, run_id).await;
         });
     }
 
@@ -124,20 +119,17 @@ impl ScoutRunner {
         let deps = self.deps.clone();
         let region_id = region_id.to_string();
         let scope = scope.clone();
-        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_id = uuid::Uuid::new_v4();
 
-        info!(region_id = region_id.as_str(), run_id = run_id.as_str(), "Spawning weave flow");
+        info!(region_id = region_id.as_str(), %run_id, "Spawning weave flow");
 
         tokio::spawn(async move {
-            let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
+            early_insert_flow_run(&deps, run_id, Some(&region_id), "weave", None, &scope).await;
 
-            early_insert_flow_run(&deps, &run_id, Some(&region_id), "weave", None, &scope).await;
-
-            // Weave engine starts from synthesis phase (skips scrape chain)
-            let engine = deps.build_weave_engine(&scope, &run_id, None);
+            let engine = deps.build_weave_engine(&scope, run_id, None);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id: run_id.clone() })
-                .correlation_id(run_id_uuid)
+                .emit(LifecycleEvent::ScoutRunRequested { run_id })
+                .correlation_id(run_id)
                 .settled()
                 .await;
 
@@ -147,7 +139,7 @@ impl ScoutRunner {
                 info!(region_id = region_id.as_str(), "Weave flow completed");
             }
 
-            post_settle_cleanup(&deps, run_id_uuid, None).await;
+            post_settle_cleanup(&deps, run_id).await;
         });
     }
 
@@ -160,7 +152,7 @@ impl ScoutRunner {
     ) {
         let deps = self.deps.clone();
         let source_ids_owned: Vec<String> = source_ids.to_vec();
-        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_id = uuid::Uuid::new_v4();
         let metadata_scope = region.as_ref()
             .map(ScoutScope::from)
             .unwrap_or(ScoutScope {
@@ -170,18 +162,17 @@ impl ScoutRunner {
                 radius_km: 0.0,
             });
 
-        info!(source_count = source_ids_owned.len(), run_id = run_id.as_str(), "Spawning scout-source flow");
+        info!(source_count = source_ids_owned.len(), %run_id, "Spawning scout-source flow");
 
         tokio::spawn(async move {
-            let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
             let source_ids_json = serde_json::to_value(&source_ids_owned).ok();
 
-            early_insert_flow_run(&deps, &run_id, None, "scout_source", source_ids_json.as_ref(), &metadata_scope).await;
+            early_insert_flow_run(&deps, run_id, None, "scout_source", source_ids_json.as_ref(), &metadata_scope).await;
 
-            let engine = deps.build_source_engine(region.as_ref(), &run_id, sources);
+            let engine = deps.build_source_engine(region.as_ref(), run_id, sources);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id: run_id.clone() })
-                .correlation_id(run_id_uuid)
+                .emit(LifecycleEvent::ScoutRunRequested { run_id })
+                .correlation_id(run_id)
                 .settled()
                 .await;
 
@@ -191,7 +182,7 @@ impl ScoutRunner {
                 info!("Scout-source flow completed");
             }
 
-            post_settle_cleanup(&deps, run_id_uuid, None).await;
+            post_settle_cleanup(&deps, run_id).await;
         });
     }
 
@@ -252,31 +243,31 @@ impl ScoutRunner {
         cleanup_old_cancellations(&self.deps.pg_pool).await;
 
         for run in rows {
-            let run_uuid = match uuid::Uuid::parse_str(&run.run_id) {
+            let run_id = match uuid::Uuid::parse_str(&run.run_id) {
                 Ok(u) => u,
                 Err(_) => continue,
             };
 
-            let store = PostgresStore::new(self.deps.pg_pool.clone(), run_uuid);
+            let store = PostgresStore::new(self.deps.pg_pool.clone(), run_id);
 
             if let Err(e) = store.reclaim_stale().await {
-                warn!(run_id = %run.run_id, error = %e, "Failed to reclaim stale work");
+                warn!(%run_id, error = %e, "Failed to reclaim stale work");
                 continue;
             }
 
             match store.has_pending_work().await {
                 Ok(false) => {
-                    info!(run_id = %run.run_id, "No pending work, marking finished");
+                    info!(%run_id, "No pending work, marking finished");
                     let _ = sqlx::query(
                         "UPDATE scout_runs SET finished_at = now() WHERE run_id = $1 AND finished_at IS NULL",
                     )
-                    .bind(&run.run_id)
+                    .bind(run_id.to_string())
                     .execute(&self.deps.pg_pool)
                     .await;
                     continue;
                 }
                 Err(e) => {
-                    warn!(run_id = %run.run_id, error = %e, "Failed to check pending work");
+                    warn!(%run_id, error = %e, "Failed to check pending work");
                     continue;
                 }
                 Ok(true) => {}
@@ -286,39 +277,37 @@ impl ScoutRunner {
                 Some(v) => match serde_json::from_value(v) {
                     Ok(s) => s,
                     Err(e) => {
-                        warn!(run_id = %run.run_id, error = %e, "Failed to deserialize scope");
+                        warn!(%run_id, error = %e, "Failed to deserialize scope");
                         continue;
                     }
                 },
                 None => {
-                    warn!(run_id = %run.run_id, "No scope stored, cannot resume");
+                    warn!(%run_id, "No scope stored, cannot resume");
                     continue;
                 }
             };
 
             let store_arc = Arc::new(store) as Arc<dyn seesaw_core::Store>;
             let deps = self.deps.clone();
-            let run_id = run.run_id.clone();
             let task_id = run.task_id.clone();
 
-            info!(run_id = %run_id, "Resuming incomplete run");
+            info!(%run_id, "Resuming incomplete run");
 
             tokio::spawn(async move {
-                let run_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
                 let engine_deps = deps.build_engine_deps_for_resume(
                     &scope,
-                    &run_id,
+                    run_id,
                     task_id.as_deref(),
                 );
                 let engine = engine::build_full_engine(engine_deps, Some(store_arc));
 
                 if let Err(e) = engine.settle().await {
-                    warn!(run_id = %run_id, error = %e, "Resume settle failed");
+                    warn!(%run_id, error = %e, "Resume settle failed");
                 } else {
-                    info!(run_id = %run_id, "Resumed run completed");
+                    info!(%run_id, "Resumed run completed");
                 }
 
-                post_settle_cleanup(&deps, run_uuid, task_id.as_deref()).await;
+                post_settle_cleanup(&deps, run_id).await;
             });
         }
     }
@@ -334,7 +323,7 @@ struct IncompleteRun {
 /// INSERT scout_runs row with flow metadata before settle.
 async fn early_insert_flow_run(
     deps: &ScoutDeps,
-    run_id: &str,
+    run_id: uuid::Uuid,
     region_id: Option<&str>,
     flow_type: &str,
     source_ids: Option<&serde_json::Value>,
@@ -346,7 +335,7 @@ async fn early_insert_flow_run(
          VALUES ($1, $2, $3, $4, $5, $6, now()) \
          ON CONFLICT (run_id) DO NOTHING",
     )
-    .bind(run_id)
+    .bind(run_id.to_string())
     .bind(&scope.name)
     .bind(region_id)
     .bind(flow_type)
@@ -355,20 +344,20 @@ async fn early_insert_flow_run(
     .execute(&deps.pg_pool)
     .await
     {
-        warn!(run_id, error = %e, "Failed to early-insert scout_runs row");
+        warn!(%run_id, error = %e, "Failed to early-insert scout_runs row");
     }
 }
 
 /// Post-settle cleanup: mark scout_runs.finished_at.
-async fn post_settle_cleanup(deps: &ScoutDeps, run_id_uuid: uuid::Uuid, _task_id: Option<&str>) {
+async fn post_settle_cleanup(deps: &ScoutDeps, run_id: uuid::Uuid) {
     if let Err(e) = sqlx::query(
         "UPDATE scout_runs SET finished_at = now() WHERE run_id = $1 AND finished_at IS NULL",
     )
-    .bind(run_id_uuid.to_string())
+    .bind(run_id.to_string())
     .execute(&deps.pg_pool)
     .await
     {
-        warn!(run_id = %run_id_uuid, error = %e, "Failed to mark scout_run finished");
+        warn!(%run_id, error = %e, "Failed to mark scout_run finished");
     }
 }
 

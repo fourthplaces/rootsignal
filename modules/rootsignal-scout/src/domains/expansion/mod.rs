@@ -76,7 +76,7 @@ pub mod handlers {
         });
         if let Some(mut topic_scrape) = output.topic_scrape {
             let scrape_events = topic_scrape.take_events();
-            let run_id = uuid::Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+            let run_id = deps.run_id;
             all_events.push(ScrapeEvent::SourcesResolved {
                 run_id,
                 web_role: ScrapeRole::TopicDiscovery,

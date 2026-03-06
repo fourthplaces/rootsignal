@@ -49,7 +49,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        let run_id = deps.run_id;
 
         let graph = match deps.graph.as_ref() {
             Some(g) => g,
@@ -93,7 +93,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        let run_id = deps.run_id;
 
         let (region, graph, budget, archive) = match (
             deps.run_scope.region(),
@@ -163,7 +163,7 @@ pub mod handlers {
             &*deps.embedder,
             ai.as_ref(),
             region.clone(),
-            deps.run_id.clone(),
+            deps.run_id.to_string(),
         );
 
         // Load shared landscapes once for all targets
@@ -241,7 +241,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        let run_id = deps.run_id;
 
         let (region, graph, budget, archive) = match (
             deps.run_scope.region(),
@@ -306,7 +306,7 @@ pub mod handlers {
             &*deps.embedder,
             ai.as_ref(),
             region.clone(),
-            deps.run_id.clone(),
+            deps.run_id.to_string(),
         );
 
         // Load situation context once for all targets
@@ -374,7 +374,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        let run_id = deps.run_id;
 
         let (region, graph, budget, archive) = match (
             deps.run_scope.region(),
@@ -439,7 +439,7 @@ pub mod handlers {
             &*deps.embedder,
             ai.as_ref(),
             region.clone(),
-            deps.run_id.clone(),
+            deps.run_id.to_string(),
         );
 
         let futures: Vec<_> = targets
@@ -479,7 +479,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        let run_id = deps.run_id;
 
         let (region, graph, budget, archive) = match (
             deps.run_scope.region(),
@@ -575,7 +575,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+        let run_id = deps.run_id;
 
         let (region, graph, budget) = match (
             deps.run_scope.region(),

@@ -24,7 +24,7 @@ pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
         (Some(g), Some(k), Some(r), Some(b)) => (g, k, r, b),
         _ => return events,
     };
-    let run_id = deps.run_id.clone();
+    let run_id = deps.run_id.to_string();
 
     // Phase 1: Discover unassigned signals
     info!("Starting situation weaving...");
