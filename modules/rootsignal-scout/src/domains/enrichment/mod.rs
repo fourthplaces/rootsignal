@@ -20,42 +20,33 @@ use crate::domains::enrichment::events::{
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-// ── Enrichment role filters: response roles done + own role not started ──
-
-fn is_scrape_completion(e: &ScrapeEvent) -> bool {
-    e.completed_role().is_some()
-}
-
-fn response_scrape_done(state: &PipelineState) -> bool {
-    !state.expected_response_roles.is_empty()
-        && state.completed_scrape_roles.is_superset(&state.expected_response_roles)
-}
+// ── Enrichment role filters: response scrape done + own role not started ──
 
 fn response_done_actor_extraction_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !is_scrape_completion(e) { return false; }
+    if !e.is_completion() { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
-    response_scrape_done(&state)
+    state.response_scrape_done()
         && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorExtraction)
 }
 
 fn response_done_diversity_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !is_scrape_completion(e) { return false; }
+    if !e.is_completion() { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
-    response_scrape_done(&state)
+    state.response_scrape_done()
         && !state.completed_enrichment_roles.contains(&EnrichmentRole::Diversity)
 }
 
 fn response_done_actor_stats_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !is_scrape_completion(e) { return false; }
+    if !e.is_completion() { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
-    response_scrape_done(&state)
+    state.response_scrape_done()
         && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorStats)
 }
 
 fn response_done_actor_location_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !is_scrape_completion(e) { return false; }
+    if !e.is_completion() { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
-    response_scrape_done(&state)
+    state.response_scrape_done()
         && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorLocation)
 }
 
@@ -67,16 +58,16 @@ fn all_enrichment_done(e: &EnrichmentEvent, ctx: &Context<ScoutEngineDeps>) -> b
 
 fn describe_enrichment_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let scrape_done = &state.completed_scrape_roles;
     let enrichment_done = &state.completed_enrichment_roles;
     let all = all_enrichment_roles();
     vec![
         Block::Checklist {
-            label: "Scrape prerequisites".into(),
-            items: state.expected_response_roles.iter().map(|r| ChecklistItem {
-                text: format!("{r:?}"),
-                done: scrape_done.contains(r),
-            }).collect(),
+            label: "Response scrape".into(),
+            items: vec![
+                ChecklistItem { text: "Web".into(), done: state.response_web_done },
+                ChecklistItem { text: "Social".into(), done: state.response_social_done },
+                ChecklistItem { text: "Topics".into(), done: state.topic_discovery_done },
+            ],
         },
         Block::Checklist {
             label: "Enrichment roles".into(),

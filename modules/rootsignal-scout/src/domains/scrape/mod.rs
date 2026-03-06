@@ -22,10 +22,14 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+use crate::domains::scrape::events::ScrapeEvent;
 
-fn is_sources_prepared(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, LifecycleEvent::SourcesPrepared { .. })
+fn has_tension_web_sources(e: &LifecycleEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, LifecycleEvent::SourcesPrepared { .. }) {
+        return false;
+    }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.source_plan.as_ref().is_some_and(|p| p.has_tension_web_sources())
 }
 
 fn has_tension_social_sources(e: &LifecycleEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -33,15 +37,15 @@ fn has_tension_social_sources(e: &LifecycleEvent, ctx: &Context<ScoutEngineDeps>
         return false;
     }
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.expected_tension_roles.contains(&ScrapeRole::TensionSocial)
+    state.source_plan.as_ref().is_some_and(|p| p.has_tension_social_sources())
 }
 
 fn has_response_social_sources(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(e, ScrapeEvent::SourcesResolved { .. }) {
+    if !matches!(e, ScrapeEvent::SourcesResolved { is_response_phase: true, .. }) {
         return false;
     }
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.expected_response_roles.contains(&ScrapeRole::ResponseSocial)
+    state.source_plan.as_ref().is_some_and(|p| p.has_response_social_sources())
 }
 
 fn is_source_expansion_done(e: &DiscoveryEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -51,12 +55,8 @@ fn is_source_expansion_done(e: &DiscoveryEvent, _ctx: &Context<ScoutEngineDeps>)
     )
 }
 
-fn is_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, ScrapeEvent::SourcesResolved { .. })
-}
-
 fn is_response_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, ScrapeEvent::SourcesResolved { web_role: ScrapeRole::ResponseWeb, .. })
+    matches!(e, ScrapeEvent::SourcesResolved { is_response_phase: true, .. })
 }
 
 fn describe_resolve_new_source_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
@@ -86,22 +86,25 @@ pub mod handlers {
     // Phase A handlers — triggered by SourcesPrepared
     // -----------------------------------------------------------------------
 
-    /// SourcesPrepared → fetch + extract web pages.
-    #[handle(on = [LifecycleEvent::SourcesPrepared], id = "scrape:start_web_scrape", extract(web_urls, web_source_keys))]
+    /// SourcesPrepared → fetch + extract web pages (only if plan has non-social sources).
+    #[handle(on = LifecycleEvent, id = "scrape:start_web_scrape", filter = has_tension_web_sources)]
     async fn start_web_scrape(
-        web_urls: Vec<String>,
-        web_source_keys: HashMap<String, Uuid>,
+        event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let run_id = ctx.deps().run_id;
-        let role = ScrapeRole::TensionWeb;
+        let (web_urls, web_source_keys) = match event {
+            LifecycleEvent::SourcesPrepared { web_urls, web_source_keys, .. } => (web_urls, web_source_keys),
+            _ => unreachable!("filter guarantees SourcesPrepared"),
+        };
 
-        info!(?role, url_count = web_urls.len(), "Fetching web pages");
+        let run_id = ctx.deps().run_id;
+
+        info!(url_count = web_urls.len(), "Fetching web pages");
 
         if web_urls.is_empty() {
             return Ok(events![ScrapeEvent::WebScrapeCompleted {
                 run_id,
-                role,
+                is_tension: true,
                 urls_scraped: 0,
                 urls_unchanged: 0,
                 urls_failed: 0,
@@ -130,7 +133,7 @@ pub mod handlers {
         all_events.extend(fetch_result.events);
         all_events.push(ScrapeEvent::WebScrapeCompleted {
             run_id,
-            role,
+            is_tension: true,
             urls_scraped: fetch_result.stats.urls_scraped,
             urls_unchanged: fetch_result.stats.urls_unchanged,
             urls_failed: fetch_result.stats.urls_failed,
@@ -152,9 +155,8 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let run_id = ctx.deps().run_id;
-        let role = ScrapeRole::TensionSocial;
 
-        info!(?role, "Fetching social media posts");
+        info!("Fetching social media posts");
 
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
@@ -173,7 +175,7 @@ pub mod handlers {
         if social_sources.is_empty() {
             return Ok(events![ScrapeEvent::SocialScrapeCompleted {
                 run_id,
-                role,
+                is_tension: true,
                 sources_scraped: 0,
                 signals_extracted: 0,
                 source_signal_counts: Default::default(),
@@ -198,7 +200,7 @@ pub mod handlers {
         all_events.extend(events);
         all_events.push(ScrapeEvent::SocialScrapeCompleted {
             run_id,
-            role,
+            is_tension: true,
             sources_scraped: social_sources.len() as u32,
             signals_extracted,
             source_signal_counts: social_output.source_signal_counts,
@@ -216,21 +218,22 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourcesResolved → fetch + extract response web pages.
-    #[handle(on = [ScrapeEvent::SourcesResolved], id = "scrape:process_web_results", extract(run_id, web_urls, web_source_keys))]
+    #[handle(on = ScrapeEvent, id = "scrape:process_web_results", filter = is_response_sources_resolved)]
     async fn process_web_results(
-        run_id: Uuid,
-        web_urls: Vec<String>,
-        web_source_keys: HashMap<String, Uuid>,
+        event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let role = ScrapeRole::ResponseWeb;
+        let (run_id, web_urls, web_source_keys) = match event {
+            ScrapeEvent::SourcesResolved { run_id, web_urls, web_source_keys, .. } => (run_id, web_urls, web_source_keys),
+            _ => unreachable!("filter guarantees SourcesResolved"),
+        };
 
-        info!(?role, url_count = web_urls.len(), "Fetching response web pages");
+        info!(url_count = web_urls.len(), "Fetching response web pages");
 
         if web_urls.is_empty() {
             return Ok(events![ScrapeEvent::WebScrapeCompleted {
                 run_id,
-                role,
+                is_tension: false,
                 urls_scraped: 0,
                 urls_unchanged: 0,
                 urls_failed: 0,
@@ -259,7 +262,7 @@ pub mod handlers {
         all_events.extend(fetch_result.events);
         all_events.push(ScrapeEvent::WebScrapeCompleted {
             run_id,
-            role,
+            is_tension: false,
             urls_scraped: fetch_result.stats.urls_scraped,
             urls_unchanged: fetch_result.stats.urls_unchanged,
             urls_failed: fetch_result.stats.urls_failed,
@@ -281,9 +284,8 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let run_id = ctx.deps().run_id;
-        let role = ScrapeRole::ResponseSocial;
 
-        info!(?role, "Fetching response social media posts");
+        info!("Fetching response social media posts");
 
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
@@ -302,7 +304,7 @@ pub mod handlers {
         if social_sources.is_empty() {
             return Ok(events![ScrapeEvent::SocialScrapeCompleted {
                 run_id,
-                role,
+                is_tension: false,
                 sources_scraped: 0,
                 signals_extracted: 0,
                 source_signal_counts: Default::default(),
@@ -327,7 +329,7 @@ pub mod handlers {
         all_events.extend(events);
         all_events.push(ScrapeEvent::SocialScrapeCompleted {
             run_id,
-            role,
+            is_tension: false,
             sources_scraped: social_sources.len() as u32,
             signals_extracted,
             source_signal_counts: social_output.source_signal_counts,
@@ -485,7 +487,7 @@ pub mod handlers {
 
             all_events.push(ScrapeEvent::SourcesResolved {
                 run_id,
-                web_role: ScrapeRole::ResponseWeb,
+                is_response_phase: true,
                 web_urls: resolution.urls,
                 web_source_keys,
                 web_source_count: resolution.source_count,
@@ -494,11 +496,9 @@ pub mod handlers {
                 query_api_errors: resolution.query_api_errors,
             });
         } else {
-            // No web sources — emit empty SourcesResolved to trigger completion
-            // Include fresh URL mappings so they're applied to state
             all_events.push(ScrapeEvent::SourcesResolved {
                 run_id,
-                web_role: ScrapeRole::ResponseWeb,
+                is_response_phase: true,
                 web_urls: Vec::new(),
                 web_source_keys: HashMap::new(),
                 web_source_count: 0,

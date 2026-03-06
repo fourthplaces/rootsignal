@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::core::aggregate::PipelineState;
 use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+use crate::domains::scrape::events::ScrapeEvent;
 use crate::testing::*;
 use seesaw_core::AnyEvent;
 
@@ -21,8 +21,8 @@ fn has_metrics_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> boo
 
 /// Emit response scrape completion events to trigger enrichment handlers.
 async fn emit_response_scrape_done(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
-    engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().role(ScrapeRole::ResponseWeb).build())).settled().await.unwrap();
-    engine.emit(empty_social_scrape(ScrapeRole::ResponseSocial)).settled().await.unwrap();
+    engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().is_tension(false).build())).settled().await.unwrap();
+    engine.emit(empty_social_scrape(false)).settled().await.unwrap();
     engine.emit(empty_topic_discovery()).settled().await.unwrap();
 }
 

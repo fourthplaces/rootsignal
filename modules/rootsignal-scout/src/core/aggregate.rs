@@ -17,7 +17,6 @@ use rootsignal_common::Node;
 
 use crate::core::pipeline_events::PipelineEvent;
 use crate::core::run_scope::RunScope;
-use crate::domains::scrape::events::ScrapeRole;
 use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
@@ -41,6 +40,29 @@ pub struct SourcePlan {
     pub response_phase_keys: HashSet<String>,
     pub selected_keys: HashSet<String>,
     pub consumed_pin_ids: Vec<Uuid>,
+}
+
+impl SourcePlan {
+    pub fn has_tension_web_sources(&self) -> bool {
+        self.selected_sources.iter().any(|s| {
+            !matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                && self.tension_phase_keys.contains(&s.canonical_key)
+        })
+    }
+
+    pub fn has_tension_social_sources(&self) -> bool {
+        self.selected_sources.iter().any(|s| {
+            matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                && self.tension_phase_keys.contains(&s.canonical_key)
+        })
+    }
+
+    pub fn has_response_social_sources(&self) -> bool {
+        self.selected_sources.iter().any(|s| {
+            matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                && self.response_phase_keys.contains(&s.canonical_key)
+        })
+    }
 }
 
 /// Output from source preparation: the plan plus context maps.
@@ -99,15 +121,17 @@ pub struct PipelineState {
     /// Social topics collected during mid-run discovery, consumed by response scrape.
     pub social_topics: Vec<String>,
 
-    /// Scrape roles expected for each phase, derived from the source plan.
+    /// Scrape completion flags — set by reducer on completion events.
     #[serde(default)]
-    pub expected_tension_roles: HashSet<ScrapeRole>,
+    pub tension_web_done: bool,
     #[serde(default)]
-    pub expected_response_roles: HashSet<ScrapeRole>,
-
-    /// Scrape roles completed in current phase, for phase-completion tracking.
+    pub tension_social_done: bool,
     #[serde(default)]
-    pub completed_scrape_roles: HashSet<ScrapeRole>,
+    pub response_web_done: bool,
+    #[serde(default)]
+    pub response_social_done: bool,
+    #[serde(default)]
+    pub topic_discovery_done: bool,
 
     /// Synthesis roles completed, for phase-completion tracking.
     #[serde(default)]
@@ -172,9 +196,11 @@ impl PipelineState {
             wiring_contexts: HashMap::new(),
             source_plan: None,
             social_topics: Vec::new(),
-            expected_tension_roles: HashSet::new(),
-            expected_response_roles: HashSet::new(),
-            completed_scrape_roles: HashSet::new(),
+            tension_web_done: false,
+            tension_social_done: false,
+            response_web_done: false,
+            response_social_done: false,
+            topic_discovery_done: false,
             completed_synthesis_roles: HashSet::new(),
             completed_enrichment_roles: HashSet::new(),
             source_expansion_completed: false,
@@ -198,6 +224,26 @@ impl PipelineState {
     pub fn known_urls(&self) -> HashSet<String> {
         self.url_to_canonical_key.keys().cloned().collect()
     }
+
+    /// All tension-phase scrapes are done (only checks handlers that have sources).
+    pub fn tension_scrape_done(&self) -> bool {
+        let plan = match self.source_plan.as_ref() {
+            Some(p) => p,
+            None => return false,
+        };
+        (!plan.has_tension_web_sources() || self.tension_web_done)
+            && (!plan.has_tension_social_sources() || self.tension_social_done)
+    }
+
+    /// All response-phase scrapes are done.
+    pub fn response_scrape_done(&self) -> bool {
+        self.response_web_done
+            && self.topic_discovery_done
+            && match self.source_plan.as_ref() {
+                Some(p) => !p.has_response_social_sources() || self.response_social_done,
+                None => true,
+            }
+    }
 }
 
 impl Default for PipelineState {
@@ -216,7 +262,7 @@ impl PipelineState {
                 self.query_api_errors.extend(query_api_errors.clone());
             }
             ScrapeEvent::WebScrapeCompleted {
-                role,
+                is_tension,
                 urls_scraped,
                 urls_unchanged,
                 urls_failed,
@@ -227,7 +273,7 @@ impl PipelineState {
                 page_previews,
                 ..
             } => {
-                self.completed_scrape_roles.insert(*role);
+                if *is_tension { self.tension_web_done = true; } else { self.response_web_done = true; }
                 self.stats.urls_scraped += urls_scraped;
                 self.stats.urls_unchanged += urls_unchanged;
                 self.stats.urls_failed += urls_failed;
@@ -240,7 +286,7 @@ impl PipelineState {
                 self.page_previews.extend(page_previews.clone());
             }
             ScrapeEvent::SocialScrapeCompleted {
-                role,
+                is_tension,
                 signals_extracted,
                 source_signal_counts,
                 collected_links,
@@ -249,7 +295,7 @@ impl PipelineState {
                 sources_scraped,
                 ..
             } => {
-                self.completed_scrape_roles.insert(*role);
+                if *is_tension { self.tension_social_done = true; } else { self.response_social_done = true; }
                 self.stats.urls_scraped += sources_scraped;
                 self.stats.signals_extracted += signals_extracted;
                 for (k, v) in source_signal_counts {
@@ -268,7 +314,7 @@ impl PipelineState {
                 stats_delta,
                 ..
             } => {
-                self.completed_scrape_roles.insert(ScrapeRole::TopicDiscovery);
+                self.topic_discovery_done = true;
                 for (k, v) in source_signal_counts {
                     *self.source_signal_counts.entry(k.clone()).or_default() += v;
                 }
@@ -281,9 +327,9 @@ impl PipelineState {
                 self.social_expansion_topics.clear();
             }
             ScrapeEvent::ResponseScrapeSkipped { .. } => {
-                for role in &self.expected_response_roles.clone() {
-                    self.completed_scrape_roles.insert(*role);
-                }
+                self.response_web_done = true;
+                self.response_social_done = true;
+                self.topic_discovery_done = true;
             }
         }
     }
@@ -399,28 +445,6 @@ impl PipelineState {
                 self.url_to_canonical_key.extend(url_mappings.clone());
                 self.url_to_pub_date.extend(pub_dates.clone());
                 self.query_api_errors.extend(query_api_errors.clone());
-
-                // Derive expected roles from what's actually in the plan
-                let has_tension_social = source_plan.selected_sources.iter().any(|s| {
-                    matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
-                        && source_plan.tension_phase_keys.contains(&s.canonical_key)
-                });
-                let has_response_social = source_plan.selected_sources.iter().any(|s| {
-                    matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
-                        && source_plan.response_phase_keys.contains(&s.canonical_key)
-                });
-
-                self.expected_tension_roles = {
-                    let mut roles = HashSet::from([ScrapeRole::TensionWeb]);
-                    if has_tension_social { roles.insert(ScrapeRole::TensionSocial); }
-                    roles
-                };
-                self.expected_response_roles = {
-                    let mut roles = HashSet::from([ScrapeRole::ResponseWeb, ScrapeRole::TopicDiscovery]);
-                    if has_response_social { roles.insert(ScrapeRole::ResponseSocial); }
-                    roles
-                };
-
                 self.source_plan = Some(source_plan.clone());
             }
             _ => {}

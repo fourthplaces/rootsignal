@@ -14,7 +14,7 @@ use crate::domains::signals::events::SignalEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 
 fn is_scrape_completed(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    e.completed_role().is_some()
+    e.is_completion()
 }
 
 #[handlers]

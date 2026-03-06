@@ -12,7 +12,7 @@ use crate::domains::signals::events::SignalEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::core::aggregate::ExtractedBatch;
-use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::scrape::activities::UrlExtraction;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::testing::*;
@@ -22,16 +22,15 @@ use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
 use seesaw_core::AnyEvent;
 
-/// Seed expected scrape roles by emitting a SourcesPrepared event.
-/// Must be called before scrape events so the phase-completion filters know what to expect.
+/// Seed source plan by emitting a SourcesPrepared event.
 async fn seed_scrape_plan(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>, include_social: bool) {
     engine.emit(sources_prepared_event(include_social)).settled().await.unwrap();
 }
 
-/// Emit response completion events to complete the response roles set.
+/// Emit response completion events to mark response phase done.
 async fn complete_response_roles(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
-    engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().role(ScrapeRole::ResponseWeb).build())).settled().await.unwrap();
-    engine.emit(empty_social_scrape(ScrapeRole::ResponseSocial)).settled().await.unwrap();
+    engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().is_tension(false).build())).settled().await.unwrap();
+    engine.emit(empty_social_scrape(false)).settled().await.unwrap();
     engine.emit(empty_topic_discovery()).settled().await.unwrap();
 }
 
@@ -68,7 +67,7 @@ fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
 fn scrape_completed_with_batch(url: &str, canonical_key: &str, batch: ExtractedBatch) -> ScrapeEvent {
     let signals = batch.nodes.len() as u32;
     TestWebScrapeCompleted::builder()
-        .role(ScrapeRole::TensionWeb)
+        .is_tension(true)
         .urls_scraped(1)
         .signals_extracted(signals)
         .extracted_batches(vec![UrlExtraction {
@@ -361,7 +360,7 @@ async fn link_promotion_promotes_links_on_phase_completed() {
     // WebScrapeCompleted(TensionWeb) with links → promotion fires immediately
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .collected_links(vec![
                 CollectedLink {
                     url: "https://instagram.com/mutual_aid_mpls".to_string(),
@@ -411,7 +410,7 @@ async fn link_promotion_skips_when_no_links() {
     // Emit TensionWeb completion with no links — filter short-circuits on is_empty
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .build()))
         .settled()
         .await
@@ -441,7 +440,7 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .urls_scraped(1)
             .collected_links(vec![
                 CollectedLink {
@@ -485,7 +484,7 @@ async fn productive_page_content_links_promoted_without_ai_triage() {
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .urls_scraped(1)
             .signals_extracted(3)
             .source_signal_counts(signal_counts)
@@ -528,7 +527,7 @@ async fn zero_signal_page_content_links_not_promoted_without_ai() {
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .urls_scraped(1)
             .collected_links(vec![
                 CollectedLink {
@@ -575,7 +574,7 @@ async fn zero_signal_page_triaged_and_promoted() {
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .urls_scraped(1)
             .collected_links(vec![
                 CollectedLink {
@@ -630,7 +629,7 @@ async fn zero_signal_page_triaged_and_rejected() {
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .urls_scraped(1)
             .collected_links(vec![
                 CollectedLink {
@@ -678,7 +677,7 @@ async fn ai_error_fails_closed_no_content_links_promoted_from_triage() {
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .urls_scraped(1)
             .collected_links(vec![
                 CollectedLink {
@@ -729,7 +728,7 @@ async fn content_links_capped_per_source() {
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .urls_scraped(1)
             .signals_extracted(5)
             .source_signal_counts(HashMap::from([("https://productive.org/resources".to_string(), 5u32)]))
@@ -767,7 +766,7 @@ async fn page_previews_cleared_after_link_promotion() {
     // WebScrapeCompleted with links + page_previews → promotion fires → previews cleared
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
+            .is_tension(true)
             .urls_scraped(1)
             .collected_links(vec![
                 CollectedLink {
@@ -884,7 +883,7 @@ async fn actor_location_emits_events_on_response_complete() {
 
 #[tokio::test]
 async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+    use crate::domains::scrape::events::ScrapeEvent;
 
     let store = Arc::new(MockSignalReader::new());
     let query = "site:linktr.ee mutual aid Minneapolis";
@@ -1015,13 +1014,13 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
         .filter_map(|e| e.downcast_ref::<ScrapeEvent>())
         .find_map(|e| match e {
             ScrapeEvent::WebScrapeCompleted {
-                role: ScrapeRole::TensionWeb,
+                is_tension: true,
                 urls_scraped,
                 ..
             } => Some(*urls_scraped),
             _ => None,
         })
-        .expect("should emit WebScrapeCompleted(TensionWeb)");
+        .expect("should emit WebScrapeCompleted(tension)");
     assert_eq!(urls_scraped, 3, "should scrape all 3 linktree pages");
 
     // 3. Social handles extracted from page links and promoted as sources

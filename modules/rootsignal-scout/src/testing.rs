@@ -1415,10 +1415,9 @@ pub fn social_source(url: &str) -> SourceNode {
     )
 }
 
-/// Build a minimal SourcesPrepared that seeds expected scrape roles on PipelineState.
+/// Build a minimal SourcesPrepared for tests.
 ///
-/// `include_social`: if true, includes a social source in tension phase so
-/// TensionSocial is expected. Otherwise only TensionWeb is expected.
+/// `include_social`: if true, includes a social source in tension phase.
 pub fn sources_prepared_event(include_social: bool) -> crate::domains::lifecycle::events::LifecycleEvent {
     use crate::core::aggregate::SourcePlan;
 
@@ -1714,11 +1713,12 @@ use typed_builder::TypedBuilder;
 
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::domains::scrape::activities::UrlExtraction;
-use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+use crate::domains::scrape::events::ScrapeEvent;
 
 #[derive(TypedBuilder)]
 pub struct TestWebScrapeCompleted {
-    role: ScrapeRole,
+    #[builder(default = true)]
+    is_tension: bool,
     #[builder(default)]
     urls_scraped: u32,
     #[builder(default)]
@@ -1739,7 +1739,7 @@ impl From<TestWebScrapeCompleted> for ScrapeEvent {
     fn from(t: TestWebScrapeCompleted) -> Self {
         ScrapeEvent::WebScrapeCompleted {
             run_id: Uuid::new_v4(),
-            role: t.role,
+            is_tension: t.is_tension,
             urls_scraped: t.urls_scraped,
             urls_unchanged: 0,
             urls_failed: 0,
@@ -1753,11 +1753,11 @@ impl From<TestWebScrapeCompleted> for ScrapeEvent {
     }
 }
 
-/// Build an empty SocialScrapeCompleted for completing role sets in tests.
-pub fn empty_social_scrape(role: ScrapeRole) -> ScrapeEvent {
+/// Build an empty SocialScrapeCompleted for tests.
+pub fn empty_social_scrape(is_tension: bool) -> ScrapeEvent {
     ScrapeEvent::SocialScrapeCompleted {
         run_id: Uuid::new_v4(),
-        role,
+        is_tension,
         sources_scraped: 0,
         signals_extracted: 0,
         source_signal_counts: Default::default(),

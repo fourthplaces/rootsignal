@@ -12,7 +12,7 @@ use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::expansion::events::ExpansionEvent;
-use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
 fn is_metrics_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -76,7 +76,7 @@ pub mod handlers {
             let run_id = deps.run_id;
             all_events.push(ScrapeEvent::SourcesResolved {
                 run_id,
-                web_role: ScrapeRole::TopicDiscovery,
+                is_response_phase: false,
                 web_urls: Vec::new(),
                 web_source_keys: Default::default(),
                 web_source_count: 0,

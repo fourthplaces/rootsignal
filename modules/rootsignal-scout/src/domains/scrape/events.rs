@@ -9,24 +9,13 @@ use uuid::Uuid;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::domains::scrape::activities::{StatsDelta, UrlExtraction};
 
-/// Sub-phase role within a scrape phase (tension or response).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScrapeRole {
-    TensionWeb,
-    TensionSocial,
-    ResponseWeb,
-    ResponseSocial,
-    TopicDiscovery,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ScrapeEvent {
-    /// Sources resolved for a scrape phase — triggers scrape_web, scrape_social, fetch_topics.
+    /// Sources resolved for response phase — triggers response scrape handlers.
     SourcesResolved {
         run_id: Uuid,
-        web_role: ScrapeRole,
+        is_response_phase: bool,
         web_urls: Vec<String>,
         /// canonical_key → source_id, populated by the resolve handler so
         /// downstream fetch handlers don't re-derive it from sources.
@@ -39,7 +28,7 @@ pub enum ScrapeEvent {
     /// Web scrape handler completed fetch+extract for a batch of URLs.
     WebScrapeCompleted {
         run_id: Uuid,
-        role: ScrapeRole,
+        is_tension: bool,
         urls_scraped: u32,
         urls_unchanged: u32,
         urls_failed: u32,
@@ -60,7 +49,7 @@ pub enum ScrapeEvent {
     /// Social scrape handler completed fetch+extract for social sources.
     SocialScrapeCompleted {
         run_id: Uuid,
-        role: ScrapeRole,
+        is_tension: bool,
         sources_scraped: u32,
         signals_extracted: u32,
         #[serde(default)]
@@ -89,20 +78,39 @@ pub enum ScrapeEvent {
         extracted_batches: Vec<UrlExtraction>,
     },
     /// Response scrape skipped entirely (missing region or graph).
-    /// Reducer marks all 3 response roles as completed so downstream gates pass.
+    /// Reducer marks all response completion flags so downstream gates pass.
     ResponseScrapeSkipped {
         reason: String,
     },
 }
 
 impl ScrapeEvent {
-    /// The scrape role completed by this event, if any.
-    pub fn completed_role(&self) -> Option<ScrapeRole> {
+    /// Is this a scrape completion event?
+    pub fn is_completion(&self) -> bool {
+        matches!(
+            self,
+            Self::WebScrapeCompleted { .. }
+                | Self::SocialScrapeCompleted { .. }
+                | Self::TopicDiscoveryCompleted { .. }
+        )
+    }
+
+    /// Is this a tension-phase completion?
+    pub fn is_tension_completion(&self) -> bool {
         match self {
-            Self::WebScrapeCompleted { role, .. } => Some(*role),
-            Self::SocialScrapeCompleted { role, .. } => Some(*role),
-            Self::TopicDiscoveryCompleted { .. } => Some(ScrapeRole::TopicDiscovery),
-            _ => None,
+            Self::WebScrapeCompleted { is_tension, .. } => *is_tension,
+            Self::SocialScrapeCompleted { is_tension, .. } => *is_tension,
+            _ => false,
+        }
+    }
+
+    /// Is this a response-phase completion?
+    pub fn is_response_completion(&self) -> bool {
+        match self {
+            Self::WebScrapeCompleted { is_tension, .. } => !*is_tension,
+            Self::SocialScrapeCompleted { is_tension, .. } => !*is_tension,
+            Self::TopicDiscoveryCompleted { .. } => true,
+            _ => false,
         }
     }
 

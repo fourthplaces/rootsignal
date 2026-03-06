@@ -15,7 +15,7 @@ mod engine_tests {
 
     use super::aggregate::PipelineState;
     use super::engine::{build_engine, ScoutEngineDeps};
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+    use crate::domains::scrape::events::ScrapeEvent;
     use crate::testing::TestWebScrapeCompleted;
 
     #[tokio::test]
@@ -28,7 +28,6 @@ mod engine_tests {
         let engine = build_engine(deps, None);
 
         let event = TestWebScrapeCompleted::builder()
-            .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .build();
         let result = engine.emit(ScrapeEvent::from(event)).settled().await;

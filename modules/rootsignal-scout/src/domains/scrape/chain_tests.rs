@@ -42,7 +42,7 @@ async fn scrape_and_dispatch(
     ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
 ) {
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+    use crate::domains::scrape::events::ScrapeEvent;
 
     let mut output = output;
     let events = output.take_events();
@@ -57,7 +57,7 @@ async fn scrape_and_dispatch(
     if !extracted_batches.is_empty() {
         let _ = engine
             .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-                .role(ScrapeRole::TensionWeb)
+                .is_tension(true)
                 .extracted_batches(extracted_batches)
                 .build()))
             .settled()
@@ -1065,7 +1065,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
 
     // Dispatch through engine: freshness events + extracted batches via WebScrapeCompleted
     {
-        use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+        use crate::domains::scrape::events::ScrapeEvent;
 
         let engine = test_engine_for_store(store.clone() as Arc<dyn SignalReader>);
         for out in result.events.into_outputs() {
@@ -1073,7 +1073,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
         }
         let _ = engine
             .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-                .role(ScrapeRole::TensionWeb)
+                .is_tension(true)
                 .extracted_batches(result.extracted_batches)
                 .build()))
             .settled()

@@ -16,7 +16,7 @@ use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::link_promoter::PromotionConfig;
 use crate::domains::discovery::activities::{bootstrap, discover_expansion_sources};
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+use crate::domains::scrape::events::ScrapeEvent;
 
 fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
@@ -25,50 +25,47 @@ fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -
 /// Link promotion filter: fires at tension/response phase boundaries
 /// when there are links to promote.
 fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    let role = match event.completed_role() {
-        Some(r) => r,
-        None => return false,
-    };
+    if !event.is_completion() {
+        return false;
+    }
     let (_, state) = ctx.singleton::<PipelineState>();
     if state.collected_links.is_empty() {
         return false;
     }
-    let expected = match role {
-        ScrapeRole::TensionWeb | ScrapeRole::TensionSocial => &state.expected_tension_roles,
-        _ => &state.expected_response_roles,
-    };
-    !expected.is_empty() && state.completed_scrape_roles.is_superset(expected)
+    if event.is_tension_completion() {
+        state.tension_scrape_done()
+    } else {
+        state.response_scrape_done()
+    }
 }
 
-/// Source expansion filter: fires when tension roles done + expansion not yet run.
+/// Source expansion filter: fires when tension scrapes done + expansion not yet run.
 fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if event.completed_role().is_none() {
+    if !event.is_completion() {
         return false;
     }
     let (_, state) = ctx.singleton::<PipelineState>();
-    !state.expected_tension_roles.is_empty()
-        && state.completed_scrape_roles.is_superset(&state.expected_tension_roles)
-        && !state.source_expansion_completed
+    state.tension_scrape_done() && !state.source_expansion_completed
 }
 
 fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let done = &state.completed_scrape_roles;
     let link_count = state.collected_links.len() as u32;
     vec![
         Block::Checklist {
             label: "Tension scrape".into(),
-            items: state.expected_tension_roles.iter().map(|r| ChecklistItem {
-                text: format!("{r:?}"),
-                done: done.contains(r),
-            }).collect(),
+            items: vec![
+                ChecklistItem { text: "Web".into(), done: state.tension_web_done },
+                ChecklistItem { text: "Social".into(), done: state.tension_social_done },
+            ],
         },
         Block::Checklist {
             label: "Response scrape".into(),
-            items: state.expected_response_roles.iter().map(|r| ChecklistItem {
-                text: format!("{r:?}"),
-                done: done.contains(r),
-            }).collect(),
+            items: vec![
+                ChecklistItem { text: "Web".into(), done: state.response_web_done },
+                ChecklistItem { text: "Social".into(), done: state.response_social_done },
+                ChecklistItem { text: "Topics".into(), done: state.topic_discovery_done },
+            ],
         },
         Block::Counter {
             label: "Collected links".into(),
@@ -80,14 +77,13 @@ fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
 
 fn describe_expansion_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let done = &state.completed_scrape_roles;
     vec![
         Block::Checklist {
             label: "Tension scrape".into(),
-            items: state.expected_tension_roles.iter().map(|r| ChecklistItem {
-                text: format!("{r:?}"),
-                done: done.contains(r),
-            }).collect(),
+            items: vec![
+                ChecklistItem { text: "Web".into(), done: state.tension_web_done },
+                ChecklistItem { text: "Social".into(), done: state.tension_social_done },
+            ],
         },
         Block::Status {
             label: "Source expansion".into(),

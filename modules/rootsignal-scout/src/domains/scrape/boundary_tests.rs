@@ -78,7 +78,7 @@ async fn scrape_and_dispatch_with(
     store: &Arc<MockSignalReader>,
     embedder: Option<Arc<dyn TextEmbedder>>,
 ) {
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+    use crate::domains::scrape::events::ScrapeEvent;
 
     let mut output = output;
     let events = output.take_events();
@@ -99,7 +99,7 @@ async fn scrape_and_dispatch_with(
     if !extracted_batches.is_empty() {
         let _ = engine
             .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
-                .role(ScrapeRole::TensionWeb)
+                .is_tension(true)
                 .extracted_batches(extracted_batches)
                 .build()))
             .settled()
