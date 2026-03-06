@@ -2,6 +2,7 @@ pub mod archive;
 pub mod enrichment;
 pub mod error;
 pub mod fetch_request;
+mod freshness;
 pub mod links;
 mod readability;
 pub mod router;

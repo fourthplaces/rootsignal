@@ -18,6 +18,7 @@ use uuid::Uuid;
 use crate::enrichment::{files_needing_enrichment, EnrichmentJob, WorkflowDispatcher};
 use crate::error::{ArchiveError, Result};
 use crate::fetch_request::FetchRequest;
+use crate::freshness::is_fresh;
 use crate::router::Platform;
 use crate::store::Store;
 use crate::services::bluesky::BlueskyService;
@@ -198,6 +199,14 @@ impl PostsRequest {
     pub async fn send(self) -> Result<Vec<Post>> {
         let source_id = self.source.id;
 
+        if let Some(last) = self.inner.store.get_last_scraped(source_id, "posts").await? {
+            if is_fresh(last, "posts") {
+                let ago = (Utc::now() - last).num_minutes();
+                info!("posts: returning cached (scraped {ago}m ago)");
+                return self.inner.store.get_posts(source_id, self.limit).await;
+            }
+        }
+
         let fetched = match self.platform {
             Platform::Instagram => {
                 let svc = self.inner.instagram.as_ref().ok_or_else(|| {
@@ -289,6 +298,14 @@ impl StoriesRequest {
     pub async fn send(self) -> Result<Vec<Story>> {
         let source_id = self.source.id;
 
+        if let Some(last) = self.inner.store.get_last_scraped(source_id, "stories").await? {
+            if is_fresh(last, "stories") {
+                let ago = (Utc::now() - last).num_minutes();
+                info!("stories: returning cached (scraped {ago}m ago)");
+                return self.inner.store.get_stories(source_id).await;
+            }
+        }
+
         let fetched = match self.platform {
             Platform::Instagram => {
                 let svc = self.inner.instagram.as_ref().ok_or_else(|| {
@@ -368,6 +385,14 @@ pub struct ShortVideoRequest {
 impl ShortVideoRequest {
     pub async fn send(self) -> Result<Vec<ShortVideo>> {
         let source_id = self.source.id;
+
+        if let Some(last) = self.inner.store.get_last_scraped(source_id, "short_videos").await? {
+            if is_fresh(last, "short_videos") {
+                let ago = (Utc::now() - last).num_minutes();
+                info!("short_videos: returning cached (scraped {ago}m ago)");
+                return self.inner.store.get_short_videos(source_id, self.limit).await;
+            }
+        }
 
         let fetched = match self.platform {
             Platform::Instagram => {
@@ -479,6 +504,16 @@ pub struct PageRequest {
 impl PageRequest {
     pub async fn send(self) -> Result<ArchivedPage> {
         let source_id = self.source.id;
+
+        if let Some(last) = self.inner.store.get_last_scraped(source_id, "pages").await? {
+            if is_fresh(last, "pages") {
+                if let Some(cached) = self.inner.store.get_page(source_id).await? {
+                    let ago = (Utc::now() - last).num_minutes();
+                    info!("pages: returning cached (scraped {ago}m ago)");
+                    return Ok(cached);
+                }
+            }
+        }
 
         // Google Docs: fetch the HTML export directly instead of using Chrome
         if let Some(export_url) = google_docs_export_url(&self.source.url) {
@@ -593,6 +628,16 @@ pub struct FeedRequest {
 impl FeedRequest {
     pub async fn send(self) -> Result<ArchivedFeed> {
         let source_id = self.source.id;
+
+        if let Some(last) = self.inner.store.get_last_scraped(source_id, "feeds").await? {
+            if is_fresh(last, "feeds") {
+                if let Some(cached) = self.inner.store.get_feed(source_id).await? {
+                    let ago = (Utc::now() - last).num_minutes();
+                    info!("feeds: returning cached (scraped {ago}m ago)");
+                    return Ok(cached);
+                }
+            }
+        }
 
         let fetched = self
             .inner
