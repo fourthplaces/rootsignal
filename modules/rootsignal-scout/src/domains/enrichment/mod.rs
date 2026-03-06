@@ -75,8 +75,8 @@ pub mod handlers {
     // ---------------------------------------------------------------
 
     /// Pin cleanup + actor extraction → EnrichmentRoleCompleted(ActorExtraction)
-    #[handle(on = ScrapeEvent, id = "enrichment:actor_extraction", filter = response_done_actor_extraction_pending)]
-    async fn actor_extraction(
+    #[handle(on = ScrapeEvent, id = "enrichment:extract_actors", filter = response_done_actor_extraction_pending)]
+    async fn extract_actors(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -136,8 +136,8 @@ pub mod handlers {
     }
 
     /// Diversity metrics → EnrichmentRoleCompleted(Diversity)
-    #[handle(on = ScrapeEvent, id = "enrichment:diversity", filter = response_done_diversity_pending)]
-    async fn diversity(
+    #[handle(on = ScrapeEvent, id = "enrichment:score_diversity", filter = response_done_diversity_pending)]
+    async fn score_diversity(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -162,8 +162,8 @@ pub mod handlers {
     }
 
     /// Actor stats → EnrichmentRoleCompleted(ActorStats)
-    #[handle(on = ScrapeEvent, id = "enrichment:actor_stats", filter = response_done_actor_stats_pending)]
-    async fn actor_stats(
+    #[handle(on = ScrapeEvent, id = "enrichment:compute_actor_stats", filter = response_done_actor_stats_pending)]
+    async fn compute_actor_stats(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -188,8 +188,8 @@ pub mod handlers {
     }
 
     /// Actor location triangulation → EnrichmentRoleCompleted(ActorLocation)
-    #[handle(on = ScrapeEvent, id = "enrichment:actor_location", filter = response_done_actor_location_pending)]
-    async fn actor_location(
+    #[handle(on = ScrapeEvent, id = "enrichment:resolve_actor_locations", filter = response_done_actor_location_pending)]
+    async fn resolve_actor_locations(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -221,7 +221,7 @@ pub mod handlers {
     // ---------------------------------------------------------------
 
     /// All enrichment roles done → update source weights/cadence, emit MetricsCompleted.
-    #[handle(on = EnrichmentEvent, id = "enrichment:metrics", filter = all_enrichment_done)]
+    #[handle(on = EnrichmentEvent, id = "enrichment:update_source_weights", filter = all_enrichment_done)]
     async fn update_source_weights(
         _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,

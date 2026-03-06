@@ -21,8 +21,8 @@ pub mod handlers {
     use super::*;
 
     /// SituationsWeaved or NothingToWeave → supervise region, emit SupervisionCompleted.
-    #[handle(on = SituationWeavingEvent, id = "supervisor:run", filter = is_weaving_done)]
-    async fn supervisor(
+    #[handle(on = SituationWeavingEvent, id = "supervisor:run_supervisor", filter = is_weaving_done)]
+    async fn run_supervisor(
         _event: SituationWeavingEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {

@@ -43,8 +43,8 @@ pub mod handlers {
     // Similarity: single graph-wide operation, not atomized
     // ---------------------------------------------------------------
 
-    #[handle(on = ExpansionEvent, id = "synthesis:similarity", filter = is_expansion_completed)]
-    async fn similarity(
+    #[handle(on = ExpansionEvent, id = "synthesis:compute_similarity", filter = is_expansion_completed)]
+    async fn compute_similarity(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -87,8 +87,8 @@ pub mod handlers {
     // ConcernLinker: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:concern_linker", filter = is_expansion_completed)]
-    async fn concern_linker(
+    #[handle(on = ExpansionEvent, id = "synthesis:link_concerns", filter = is_expansion_completed)]
+    async fn link_concerns(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -236,8 +236,8 @@ pub mod handlers {
     // ResponseFinder: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:response_finder", filter = is_expansion_completed)]
-    async fn response_finder(
+    #[handle(on = ExpansionEvent, id = "synthesis:find_responses", filter = is_expansion_completed)]
+    async fn find_responses(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -370,8 +370,8 @@ pub mod handlers {
     // GatheringFinder: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:gathering_finder", filter = is_expansion_completed)]
-    async fn gathering_finder(
+    #[handle(on = ExpansionEvent, id = "synthesis:find_gatherings", filter = is_expansion_completed)]
+    async fn find_gatherings(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -476,8 +476,8 @@ pub mod handlers {
     // Investigation: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:investigation", filter = is_expansion_completed)]
-    async fn investigation(
+    #[handle(on = ExpansionEvent, id = "synthesis:investigate_signals", filter = is_expansion_completed)]
+    async fn investigate_signals(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -573,8 +573,8 @@ pub mod handlers {
     // ResponseMapping: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:response_mapping", filter = is_expansion_completed)]
-    async fn response_mapping(
+    #[handle(on = ExpansionEvent, id = "synthesis:map_responses", filter = is_expansion_completed)]
+    async fn map_responses(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -672,8 +672,8 @@ pub mod handlers {
 
     /// All synthesis roles done → re-evaluate Notice severity now that
     /// EVIDENCE_OF edges have been projected to Neo4j by the graph projector.
-    #[handle(on = SynthesisEvent, id = "synthesis:severity_inference", filter = all_synthesis_done)]
-    async fn severity_inference(
+    #[handle(on = SynthesisEvent, id = "synthesis:infer_severity", filter = all_synthesis_done)]
+    async fn infer_severity(
         _event: SynthesisEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {

@@ -43,8 +43,8 @@ pub mod handlers {
     use super::*;
 
     /// ScoutRunRequested → find stale signals, emit SignalsExpired.
-    #[handle(on = LifecycleEvent, id = "lifecycle:find_stale", filter = is_scout_run_requested)]
-    async fn find_stale(
+    #[handle(on = LifecycleEvent, id = "lifecycle:find_stale_signals", filter = is_scout_run_requested)]
+    async fn find_stale_signals(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -148,8 +148,8 @@ async fn finalize_impl(ctx: Context<ScoutEngineDeps>) -> Result<Events> {
 }
 
 /// Finalize handler for the scrape chain: triggers when all synthesis roles done.
-#[handle(on = SynthesisEvent, id = "lifecycle:scrape_finalize", filter = all_synthesis_done)]
-pub async fn scrape_finalize(
+#[handle(on = SynthesisEvent, id = "lifecycle:finalize_scrape_run", filter = all_synthesis_done)]
+pub async fn finalize_scrape_run(
     _event: SynthesisEvent,
     ctx: Context<ScoutEngineDeps>,
 ) -> Result<Events> {
@@ -157,8 +157,8 @@ pub async fn scrape_finalize(
 }
 
 /// Finalize handler for the full chain: triggers on SupervisionCompleted or NothingToSupervise.
-#[handle(on = SupervisorEvent, id = "lifecycle:full_finalize", filter = is_supervision_done)]
-pub async fn full_finalize(
+#[handle(on = SupervisorEvent, id = "lifecycle:finalize_full_run", filter = is_supervision_done)]
+pub async fn finalize_full_run(
     _event: SupervisorEvent,
     ctx: Context<ScoutEngineDeps>,
 ) -> Result<Events> {
@@ -168,8 +168,8 @@ pub async fn full_finalize(
 /// Kickoff handler for weave engine: emits ExpansionCompleted on ScoutRunRequested.
 /// The weave engine skips scrape/enrichment/expansion, so this provides the
 /// trigger that synthesis handlers need to start.
-#[handle(on = LifecycleEvent, id = "lifecycle:weave_kickoff", filter = is_scout_run_requested)]
-pub async fn weave_kickoff(
+#[handle(on = LifecycleEvent, id = "lifecycle:start_weave", filter = is_scout_run_requested)]
+pub async fn start_weave(
     _event: LifecycleEvent,
     _ctx: Context<ScoutEngineDeps>,
 ) -> Result<Events> {

@@ -17,7 +17,7 @@ pub mod handlers {
     use super::*;
 
     /// NewsScanRequested → scan RSS feeds for signals.
-    #[handle(on = LifecycleEvent, id = "news_scanning:scan", filter = is_news_scan_requested)]
+    #[handle(on = LifecycleEvent, id = "news_scanning:scan_news", filter = is_news_scan_requested)]
     async fn scan_news(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,

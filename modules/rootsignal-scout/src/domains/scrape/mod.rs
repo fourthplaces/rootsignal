@@ -57,8 +57,8 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourcesPrepared → fetch + extract web pages.
-    #[handle(on = LifecycleEvent, id = "scrape:fetch_web", filter = is_sources_prepared)]
-    async fn fetch_web(
+    #[handle(on = LifecycleEvent, id = "scrape:start_web_scrape", filter = is_sources_prepared)]
+    async fn start_web_scrape(
         event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -120,8 +120,8 @@ pub mod handlers {
     }
 
     /// SourcesPrepared → fetch + extract social media posts.
-    #[handle(on = LifecycleEvent, id = "scrape:fetch_social", filter = is_sources_prepared)]
-    async fn fetch_social(
+    #[handle(on = LifecycleEvent, id = "scrape:start_social_scrape", filter = is_sources_prepared)]
+    async fn start_social_scrape(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -190,8 +190,8 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourcesResolved → fetch + extract response web pages.
-    #[handle(on = ScrapeEvent, id = "scrape:fetch_web_responses", filter = is_sources_resolved)]
-    async fn fetch_web_responses(
+    #[handle(on = ScrapeEvent, id = "scrape:process_web_results", filter = is_sources_resolved)]
+    async fn process_web_results(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -252,8 +252,8 @@ pub mod handlers {
     }
 
     /// SourcesResolved → fetch + extract response social media posts.
-    #[handle(on = ScrapeEvent, id = "scrape:fetch_social_responses", filter = is_sources_resolved)]
-    async fn fetch_social_responses(
+    #[handle(on = ScrapeEvent, id = "scrape:process_social_results", filter = is_sources_resolved)]
+    async fn process_social_results(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -318,8 +318,8 @@ pub mod handlers {
     }
 
     /// SourcesResolved → discover from social topics.
-    #[handle(on = ScrapeEvent, id = "scrape:fetch_topics", filter = is_response_sources_resolved)]
-    async fn fetch_topics(
+    #[handle(on = ScrapeEvent, id = "scrape:discover_topics", filter = is_response_sources_resolved)]
+    async fn discover_topics(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -376,8 +376,8 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourceExpansionCompleted or SourceExpansionSkipped → resolve response URLs.
-    #[handle(on = DiscoveryEvent, id = "scrape:resolve_response", filter = is_source_expansion_done)]
-    async fn resolve_response(
+    #[handle(on = DiscoveryEvent, id = "scrape:resolve_new_source", filter = is_source_expansion_done)]
+    async fn resolve_new_source(
         _event: DiscoveryEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {

@@ -24,8 +24,8 @@ pub mod handlers {
     use super::*;
 
     /// All synthesis roles done → weave situations, emit SituationsWeaved.
-    #[handle(on = SynthesisEvent, id = "situation_weaving:run", filter = all_synthesis_done_and_not_yet_weaved)]
-    async fn situation_weaving(
+    #[handle(on = SynthesisEvent, id = "situation_weaving:weave_situations", filter = all_synthesis_done_and_not_yet_weaved)]
+    async fn weave_situations(
         _event: SynthesisEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {

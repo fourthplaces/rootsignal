@@ -132,7 +132,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
         .with_handlers(expansion::handlers::handlers())
         .with_handlers(synthesis::handlers::handlers())
         // Scrape chain finalize — triggers when all synthesis roles complete
-        .with_handler(lifecycle::__seesaw_effect_scrape_finalize())
+        .with_handler(lifecycle::__seesaw_effect_finalize_scrape_run())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),
@@ -204,7 +204,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
         // Full chain finalize — triggers on SupervisionCompleted/NothingToSupervise
-        .with_handler(lifecycle::__seesaw_effect_full_finalize())
+        .with_handler(lifecycle::__seesaw_effect_finalize_full_run())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),
@@ -273,9 +273,9 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn se
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
         // Weave kickoff — emits ExpansionCompleted on ScoutRunRequested
-        .with_handler(lifecycle::__seesaw_effect_weave_kickoff())
+        .with_handler(lifecycle::__seesaw_effect_start_weave())
         // Full chain finalize — triggers on SupervisionCompleted/NothingToSupervise
-        .with_handler(lifecycle::__seesaw_effect_full_finalize())
+        .with_handler(lifecycle::__seesaw_effect_finalize_full_run())
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),
             source_event_type: info.source_event_type.clone(),

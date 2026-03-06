@@ -76,8 +76,8 @@ pub mod handlers {
     /// Auto-accepts social/direct-action/query/admin sources.
     /// LLM-filters web URL sources via `filter_domains_batch`.
     /// Emits `SourceRegistered` (accepted) or `SourceRejected` (audit).
-    #[handle(on = DiscoveryEvent, id = "discovery:domain_filter", filter = is_sources_discovered)]
-    async fn domain_filter(
+    #[handle(on = DiscoveryEvent, id = "discovery:filter_domains", filter = is_sources_discovered)]
+    async fn filter_domains(
         event: DiscoveryEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -107,8 +107,8 @@ pub mod handlers {
     }
 
     /// ScoutRunRequested → seed sources when the region has none.
-    #[handle(on = LifecycleEvent, id = "discovery:bootstrap", filter = is_scout_run_requested)]
-    async fn bootstrap(
+    #[handle(on = LifecycleEvent, id = "discovery:bootstrap_sources", filter = is_scout_run_requested)]
+    async fn bootstrap_sources(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -125,8 +125,8 @@ pub mod handlers {
     /// - Social handles: promoted from ALL pages (unchanged behavior)
     /// - Content links: promoted only from "productive" pages (signal_count > 0)
     ///   or pages that pass lightweight LLM triage
-    #[handle(on = ScrapeEvent, id = "discovery:link_promotion", filter = should_promote_links)]
-    async fn link_promotion(
+    #[handle(on = ScrapeEvent, id = "discovery:promote_links", filter = should_promote_links)]
+    async fn promote_links(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -309,8 +309,8 @@ pub mod handlers {
 
     /// Scrape completed → expand source pool when tension roles done.
     /// Emits SourceExpansionCompleted or SourceExpansionSkipped.
-    #[handle(on = ScrapeEvent, id = "discovery:source_expansion", filter = tension_done_expansion_pending)]
-    async fn source_expansion(
+    #[handle(on = ScrapeEvent, id = "discovery:expand_sources", filter = tension_done_expansion_pending)]
+    async fn expand_sources(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {

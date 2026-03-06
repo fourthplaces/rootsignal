@@ -22,8 +22,8 @@ pub mod handlers {
     use super::*;
 
     /// Scrape completed → run 4-layer dedup on all extracted batches.
-    #[handle(on = ScrapeEvent, id = "signals:dedup", filter = is_scrape_completed)]
-    async fn dedup(
+    #[handle(on = ScrapeEvent, id = "signals:dedup_signals", filter = is_scrape_completed)]
+    async fn dedup_signals(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
@@ -52,7 +52,7 @@ pub mod handlers {
     }
 
     /// SignalCreated → wire edges (source, actor, resources, tags).
-    #[handle(on = [SignalEvent::SignalCreated], id = "signals:wire_edges", extract(node_id, node_type, source_url, canonical_key))]
+    #[handle(on = [SignalEvent::SignalCreated], id = "signals:wire_signal_edges", extract(node_id, node_type, source_url, canonical_key))]
     async fn wire_signal_edges(
         node_id: Uuid,
         node_type: NodeType,

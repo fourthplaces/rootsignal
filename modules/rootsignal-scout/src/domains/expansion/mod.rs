@@ -24,8 +24,8 @@ pub mod handlers {
     use super::*;
 
     /// MetricsCompleted → signal expansion + end-of-run discovery, emit ExpansionCompleted.
-    #[handle(on = LifecycleEvent, id = "expansion:signal_expansion", filter = is_metrics_completed)]
-    async fn signal_expansion(
+    #[handle(on = LifecycleEvent, id = "expansion:expand_signals", filter = is_metrics_completed)]
+    async fn expand_signals(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
