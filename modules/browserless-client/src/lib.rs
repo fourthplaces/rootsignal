@@ -45,8 +45,7 @@ impl BrowserlessClient {
             "gotoOptions": {
                 "waitUntil": "networkidle2",
                 "timeout": 45000
-            },
-            "bestAttempt": true
+            }
         });
 
         let resp = self
