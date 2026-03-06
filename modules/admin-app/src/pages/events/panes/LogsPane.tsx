@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Search } from "lucide-react";
 import { useQuery } from "@apollo/client";
 import { useEventsPaneContext } from "../EventsPaneContext";
 import { ADMIN_HANDLER_LOGS, ADMIN_HANDLER_LOGS_BY_RUN } from "@/graphql/queries";
@@ -82,7 +83,7 @@ function LogRow({ log, showHandler }: { log: HandlerLogEntry; showHandler: boole
 // ---------------------------------------------------------------------------
 
 export function LogsPane() {
-  const { logsFilter } = useEventsPaneContext();
+  const { logsFilter, setInvestigation, runId } = useEventsPaneContext();
   const [scope, setScope] = useState<"handler" | "run">("handler");
   const [levelFilter, setLevelFilter] = useState<Set<string>>(new Set(["debug", "info", "warn"]));
   const [searchText, setSearchText] = useState("");
@@ -189,6 +190,16 @@ export function LogsPane() {
           onChange={(e) => setSearchText(e.target.value)}
           className="ml-auto text-[11px] bg-transparent border border-border rounded px-2 py-0.5 w-40 focus:outline-none focus:ring-1 focus:ring-blue-500/50 text-foreground placeholder:text-muted-foreground"
         />
+
+        {/* Investigate */}
+        <button
+          onClick={() => setInvestigation({ mode: "logs", runId: logsFilter.runId ?? (runId || undefined), handlerId: logsFilter.handlerId })}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          title="Investigate logs with AI"
+        >
+          <Search className="w-3 h-3" />
+          <span>Investigate</span>
+        </button>
       </div>
 
       {/* Header */}

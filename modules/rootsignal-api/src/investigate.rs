@@ -49,6 +49,12 @@ pub enum InvestigateRequest {
         run_id: String,
         messages: Vec<ChatMessage>,
     },
+    #[serde(rename = "logs")]
+    Logs {
+        run_id: Option<String>,
+        handler_id: Option<String>,
+        messages: Vec<ChatMessage>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,6 +313,11 @@ pub async fn investigate_handler(
         InvestigateRequest::ScoutRun { run_id, messages } => {
             handle_run_mode(state, pool, &api_key, run_id, messages).await
         }
+        InvestigateRequest::Logs {
+            run_id,
+            handler_id,
+            messages,
+        } => handle_logs_mode(state, pool, &api_key, run_id, handler_id, messages).await,
     }
 }
 
@@ -720,6 +731,166 @@ async fn handle_run_mode(
     );
 
     run_agent(claude, SCOUT_RUN_SYSTEM_PROMPT, &context, &chat_messages).await
+}
+
+// ---------------------------------------------------------------------------
+// Logs mode — system prompt + context builder + handler
+// ---------------------------------------------------------------------------
+
+const LOGS_SYSTEM_PROMPT: &str = r#"You are a handler log analysis assistant for RootSignal, an event-sourced community intelligence platform powered by the seesaw engine.
+
+## Handler Logs
+
+Each log entry was emitted by a handler during event processing. Handlers are the units of work in the seesaw engine — they receive events, do domain work, and emit new events.
+
+Log fields:
+- **level**: debug, info, or warn
+- **handler_id**: which handler emitted the log
+- **message**: human-readable description of what happened
+- **data**: optional structured JSON with details (URLs, IDs, counts, etc.)
+- **logged_at**: timestamp
+
+## What to Look For
+
+- **Errors and warnings**: anything that suggests something went wrong
+- **Performance patterns**: handlers that took unusually long, large batch sizes, repeated retries
+- **Unexpected sequences**: handlers running in an odd order, missing expected log entries
+- **Silent failures**: handlers that log success but with suspicious data (zero results, empty payloads)
+- **Repeated patterns**: the same warning appearing many times (suggests a systematic issue)
+
+## Your Tools
+
+You have tools to drill deeper into anything suspicious:
+- `search_events` — find events related to what you see in logs
+- `get_event` — load full payload of a specific event
+- `load_causal_tree` — trace the causal chain from any event
+- `get_run_info` — get run metadata and stats
+- `get_signal` — inspect a signal node
+- `fetch_url` — fetch a source page to compare against logged data
+
+## How to Respond
+
+Talk like you're reviewing logs with a colleague. Start with the big picture — does this look healthy or troubled? Then call out specifics: warnings, errors, anything that stands out. Mention handler IDs and timestamps when they help trace the story. Be concise and direct.
+"#;
+
+const MAX_LOG_ENTRIES: usize = 500;
+
+fn build_logs_context(
+    logs: &[scout_run::HandlerLogRowFull],
+    run_id: Option<&str>,
+    handler_id: Option<&str>,
+) -> String {
+    let mut ctx = String::from("## Handler Logs\n\n");
+
+    if let Some(rid) = run_id {
+        ctx.push_str(&format!("**run_id**: {rid}\n"));
+    }
+    if let Some(hid) = handler_id {
+        ctx.push_str(&format!("**handler_id filter**: {hid}\n"));
+    }
+    ctx.push_str(&format!("**entries**: {} (cap {})\n\n", logs.len(), MAX_LOG_ENTRIES));
+
+    ctx.push_str("| # | logged_at | level | handler_id | message | data |\n");
+    ctx.push_str("|---|-----------|-------|------------|---------|------|\n");
+
+    for (i, log) in logs.iter().enumerate() {
+        let data_str = match &log.data {
+            Some(v) => {
+                let s = v.to_string();
+                if s.len() > 120 {
+                    format!("{}…", &s[..117])
+                } else {
+                    s
+                }
+            }
+            None => "-".to_string(),
+        };
+        ctx.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} |\n",
+            i + 1,
+            log.logged_at,
+            log.level,
+            log.handler_id,
+            log.message.replace('|', "\\|"),
+            data_str.replace('|', "\\|"),
+        ));
+    }
+
+    ctx
+}
+
+async fn handle_logs_mode(
+    state: Arc<AppState>,
+    pool: Arc<sqlx::PgPool>,
+    api_key: &str,
+    run_id: Option<String>,
+    handler_id: Option<String>,
+    chat_messages: Vec<ChatMessage>,
+) -> axum::response::Response {
+    let run_id = match run_id {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            return (StatusCode::BAD_REQUEST, "run_id is required for logs investigation")
+                .into_response();
+        }
+    };
+
+    // Load all logs for the run
+    let all_logs = match scout_run::handler_logs_by_run(&pool, &run_id).await {
+        Ok(logs) => logs,
+        Err(e) => {
+            tracing::error!(error = %e, run_id, "Failed to load handler logs");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load logs: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    // Optionally filter by handler_id, then cap
+    let filtered: Vec<_> = if let Some(ref hid) = handler_id {
+        all_logs
+            .into_iter()
+            .filter(|l| l.handler_id == *hid)
+            .take(MAX_LOG_ENTRIES)
+            .collect()
+    } else {
+        all_logs.into_iter().take(MAX_LOG_ENTRIES).collect()
+    };
+
+    if filtered.is_empty() {
+        return (StatusCode::NOT_FOUND, "No logs found for the given filters").into_response();
+    }
+
+    let context = build_logs_context(&filtered, Some(&run_id), handler_id.as_deref());
+
+    let mut claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+        .tool(SearchEventsTool { pool: pool.clone() })
+        .tool(GetEventTool { pool: pool.clone() })
+        .tool(LoadCausalTreeTool { pool: pool.clone() })
+        .tool(GetRunInfoTool { pool: pool.clone() })
+        .tool(FetchUrlTool)
+        .tool(GetSignalTool {
+            reader: state.reader.clone(),
+        });
+
+    if let (Some(token), Some(repo)) = (&state.config.github_token, &state.config.github_repo) {
+        claude = claude.tool(CreateGitHubIssueTool {
+            github_token: token.clone(),
+            github_repo: repo.clone(),
+        });
+    }
+
+    tracing::info!(
+        message_count = chat_messages.len(),
+        run_id = %run_id,
+        handler_id = ?handler_id,
+        log_count = filtered.len(),
+        "Starting logs investigation"
+    );
+
+    run_agent(claude, LOGS_SYSTEM_PROMPT, &context, &chat_messages).await
 }
 
 async fn run_agent(

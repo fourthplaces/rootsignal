@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useMemo, useCallback, useEffect, u
 import { useSearchParams } from "react-router";
 import { useQuery, useLazyQuery, useSubscription } from "@apollo/client";
 import { ADMIN_EVENTS, ADMIN_CAUSAL_TREE, ADMIN_CAUSAL_FLOW, EVENTS_SUBSCRIPTION } from "@/graphql/queries";
+import type { InvestigateMode } from "@/components/InvestigateDrawer";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -109,8 +110,8 @@ type EventsPaneContextValue = {
   treeLoading: boolean;
 
   // Investigate
-  investigateEvent: AdminEvent | null;
-  setInvestigateEvent: (event: AdminEvent | null) => void;
+  investigation: InvestigateMode | null;
+  setInvestigation: (mode: InvestigateMode | null) => void;
 
   // Causal flow
   flowRunId: string | null;
@@ -167,7 +168,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
   const [cursor, setCursor] = useState<number | null>(null);
 
   // Investigate
-  const [investigateEvent, setInvestigateEvent] = useState<AdminEvent | null>(null);
+  const [investigation, setInvestigation] = useState<InvestigateMode | null>(null);
 
   // Logs panel
   const [logsFilter, setLogsFilter] = useState<LogsFilter | null>(null);
@@ -430,8 +431,8 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       selectSeq,
       treeEvents: effectiveTreeSource?.events ?? null,
       treeLoading: effectiveTreeSource?.source === "flow" ? flowLoading : treeLoading,
-      investigateEvent,
-      setInvestigateEvent,
+      investigation,
+      setInvestigation,
       flowRunId,
       openFlow,
       closeFlow,
@@ -446,7 +447,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
       layers, toggleLayer, search, runId, timeFrom, timeTo,
       filteredEvents, loading, hasMore, loadMore, allEvents.length,
       live, selectedSeq, selectSeq, effectiveTreeSource, treeLoading, flowLoading,
-      investigateEvent,
+      investigation,
       flowRunId, openFlow, closeFlow, flowEvents,
       flowSelection,
       logsFilter,

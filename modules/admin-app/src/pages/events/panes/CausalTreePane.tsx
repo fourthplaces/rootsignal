@@ -149,7 +149,7 @@ function TreeNode({
   childrenMap: Map<string, AdminEvent[]>;
   depth: number;
 }) {
-  const { selectedSeq, selectSeq, setInvestigateEvent, flowSelection } = useEventsPaneContext();
+  const { selectedSeq, selectSeq, setInvestigation, treeEvents, flowSelection } = useEventsPaneContext();
   const [payloadOpen, setPayloadOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const isSelected = event.seq === selectedSeq;
@@ -165,9 +165,9 @@ function TreeNode({
   }, [isSelected]);
 
   const handleInvestigate = useCallback(() => {
-    setInvestigateEvent(event);
+    setInvestigation({ mode: "event", event, treeEvents: treeEvents ?? undefined });
     selectSeq(event.seq, event.runId ?? undefined);
-  }, [event, setInvestigateEvent, selectSeq]);
+  }, [event, setInvestigation, selectSeq, treeEvents]);
 
   // Group children by handler_id. Children with no handler_id render directly.
   const { handlerGroups, directChildren } = useMemo(() => {

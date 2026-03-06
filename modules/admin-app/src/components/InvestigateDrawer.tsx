@@ -57,7 +57,8 @@ type AdminEvent = {
 export type InvestigateMode =
   | { mode: "event"; event: AdminEvent; treeEvents?: AdminEvent[] }
   | { mode: "sources"; sourceIds: string[]; sourceLabel: string }
-  | { mode: "scout_run"; runId: string; runLabel: string };
+  | { mode: "scout_run"; runId: string; runLabel: string }
+  | { mode: "logs"; runId?: string; handlerId?: string };
 
 type ChatMsg = {
   role: "user" | "assistant";
@@ -106,6 +107,21 @@ function getModeConfig(investigation: InvestigateMode): ModeConfig {
         showSynthesis: false,
         buildBody: (messages) => ({ mode: "scout_run", run_id: investigation.runId, messages }),
       };
+    case "logs": {
+      const qualifier = investigation.handlerId
+        ? ` · ${investigation.handlerId}`
+        : investigation.runId
+          ? ` · run ${investigation.runId.slice(0, 8)}…`
+          : "";
+      return {
+        title: `Investigate Logs${qualifier}`,
+        subtitle: investigation.handlerId ?? investigation.runId ?? "all logs",
+        autoMessage: "Analyze these handler logs. Summarize what happened, flag anything unusual — errors, unexpected patterns, performance issues.",
+        loadingLabel: "Analyzing logs...",
+        showSynthesis: false,
+        buildBody: (messages) => ({ mode: "logs", run_id: investigation.runId, handler_id: investigation.handlerId, messages }),
+      };
+    }
   }
 }
 

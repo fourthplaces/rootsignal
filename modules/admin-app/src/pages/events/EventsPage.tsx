@@ -27,7 +27,7 @@ const PANE_REGISTRY: PaneType[] = [
 // ---------------------------------------------------------------------------
 
 function EventsPageInner() {
-  const { selectedSeq, investigateEvent, setInvestigateEvent, flowRunId, logsFilter, setLogsFilter } = useEventsPaneContext();
+  const { selectedSeq, investigation, setInvestigation, flowRunId, logsFilter, setLogsFilter } = useEventsPaneContext();
   const paneManagerRef = useRef<PaneManagerHandle>(null);
 
   // Auto-open causal tree tab when an event is selected
@@ -50,16 +50,16 @@ function EventsPageInner() {
     }
   }, [flowRunId]);
 
-  // Auto-open investigate tab when investigateEvent is set
+  // Auto-open investigate tab when investigation is set
   useEffect(() => {
-    if (!investigateEvent || !paneManagerRef.current) return;
+    if (!investigation || !paneManagerRef.current) return;
     const pm = paneManagerRef.current;
     if (pm.hasTab("investigate")) {
       pm.selectTab("investigate");
     } else {
       pm.addTab("investigate", "Investigate");
     }
-  }, [investigateEvent]);
+  }, [investigation]);
 
   // Auto-open logs tab when logsFilter is set
   useEffect(() => {
@@ -85,11 +85,11 @@ function EventsPageInner() {
             if (comp === "logs") hasLogsTab = true;
           }
         });
-        if (!hasInvestigateTab) setInvestigateEvent(null);
+        if (!hasInvestigateTab) setInvestigation(null);
         if (!hasLogsTab) setLogsFilter(null);
       }
     },
-    [setInvestigateEvent, setLogsFilter],
+    [setInvestigation, setLogsFilter],
   );
 
   return (

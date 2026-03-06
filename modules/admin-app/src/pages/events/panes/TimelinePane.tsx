@@ -285,16 +285,17 @@ export function TimelinePane() {
     selectedSeq,
     selectSeq,
     setRunId,
-    setInvestigateEvent,
+    setInvestigation,
+    treeEvents,
     openFlow,
   } = useEventsPaneContext();
 
   const handleInvestigate = useCallback(
     (event: AdminEvent) => {
-      setInvestigateEvent(event);
+      setInvestigation({ mode: "event", event, treeEvents: treeEvents ?? undefined });
       selectSeq(event.seq, event.runId ?? undefined);
     },
-    [setInvestigateEvent, selectSeq],
+    [setInvestigation, selectSeq, treeEvents],
   );
 
   return (
