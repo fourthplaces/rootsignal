@@ -1,3 +1,3 @@
-// Scheduling utilities: budget tracking, metrics collection, run scheduler.
+// Scheduling utilities: budget tracking, metrics collection, source selection.
 
 pub mod activities;

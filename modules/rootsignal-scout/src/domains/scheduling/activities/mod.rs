@@ -1,5 +1,5 @@
-// Scheduling activities: budget, metrics, scheduler.
+// Scheduling activities: budget, metrics, source selector.
 
 pub mod budget;
 pub mod metrics;
-pub mod scheduler;
+pub mod selector;

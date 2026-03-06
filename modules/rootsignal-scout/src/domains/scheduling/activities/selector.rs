@@ -14,12 +14,12 @@ const EXPLORATION_WEIGHT_THRESHOLD: f64 = 0.3;
 /// Minimum days since last scrape before a low-weight source is eligible for exploration.
 const EXPLORATION_MIN_STALE_DAYS: i64 = 5;
 
-/// Result of scheduling: which sources to scrape and why.
-pub struct ScheduleResult {
+/// Result of source selection: which sources to scrape and why.
+pub struct SourceSelection {
     /// Sources selected for normal scraping (above cadence threshold).
-    pub scheduled: Vec<ScheduledSource>,
+    pub scheduled: Vec<SelectedSource>,
     /// Sources selected for exploration (random sampling of low-weight stale sources).
-    pub exploration: Vec<ScheduledSource>,
+    pub exploration: Vec<SelectedSource>,
     /// Sources skipped (not yet due based on cadence).
     pub skipped: usize,
     /// Convenience partition: canonical keys of sources with role=Tension or Mixed (Phase A).
@@ -28,13 +28,13 @@ pub struct ScheduleResult {
     pub response_phase: Vec<String>,
 }
 
-pub struct ScheduledSource {
+pub struct SelectedSource {
     pub canonical_key: String,
-    pub reason: ScheduleReason,
+    pub reason: SelectionReason,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScheduleReason {
+pub enum SelectionReason {
     /// Due based on weight-derived cadence.
     Cadence,
     /// Never been scraped.
@@ -43,20 +43,20 @@ pub enum ScheduleReason {
     Exploration,
 }
 
-/// Schedule sources for this run. Returns which to scrape and which to skip.
-pub fn schedule(sources: &[SourceNode], now: DateTime<Utc>) -> ScheduleResult {
+/// Select sources for this run. Returns which to scrape and which to skip.
+pub fn select_sources(sources: &[SourceNode], now: DateTime<Utc>) -> SourceSelection {
     let mut scheduled = Vec::new();
     let mut exploration_candidates = Vec::new();
     let mut skipped = 0usize;
 
     for source in sources {
         if should_scrape(source, now) {
-            scheduled.push(ScheduledSource {
+            scheduled.push(SelectedSource {
                 canonical_key: source.canonical_key.clone(),
                 reason: if source.last_scraped.is_none() {
-                    ScheduleReason::NeverScraped
+                    SelectionReason::NeverScraped
                 } else {
-                    ScheduleReason::Cadence
+                    SelectionReason::Cadence
                 },
             });
         } else if is_exploration_candidate(source, now) {
@@ -88,12 +88,12 @@ pub fn schedule(sources: &[SourceNode], now: DateTime<Utc>) -> ScheduleResult {
         b_stale.cmp(&a_stale) // most stale first
     });
 
-    let exploration: Vec<ScheduledSource> = exploration_candidates
+    let exploration: Vec<SelectedSource> = exploration_candidates
         .into_iter()
         .take(exploration_slots)
-        .map(|s| ScheduledSource {
+        .map(|s| SelectedSource {
             canonical_key: s.canonical_key.clone(),
-            reason: ScheduleReason::Exploration,
+            reason: SelectionReason::Exploration,
         })
         .collect();
 
@@ -103,7 +103,7 @@ pub fn schedule(sources: &[SourceNode], now: DateTime<Utc>) -> ScheduleResult {
             scheduled = scheduled.len(),
             exploration = exploration_picked,
             skipped,
-            "Source scheduling complete"
+            "Source selection complete"
         );
     }
 
@@ -130,7 +130,7 @@ pub fn schedule(sources: &[SourceNode], now: DateTime<Utc>) -> ScheduleResult {
         }
     }
 
-    ScheduleResult {
+    SourceSelection {
         scheduled,
         exploration,
         skipped,
@@ -242,9 +242,9 @@ pub fn is_dormant(consecutive_empty_runs: u32, method: &DiscoveryMethod) -> bool
 // Web Query Tiered Scheduling
 // =============================================================================
 
-/// Result of web query scheduling.
+/// Result of web query selection.
 #[derive(Debug)]
-pub struct WebQueryScheduleResult {
+pub struct WebQuerySourceSelection {
     /// Canonical keys of queries selected for this run.
     pub scheduled: Vec<String>,
     /// How many went into each tier.
@@ -255,7 +255,7 @@ pub struct WebQueryScheduleResult {
     pub skipped: usize,
 }
 
-/// Schedule web queries for a run using tiered priority.
+/// Select web queries for a run using tiered priority.
 ///
 /// - **Hot tier (60%)**: Top-scoring by `weight * tension_heat`, non-dormant,
 ///   per-tension cap of 3.
@@ -264,11 +264,11 @@ pub struct WebQueryScheduleResult {
 ///   (seasonal resurrection).
 ///
 /// `max_per_run` defaults to 50 if 0. Callers should pass `Config.max_web_queries_per_run`.
-pub fn schedule_web_queries(
+pub fn select_web_queries(
     sources: &[SourceNode],
     max_per_run: usize,
     now: DateTime<Utc>,
-) -> WebQueryScheduleResult {
+) -> WebQuerySourceSelection {
     let max = if max_per_run == 0 { 50 } else { max_per_run };
 
     // Filter to active web query sources only
@@ -278,7 +278,7 @@ pub fn schedule_web_queries(
         .collect();
 
     if web_queries.is_empty() {
-        return WebQueryScheduleResult {
+        return WebQuerySourceSelection {
             scheduled: vec![],
             hot: 0,
             warm: 0,
@@ -376,7 +376,7 @@ pub fn schedule_web_queries(
         warm = warm_selected.len(),
         cold = cold_selected.len(),
         skipped,
-        "Web query scheduling complete"
+        "Web query selection complete"
     );
 
     let mut scheduled = Vec::with_capacity(total_scheduled);
@@ -387,7 +387,7 @@ pub fn schedule_web_queries(
     scheduled.extend(warm_selected);
     scheduled.extend(cold_selected);
 
-    WebQueryScheduleResult {
+    WebQuerySourceSelection {
         scheduled,
         hot: hot_count,
         warm: warm_count,
@@ -543,9 +543,9 @@ mod tests {
     #[test]
     fn never_scraped_always_scheduled() {
         let sources = vec![make_source(0.5, None)];
-        let result = schedule(&sources, Utc::now());
+        let result = select_sources(&sources, Utc::now());
         assert_eq!(result.scheduled.len(), 1);
-        assert_eq!(result.scheduled[0].reason, ScheduleReason::NeverScraped);
+        assert_eq!(result.scheduled[0].reason, SelectionReason::NeverScraped);
     }
 
     #[test]
@@ -554,12 +554,12 @@ mod tests {
 
         // Last scraped 7 hours ago, weight > 0.8 → cadence is 6h → due
         let sources = vec![make_source(0.9, Some(now - Duration::hours(7)))];
-        let result = schedule(&sources, now);
+        let result = select_sources(&sources, now);
         assert_eq!(result.scheduled.len(), 1);
 
         // Last scraped 3 hours ago → not due
         let sources = vec![make_source(0.9, Some(now - Duration::hours(3)))];
-        let result = schedule(&sources, now);
+        let result = select_sources(&sources, now);
         assert_eq!(result.scheduled.len(), 0);
     }
 
@@ -569,12 +569,12 @@ mod tests {
 
         // Weight 0.1, last scraped 8 days ago → due (cadence = 168h = 7 days)
         let sources = vec![make_source(0.1, Some(now - Duration::days(8)))];
-        let result = schedule(&sources, now);
+        let result = select_sources(&sources, now);
         assert_eq!(result.scheduled.len(), 1);
 
         // Last scraped 3 days ago → not due
         let sources = vec![make_source(0.1, Some(now - Duration::days(3)))];
-        let result = schedule(&sources, now);
+        let result = select_sources(&sources, now);
         assert_eq!(result.scheduled.len(), 0);
     }
 
@@ -599,7 +599,7 @@ mod tests {
             sources.push(s);
         }
 
-        let result = schedule(&sources, now);
+        let result = select_sources(&sources, now);
         assert_eq!(result.scheduled.len(), 10);
         assert!(
             !result.exploration.is_empty(),
@@ -607,7 +607,7 @@ mod tests {
         );
         assert!(result.exploration.len() <= 3);
         for e in &result.exploration {
-            assert_eq!(e.reason, ScheduleReason::Exploration);
+            assert_eq!(e.reason, SelectionReason::Exploration);
         }
     }
 
@@ -714,7 +714,7 @@ mod tests {
         // Cadence for weight 0.15 = 168h (7 days) → NOT due by cadence (6 < 7).
         // With min_stale_days=5, IS eligible for exploration (6 >= 5).
         let sources = vec![make_source(0.15, Some(now - Duration::days(6)))];
-        let result = schedule(&sources, now);
+        let result = select_sources(&sources, now);
         assert_eq!(
             result.scheduled.len(),
             0,
@@ -820,7 +820,7 @@ mod tests {
 
     #[test]
     fn wq_schedule_empty_input() {
-        let result = schedule_web_queries(&[], 50, Utc::now());
+        let result = select_web_queries(&[], 50, Utc::now());
         assert!(result.scheduled.is_empty());
         assert_eq!(result.hot, 0);
         assert_eq!(result.warm, 0);
@@ -833,7 +833,7 @@ mod tests {
         let sources: Vec<SourceNode> = (0..100)
             .map(|_| make_web_query(0.5, Some(now - Duration::hours(48)), 0, None))
             .collect();
-        let result = schedule_web_queries(&sources, 20, now);
+        let result = select_web_queries(&sources, 20, now);
         assert!(
             result.scheduled.len() <= 20,
             "Should not exceed max: {}",
@@ -851,7 +851,7 @@ mod tests {
         for _ in 0..5 {
             sources.push(make_web_query(0.3, None, 0, None));
         }
-        let result = schedule_web_queries(&sources, 50, now);
+        let result = select_web_queries(&sources, 50, now);
         assert!(
             result.cold > 0,
             "Never-scraped queries should be in cold tier"
@@ -868,7 +868,7 @@ mod tests {
         for _ in 0..3 {
             sources.push(make_web_query(0.1, Some(now - Duration::days(30)), 7, None));
         }
-        let result = schedule_web_queries(&sources, 50, now);
+        let result = select_web_queries(&sources, 50, now);
         assert!(result.cold > 0, "Dormant queries should be in cold tier");
     }
 
@@ -886,7 +886,7 @@ mod tests {
                 )
             })
             .collect();
-        let result = schedule_web_queries(&sources, 50, now);
+        let result = select_web_queries(&sources, 50, now);
         // Hot tier should cap at 3 for same tension
         assert!(
             result.hot <= 3,
@@ -900,7 +900,7 @@ mod tests {
         let now = Utc::now();
         let mut source = make_web_query(0.5, Some(now - Duration::hours(48)), 0, None);
         source.active = false;
-        let result = schedule_web_queries(&[source], 50, now);
+        let result = select_web_queries(&[source], 50, now);
         assert!(
             result.scheduled.is_empty(),
             "Inactive sources should be skipped"
@@ -914,7 +914,7 @@ mod tests {
         // Make it a URL source (not a web query) so it gets filtered out
         source.canonical_value = "https://example.com".to_string();
         source.url = Some("https://example.com".to_string());
-        let result = schedule_web_queries(&[source], 50, now);
+        let result = select_web_queries(&[source], 50, now);
         assert!(
             result.scheduled.is_empty(),
             "Non-web-query sources should be filtered out"
@@ -961,7 +961,7 @@ mod tests {
         source.scrape_count = 3;
         source.signals_produced = 0;
         source.sources_discovered = 0;
-        let result = schedule(&[source], now);
+        let result = select_sources(&[source], now);
         assert_eq!(result.scheduled.len(), 0, "Unproductive source should be gated");
     }
 
@@ -972,7 +972,7 @@ mod tests {
         source.scrape_count = 3;
         source.signals_produced = 0;
         source.sources_discovered = 5;
-        let result = schedule(&[source], now);
+        let result = select_sources(&[source], now);
         assert_eq!(result.scheduled.len(), 1, "Source with discovery credit should pass gate");
     }
 
@@ -983,7 +983,7 @@ mod tests {
         source.scrape_count = 2;
         source.signals_produced = 0;
         source.sources_discovered = 0;
-        let result = schedule(&[source], now);
+        let result = select_sources(&[source], now);
         assert_eq!(result.scheduled.len(), 1, "Source under threshold should still be scheduled");
     }
 
@@ -994,7 +994,7 @@ mod tests {
         source.scrape_count = 3;
         source.signals_produced = 0;
         source.sources_discovered = 0;
-        let result = schedule(&[source], now);
+        let result = select_sources(&[source], now);
         assert_eq!(result.exploration.len(), 0, "Unproductive source should not explore");
         assert_eq!(result.scheduled.len(), 0, "Unproductive source should not be scheduled");
     }

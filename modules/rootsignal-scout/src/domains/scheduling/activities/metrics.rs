@@ -44,7 +44,6 @@ impl<'a> Metrics<'a> {
     ) -> Events {
         let mut events = Events::new();
 
-        // Record per-source scrape metrics. Skip queries where the search API errored.
         for (canonical_key, signals_produced) in source_signal_counts {
             if query_api_errors.contains(canonical_key) {
                 continue;
@@ -56,7 +55,6 @@ impl<'a> Metrics<'a> {
             });
         }
 
-        // Compute source weights and emit change events.
         for source in all_sources {
             let tension_count = self
                 .graph
@@ -74,7 +72,7 @@ impl<'a> Metrics<'a> {
                 } else {
                     source.scrape_count.max(1)
                 };
-            let base_weight = super::scheduler::compute_weight(
+            let base_weight = super::selector::compute_weight(
                 total_signals,
                 source.signals_corroborated,
                 scrape_count,
@@ -94,13 +92,13 @@ impl<'a> Metrics<'a> {
                     source.consecutive_empty_runs
                 };
             let cadence = if is_web_query(&source.canonical_value) {
-                super::scheduler::cadence_hours_with_backoff(
+                super::selector::cadence_hours_with_backoff(
                     new_weight,
                     empty_runs,
                     &source.discovery_method,
                 )
             } else {
-                super::scheduler::cadence_hours_for_weight(new_weight)
+                super::selector::cadence_hours_for_weight(new_weight)
             };
 
             if (new_weight - source.weight).abs() > f64::EPSILON {

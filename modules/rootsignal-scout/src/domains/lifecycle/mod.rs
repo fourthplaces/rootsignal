@@ -1,4 +1,4 @@
-// Lifecycle domain: reap, schedule, finalize.
+// Lifecycle domain: stale detection, source preparation, finalize.
 
 pub mod activities;
 pub mod events;
@@ -19,10 +19,6 @@ fn is_scout_run_requested(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
-fn is_find_stale_completed(e: &LifecycleEvent) -> bool {
-    matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::FindStale))
-}
-
 fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
     matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Synthesis))
 }
@@ -35,22 +31,29 @@ fn is_supervisor_completed(e: &LifecycleEvent) -> bool {
 pub mod handlers {
     use super::*;
 
-    /// ScoutRunRequested → find stale signals, emit PhaseCompleted(FindStale).
+    /// ScoutRunRequested → find stale signals, emit SignalsExpired.
     #[handle(on = LifecycleEvent, id = "lifecycle:find_stale", filter = is_scout_run_requested)]
     async fn find_stale(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let mut events = activities::find_stale_signals(&*deps.store).await;
-        events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::FindStale,
-        });
-        Ok(events)
+        let stale = activities::find_stale_signals(&*deps.store).await;
+
+        if stale.is_empty() {
+            return Ok(events![PipelineEvent::HandlerSkipped {
+                handler_id: "lifecycle:find_stale".into(),
+                reason: "no stale signals found".into(),
+            }]);
+        }
+
+        Ok(events![rootsignal_common::events::SystemEvent::SignalsExpired {
+            signals: stale,
+        }])
     }
 
-    /// PhaseCompleted(FindStale) → load + select sources, stash plan in state, emit SourcesPrepared.
-    #[handle(on = LifecycleEvent, id = "lifecycle:prepare_sources", filter = is_find_stale_completed)]
+    /// ScoutRunRequested → load + select sources, emit SourcesPrepared.
+    #[handle(on = LifecycleEvent, id = "lifecycle:prepare_sources", filter = is_scout_run_requested)]
     async fn prepare_sources(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -59,17 +62,18 @@ pub mod handlers {
 
         // Branch on run modality
         let output = match deps.run_scope.input_sources() {
-            Some(sources) => activities::prepare_input_sources(sources),
-            None => {
-                let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
-                    (Some(r), Some(g)) => (r, g),
-                    _ => return Ok(events![PipelineEvent::HandlerSkipped {
-                        handler_id: "lifecycle:prepare_sources".into(),
-                        reason: "missing region or graph (test environment)".into(),
-                    }]),
-                };
-                activities::prepare_sources(graph, region).await
-            }
+            // Source-targeted runs: scrape these specific URLs
+            Some(sources) => activities::build_source_plan_from_list(sources),
+            // Region runs: load sources from graph, select by cadence
+            None => match (deps.run_scope.region(), deps.graph.as_ref()) {
+                (Some(region), Some(graph)) => {
+                    activities::build_source_plan_from_region(graph, region).await
+                }
+                _ => {
+                    ctx.logger.warn("No region or graph available, skipping source plan");
+                    return Ok(events![]);
+                }
+            },
         };
 
         Ok(events![
