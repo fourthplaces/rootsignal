@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use rootsignal_common::types::{ActorContext, NodeType, SourceNode};
+use rootsignal_common::{scraping_strategy, ScrapingStrategy};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -98,6 +99,12 @@ pub struct PipelineState {
     /// Social topics collected during mid-run discovery, consumed by response scrape.
     pub social_topics: Vec<String>,
 
+    /// Scrape roles expected for each phase, derived from the source plan.
+    #[serde(default)]
+    pub expected_tension_roles: HashSet<ScrapeRole>,
+    #[serde(default)]
+    pub expected_response_roles: HashSet<ScrapeRole>,
+
     /// Scrape roles completed in current phase, for phase-completion tracking.
     #[serde(default)]
     pub completed_scrape_roles: HashSet<ScrapeRole>,
@@ -165,6 +172,8 @@ impl PipelineState {
             wiring_contexts: HashMap::new(),
             source_plan: None,
             social_topics: Vec::new(),
+            expected_tension_roles: HashSet::new(),
+            expected_response_roles: HashSet::new(),
             completed_scrape_roles: HashSet::new(),
             completed_synthesis_roles: HashSet::new(),
             completed_enrichment_roles: HashSet::new(),
@@ -272,9 +281,9 @@ impl PipelineState {
                 self.social_expansion_topics.clear();
             }
             ScrapeEvent::ResponseScrapeSkipped { .. } => {
-                self.completed_scrape_roles.insert(ScrapeRole::ResponseWeb);
-                self.completed_scrape_roles.insert(ScrapeRole::ResponseSocial);
-                self.completed_scrape_roles.insert(ScrapeRole::TopicDiscovery);
+                for role in &self.expected_response_roles.clone() {
+                    self.completed_scrape_roles.insert(*role);
+                }
             }
         }
     }
@@ -390,6 +399,28 @@ impl PipelineState {
                 self.url_to_canonical_key.extend(url_mappings.clone());
                 self.url_to_pub_date.extend(pub_dates.clone());
                 self.query_api_errors.extend(query_api_errors.clone());
+
+                // Derive expected roles from what's actually in the plan
+                let has_tension_social = source_plan.selected_sources.iter().any(|s| {
+                    matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                        && source_plan.tension_phase_keys.contains(&s.canonical_key)
+                });
+                let has_response_social = source_plan.selected_sources.iter().any(|s| {
+                    matches!(scraping_strategy(s.value()), ScrapingStrategy::Social(_))
+                        && source_plan.response_phase_keys.contains(&s.canonical_key)
+                });
+
+                self.expected_tension_roles = {
+                    let mut roles = HashSet::from([ScrapeRole::TensionWeb]);
+                    if has_tension_social { roles.insert(ScrapeRole::TensionSocial); }
+                    roles
+                };
+                self.expected_response_roles = {
+                    let mut roles = HashSet::from([ScrapeRole::ResponseWeb, ScrapeRole::TopicDiscovery]);
+                    if has_response_social { roles.insert(ScrapeRole::ResponseSocial); }
+                    roles
+                };
+
                 self.source_plan = Some(source_plan.clone());
             }
             _ => {}

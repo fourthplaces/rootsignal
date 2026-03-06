@@ -1415,6 +1415,47 @@ pub fn social_source(url: &str) -> SourceNode {
     )
 }
 
+/// Build a minimal SourcesPrepared that seeds expected scrape roles on PipelineState.
+///
+/// `include_social`: if true, includes a social source in tension phase so
+/// TensionSocial is expected. Otherwise only TensionWeb is expected.
+pub fn sources_prepared_event(include_social: bool) -> crate::domains::lifecycle::events::LifecycleEvent {
+    use crate::core::aggregate::SourcePlan;
+
+    let web = page_source("https://example.com/page");
+    let social = social_source("https://instagram.com/test_account");
+
+    let mut selected = vec![web.clone()];
+    let mut tension_keys: HashSet<String> = HashSet::from([web.canonical_key.clone()]);
+
+    if include_social {
+        selected.push(social.clone());
+        tension_keys.insert(social.canonical_key.clone());
+    }
+
+    let plan = SourcePlan {
+        all_sources: selected.clone(),
+        selected_sources: selected,
+        tension_phase_keys: tension_keys,
+        response_phase_keys: HashSet::new(),
+        selected_keys: HashSet::new(),
+        consumed_pin_ids: Vec::new(),
+    };
+
+    crate::domains::lifecycle::events::LifecycleEvent::SourcesPrepared {
+        tension_count: plan.tension_phase_keys.len() as u32,
+        response_count: 0,
+        source_plan: plan,
+        actor_contexts: HashMap::new(),
+        url_mappings: HashMap::new(),
+        web_urls: Vec::new(),
+        web_source_keys: HashMap::new(),
+        web_source_count: 0,
+        pub_dates: HashMap::new(),
+        query_api_errors: HashSet::new(),
+    }
+}
+
 /// Create a minimal Post for testing social scrape.
 pub fn test_post(text: &str) -> Post {
     Post {

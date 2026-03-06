@@ -96,7 +96,9 @@ async fn missing_deps_skips_enrichment_with_immediate_role_completed() {
         None,
     );
 
-    // Emit response scrape completion — triggers enrichment via state-gated filters
+    use crate::testing::sources_prepared_event;
+    engine.emit(sources_prepared_event(false)).settled().await.unwrap();
+
     emit_response_scrape_done(&engine).await;
 
     assert!(

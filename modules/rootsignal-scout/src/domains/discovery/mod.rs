@@ -3,8 +3,6 @@
 pub mod activities;
 pub mod events;
 
-use std::collections::HashSet;
-
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
@@ -24,16 +22,7 @@ fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
-/// Expected roles for each scrape phase, used for completion tracking.
-fn tension_roles() -> HashSet<ScrapeRole> {
-    HashSet::from([ScrapeRole::TensionWeb, ScrapeRole::TensionSocial])
-}
-
-fn response_roles() -> HashSet<ScrapeRole> {
-    HashSet::from([ScrapeRole::ResponseWeb, ScrapeRole::ResponseSocial, ScrapeRole::TopicDiscovery])
-}
-
-/// Link promotion filter: fires at tension/response/expansion phase boundaries
+/// Link promotion filter: fires at tension/response phase boundaries
 /// when there are links to promote.
 fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
     let role = match event.completed_role() {
@@ -44,11 +33,11 @@ fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> 
     if state.collected_links.is_empty() {
         return false;
     }
-    match role {
-        ScrapeRole::TensionWeb | ScrapeRole::TensionSocial =>
-            state.completed_scrape_roles.is_superset(&tension_roles()),
-        _ => state.completed_scrape_roles.is_superset(&response_roles()),
-    }
+    let expected = match role {
+        ScrapeRole::TensionWeb | ScrapeRole::TensionSocial => &state.expected_tension_roles,
+        _ => &state.expected_response_roles,
+    };
+    !expected.is_empty() && state.completed_scrape_roles.is_superset(expected)
 }
 
 /// Source expansion filter: fires when tension roles done + expansion not yet run.
@@ -57,27 +46,26 @@ fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngine
         return false;
     }
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.completed_scrape_roles.is_superset(&tension_roles())
+    !state.expected_tension_roles.is_empty()
+        && state.completed_scrape_roles.is_superset(&state.expected_tension_roles)
         && !state.source_expansion_completed
 }
 
 fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let tension = tension_roles();
-    let response = response_roles();
     let done = &state.completed_scrape_roles;
     let link_count = state.collected_links.len() as u32;
     vec![
         Block::Checklist {
             label: "Tension scrape".into(),
-            items: tension.iter().map(|r| ChecklistItem {
+            items: state.expected_tension_roles.iter().map(|r| ChecklistItem {
                 text: format!("{r:?}"),
                 done: done.contains(r),
             }).collect(),
         },
         Block::Checklist {
             label: "Response scrape".into(),
-            items: response.iter().map(|r| ChecklistItem {
+            items: state.expected_response_roles.iter().map(|r| ChecklistItem {
                 text: format!("{r:?}"),
                 done: done.contains(r),
             }).collect(),
@@ -92,12 +80,11 @@ fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
 
 fn describe_expansion_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let tension = tension_roles();
     let done = &state.completed_scrape_roles;
     vec![
         Block::Checklist {
             label: "Tension scrape".into(),
-            items: tension.iter().map(|r| ChecklistItem {
+            items: state.expected_tension_roles.iter().map(|r| ChecklistItem {
                 text: format!("{r:?}"),
                 done: done.contains(r),
             }).collect(),

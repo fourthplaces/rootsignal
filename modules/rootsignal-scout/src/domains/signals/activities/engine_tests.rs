@@ -22,14 +22,10 @@ use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
 use seesaw_core::AnyEvent;
 
-/// Emit an empty TensionSocial to complete the tension roles set.
-/// Link promotion filter requires both TensionWeb + TensionSocial in completed_scrape_roles.
-async fn complete_tension_roles(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
-    engine
-        .emit(empty_social_scrape(ScrapeRole::TensionSocial))
-        .settled()
-        .await
-        .unwrap();
+/// Seed expected scrape roles by emitting a SourcesPrepared event.
+/// Must be called before scrape events so the phase-completion filters know what to expect.
+async fn seed_scrape_plan(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>, include_social: bool) {
+    engine.emit(sources_prepared_event(include_social)).settled().await.unwrap();
 }
 
 /// Emit response completion events to complete the response roles set.
@@ -359,8 +355,10 @@ async fn link_promotion_promotes_links_on_phase_completed() {
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
-    // Seed collected links via WebScrapeCompleted (simulates links found during scraping)
+    // WebScrapeCompleted(TensionWeb) with links → promotion fires immediately
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
@@ -378,12 +376,6 @@ async fn link_promotion_promotes_links_on_phase_completed() {
         .settled()
         .await
         .unwrap();
-
-    // Clear captured events from seeding so we only see link promotion events
-    captured.lock().unwrap().clear();
-
-    // Complete tension roles — link_promotion filter fires
-    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
 
@@ -413,13 +405,20 @@ async fn link_promotion_skips_when_no_links() {
         Some(mpls_region()),
     );
 
-    // No collected links
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
-    complete_tension_roles(&engine).await;
+    // Emit TensionWeb completion with no links — filter short-circuits on is_empty
+    engine
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .build()))
+        .settled()
+        .await
+        .unwrap();
 
     let names = event_names(&captured);
 
-    // No handler output — link promotion filter skips when no links
     assert!(
         !names.iter().any(|n| n.contains("sources_registered")),
         "should not emit SourcesRegistered with no links, got: {names:?}"
@@ -437,8 +436,9 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
-    // Seed links from a page with zero signals — no source_signal_counts entry
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
@@ -457,10 +457,6 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
         .settled()
         .await
         .unwrap();
-
-    captured.lock().unwrap().clear();
-
-    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
     assert!(
@@ -481,9 +477,9 @@ async fn productive_page_content_links_promoted_without_ai_triage() {
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
-    // Seed links from a productive page (signal_count > 0).
-    // Use discovered_on URL as canonical key so url_to_canonical_key lookup succeeds.
     let mut signal_counts = HashMap::new();
     signal_counts.insert("https://hub-page.org/resources".to_string(), 3u32);
 
@@ -508,10 +504,6 @@ async fn productive_page_content_links_promoted_without_ai_triage() {
         .await
         .unwrap();
 
-    captured.lock().unwrap().clear();
-
-    complete_tension_roles(&engine).await;
-
     let names = event_names(&captured);
     assert!(
         names.iter().any(|n| n.contains("sources_registered")),
@@ -531,8 +523,9 @@ async fn zero_signal_page_content_links_not_promoted_without_ai() {
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
-    // Seed only non-social links from a zero-signal page
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
@@ -547,10 +540,6 @@ async fn zero_signal_page_content_links_not_promoted_without_ai() {
         .settled()
         .await
         .unwrap();
-
-    captured.lock().unwrap().clear();
-
-    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
     let source_count = names.iter().filter(|n| n.contains("sources_registered")).count();
@@ -581,6 +570,8 @@ async fn zero_signal_page_triaged_and_promoted() {
         ai,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
@@ -605,13 +596,8 @@ async fn zero_signal_page_triaged_and_promoted() {
         .await
         .unwrap();
 
-    captured.lock().unwrap().clear();
-
-    complete_tension_roles(&engine).await;
-
     let names = event_names(&captured);
 
-    // Content links promoted from triage-passed page
     assert!(
         names.iter().any(|n| n.contains("sources_registered")),
         "content links from triage-passed page should be promoted, got: {names:?}"
@@ -639,6 +625,8 @@ async fn zero_signal_page_triaged_and_rejected() {
         ai,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
@@ -659,13 +647,8 @@ async fn zero_signal_page_triaged_and_rejected() {
         .await
         .unwrap();
 
-    captured.lock().unwrap().clear();
-
-    complete_tension_roles(&engine).await;
-
     let names = event_names(&captured);
 
-    // No content links promoted
     let source_count = names.iter().filter(|n| n.contains("sources_registered")).count();
     assert_eq!(
         source_count, 0,
@@ -690,6 +673,8 @@ async fn ai_error_fails_closed_no_content_links_promoted_from_triage() {
         ai,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
@@ -709,10 +694,6 @@ async fn ai_error_fails_closed_no_content_links_promoted_from_triage() {
         .settled()
         .await
         .unwrap();
-
-    captured.lock().unwrap().clear();
-
-    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
 
@@ -735,6 +716,8 @@ async fn content_links_capped_per_source() {
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
+    captured.lock().unwrap().clear();
 
     // Create 15 content links from a productive page — should be capped at 10
     let collected_links: Vec<CollectedLink> = (0..15)
@@ -755,10 +738,6 @@ async fn content_links_capped_per_source() {
         .settled()
         .await
         .unwrap();
-
-    captured.lock().unwrap().clear();
-
-    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
     let source_count = names.iter().filter(|n| n.contains("sources_registered")).count();
@@ -783,7 +762,9 @@ async fn page_previews_cleared_after_link_promotion() {
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
 
+    // WebScrapeCompleted with links + page_previews → promotion fires → previews cleared
     engine
         .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
@@ -802,14 +783,6 @@ async fn page_previews_cleared_after_link_promotion() {
         .settled()
         .await
         .unwrap();
-
-    let state = engine.singleton::<PipelineState>();
-    assert!(
-        !state.page_previews.is_empty(),
-        "page_previews should be populated after WebScrapeCompleted"
-    );
-
-    complete_tension_roles(&engine).await;
 
     let state = engine.singleton::<PipelineState>();
     assert!(
@@ -886,8 +859,8 @@ async fn actor_location_emits_events_on_response_complete() {
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
+    seed_scrape_plan(&engine, false).await;
 
-    // Complete response roles — enrichment actor_location filter fires
     complete_response_roles(&engine).await;
 
     let names = event_names(&captured);

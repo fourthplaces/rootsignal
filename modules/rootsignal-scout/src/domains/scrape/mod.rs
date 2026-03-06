@@ -28,6 +28,22 @@ fn is_sources_prepared(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> b
     matches!(e, LifecycleEvent::SourcesPrepared { .. })
 }
 
+fn has_tension_social_sources(e: &LifecycleEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, LifecycleEvent::SourcesPrepared { .. }) {
+        return false;
+    }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.expected_tension_roles.contains(&ScrapeRole::TensionSocial)
+}
+
+fn has_response_social_sources(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, ScrapeEvent::SourcesResolved { .. }) {
+        return false;
+    }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.expected_response_roles.contains(&ScrapeRole::ResponseSocial)
+}
+
 fn is_source_expansion_done(e: &DiscoveryEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
@@ -129,8 +145,8 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// SourcesPrepared → fetch + extract social media posts.
-    #[handle(on = LifecycleEvent, id = "scrape:start_social_scrape", filter = is_sources_prepared)]
+    /// SourcesPrepared → fetch + extract social media posts (only if plan has social sources).
+    #[handle(on = LifecycleEvent, id = "scrape:start_social_scrape", filter = has_tension_social_sources)]
     async fn start_social_scrape(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -258,8 +274,8 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// SourcesResolved → fetch + extract response social media posts.
-    #[handle(on = ScrapeEvent, id = "scrape:process_social_results", filter = is_sources_resolved)]
+    /// SourcesResolved → fetch + extract response social media posts (only if plan has social sources).
+    #[handle(on = ScrapeEvent, id = "scrape:process_social_results", filter = has_response_social_sources)]
     async fn process_social_results(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
