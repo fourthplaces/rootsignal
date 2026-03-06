@@ -631,12 +631,6 @@ async fn zero_signal_page_triaged_and_promoted() {
 
     let names = event_names(&captured);
 
-    // PageTriaged event emitted
-    assert!(
-        names.iter().any(|n| n.contains("page_triaged")),
-        "expected PageTriaged event, got: {names:?}"
-    );
-
     // Content links promoted from triage-passed page
     let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert!(
@@ -692,12 +686,6 @@ async fn zero_signal_page_triaged_and_rejected() {
 
     let names = event_names(&captured);
 
-    // PageTriaged emitted
-    assert!(
-        names.iter().any(|n| n.contains("page_triaged")),
-        "expected PageTriaged event, got: {names:?}"
-    );
-
     // No content links promoted
     let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert_eq!(
@@ -748,12 +736,6 @@ async fn ai_error_fails_closed_no_content_links_promoted() {
     complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
-
-    // PageTriaged emitted (with relevant=false due to error)
-    assert!(
-        names.iter().any(|n| n.contains("page_triaged")),
-        "expected PageTriaged event even on error, got: {names:?}"
-    );
 
     // No content links promoted
     let source_count = names.iter().filter(|n| n.contains("source_registered")).count();

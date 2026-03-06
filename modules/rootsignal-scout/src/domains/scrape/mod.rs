@@ -57,22 +57,18 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourcesPrepared → fetch + extract web pages.
-    #[handle(on = LifecycleEvent, id = "scrape:start_web_scrape", filter = is_sources_prepared)]
+    #[handle(on = [LifecycleEvent::SourcesPrepared], id = "scrape:start_web_scrape", extract(web_urls, web_source_keys))]
     async fn start_web_scrape(
-        event: LifecycleEvent,
+        web_urls: Vec<String>,
+        web_source_keys: HashMap<String, Uuid>,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let (urls, source_keys) = match event {
-            LifecycleEvent::SourcesPrepared { web_urls, web_source_keys, .. } => (web_urls, web_source_keys),
-            _ => unreachable!("filter guarantees SourcesPrepared"),
-        };
-
         let run_id = ctx.deps().run_id;
         let role = ScrapeRole::TensionWeb;
 
-        info!(?role, url_count = urls.len(), "Fetching web pages");
+        info!(?role, url_count = web_urls.len(), "Fetching web pages");
 
-        if urls.is_empty() {
+        if web_urls.is_empty() {
             return Ok(events![ScrapeEvent::WebScrapeCompleted {
                 run_id,
                 role,
@@ -93,8 +89,8 @@ pub mod handlers {
 
         let fetch_result = activities::web_scrape::fetch_and_extract(
             deps,
-            &urls,
-            &source_keys,
+            &web_urls,
+            &web_source_keys,
             &state.url_to_canonical_key,
             &state.actor_contexts,
             &state.url_to_pub_date,
@@ -190,21 +186,18 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourcesResolved → fetch + extract response web pages.
-    #[handle(on = ScrapeEvent, id = "scrape:process_web_results", filter = is_sources_resolved)]
+    #[handle(on = [ScrapeEvent::SourcesResolved], id = "scrape:process_web_results", extract(run_id, web_urls, web_source_keys))]
     async fn process_web_results(
-        event: ScrapeEvent,
+        run_id: Uuid,
+        web_urls: Vec<String>,
+        web_source_keys: HashMap<String, Uuid>,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let (run_id, urls, source_keys) = match event {
-            ScrapeEvent::SourcesResolved { run_id, web_urls, web_source_keys, .. } => (run_id, web_urls, web_source_keys),
-            _ => unreachable!("filter guarantees SourcesResolved"),
-        };
-
         let role = ScrapeRole::ResponseWeb;
 
-        info!(?role, url_count = urls.len(), "Fetching response web pages");
+        info!(?role, url_count = web_urls.len(), "Fetching response web pages");
 
-        if urls.is_empty() {
+        if web_urls.is_empty() {
             return Ok(events![ScrapeEvent::WebScrapeCompleted {
                 run_id,
                 role,
@@ -225,8 +218,8 @@ pub mod handlers {
 
         let fetch_result = activities::web_scrape::fetch_and_extract(
             deps,
-            &urls,
-            &source_keys,
+            &web_urls,
+            &web_source_keys,
             &state.url_to_canonical_key,
             &state.actor_contexts,
             &state.url_to_pub_date,

@@ -31,12 +31,6 @@ pub enum DiscoveryEvent {
     SocialTopicsDiscovered {
         topics: Vec<String>,
     },
-    /// Page triage result: whether a zero-signal page's outbound links are worth promoting.
-    PageTriaged {
-        url: String,
-        relevant: bool,
-        reason: String,
-    },
     /// Source expansion completed — handler finished its work.
     SourceExpansionCompleted,
     /// Source expansion skipped — missing deps or no data.
@@ -58,7 +52,6 @@ impl DiscoveryEvent {
             Self::ExpansionQueryCollected { .. } => "expansion_query_collected",
             Self::SocialTopicCollected { .. } => "social_topic_collected",
             Self::SocialTopicsDiscovered { .. } => "social_topics_discovered",
-            Self::PageTriaged { .. } => "page_triaged",
             Self::SourceExpansionCompleted => "source_expansion_completed",
             Self::SourceExpansionSkipped { .. } => "source_expansion_skipped",
         };

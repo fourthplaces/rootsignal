@@ -326,7 +326,6 @@ impl PipelineState {
             DiscoveryEvent::SocialTopicsDiscovered { topics } => {
                 self.social_topics = topics.clone();
             }
-            DiscoveryEvent::PageTriaged { .. } => {}
             DiscoveryEvent::SourceExpansionCompleted => {
                 self.source_expansion_completed = true;
             }

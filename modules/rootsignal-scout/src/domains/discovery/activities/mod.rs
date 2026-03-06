@@ -2,6 +2,7 @@
 
 pub(crate) mod bootstrap;
 pub(crate) mod domain_filter_gate;
+pub(crate) mod link_promotion;
 pub(crate) mod page_triage;
 pub mod source_finder;
 
