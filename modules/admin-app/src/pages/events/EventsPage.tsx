@@ -61,14 +61,12 @@ function EventsPageInner() {
     }
   }, [investigation]);
 
-  // Auto-open logs tab when logsFilter is set
+  // Select logs tab when logsFilter changes (only if tab is already open)
   useEffect(() => {
     if (!logsFilter || !paneManagerRef.current) return;
     const pm = paneManagerRef.current;
     if (pm.hasTab("logs")) {
       pm.selectTab("logs");
-    } else {
-      pm.addTab("logs", "Logs");
     }
   }, [logsFilter]);
 
