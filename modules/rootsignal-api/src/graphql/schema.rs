@@ -2041,6 +2041,7 @@ struct OutcomeRejection {
 
 #[derive(SimpleObject)]
 struct OutcomeSourceDiscovered {
+    source_id: Option<String>,
     canonical_key: String,
     url: Option<String>,
     discovery_method: Option<String>,
@@ -2219,6 +2220,7 @@ impl ScoutRunOutcomes {
                 if let Some(sources) = r.data.get("sources").and_then(|v| v.as_array()) {
                     return sources.iter().map(|s| {
                         OutcomeSourceDiscovered {
+                            source_id: s.get("id").and_then(|v| v.as_str()).map(String::from),
                             canonical_key: s.get("canonical_key").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
                             url: s.get("url").and_then(|v| v.as_str()).map(String::from),
                             discovery_method: s.get("discovery_method").and_then(|v| v.as_str()).map(String::from),
@@ -2234,6 +2236,7 @@ impl ScoutRunOutcomes {
                         .and_then(|v| v.as_str())
                 };
                 vec![OutcomeSourceDiscovered {
+                    source_id: get_field("id").map(String::from),
                     canonical_key: get_field("canonical_key").unwrap_or("?").to_string(),
                     url: get_field("url").map(String::from),
                     discovery_method: get_field("discovery_method").map(String::from),

@@ -435,7 +435,7 @@ export const ADMIN_SCOUT_RUN_OUTCOMES = gql`
         total
       }
       sourcesDiscovered(limit: 50) {
-        items { canonicalKey url discoveryMethod gapContext }
+        items { sourceId canonicalKey url discoveryMethod gapContext }
         total
       }
       expansionQueries(limit: 50) {
