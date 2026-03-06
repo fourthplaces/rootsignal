@@ -159,6 +159,11 @@ impl ChromePageService {
     }
 }
 
+/// Max retry attempts for transient Browserless failures.
+const BROWSERLESS_MAX_ATTEMPTS: u32 = 3;
+/// Base backoff duration for Browserless retries.
+const BROWSERLESS_RETRY_BASE: Duration = Duration::from_secs(2);
+
 pub(crate) struct BrowserlessPageService {
     client: browserless_client::BrowserlessClient,
 }
@@ -171,46 +176,67 @@ impl BrowserlessPageService {
         }
     }
 
-    /// Fetch a page via Browserless.
+    /// Fetch a page via Browserless with retry on transient failures.
     pub(crate) async fn fetch(&self, url: &str, source_id: Uuid) -> Result<FetchedPage> {
         info!(url, "page: fetching via browserless");
 
-        let html = self
-            .client
-            .content(url)
-            .await
-            .context("Browserless content request failed")?;
+        let mut last_error = None;
+        for attempt in 0..BROWSERLESS_MAX_ATTEMPTS {
+            match self.client.content(url).await {
+                Ok(html) if !html.is_empty() => {
+                    let markdown = html_to_markdown(html.as_bytes(), Some(url));
+                    let hash = rootsignal_common::content_hash(&html).to_string();
+                    let title = extract_title(&html);
 
-        if html.is_empty() {
-            warn!(url, "page: empty HTML response");
-            let hash = rootsignal_common::content_hash("").to_string();
-            return Ok(FetchedPage {
-                page: InsertPage {
-                    source_id,
-                    content_hash: hash,
-                    markdown: String::new(),
-                    title: None,
-                    links: Vec::new(),
-                },
-                raw_html: String::new(),
-            });
+                    info!(url, bytes = html.len(), "page: fetched successfully");
+
+                    return Ok(FetchedPage {
+                        page: InsertPage {
+                            source_id,
+                            content_hash: hash,
+                            markdown,
+                            title,
+                            links: Vec::new(),
+                        },
+                        raw_html: html,
+                    });
+                }
+                Ok(_) => {
+                    if attempt + 1 < BROWSERLESS_MAX_ATTEMPTS {
+                        let backoff = BROWSERLESS_RETRY_BASE * 2u32.pow(attempt);
+                        warn!(url, attempt = attempt + 1, "page: empty HTML, retrying");
+                        tokio::time::sleep(backoff).await;
+                        continue;
+                    }
+                    warn!(url, "page: empty HTML after all attempts");
+                }
+                Err(e) => {
+                    if attempt + 1 < BROWSERLESS_MAX_ATTEMPTS {
+                        let backoff = BROWSERLESS_RETRY_BASE * 2u32.pow(attempt);
+                        warn!(url, attempt = attempt + 1, error = %e, "page: browserless failed, retrying");
+                        tokio::time::sleep(backoff).await;
+                        last_error = Some(e);
+                        continue;
+                    }
+                    return Err(anyhow::anyhow!("Browserless failed after {BROWSERLESS_MAX_ATTEMPTS} attempts: {e}"));
+                }
+            }
         }
 
-        let markdown = html_to_markdown(html.as_bytes(), Some(url));
-        let hash = rootsignal_common::content_hash(&html).to_string();
-        let title = extract_title(&html);
+        if let Some(e) = last_error {
+            return Err(anyhow::anyhow!("Browserless failed after {BROWSERLESS_MAX_ATTEMPTS} attempts: {e}"));
+        }
 
-        info!(url, bytes = html.len(), "page: fetched successfully");
-
+        let hash = rootsignal_common::content_hash("").to_string();
         Ok(FetchedPage {
             page: InsertPage {
                 source_id,
                 content_hash: hash,
-                markdown,
-                title,
+                markdown: String::new(),
+                title: None,
                 links: Vec::new(),
             },
-            raw_html: html,
+            raw_html: String::new(),
         })
     }
 }
