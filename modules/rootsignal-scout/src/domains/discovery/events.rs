@@ -17,9 +17,6 @@ pub enum DiscoveryEvent {
         source: SourceNode,
         reason: String,
     },
-    LinksPromoted {
-        count: u32,
-    },
     ExpansionQueryCollected {
         query: String,
         source_url: String,
@@ -48,7 +45,6 @@ impl DiscoveryEvent {
         let variant = match self {
             Self::SourcesDiscovered { .. } => "sources_discovered",
             Self::SourceRejected { .. } => "source_rejected",
-            Self::LinksPromoted { .. } => "links_promoted",
             Self::ExpansionQueryCollected { .. } => "expansion_query_collected",
             Self::SocialTopicCollected { .. } => "social_topic_collected",
             Self::SocialTopicsDiscovered { .. } => "social_topics_discovered",

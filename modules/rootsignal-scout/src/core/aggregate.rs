@@ -307,14 +307,14 @@ impl PipelineState {
     /// Apply a discovery domain event.
     pub fn apply_discovery(&mut self, event: &DiscoveryEvent) {
         match event {
-            DiscoveryEvent::SourcesDiscovered { sources, .. } => {
+            DiscoveryEvent::SourcesDiscovered { sources, discovered_by } => {
                 self.stats.sources_discovered += sources.len() as u32;
+                if discovered_by == "link_promoter" {
+                    self.collected_links.clear();
+                    self.page_previews.clear();
+                }
             }
             DiscoveryEvent::SourceRejected { .. } => {}
-            DiscoveryEvent::LinksPromoted { .. } => {
-                self.collected_links.clear();
-                self.page_previews.clear();
-            }
             DiscoveryEvent::ExpansionQueryCollected { query, .. } => {
                 self.expansion_queries.push(query.clone());
                 self.stats.expansion_queries_collected += 1;

@@ -397,17 +397,11 @@ async fn link_promotion_promotes_links_on_phase_completed() {
         "expected at least 1 SourceRegistered, got: {names:?}"
     );
 
-    // LinksPromoted event emitted
-    assert!(
-        names.iter().any(|n| n.contains("links_promoted")),
-        "expected LinksPromoted, got: {names:?}"
-    );
-
-    // Reducer cleared collected_links on LinksPromoted
+    // Reducer cleared collected_links after link promotion
     let state = engine.singleton::<PipelineState>();
     assert!(
         state.collected_links.is_empty(),
-        "collected_links should be cleared after LinksPromoted"
+        "collected_links should be cleared after link promotion"
     );
 }
 
@@ -433,10 +427,6 @@ async fn link_promotion_skips_when_no_links() {
     assert!(
         !names.iter().any(|n| n.contains("source_registered")),
         "should not emit SourceRegistered with no links, got: {names:?}"
-    );
-    assert!(
-        !names.iter().any(|n| n.contains("links_promoted")),
-        "should not emit LinksPromoted with no links, got: {names:?}"
     );
 }
 
@@ -482,18 +472,14 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
         source_count >= 2,
         "social handles should be promoted even from zero-signal pages, got: {names:?}"
     );
-    assert!(
-        names.iter().any(|n| n.contains("links_promoted")),
-        "LinksPromoted should be emitted, got: {names:?}"
-    );
 }
 
 // ---------------------------------------------------------------------------
-// Page triage: productive page content links promoted without triage
+// Page triage: productive page content links promoted without AI triage
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn productive_page_content_links_promoted_without_triage() {
+async fn productive_page_content_links_promoted_without_ai_triage() {
     let store = Arc::new(MockSignalReader::new());
     // No AI — content links from productive pages should still be promoted
     let (engine, captured, _scope) = test_engine_with_capture_for_store(
@@ -695,11 +681,11 @@ async fn zero_signal_page_triaged_and_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Page triage: AI error fails closed (no content links promoted)
+// Page triage: AI error fails closed (no content links promoted from triage)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn ai_error_fails_closed_no_content_links_promoted() {
+async fn ai_error_fails_closed_no_content_links_promoted_from_triage() {
     use crate::testing::MockAgent;
     let store = Arc::new(MockSignalReader::new());
 
@@ -794,11 +780,11 @@ async fn content_links_capped_per_source() {
 }
 
 // ---------------------------------------------------------------------------
-// Page previews cleared after LinksPromoted
+// Page previews cleared after link promotion
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn page_previews_cleared_after_links_promoted() {
+async fn page_previews_cleared_after_link_promotion() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, _captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
@@ -835,7 +821,7 @@ async fn page_previews_cleared_after_links_promoted() {
     let state = engine.singleton::<PipelineState>();
     assert!(
         state.page_previews.is_empty(),
-        "page_previews should be cleared after LinksPromoted"
+        "page_previews should be cleared after link promotion"
     );
 }
 
@@ -1106,13 +1092,7 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
         "x.com/mplsmutualaid should be promoted from linktree page, got: {promoted_urls:?}"
     );
 
-    // 4. Links promoted event emitted
-    assert!(
-        names.iter().any(|n| n.contains("links_promoted")),
-        "should emit LinksPromoted, got: {names:?}"
-    );
-
-    // 5. Pipeline state: signals extracted and stored
+    // 4. Pipeline state: signals extracted and stored
     drop(events);
     let state = engine.singleton::<PipelineState>();
     assert!(
