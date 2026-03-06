@@ -30,7 +30,8 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let mut all_events = activities::weave_situations(&deps).await;
+        let (_, state) = ctx.singleton::<PipelineState>();
+        let mut all_events = activities::weave_situations(&deps, state.run_scope.region()).await;
         all_events.push(SituationWeavingEvent::SituationsWeaved);
         Ok(all_events)
     }

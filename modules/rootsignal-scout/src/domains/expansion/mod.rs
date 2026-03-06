@@ -30,10 +30,11 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
 
         // Requires region + graph + budget — skip in tests
         let (region, graph, budget) = match (
-            deps.run_scope.region(),
+            state.run_scope.region(),
             deps.graph.as_ref(),
             deps.budget.as_ref(),
         ) {
@@ -87,18 +88,12 @@ pub mod handlers {
                 pub_dates: topic_scrape.pub_dates,
                 query_api_errors: topic_scrape.query_api_errors,
             });
-            all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+            all_events.push(ScrapeEvent::TopicDiscoveryCompleted {
                 run_id,
-                role: ScrapeRole::TopicDiscovery,
-                urls_scraped: 0,
-                urls_unchanged: 0,
-                urls_failed: 0,
-                signals_extracted: 0,
                 source_signal_counts: topic_scrape.source_signal_counts,
                 collected_links: topic_scrape.collected_links,
                 expansion_queries: topic_scrape.expansion_queries,
                 stats_delta: topic_scrape.stats_delta,
-                page_previews: Default::default(),
                 extracted_batches: Vec::new(),
             });
             all_events.extend(scrape_events);

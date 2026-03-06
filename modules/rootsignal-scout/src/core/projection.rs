@@ -175,24 +175,21 @@ pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
                 };
 
                 match lifecycle {
-                    LifecycleEvent::ScoutRunRequested { run_id } => {
-                        let region = deps
-                            .run_scope
+                    LifecycleEvent::ScoutRunRequested { run_id, scope } => {
+                        let region = scope
                             .region()
                             .map(|r| r.name.as_str())
                             .unwrap_or("unknown");
-                        let scope_json = deps
-                            .run_scope
+                        let scope_json = scope
                             .region()
                             .and_then(|r| serde_json::to_value(r).ok());
                         sqlx::query(
-                            "INSERT INTO scout_runs (run_id, region, task_id, scope, started_at) \
-                             VALUES ($1, $2, $3, $4, now()) \
+                            "INSERT INTO scout_runs (run_id, region, scope, started_at) \
+                             VALUES ($1, $2, $3, now()) \
                              ON CONFLICT (run_id) DO NOTHING",
                         )
                         .bind(run_id.to_string())
                         .bind(region)
-                        .bind(deps.task_id.as_deref())
                         .bind(&scope_json)
                         .execute(pool)
                         .await?;

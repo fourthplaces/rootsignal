@@ -13,24 +13,21 @@ use crate::domains::signals::activities::{creation, dedup};
 use crate::domains::signals::events::SignalEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 
-fn is_scrape_role_completed(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. })
+fn is_scrape_completed(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    e.completed_role().is_some()
 }
 
 #[handlers]
 pub mod handlers {
     use super::*;
 
-    /// ScrapeRoleCompleted → run 4-layer dedup on all extracted batches.
-    #[handle(on = ScrapeEvent, id = "signals:dedup", filter = is_scrape_role_completed)]
+    /// Scrape completed → run 4-layer dedup on all extracted batches.
+    #[handle(on = ScrapeEvent, id = "signals:dedup", filter = is_scrape_completed)]
     async fn dedup(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let extracted_batches = match event {
-            ScrapeEvent::ScrapeRoleCompleted { extracted_batches, .. } => extracted_batches,
-            _ => unreachable!("filter guarantees ScrapeRoleCompleted"),
-        };
+        let extracted_batches = event.into_extracted_batches();
 
         if extracted_batches.is_empty() {
             return Ok(Events::new());

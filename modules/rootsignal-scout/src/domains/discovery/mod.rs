@@ -42,9 +42,9 @@ fn response_roles() -> HashSet<ScrapeRole> {
 /// Link promotion filter: fires at tension/response/expansion phase boundaries
 /// when there are links to promote.
 fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    let role = match event {
-        ScrapeEvent::ScrapeRoleCompleted { role, .. } => *role,
-        _ => return false,
+    let role = match event.completed_role() {
+        Some(r) => r,
+        None => return false,
     };
     let (_, state) = ctx.singleton::<PipelineState>();
     if state.collected_links.is_empty() {
@@ -59,7 +59,7 @@ fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> 
 
 /// Source expansion filter: fires when tension roles done + expansion not yet run.
 fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(event, ScrapeEvent::ScrapeRoleCompleted { .. }) {
+    if event.completed_role().is_none() {
         return false;
     }
     let (_, state) = ctx.singleton::<PipelineState>();
@@ -90,7 +90,8 @@ pub mod handlers {
         }
 
         let deps = ctx.deps();
-        let region_name = deps.run_scope.region().map(|r| r.name.clone());
+        let (_, state) = ctx.singleton::<PipelineState>();
+        let region_name = state.run_scope.region().map(|r| r.name.clone());
         let ai = deps.ai.as_deref();
 
         let events = activities::domain_filter_gate::filter_discovered_sources(
@@ -117,7 +118,7 @@ pub mod handlers {
         Ok(events)
     }
 
-    /// ScrapeRoleCompleted → promote links from collected pages.
+    /// Scrape completed → promote links from collected pages.
     ///
     /// Filter gates on: tension_roles or response_roles done + links not empty.
     /// Two-path gate:
@@ -306,7 +307,7 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// ScrapeRoleCompleted → expand source pool when tension roles done.
+    /// Scrape completed → expand source pool when tension roles done.
     /// Emits SourceExpansionCompleted or SourceExpansionSkipped.
     #[handle(on = ScrapeEvent, id = "discovery:source_expansion", filter = tension_done_expansion_pending)]
     async fn source_expansion(
@@ -315,10 +316,11 @@ pub mod handlers {
     ) -> Result<Events> {
         info!("=== Source Expansion ===");
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
 
         // Requires graph + budget — skip in tests
         let (region, graph, budget) = match (
-            deps.run_scope.region(),
+            state.run_scope.region(),
             deps.graph.as_ref(),
             deps.budget.as_ref(),
         ) {

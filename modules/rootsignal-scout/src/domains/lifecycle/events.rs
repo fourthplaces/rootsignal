@@ -1,12 +1,14 @@
 //! Lifecycle domain events: engine start, run completion.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use uuid::Uuid;
 
 use crate::core::aggregate::SourcePlan;
+use crate::core::run_scope::RunScope;
 use crate::core::stats::ScoutStats;
 use rootsignal_common::types::ActorContext;
 
@@ -15,6 +17,8 @@ use rootsignal_common::types::ActorContext;
 pub enum LifecycleEvent {
     ScoutRunRequested {
         run_id: Uuid,
+        #[serde(default)]
+        scope: RunScope,
     },
     SourcesPrepared {
         tension_count: u32,
@@ -22,6 +26,11 @@ pub enum LifecycleEvent {
         source_plan: SourcePlan,
         actor_contexts: HashMap<String, ActorContext>,
         url_mappings: HashMap<String, String>,
+        web_urls: Vec<String>,
+        web_source_keys: HashMap<String, Uuid>,
+        web_source_count: u32,
+        pub_dates: HashMap<String, DateTime<Utc>>,
+        query_api_errors: HashSet<String>,
     },
     RunCompleted {
         stats: ScoutStats,

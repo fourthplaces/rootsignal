@@ -93,10 +93,11 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = deps.run_id;
 
         let (region, graph, budget, archive) = match (
-            deps.run_scope.region(),
+            state.run_scope.region(),
             deps.graph.as_ref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
@@ -241,10 +242,11 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = deps.run_id;
 
         let (region, graph, budget, archive) = match (
-            deps.run_scope.region(),
+            state.run_scope.region(),
             deps.graph.as_ref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
@@ -374,10 +376,11 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = deps.run_id;
 
         let (region, graph, budget, archive) = match (
-            deps.run_scope.region(),
+            state.run_scope.region(),
             deps.graph.as_ref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
@@ -479,10 +482,11 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = deps.run_id;
 
         let (region, graph, budget, archive) = match (
-            deps.run_scope.region(),
+            state.run_scope.region(),
             deps.graph.as_ref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
@@ -575,10 +579,11 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = deps.run_id;
 
         let (region, graph, budget) = match (
-            deps.run_scope.region(),
+            state.run_scope.region(),
             deps.graph.as_ref(),
             deps.budget.as_ref(),
         ) {
@@ -673,8 +678,9 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
 
-        let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
+        let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped severity inference: missing region or graph");

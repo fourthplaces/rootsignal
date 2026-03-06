@@ -1,6 +1,6 @@
 //! Scrape domain events: content fetching, extraction, social scraping.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -34,29 +34,22 @@ pub enum ScrapeEvent {
         web_source_count: u32,
         url_mappings: HashMap<String, String>,
         pub_dates: HashMap<String, DateTime<Utc>>,
-        query_api_errors: HashSet<String>,
+        query_api_errors: std::collections::HashSet<String>,
     },
-    /// A scrape sub-phase completed fetch+extract.
-    ScrapeRoleCompleted {
+    /// Web scrape handler completed fetch+extract for a batch of URLs.
+    WebScrapeCompleted {
         run_id: Uuid,
         role: ScrapeRole,
         urls_scraped: u32,
         urls_unchanged: u32,
         urls_failed: u32,
         signals_extracted: u32,
-        /// Accumulated per-source signal counts from this role's scrape.
         #[serde(default)]
         source_signal_counts: HashMap<String, u32>,
-        /// Links collected during this role's scrape for promotion.
         #[serde(default)]
         collected_links: Vec<CollectedLink>,
-        /// Expansion queries extracted from signals during this role's scrape.
         #[serde(default)]
         expansion_queries: Vec<String>,
-        /// Social/discovery stats delta from this role's scrape.
-        #[serde(default)]
-        stats_delta: StatsDelta,
-        /// Content previews (first 500 chars) keyed by URL, for page triage.
         #[serde(default)]
         page_previews: HashMap<String, String>,
         /// Extracted batches per URL — in-memory only, skipped during serialization.
@@ -64,13 +57,62 @@ pub enum ScrapeEvent {
         #[serde(skip)]
         extracted_batches: Vec<UrlExtraction>,
     },
+    /// Social scrape handler completed fetch+extract for social sources.
+    SocialScrapeCompleted {
+        run_id: Uuid,
+        role: ScrapeRole,
+        sources_scraped: u32,
+        signals_extracted: u32,
+        #[serde(default)]
+        source_signal_counts: HashMap<String, u32>,
+        #[serde(default)]
+        collected_links: Vec<CollectedLink>,
+        #[serde(default)]
+        expansion_queries: Vec<String>,
+        #[serde(default)]
+        stats_delta: StatsDelta,
+        #[serde(skip)]
+        extracted_batches: Vec<UrlExtraction>,
+    },
+    /// Topic discovery handler completed discovery from social topics.
+    TopicDiscoveryCompleted {
+        run_id: Uuid,
+        #[serde(default)]
+        source_signal_counts: HashMap<String, u32>,
+        #[serde(default)]
+        collected_links: Vec<CollectedLink>,
+        #[serde(default)]
+        expansion_queries: Vec<String>,
+        #[serde(default)]
+        stats_delta: StatsDelta,
+        #[serde(skip)]
+        extracted_batches: Vec<UrlExtraction>,
+    },
+    /// Response scrape skipped entirely (missing region or graph).
+    /// Reducer marks all 3 response roles as completed so downstream gates pass.
+    ResponseScrapeSkipped {
+        reason: String,
+    },
 }
 
 impl ScrapeEvent {
-    pub fn run_id(&self) -> Uuid {
+    /// The scrape role completed by this event, if any.
+    pub fn completed_role(&self) -> Option<ScrapeRole> {
         match self {
-            Self::SourcesResolved { run_id, .. }
-            | Self::ScrapeRoleCompleted { run_id, .. } => *run_id,
+            Self::WebScrapeCompleted { role, .. } => Some(*role),
+            Self::SocialScrapeCompleted { role, .. } => Some(*role),
+            Self::TopicDiscoveryCompleted { .. } => Some(ScrapeRole::TopicDiscovery),
+            _ => None,
+        }
+    }
+
+    /// Extract the in-memory batches from a completion event (consumes self).
+    pub fn into_extracted_batches(self) -> Vec<UrlExtraction> {
+        match self {
+            Self::WebScrapeCompleted { extracted_batches, .. } => extracted_batches,
+            Self::SocialScrapeCompleted { extracted_batches, .. } => extracted_batches,
+            Self::TopicDiscoveryCompleted { extracted_batches, .. } => extracted_batches,
+            _ => Vec::new(),
         }
     }
 }

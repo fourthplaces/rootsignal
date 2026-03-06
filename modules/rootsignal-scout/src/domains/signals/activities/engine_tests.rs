@@ -22,25 +22,21 @@ use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
 use seesaw_core::AnyEvent;
 
-/// Emit a no-op TensionSocial ScrapeRoleCompleted to complete the tension roles set.
+/// Emit an empty TensionSocial to complete the tension roles set.
 /// Link promotion filter requires both TensionWeb + TensionSocial in completed_scrape_roles.
 async fn complete_tension_roles(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder().role(ScrapeRole::TensionSocial).build()))
+        .emit(empty_social_scrape(ScrapeRole::TensionSocial))
         .settled()
         .await
         .unwrap();
 }
 
-/// Emit all 3 response ScrapeRoleCompleted events to complete the response roles set.
+/// Emit response completion events to complete the response roles set.
 async fn complete_response_roles(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
-    for role in [ScrapeRole::ResponseWeb, ScrapeRole::ResponseSocial, ScrapeRole::TopicDiscovery] {
-        engine
-            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder().role(role).build()))
-            .settled()
-            .await
-            .unwrap();
-    }
+    engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().role(ScrapeRole::ResponseWeb).build())).settled().await.unwrap();
+    engine.emit(empty_social_scrape(ScrapeRole::ResponseSocial)).settled().await.unwrap();
+    engine.emit(empty_topic_discovery()).settled().await.unwrap();
 }
 
 /// Helper: collect event variant names from captured events.
@@ -70,12 +66,12 @@ fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: build a ScrapeRoleCompleted carrying an extracted batch
+// Helper: build a WebScrapeCompleted carrying an extracted batch
 // ---------------------------------------------------------------------------
 
 fn scrape_completed_with_batch(url: &str, canonical_key: &str, batch: ExtractedBatch) -> ScrapeEvent {
     let signals = batch.nodes.len() as u32;
-    TestScrapeRoleCompleted::builder()
+    TestWebScrapeCompleted::builder()
         .role(ScrapeRole::TensionWeb)
         .urls_scraped(1)
         .signals_extracted(signals)
@@ -89,13 +85,13 @@ fn scrape_completed_with_batch(url: &str, canonical_key: &str, batch: ExtractedB
 }
 
 // ---------------------------------------------------------------------------
-// New signal via ScrapeRoleCompleted — full dedup + creation chain
+// New signal via WebScrapeCompleted — full dedup + creation chain
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn new_signal_dispatches_full_event_chain() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -164,7 +160,7 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
         NodeType::Concern,
         "https://other-source.org/events",
     );
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -212,7 +208,7 @@ async fn same_source_reencounter_dispatches_citation_and_freshness() {
         NodeType::Concern,
         "https://example.org/events",
     );
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -247,13 +243,13 @@ async fn same_source_reencounter_dispatches_citation_and_freshness() {
 }
 
 // ---------------------------------------------------------------------------
-// ScrapeRoleCompleted with batch — dedup + creation chain
+// WebScrapeCompleted with batch — dedup + creation chain
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn scrape_completed_dispatches_dedup_and_creation_chain() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -301,7 +297,7 @@ async fn scrape_completed_dispatches_dedup_and_creation_chain() {
 }
 
 // ---------------------------------------------------------------------------
-// ScrapeRoleCompleted with existing title — dedup reencounter path
+// WebScrapeCompleted with existing title — dedup reencounter path
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -313,7 +309,7 @@ async fn scrape_completed_with_existing_title_emits_freshness() {
         NodeType::Concern,
         "https://example.org/events",
     );
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -359,14 +355,14 @@ async fn scrape_completed_with_existing_title_emits_freshness() {
 #[tokio::test]
 async fn link_promotion_promotes_links_on_phase_completed() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
-    // Seed collected links via ScrapeRoleCompleted (simulates links found during scraping)
+    // Seed collected links via WebScrapeCompleted (simulates links found during scraping)
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .collected_links(vec![
                 CollectedLink {
@@ -422,7 +418,7 @@ async fn link_promotion_promotes_links_on_phase_completed() {
 #[tokio::test]
 async fn link_promotion_skips_when_no_links() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -451,14 +447,14 @@ async fn link_promotion_skips_when_no_links() {
 #[tokio::test]
 async fn social_handles_always_promoted_from_zero_signal_pages() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
     // Seed links from a page with zero signals — no source_signal_counts entry
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .collected_links(vec![
@@ -500,7 +496,7 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
 async fn productive_page_content_links_promoted_without_triage() {
     let store = Arc::new(MockSignalReader::new());
     // No AI — content links from productive pages should still be promoted
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -511,7 +507,7 @@ async fn productive_page_content_links_promoted_without_triage() {
     signal_counts.insert("https://hub-page.org/resources".to_string(), 3u32);
 
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .signals_extracted(3)
@@ -551,14 +547,14 @@ async fn productive_page_content_links_promoted_without_triage() {
 async fn zero_signal_page_content_links_not_promoted_without_ai() {
     let store = Arc::new(MockSignalReader::new());
     // No AI configured — zero-signal pages should be fail-closed
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
     // Seed only non-social links from a zero-signal page
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .collected_links(vec![
@@ -600,14 +596,14 @@ async fn zero_signal_page_triaged_and_promoted() {
         ]
     })));
 
-    let (engine, captured) = test_engine_with_ai(
+    let (engine, captured, _scope) = test_engine_with_ai(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         ai,
         Some(mpls_region()),
     );
 
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .collected_links(vec![
@@ -665,14 +661,14 @@ async fn zero_signal_page_triaged_and_rejected() {
         ]
     })));
 
-    let (engine, captured) = test_engine_with_ai(
+    let (engine, captured, _scope) = test_engine_with_ai(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         ai,
         Some(mpls_region()),
     );
 
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .collected_links(vec![
@@ -722,14 +718,14 @@ async fn ai_error_fails_closed_no_content_links_promoted() {
     // Mock AI configured to fail
     let ai = Arc::new(MockAgent::failing());
 
-    let (engine, captured) = test_engine_with_ai(
+    let (engine, captured, _scope) = test_engine_with_ai(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         ai,
         Some(mpls_region()),
     );
 
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .collected_links(vec![
@@ -774,7 +770,7 @@ async fn ai_error_fails_closed_no_content_links_promoted() {
 #[tokio::test]
 async fn content_links_capped_per_source() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -788,7 +784,7 @@ async fn content_links_capped_per_source() {
         .collect();
 
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .signals_extracted(5)
@@ -822,13 +818,13 @@ async fn content_links_capped_per_source() {
 #[tokio::test]
 async fn page_previews_cleared_after_links_promoted() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, _captured) = test_engine_with_capture_for_store(
+    let (engine, _captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
     engine
-        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+        .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
             .role(ScrapeRole::TensionWeb)
             .urls_scraped(1)
             .collected_links(vec![
@@ -849,7 +845,7 @@ async fn page_previews_cleared_after_links_promoted() {
     let state = engine.singleton::<PipelineState>();
     assert!(
         !state.page_previews.is_empty(),
-        "page_previews should be populated after ScrapeRoleCompleted"
+        "page_previews should be populated after WebScrapeCompleted"
     );
 
     complete_tension_roles(&engine).await;
@@ -925,7 +921,7 @@ async fn actor_location_emits_events_on_response_complete() {
         .unwrap();
 
     // Build engine with this store so the handler can read actors + signals
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -1043,7 +1039,7 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
     })));
 
     // ENGINE: source-targeted run — real Extractor, real link promotion, real dispatch
-    let (engine, captured) = test_engine_for_source_run(
+    let (engine, captured, scope) = test_engine_for_source_run(
         store.clone() as Arc<dyn crate::traits::SignalReader>,
         vec![web_query_source(query)],
         Arc::new(fetcher),
@@ -1054,6 +1050,7 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
     engine
         .emit(LifecycleEvent::ScoutRunRequested {
             run_id: Uuid::new_v4(),
+            scope,
         })
         .settled()
         .await
@@ -1063,19 +1060,15 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
     let names = event_names(&captured);
     let events = captured.lock().unwrap();
 
-    // 1. SERP resolved all 3 linktree URLs
+    // 1. SERP resolved all 3 linktree URLs (carried on SourcesPrepared)
     let resolved_urls = events
         .iter()
-        .filter_map(|e| e.downcast_ref::<ScrapeEvent>())
+        .filter_map(|e| e.downcast_ref::<LifecycleEvent>())
         .find_map(|e| match e {
-            ScrapeEvent::SourcesResolved {
-                web_role: ScrapeRole::TensionWeb,
-                web_urls,
-                ..
-            } => Some(web_urls.clone()),
+            LifecycleEvent::SourcesPrepared { web_urls, .. } => Some(web_urls.clone()),
             _ => None,
         })
-        .expect("should emit SourcesResolved(TensionWeb)");
+        .expect("should emit SourcesPrepared with web_urls");
     assert_eq!(
         resolved_urls.len(),
         3,
@@ -1087,14 +1080,14 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
         .iter()
         .filter_map(|e| e.downcast_ref::<ScrapeEvent>())
         .find_map(|e| match e {
-            ScrapeEvent::ScrapeRoleCompleted {
+            ScrapeEvent::WebScrapeCompleted {
                 role: ScrapeRole::TensionWeb,
                 urls_scraped,
                 ..
             } => Some(*urls_scraped),
             _ => None,
         })
-        .expect("should emit ScrapeRoleCompleted(TensionWeb)");
+        .expect("should emit WebScrapeCompleted(TensionWeb)");
     assert_eq!(urls_scraped, 3, "should scrape all 3 linktree pages");
 
     // 3. Social handles extracted from page links and promoted as sources

@@ -15,6 +15,7 @@ use tracing::{info, warn};
 
 use rootsignal_scout::core::engine;
 use rootsignal_scout::core::postgres_store::PostgresStore;
+use rootsignal_scout::core::run_scope::RunScope;
 use seesaw_core::store::Store;
 use rootsignal_scout::domains::lifecycle::events::LifecycleEvent;
 use rootsignal_scout::workflows::ScoutDeps;
@@ -68,9 +69,10 @@ impl ScoutRunner {
         tokio::spawn(async move {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "bootstrap", None, &scope).await;
 
-            let engine = deps.build_scrape_engine(&scope, run_id, None);
+            let run_scope = RunScope::Region(scope.clone());
+            let engine = deps.build_scrape_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -97,9 +99,10 @@ impl ScoutRunner {
         tokio::spawn(async move {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "scrape", None, &scope).await;
 
-            let engine = deps.build_scrape_engine(&scope, run_id, None);
+            let run_scope = RunScope::Region(scope.clone());
+            let engine = deps.build_scrape_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -126,9 +129,10 @@ impl ScoutRunner {
         tokio::spawn(async move {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "weave", None, &scope).await;
 
-            let engine = deps.build_weave_engine(&scope, run_id, None);
+            let run_scope = RunScope::Region(scope.clone());
+            let engine = deps.build_weave_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -169,9 +173,13 @@ impl ScoutRunner {
 
             early_insert_flow_run(&deps, run_id, None, "scout_source", source_ids_json.as_ref(), &metadata_scope).await;
 
-            let engine = deps.build_source_engine(region.as_ref(), run_id, sources);
+            let run_scope = RunScope::Sources {
+                sources: sources.clone(),
+                region: region.as_ref().map(ScoutScope::from),
+            };
+            let engine = deps.build_source_engine(region.as_ref(), run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -221,7 +229,7 @@ impl ScoutRunner {
     /// queue entries, rebuilds engines, and calls `settle()` to finish them.
     pub async fn resume_incomplete_runs(&self) {
         let rows = match sqlx::query_as::<_, IncompleteRun>(
-            "SELECT run_id, task_id, scope FROM scout_runs WHERE finished_at IS NULL",
+            "SELECT run_id, scope FROM scout_runs WHERE finished_at IS NULL",
         )
         .fetch_all(&self.deps.pg_pool)
         .await
@@ -289,7 +297,6 @@ impl ScoutRunner {
 
             let store_arc = Arc::new(store) as Arc<dyn seesaw_core::Store>;
             let deps = self.deps.clone();
-            let task_id = run.task_id.clone();
 
             info!(%run_id, "Resuming incomplete run");
 
@@ -297,7 +304,6 @@ impl ScoutRunner {
                 let engine_deps = deps.build_engine_deps_for_resume(
                     &scope,
                     run_id,
-                    task_id.as_deref(),
                 );
                 let engine = engine::build_full_engine(engine_deps, Some(store_arc));
 
@@ -316,7 +322,6 @@ impl ScoutRunner {
 #[derive(sqlx::FromRow)]
 struct IncompleteRun {
     run_id: String,
-    task_id: Option<String>,
     scope: Option<serde_json::Value>,
 }
 
@@ -330,9 +335,10 @@ async fn early_insert_flow_run(
     scope: &ScoutScope,
 ) {
     let scope_json = serde_json::to_value(scope).ok();
+    let task_id = std::env::var("FLY_MACHINE_ID").ok();
     if let Err(e) = sqlx::query(
-        "INSERT INTO scout_runs (run_id, region, region_id, flow_type, source_ids, scope, started_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, now()) \
+        "INSERT INTO scout_runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now()) \
          ON CONFLICT (run_id) DO NOTHING",
     )
     .bind(run_id.to_string())
@@ -341,6 +347,7 @@ async fn early_insert_flow_run(
     .bind(flow_type)
     .bind(source_ids)
     .bind(&scope_json)
+    .bind(task_id.as_deref())
     .execute(&deps.pg_pool)
     .await
     {

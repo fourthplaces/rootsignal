@@ -3,11 +3,12 @@
 pub mod activities;
 pub mod events;
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
-
-
+use uuid::Uuid;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -33,6 +34,10 @@ fn is_supervision_done(e: &SupervisorEvent, _ctx: &Context<ScoutEngineDeps>) -> 
     )
 }
 
+fn build_source_keys(sources: &[rootsignal_common::SourceNode]) -> HashMap<String, Uuid> {
+    sources.iter().map(|s| (s.canonical_key.clone(), s.id)).collect()
+}
+
 #[handlers]
 pub mod handlers {
     use super::*;
@@ -55,20 +60,21 @@ pub mod handlers {
         }])
     }
 
-    /// ScoutRunRequested → load + select sources, emit SourcesPrepared.
+    /// ScoutRunRequested → build source plan, resolve web URLs, emit SourcesPrepared.
     #[handle(on = LifecycleEvent, id = "lifecycle:prepare_sources", filter = is_scout_run_requested)]
     async fn prepare_sources(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
 
         // Branch on run modality
-        let output = match deps.run_scope.input_sources() {
+        let mut output = match state.run_scope.input_sources() {
             // Source-targeted runs: scrape these specific URLs
             Some(sources) => activities::build_source_plan_from_list(sources),
             // Region runs: load sources from graph, select by cadence
-            None => match (deps.run_scope.region(), deps.graph.as_ref()) {
+            None => match (state.run_scope.region(), deps.graph.as_ref()) {
                 (Some(region), Some(graph)) => {
                     activities::build_source_plan_from_region(graph, region).await
                 }
@@ -79,6 +85,33 @@ pub mod handlers {
             },
         };
 
+        info!("=== Phase A: Find Problems ===");
+
+        let web_sources: Vec<rootsignal_common::SourceNode> = output.source_plan
+            .selected_sources
+            .iter()
+            .filter(|s| {
+                output.source_plan.tension_phase_keys.contains(&s.canonical_key)
+                    && !matches!(
+                        rootsignal_common::scraping_strategy(s.value()),
+                        rootsignal_common::ScrapingStrategy::Social(_)
+                    )
+            })
+            .cloned()
+            .collect();
+
+        let web_source_refs: Vec<&rootsignal_common::SourceNode> = web_sources.iter().collect();
+        let resolution = crate::domains::scrape::activities::url_resolution::resolve_web_urls(
+            deps,
+            &web_source_refs,
+            &output.url_mappings,
+        ).await;
+
+        let web_source_keys = build_source_keys(&web_sources);
+
+        // Merge resolution url_mappings (redirects) into source url_mappings
+        output.url_mappings.extend(resolution.url_mappings);
+
         Ok(events![
             LifecycleEvent::SourcesPrepared {
                 tension_count: output.tension_count,
@@ -86,6 +119,11 @@ pub mod handlers {
                 source_plan: output.source_plan,
                 actor_contexts: output.actor_contexts,
                 url_mappings: output.url_mappings,
+                web_urls: resolution.urls,
+                web_source_keys,
+                web_source_count: resolution.source_count,
+                pub_dates: resolution.pub_dates,
+                query_api_errors: resolution.query_api_errors,
             },
         ])
     }
@@ -153,16 +191,13 @@ mod tests {
     use crate::core::engine::{build_engine, ScoutEngineDeps};
     use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
 
-    fn build_test_engine(
-        task_id: Option<&str>,
-    ) -> (seesaw_core::Engine<ScoutEngineDeps>, Arc<Mutex<Vec<AnyEvent>>>) {
+    fn build_test_engine() -> (seesaw_core::Engine<ScoutEngineDeps>, Arc<Mutex<Vec<AnyEvent>>>) {
         let sink = Arc::new(Mutex::new(Vec::new()));
         let mut deps = ScoutEngineDeps::new(
             Arc::new(crate::testing::MockSignalReader::new()),
             Arc::new(crate::infra::embedder::NoOpEmbedder),
             uuid::Uuid::new_v4(),
         );
-        deps.task_id = task_id.map(String::from);
         deps.captured_events = Some(sink.clone());
         let engine = build_engine(deps, None);
         (engine, sink)
@@ -181,7 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn finalize_emits_run_completed() {
-        let (engine, sink) = build_test_engine(Some("task-1"));
+        let (engine, sink) = build_test_engine();
 
         // Emit all synthesis role completions to trigger finalize
         for event in all_synthesis_role_completed_events() {
@@ -200,7 +235,7 @@ mod tests {
     async fn handler_failure_counted_in_run_completed_stats() {
         use crate::core::pipeline_events::PipelineEvent;
 
-        let (engine, sink) = build_test_engine(Some("task-1"));
+        let (engine, sink) = build_test_engine();
 
         engine
             .emit(PipelineEvent::HandlerFailed {

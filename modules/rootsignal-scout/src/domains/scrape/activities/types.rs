@@ -18,7 +18,7 @@ pub(crate) use crate::domains::signals::activities::dedup_utils::{
     DedupVerdict,
 };
 
-/// Per-URL extraction result carried on ScrapeRoleCompleted (in-memory only).
+/// Per-URL extraction result carried on scrape completion events (in-memory only).
 #[derive(Debug, Clone)]
 pub struct UrlExtraction {
     pub url: String,
@@ -96,6 +96,22 @@ impl ScrapeOutput {
         self.stats_delta.discovery_posts_found += other.stats_delta.discovery_posts_found;
         self.stats_delta.discovery_accounts_found += other.stats_delta.discovery_accounts_found;
         self.extracted_batches.extend(other.extracted_batches);
+    }
+}
+
+impl From<(UrlResolution, FetchExtractResult)> for ScrapeOutput {
+    fn from((resolution, fetch): (UrlResolution, FetchExtractResult)) -> Self {
+        Self {
+            events: fetch.events,
+            url_mappings: resolution.url_mappings,
+            source_signal_counts: fetch.source_signal_counts,
+            query_api_errors: resolution.query_api_errors,
+            pub_dates: resolution.pub_dates,
+            collected_links: fetch.collected_links,
+            expansion_queries: fetch.expansion_queries,
+            stats_delta: StatsDelta::default(),
+            extracted_batches: fetch.extracted_batches,
+        }
     }
 }
 

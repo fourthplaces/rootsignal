@@ -15,6 +15,7 @@ use uuid::Uuid;
 use rootsignal_common::Node;
 
 use crate::core::pipeline_events::PipelineEvent;
+use crate::core::run_scope::RunScope;
 use crate::domains::scrape::events::ScrapeRole;
 use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
 use crate::domains::expansion::events::ExpansionEvent;
@@ -53,6 +54,10 @@ pub struct SourcePlanOutput {
 /// Mutable state for a scout run, updated by the reducer.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PipelineState {
+    /// Run scope: geographic/source context for this run.
+    #[serde(default)]
+    pub run_scope: RunScope,
+
     /// URL → source canonical_key resolution map.
     pub url_to_canonical_key: HashMap<String, String>,
 
@@ -110,7 +115,7 @@ pub struct PipelineState {
     pub source_expansion_completed: bool,
 }
 
-/// A batch of extracted nodes for a single URL, carried on `ScrapeRoleCompleted`
+/// A batch of extracted nodes for a single URL, carried on scrape completion events
 /// as in-memory data for the dedup handler.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedBatch {
@@ -146,6 +151,7 @@ pub struct WiringContext {
 impl PipelineState {
     pub fn new(url_to_canonical_key: HashMap<String, String>) -> Self {
         Self {
+            run_scope: RunScope::default(),
             url_to_canonical_key,
             source_signal_counts: HashMap::new(),
             expansion_queries: Vec::new(),
@@ -200,7 +206,7 @@ impl PipelineState {
                 self.url_to_pub_date.extend(pub_dates.clone());
                 self.query_api_errors.extend(query_api_errors.clone());
             }
-            ScrapeEvent::ScrapeRoleCompleted {
+            ScrapeEvent::WebScrapeCompleted {
                 role,
                 urls_scraped,
                 urls_unchanged,
@@ -209,28 +215,66 @@ impl PipelineState {
                 source_signal_counts,
                 collected_links,
                 expansion_queries,
-                stats_delta,
                 page_previews,
                 ..
             } => {
+                self.completed_scrape_roles.insert(*role);
                 self.stats.urls_scraped += urls_scraped;
                 self.stats.urls_unchanged += urls_unchanged;
                 self.stats.urls_failed += urls_failed;
                 self.stats.signals_extracted += signals_extracted;
-                self.completed_scrape_roles.insert(*role);
                 for (k, v) in source_signal_counts {
                     *self.source_signal_counts.entry(k.clone()).or_default() += v;
                 }
                 self.collected_links.extend(collected_links.clone());
                 self.expansion_queries.extend(expansion_queries.clone());
                 self.page_previews.extend(page_previews.clone());
+            }
+            ScrapeEvent::SocialScrapeCompleted {
+                role,
+                signals_extracted,
+                source_signal_counts,
+                collected_links,
+                expansion_queries,
+                stats_delta,
+                sources_scraped,
+                ..
+            } => {
+                self.completed_scrape_roles.insert(*role);
+                self.stats.urls_scraped += sources_scraped;
+                self.stats.signals_extracted += signals_extracted;
+                for (k, v) in source_signal_counts {
+                    *self.source_signal_counts.entry(k.clone()).or_default() += v;
+                }
+                self.collected_links.extend(collected_links.clone());
+                self.expansion_queries.extend(expansion_queries.clone());
                 self.stats.social_media_posts += stats_delta.social_media_posts;
                 self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
                 self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
-                if *role == ScrapeRole::TopicDiscovery {
-                    self.social_topics.clear();
-                    self.social_expansion_topics.clear();
+            }
+            ScrapeEvent::TopicDiscoveryCompleted {
+                source_signal_counts,
+                collected_links,
+                expansion_queries,
+                stats_delta,
+                ..
+            } => {
+                self.completed_scrape_roles.insert(ScrapeRole::TopicDiscovery);
+                for (k, v) in source_signal_counts {
+                    *self.source_signal_counts.entry(k.clone()).or_default() += v;
                 }
+                self.collected_links.extend(collected_links.clone());
+                self.expansion_queries.extend(expansion_queries.clone());
+                self.stats.social_media_posts += stats_delta.social_media_posts;
+                self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
+                self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
+                self.social_topics.clear();
+                self.social_expansion_topics.clear();
+            }
+            ScrapeEvent::ResponseScrapeSkipped { .. } => {
+                self.completed_scrape_roles.insert(ScrapeRole::ResponseWeb);
+                self.completed_scrape_roles.insert(ScrapeRole::ResponseSocial);
+                self.completed_scrape_roles.insert(ScrapeRole::TopicDiscovery);
             }
         }
     }
@@ -333,14 +377,21 @@ impl PipelineState {
     /// Apply a lifecycle domain event.
     pub fn apply_lifecycle(&mut self, event: &LifecycleEvent) {
         match event {
+            LifecycleEvent::ScoutRunRequested { scope, .. } => {
+                self.run_scope = scope.clone();
+            }
             LifecycleEvent::SourcesPrepared {
                 source_plan,
                 actor_contexts,
                 url_mappings,
+                pub_dates,
+                query_api_errors,
                 ..
             } => {
                 self.actor_contexts.extend(actor_contexts.clone());
                 self.url_to_canonical_key.extend(url_mappings.clone());
+                self.url_to_pub_date.extend(pub_dates.clone());
+                self.query_api_errors.extend(query_api_errors.clone());
                 self.source_plan = Some(source_plan.clone());
             }
             _ => {}

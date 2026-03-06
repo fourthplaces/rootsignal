@@ -21,7 +21,6 @@ use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::scrape::activities::StatsDelta;
 
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
@@ -53,69 +52,28 @@ fn build_source_keys(sources: &[rootsignal_common::SourceNode]) -> HashMap<Strin
 pub mod handlers {
     use super::*;
 
-    /// SourcesPrepared → resolve tension URLs, emit SourcesResolved.
-    #[handle(on = LifecycleEvent, id = "scrape:resolve_tension", filter = is_sources_prepared)]
-    async fn resolve_tension(
-        _event: LifecycleEvent,
+    // -----------------------------------------------------------------------
+    // Phase A handlers — triggered by SourcesPrepared
+    // -----------------------------------------------------------------------
+
+    /// SourcesPrepared → fetch + extract web pages.
+    #[handle(on = LifecycleEvent, id = "scrape:fetch_web", filter = is_sources_prepared)]
+    async fn fetch_web(
+        event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        info!("=== Phase A: Find Problems ===");
-        let deps = ctx.deps();
-
-        let (_, state) = ctx.singleton::<PipelineState>();
-        let run_id = deps.run_id;
-
-        let plan = state.source_plan.as_ref().expect("source plan stashed");
-
-        let tension_web: Vec<rootsignal_common::SourceNode> = plan
-            .selected_sources
-            .iter()
-            .filter(|s| {
-                plan.tension_phase_keys.contains(&s.canonical_key)
-                    && !matches!(
-                        rootsignal_common::scraping_strategy(s.value()),
-                        rootsignal_common::ScrapingStrategy::Social(_)
-                    )
-            })
-            .cloned()
-            .collect();
-
-        let tension_web_refs: Vec<&rootsignal_common::SourceNode> = tension_web.iter().collect();
-        let resolution = activities::url_resolution::resolve_web_urls(
-            deps,
-            &tension_web_refs,
-            &state.url_to_canonical_key,
-        ).await;
-
-        let tension_web_keys = build_source_keys(&tension_web);
-
-        Ok(events![ScrapeEvent::SourcesResolved {
-            run_id,
-            web_role: ScrapeRole::TensionWeb,
-            web_urls: resolution.urls,
-            web_source_keys: tension_web_keys,
-            web_source_count: resolution.source_count,
-            url_mappings: resolution.url_mappings,
-            pub_dates: resolution.pub_dates,
-            query_api_errors: resolution.query_api_errors,
-        }])
-    }
-
-    /// SourcesResolved → fetch + extract all URLs in batch, emit ScrapeRoleCompleted.
-    #[handle(on = ScrapeEvent, id = "scrape:scrape_web", filter = is_sources_resolved)]
-    async fn scrape_web(
-        event: ScrapeEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (run_id, role, urls, source_keys) = match event {
-            ScrapeEvent::SourcesResolved { run_id, web_role, web_urls, web_source_keys, .. } => (run_id, web_role, web_urls, web_source_keys),
-            _ => unreachable!("filter guarantees SourcesResolved"),
+        let (urls, source_keys) = match event {
+            LifecycleEvent::SourcesPrepared { web_urls, web_source_keys, .. } => (web_urls, web_source_keys),
+            _ => unreachable!("filter guarantees SourcesPrepared"),
         };
 
-        info!(?role, url_count = urls.len(), "Scraping web URLs for role");
+        let run_id = ctx.deps().run_id;
+        let role = ScrapeRole::TensionWeb;
+
+        info!(?role, url_count = urls.len(), "Fetching web pages");
 
         if urls.is_empty() {
-            return Ok(events![ScrapeEvent::ScrapeRoleCompleted {
+            return Ok(events![ScrapeEvent::WebScrapeCompleted {
                 run_id,
                 role,
                 urls_scraped: 0,
@@ -125,7 +83,6 @@ pub mod handlers {
                 source_signal_counts: Default::default(),
                 collected_links: Default::default(),
                 expansion_queries: Default::default(),
-                stats_delta: Default::default(),
                 page_previews: Default::default(),
                 extracted_batches: Default::default(),
             }]);
@@ -145,7 +102,7 @@ pub mod handlers {
 
         let mut all_events = Events::new();
         all_events.extend(fetch_result.events);
-        all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+        all_events.push(ScrapeEvent::WebScrapeCompleted {
             run_id,
             role,
             urls_scraped: fetch_result.stats.urls_scraped,
@@ -155,7 +112,6 @@ pub mod handlers {
             source_signal_counts: fetch_result.source_signal_counts,
             collected_links: fetch_result.collected_links,
             expansion_queries: fetch_result.expansion_queries,
-            stats_delta: StatsDelta::default(),
             page_previews: fetch_result.page_previews,
             extracted_batches: fetch_result.extracted_batches,
         });
@@ -163,65 +119,41 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// SourcesResolved → scrape all social sources in batch, emit ScrapeRoleCompleted.
-    #[handle(on = ScrapeEvent, id = "scrape:scrape_social", filter = is_sources_resolved)]
-    async fn scrape_social(
-        event: ScrapeEvent,
+    /// SourcesPrepared → fetch + extract social media posts.
+    #[handle(on = LifecycleEvent, id = "scrape:fetch_social", filter = is_sources_prepared)]
+    async fn fetch_social(
+        _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let (run_id, web_role) = match &event {
-            ScrapeEvent::SourcesResolved { run_id, web_role, .. } => (*run_id, *web_role),
-            _ => unreachable!("filter guarantees SourcesResolved"),
-        };
+        let run_id = ctx.deps().run_id;
+        let role = ScrapeRole::TensionSocial;
 
-        // Derive social role from web role
-        let role = match web_role {
-            ScrapeRole::TensionWeb => ScrapeRole::TensionSocial,
-            ScrapeRole::ResponseWeb => ScrapeRole::ResponseSocial,
-            _ => unreachable!("SourcesResolved always has TensionWeb or ResponseWeb"),
-        };
-
-        info!(?role, "Scraping social sources for role");
+        info!(?role, "Fetching social media posts");
 
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
         let plan = state.source_plan.as_ref().expect("source plan stashed");
 
-        let social_sources: Vec<&rootsignal_common::SourceNode> = if matches!(role, ScrapeRole::TensionSocial) {
-            plan.selected_sources
-                .iter()
-                .filter(|s| {
-                    matches!(
-                        rootsignal_common::scraping_strategy(s.value()),
-                        rootsignal_common::ScrapingStrategy::Social(_)
-                    ) && plan.tension_phase_keys.contains(&s.canonical_key)
-                })
-                .collect()
-        } else {
-            plan.selected_sources
-                .iter()
-                .filter(|s| {
-                    matches!(
-                        rootsignal_common::scraping_strategy(s.value()),
-                        rootsignal_common::ScrapingStrategy::Social(_)
-                    ) && plan.response_phase_keys.contains(&s.canonical_key)
-                })
-                .collect()
-        };
+        let social_sources: Vec<&rootsignal_common::SourceNode> = plan.selected_sources
+            .iter()
+            .filter(|s| {
+                matches!(
+                    rootsignal_common::scraping_strategy(s.value()),
+                    rootsignal_common::ScrapingStrategy::Social(_)
+                ) && plan.tension_phase_keys.contains(&s.canonical_key)
+            })
+            .collect();
 
         if social_sources.is_empty() {
-            return Ok(events![ScrapeEvent::ScrapeRoleCompleted {
+            return Ok(events![ScrapeEvent::SocialScrapeCompleted {
                 run_id,
                 role,
-                urls_scraped: 0,
-                urls_unchanged: 0,
-                urls_failed: 0,
+                sources_scraped: 0,
                 signals_extracted: 0,
                 source_signal_counts: Default::default(),
                 collected_links: Default::default(),
                 expansion_queries: Default::default(),
                 stats_delta: Default::default(),
-                page_previews: Default::default(),
                 extracted_batches: Default::default(),
             }]);
         }
@@ -238,25 +170,154 @@ pub mod handlers {
 
         let mut all_events = Events::new();
         all_events.extend(events);
-        all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+        all_events.push(ScrapeEvent::SocialScrapeCompleted {
             run_id,
             role,
-            urls_scraped: social_sources.len() as u32,
-            urls_unchanged: 0,
-            urls_failed: 0,
+            sources_scraped: social_sources.len() as u32,
             signals_extracted,
             source_signal_counts: social_output.source_signal_counts,
             collected_links: social_output.collected_links,
             expansion_queries: social_output.expansion_queries,
             stats_delta: social_output.stats_delta,
-            page_previews: Default::default(),
             extracted_batches: social_output.extracted_batches,
         });
 
         Ok(all_events)
     }
 
-    /// SourcesResolved(ResponseWeb) → discover from social topics.
+    // -----------------------------------------------------------------------
+    // Phase B handlers — triggered by SourcesResolved (response phase)
+    // -----------------------------------------------------------------------
+
+    /// SourcesResolved → fetch + extract response web pages.
+    #[handle(on = ScrapeEvent, id = "scrape:fetch_web_responses", filter = is_sources_resolved)]
+    async fn fetch_web_responses(
+        event: ScrapeEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let (run_id, urls, source_keys) = match event {
+            ScrapeEvent::SourcesResolved { run_id, web_urls, web_source_keys, .. } => (run_id, web_urls, web_source_keys),
+            _ => unreachable!("filter guarantees SourcesResolved"),
+        };
+
+        let role = ScrapeRole::ResponseWeb;
+
+        info!(?role, url_count = urls.len(), "Fetching response web pages");
+
+        if urls.is_empty() {
+            return Ok(events![ScrapeEvent::WebScrapeCompleted {
+                run_id,
+                role,
+                urls_scraped: 0,
+                urls_unchanged: 0,
+                urls_failed: 0,
+                signals_extracted: 0,
+                source_signal_counts: Default::default(),
+                collected_links: Default::default(),
+                expansion_queries: Default::default(),
+                page_previews: Default::default(),
+                extracted_batches: Default::default(),
+            }]);
+        }
+
+        let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
+
+        let fetch_result = activities::web_scrape::fetch_and_extract(
+            deps,
+            &urls,
+            &source_keys,
+            &state.url_to_canonical_key,
+            &state.actor_contexts,
+            &state.url_to_pub_date,
+        ).await;
+
+        let mut all_events = Events::new();
+        all_events.extend(fetch_result.events);
+        all_events.push(ScrapeEvent::WebScrapeCompleted {
+            run_id,
+            role,
+            urls_scraped: fetch_result.stats.urls_scraped,
+            urls_unchanged: fetch_result.stats.urls_unchanged,
+            urls_failed: fetch_result.stats.urls_failed,
+            signals_extracted: fetch_result.stats.signals_extracted,
+            source_signal_counts: fetch_result.source_signal_counts,
+            collected_links: fetch_result.collected_links,
+            expansion_queries: fetch_result.expansion_queries,
+            page_previews: fetch_result.page_previews,
+            extracted_batches: fetch_result.extracted_batches,
+        });
+
+        Ok(all_events)
+    }
+
+    /// SourcesResolved → fetch + extract response social media posts.
+    #[handle(on = ScrapeEvent, id = "scrape:fetch_social_responses", filter = is_sources_resolved)]
+    async fn fetch_social_responses(
+        _event: ScrapeEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let run_id = ctx.deps().run_id;
+        let role = ScrapeRole::ResponseSocial;
+
+        info!(?role, "Fetching response social media posts");
+
+        let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
+        let plan = state.source_plan.as_ref().expect("source plan stashed");
+
+        let social_sources: Vec<&rootsignal_common::SourceNode> = plan.selected_sources
+            .iter()
+            .filter(|s| {
+                matches!(
+                    rootsignal_common::scraping_strategy(s.value()),
+                    rootsignal_common::ScrapingStrategy::Social(_)
+                ) && plan.response_phase_keys.contains(&s.canonical_key)
+            })
+            .collect();
+
+        if social_sources.is_empty() {
+            return Ok(events![ScrapeEvent::SocialScrapeCompleted {
+                run_id,
+                role,
+                sources_scraped: 0,
+                signals_extracted: 0,
+                source_signal_counts: Default::default(),
+                collected_links: Default::default(),
+                expansion_queries: Default::default(),
+                stats_delta: Default::default(),
+                extracted_batches: Default::default(),
+            }]);
+        }
+
+        let mut social_output = activities::social_scrape::scrape_social_sources(
+            deps,
+            &social_sources,
+            &state.url_to_canonical_key,
+            &state.actor_contexts,
+        ).await;
+
+        let events = social_output.take_events();
+        let signals_extracted: u32 = social_output.source_signal_counts.values().sum();
+
+        let mut all_events = Events::new();
+        all_events.extend(events);
+        all_events.push(ScrapeEvent::SocialScrapeCompleted {
+            run_id,
+            role,
+            sources_scraped: social_sources.len() as u32,
+            signals_extracted,
+            source_signal_counts: social_output.source_signal_counts,
+            collected_links: social_output.collected_links,
+            expansion_queries: social_output.expansion_queries,
+            stats_delta: social_output.stats_delta,
+            extracted_batches: social_output.extracted_batches,
+        });
+
+        Ok(all_events)
+    }
+
+    /// SourcesResolved → discover from social topics.
     #[handle(on = ScrapeEvent, id = "scrape:fetch_topics", filter = is_response_sources_resolved)]
     async fn fetch_topics(
         event: ScrapeEvent,
@@ -264,7 +325,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let run_id = match &event {
             ScrapeEvent::SourcesResolved { run_id, .. } => *run_id,
-            _ => unreachable!("filter guarantees SourcesResolved(ResponseWeb)"),
+            _ => unreachable!("filter guarantees SourcesResolved"),
         };
 
         info!("Fetch topics for topic discovery");
@@ -279,18 +340,12 @@ pub mod handlers {
         let mut all_events = Events::new();
 
         if all_social_topics.is_empty() {
-            all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+            all_events.push(ScrapeEvent::TopicDiscoveryCompleted {
                 run_id,
-                role: ScrapeRole::TopicDiscovery,
-                urls_scraped: 0,
-                urls_unchanged: 0,
-                urls_failed: 0,
-                signals_extracted: 0,
                 source_signal_counts: Default::default(),
                 collected_links: Default::default(),
                 expansion_queries: Default::default(),
                 stats_delta: Default::default(),
-                page_previews: Default::default(),
                 extracted_batches: Default::default(),
             });
         } else {
@@ -303,24 +358,22 @@ pub mod handlers {
 
             let events = topic_output.take_events();
             all_events.extend(events);
-            all_events.push(ScrapeEvent::ScrapeRoleCompleted {
+            all_events.push(ScrapeEvent::TopicDiscoveryCompleted {
                 run_id,
-                role: ScrapeRole::TopicDiscovery,
-                urls_scraped: 0,
-                urls_unchanged: 0,
-                urls_failed: 0,
-                signals_extracted: 0,
                 source_signal_counts: topic_output.source_signal_counts,
                 collected_links: topic_output.collected_links,
                 expansion_queries: topic_output.expansion_queries,
                 stats_delta: topic_output.stats_delta,
-                page_previews: Default::default(),
                 extracted_batches: topic_output.extracted_batches,
             });
         }
 
         Ok(all_events)
     }
+
+    // -----------------------------------------------------------------------
+    // Response URL resolution — separate because it reloads sources from graph
+    // -----------------------------------------------------------------------
 
     /// SourceExpansionCompleted or SourceExpansionSkipped → resolve response URLs.
     #[handle(on = DiscoveryEvent, id = "scrape:resolve_response", filter = is_source_expansion_done)]
@@ -330,62 +383,18 @@ pub mod handlers {
     ) -> Result<Events> {
         info!("=== Phase B: Find Responses ===");
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
 
-        // Requires region + graph — skip in tests
-        let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
+        let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped response scrape resolve: missing region or graph");
-                let run_id = deps.run_id;
-                // Emit empty role completions for all 3 response roles so enrichment gates pass
-                return Ok(events![
-                    ScrapeEvent::ScrapeRoleCompleted {
-                        run_id,
-                        role: ScrapeRole::ResponseWeb,
-                        urls_scraped: 0,
-                        urls_unchanged: 0,
-                        urls_failed: 0,
-                        signals_extracted: 0,
-                        source_signal_counts: Default::default(),
-                        collected_links: Default::default(),
-                        expansion_queries: Default::default(),
-                        stats_delta: Default::default(),
-                        page_previews: Default::default(),
-                        extracted_batches: Default::default(),
-                            },
-                    ScrapeEvent::ScrapeRoleCompleted {
-                        run_id,
-                        role: ScrapeRole::ResponseSocial,
-                        urls_scraped: 0,
-                        urls_unchanged: 0,
-                        urls_failed: 0,
-                        signals_extracted: 0,
-                        source_signal_counts: Default::default(),
-                        collected_links: Default::default(),
-                        expansion_queries: Default::default(),
-                        stats_delta: Default::default(),
-                        page_previews: Default::default(),
-                        extracted_batches: Default::default(),
-                            },
-                    ScrapeEvent::ScrapeRoleCompleted {
-                        run_id,
-                        role: ScrapeRole::TopicDiscovery,
-                        urls_scraped: 0,
-                        urls_unchanged: 0,
-                        urls_failed: 0,
-                        signals_extracted: 0,
-                        source_signal_counts: Default::default(),
-                        collected_links: Default::default(),
-                        expansion_queries: Default::default(),
-                        stats_delta: Default::default(),
-                        page_previews: Default::default(),
-                        extracted_batches: Default::default(),
-                            },
-                ]);
+                return Ok(events![ScrapeEvent::ResponseScrapeSkipped {
+                    reason: "missing region or graph".into(),
+                }]);
             }
         };
 
-        let (_, state) = ctx.singleton::<PipelineState>();
         let run_id = deps.run_id;
         let plan = state.source_plan.as_ref().expect("source plan stashed");
 

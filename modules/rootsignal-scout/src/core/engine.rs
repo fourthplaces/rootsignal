@@ -19,7 +19,6 @@ use ai_client::Agent;
 use rootsignal_common::EmbeddingLookup;
 use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector, GraphReader};
 
-use crate::core::run_scope::RunScope;
 use sqlx::PgPool;
 
 use crate::core::aggregate::pipeline_aggregators;
@@ -41,7 +40,6 @@ pub struct ScoutEngineDeps {
     // --- Fields from PipelineDeps (previously behind Arc<RwLock<Option>>) ---
     pub store: Arc<dyn SignalReader>,
     pub embedder: Arc<dyn TextEmbedder>,
-    pub run_scope: RunScope,
     pub fetcher: Option<Arc<dyn ContentFetcher>>,
     pub ai: Option<Arc<dyn Agent>>,
     /// Raw API key — only used by out-of-scope callers (supervisor, news_scanner)
@@ -63,8 +61,6 @@ pub struct ScoutEngineDeps {
     pub pg_pool: Option<PgPool>,
     /// Archive for web search/page reading in synthesis finders.
     pub archive: Option<Arc<rootsignal_archive::Archive>>,
-    /// Task ID — legacy, kept for `resume_incomplete_runs` backward compat.
-    pub task_id: Option<String>,
 }
 
 impl ScoutEngineDeps {
@@ -77,7 +73,6 @@ impl ScoutEngineDeps {
         Self {
             store,
             embedder,
-            run_scope: RunScope::Unscoped,
             fetcher: None,
             ai: None,
             anthropic_api_key: None,
@@ -89,7 +84,6 @@ impl ScoutEngineDeps {
             budget: None,
             pg_pool: None,
             archive: None,
-            task_id: None,
         }
     }
 }

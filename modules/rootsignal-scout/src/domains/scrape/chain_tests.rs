@@ -36,7 +36,7 @@ async fn dispatch_events(
 /// Take events from scrape output, apply state, and dispatch through engine.
 ///
 /// Mirrors the scrape handler: dispatches freshness events, then constructs
-/// a ScrapeRoleCompleted carrying extracted_batches so dedup triggers.
+/// a WebScrapeCompleted carrying extracted_batches so dedup triggers.
 async fn scrape_and_dispatch(
     output: ScrapeOutput,
     ctx: &mut PipelineState,
@@ -56,7 +56,7 @@ async fn scrape_and_dispatch(
 
     if !extracted_batches.is_empty() {
         let _ = engine
-            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
                 .role(ScrapeRole::TensionWeb)
                 .extracted_batches(extracted_batches)
                 .build()))
@@ -1063,7 +1063,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
     assert_eq!(result.stats.signals_extracted, 1, "one signal extracted");
     assert!(!result.extracted_batches.is_empty(), "should produce extracted batches");
 
-    // Dispatch through engine: freshness events + extracted batches via ScrapeRoleCompleted
+    // Dispatch through engine: freshness events + extracted batches via WebScrapeCompleted
     {
         use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
@@ -1072,7 +1072,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
             let _ = engine.emit_output(out).settled().await;
         }
         let _ = engine
-            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
                 .role(ScrapeRole::TensionWeb)
                 .extracted_batches(result.extracted_batches)
                 .build()))

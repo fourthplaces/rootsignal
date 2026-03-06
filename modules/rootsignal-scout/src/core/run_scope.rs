@@ -1,12 +1,15 @@
 //! Run scope: determines the modality of a scout run.
 
 use rootsignal_common::{RegionNode, ScoutScope, SourceNode};
+use serde::{Deserialize, Serialize};
 
 /// What a scout run is scoped to.
 ///
 /// - `Unscoped`: no geographic context (tests, news scans).
 /// - `Region`: load sources from graph, full scheduling algorithm.
 /// - `Sources`: scrape specific input sources, optional geographic context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum RunScope {
     /// No geographic scope (tests, news scans).
     Unscoped,
@@ -17,6 +20,12 @@ pub enum RunScope {
         sources: Vec<SourceNode>,
         region: Option<ScoutScope>,
     },
+}
+
+impl Default for RunScope {
+    fn default() -> Self {
+        Self::Unscoped
+    }
 }
 
 impl RunScope {

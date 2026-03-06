@@ -70,7 +70,7 @@ async fn scrape_and_dispatch(
 /// Take events from scrape output, apply state, and dispatch with custom embedder.
 ///
 /// Mirrors what the scrape handler does: dispatches freshness events, then
-/// constructs a ScrapeRoleCompleted carrying extracted_batches so the dedup
+/// constructs a WebScrapeCompleted carrying extracted_batches so the dedup
 /// handler triggers and processes new signals through the engine.
 async fn scrape_and_dispatch_with(
     output: ScrapeOutput,
@@ -95,10 +95,10 @@ async fn scrape_and_dispatch_with(
         let _ = engine.emit_output(out).settled().await;
     }
 
-    // Dispatch ScrapeRoleCompleted with extracted batches — triggers dedup handler
+    // Dispatch WebScrapeCompleted with extracted batches — triggers dedup handler
     if !extracted_batches.is_empty() {
         let _ = engine
-            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
                 .role(ScrapeRole::TensionWeb)
                 .extracted_batches(extracted_batches)
                 .build()))

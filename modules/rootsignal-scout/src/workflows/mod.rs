@@ -54,7 +54,7 @@ impl ScoutDeps {
     /// Wire all per-invocation infrastructure deps.
     ///
     /// Returns `(deps, ai)` — callers add the scope-specific parts
-    /// (extractor, run_scope, task_id) on top.
+    /// (extractor) on top.
     fn build_base_deps(
         &self,
         run_id: Uuid,
@@ -108,14 +108,9 @@ impl ScoutDeps {
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
         spent_cents: u64,
-        task_id: Option<&str>,
     ) -> ScoutEngineDeps {
-        use crate::core::run_scope::RunScope;
-
         let (mut deps, ai) = self.build_base_deps(run_id, spent_cents);
         deps.extractor = Some(Self::make_extractor(&ai, Some(scope)));
-        deps.run_scope = RunScope::Region(scope.clone());
-        deps.task_id = task_id.map(String::from);
         deps
     }
 
@@ -127,9 +122,8 @@ impl ScoutDeps {
         &self,
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
-        task_id: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_region_deps(scope, run_id, 0, task_id);
+        let deps = self.build_region_deps(scope, run_id, 0);
         engine::build_engine(deps, self.make_store(run_id))
     }
 
@@ -143,9 +137,8 @@ impl ScoutDeps {
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
         spent_cents: u64,
-        task_id: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_region_deps(scope, run_id, spent_cents, task_id);
+        let deps = self.build_region_deps(scope, run_id, spent_cents);
         engine::build_full_engine(deps, self.make_store(run_id))
     }
 
@@ -156,9 +149,8 @@ impl ScoutDeps {
         &self,
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
-        task_id: Option<&str>,
     ) -> ScoutEngine {
-        let deps = self.build_region_deps(scope, run_id, 0, task_id);
+        let deps = self.build_region_deps(scope, run_id, 0);
         engine::build_weave_engine(deps, self.make_store(run_id))
     }
 
@@ -167,9 +159,8 @@ impl ScoutDeps {
         &self,
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
-        task_id: Option<&str>,
     ) -> ScoutEngineDeps {
-        self.build_region_deps(scope, run_id, 0, task_id)
+        self.build_region_deps(scope, run_id, 0)
     }
 
     // -----------------------------------------------------------------
@@ -184,17 +175,10 @@ impl ScoutDeps {
         &self,
         region: Option<&rootsignal_common::RegionNode>,
         run_id: Uuid,
-        input_sources: Vec<rootsignal_common::SourceNode>,
     ) -> ScoutEngine {
-        use crate::core::run_scope::RunScope;
-
         let scope = region.map(rootsignal_common::ScoutScope::from);
         let (mut deps, ai) = self.build_base_deps(run_id, 0);
         deps.extractor = Some(Self::make_extractor(&ai, scope.as_ref()));
-        deps.run_scope = RunScope::Sources {
-            sources: input_sources,
-            region: scope,
-        };
         engine::build_engine(deps, self.make_store(run_id))
     }
 

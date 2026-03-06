@@ -19,21 +19,17 @@ fn has_metrics_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> boo
     })
 }
 
-/// Emit all 3 response ScrapeRoleCompleted events to trigger enrichment handlers.
+/// Emit response scrape completion events to trigger enrichment handlers.
 async fn emit_response_scrape_done(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
-    for role in [ScrapeRole::ResponseWeb, ScrapeRole::ResponseSocial, ScrapeRole::TopicDiscovery] {
-        engine
-            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder().role(role).build()))
-            .settled()
-            .await
-            .unwrap();
-    }
+    engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().role(ScrapeRole::ResponseWeb).build())).settled().await.unwrap();
+    engine.emit(empty_social_scrape(ScrapeRole::ResponseSocial)).settled().await.unwrap();
+    engine.emit(empty_topic_discovery()).settled().await.unwrap();
 }
 
 #[tokio::test]
 async fn three_of_four_enrichment_roles_does_not_trigger_metrics() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -63,7 +59,7 @@ async fn three_of_four_enrichment_roles_does_not_trigger_metrics() {
 #[tokio::test]
 async fn fourth_enrichment_role_triggers_metrics() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -95,7 +91,7 @@ async fn fourth_enrichment_role_triggers_metrics() {
 async fn missing_deps_skips_enrichment_with_immediate_role_completed() {
     let store = Arc::new(MockSignalReader::new());
     // No region, no graph_client — role handlers should emit role completed immediately
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         None,
     );

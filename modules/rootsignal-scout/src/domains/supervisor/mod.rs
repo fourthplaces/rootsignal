@@ -4,6 +4,7 @@ pub mod events;
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::situation_weaving::events::SituationWeavingEvent;
 use crate::domains::supervisor::events::SupervisorEvent;
@@ -26,8 +27,9 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
         let mut out = events![SupervisorEvent::SupervisionCompleted];
-        activities::supervise(&deps, &mut out).await;
+        activities::supervise(&deps, state.run_scope.region(), &mut out).await;
         Ok(out)
     }
 }

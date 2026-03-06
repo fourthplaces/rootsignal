@@ -7,10 +7,10 @@ use crate::core::engine::ScoutEngineDeps;
 
 /// Run supervisor: issue detection, merge duplicates, cause heat.
 /// Returns events (e.g. DuplicateTensionMerged) for the caller to dispatch.
-pub async fn supervise(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events) {
+pub async fn supervise(deps: &ScoutEngineDeps, region: Option<&rootsignal_common::ScoutScope>, events: &mut seesaw_core::Events) {
     let (gr, region, pg_pool, api_key) = match (
         deps.graph.as_ref(),
-        deps.run_scope.region(),
+        region,
         deps.pg_pool.as_ref(),
         deps.anthropic_api_key.as_deref(),
     ) {

@@ -18,7 +18,7 @@ use crate::domains::discovery::events::DiscoveryEvent;
 
 /// Handle the ScoutRunRequested event: seed sources if region is empty.
 pub async fn seed_sources_if_empty(
-    _state: &PipelineState,
+    state: &PipelineState,
     deps: &ScoutEngineDeps,
 ) -> Result<seesaw_core::Events> {
     let sources = deps.store.get_active_sources().await?;
@@ -31,7 +31,7 @@ pub async fn seed_sources_if_empty(
         None => return Ok(seesaw_core::Events::new()),
     };
 
-    let region = match deps.run_scope.region() {
+    let region = match state.run_scope.region() {
         Some(r) => r,
         None => return Ok(seesaw_core::Events::new()),
     };

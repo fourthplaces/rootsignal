@@ -27,29 +27,34 @@ fn response_roles() -> HashSet<ScrapeRole> {
 
 // ── Enrichment role filters: response_roles done + own role not started ──
 
+/// Enrichment gates fire on any scrape completion event (including ResponseScrapeSkipped).
+fn is_scrape_completion(e: &ScrapeEvent) -> bool {
+    e.completed_role().is_some() || matches!(e, ScrapeEvent::ResponseScrapeSkipped { .. })
+}
+
 fn response_done_actor_extraction_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. }) { return false; }
+    if !is_scrape_completion(e) { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
     state.completed_scrape_roles.is_superset(&response_roles())
         && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorExtraction)
 }
 
 fn response_done_diversity_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. }) { return false; }
+    if !is_scrape_completion(e) { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
     state.completed_scrape_roles.is_superset(&response_roles())
         && !state.completed_enrichment_roles.contains(&EnrichmentRole::Diversity)
 }
 
 fn response_done_actor_stats_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. }) { return false; }
+    if !is_scrape_completion(e) { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
     state.completed_scrape_roles.is_superset(&response_roles())
         && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorStats)
 }
 
 fn response_done_actor_location_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. }) { return false; }
+    if !is_scrape_completion(e) { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
     state.completed_scrape_roles.is_superset(&response_roles())
         && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorLocation)
@@ -66,7 +71,7 @@ pub mod handlers {
     use super::*;
 
     // ---------------------------------------------------------------
-    // Role handlers: each listens for ScrapeRoleCompleted + state gate
+    // Role handlers: each listens for scrape completion + state gate
     // ---------------------------------------------------------------
 
     /// Pin cleanup + actor extraction → EnrichmentRoleCompleted(ActorExtraction)
@@ -76,8 +81,9 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
 
-        let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
+        let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped actor extraction: missing region or graph");
@@ -221,9 +227,10 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
+        let (_, state) = ctx.singleton::<PipelineState>();
 
         // Requires graph + region — skip in tests
-        let (region, graph) = match (deps.run_scope.region(), deps.graph.as_ref()) {
+        let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped source metrics: missing region or graph");

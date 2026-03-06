@@ -1518,36 +1518,44 @@ pub fn test_engine_with_capture() -> (
     Arc<ScoutEngine>,
     Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
 ) {
-    test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         Arc::new(MockSignalReader::new()) as Arc<dyn SignalReader>,
         None,
-    )
+    );
+    (engine, captured)
 }
 
 /// Create a test engine with capture, wired to the given store and optional region.
+///
+/// Returns `(engine, captured, scope)` — caller emits `ScoutRunRequested { run_id, scope }`
+/// to populate PipelineState.run_scope, matching production flow.
 pub fn test_engine_with_capture_for_store(
     store: Arc<dyn SignalReader>,
     region: Option<rootsignal_common::ScoutScope>,
 ) -> (
     Arc<ScoutEngine>,
     Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    crate::core::run_scope::RunScope,
 ) {
+    let scope = match region {
+        Some(r) => crate::core::run_scope::RunScope::Region(r),
+        None => crate::core::run_scope::RunScope::Unscoped,
+    };
     let captured = Arc::new(Mutex::new(Vec::new()));
     let mut deps = ScoutEngineDeps::new(
         store,
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         Uuid::new_v4(),
     );
-    deps.run_scope = match region {
-        Some(r) => crate::core::run_scope::RunScope::Region(r),
-        None => crate::core::run_scope::RunScope::Unscoped,
-    };
     deps.captured_events = Some(captured.clone());
     let engine = Arc::new(build_engine(deps, None));
-    (engine, captured)
+    (engine, captured, scope)
 }
 
 /// Create a test engine with capture, AI agent, and optional region.
+///
+/// Returns `(engine, captured, scope)` — caller emits `ScoutRunRequested { run_id, scope }`
+/// to populate PipelineState.run_scope, matching production flow.
 pub fn test_engine_with_ai(
     store: Arc<dyn SignalReader>,
     ai: Arc<dyn ai_client::Agent>,
@@ -1555,25 +1563,29 @@ pub fn test_engine_with_ai(
 ) -> (
     Arc<ScoutEngine>,
     Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    crate::core::run_scope::RunScope,
 ) {
+    let scope = match region {
+        Some(r) => crate::core::run_scope::RunScope::Region(r),
+        None => crate::core::run_scope::RunScope::Unscoped,
+    };
     let captured = Arc::new(Mutex::new(Vec::new()));
     let mut deps = ScoutEngineDeps::new(
         store,
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         Uuid::new_v4(),
     );
-    deps.run_scope = match region {
-        Some(r) => crate::core::run_scope::RunScope::Region(r),
-        None => crate::core::run_scope::RunScope::Unscoped,
-    };
     deps.ai = Some(ai);
     deps.captured_events = Some(captured.clone());
     let engine = Arc::new(build_engine(deps, None));
-    (engine, captured)
+    (engine, captured, scope)
 }
 
 /// Create a test engine for a source-targeted run with real extractor, event capture,
 /// and all scrape deps wired. Uses the real `Extractor` backed by the given AI agent.
+///
+/// Returns `(engine, captured, scope)` — caller emits `ScoutRunRequested { run_id, scope }`
+/// to populate PipelineState.run_scope, matching production flow.
 pub fn test_engine_for_source_run(
     store: Arc<dyn SignalReader>,
     sources: Vec<rootsignal_common::SourceNode>,
@@ -1582,6 +1594,7 @@ pub fn test_engine_for_source_run(
 ) -> (
     Arc<ScoutEngine>,
     Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    crate::core::run_scope::RunScope,
 ) {
     let captured = Arc::new(Mutex::new(Vec::new()));
     let region = mpls_region();
@@ -1593,21 +1606,21 @@ pub fn test_engine_for_source_run(
             region.center_lng,
         ),
     );
+    let scope = crate::core::run_scope::RunScope::Sources {
+        sources,
+        region: Some(region),
+    };
     let mut deps = ScoutEngineDeps::new(
         store,
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         Uuid::new_v4(),
     );
-    deps.run_scope = crate::core::run_scope::RunScope::Sources {
-        sources,
-        region: Some(region),
-    };
     deps.fetcher = Some(fetcher);
     deps.extractor = Some(extractor);
     deps.ai = Some(ai);
     deps.captured_events = Some(captured.clone());
     let engine = Arc::new(build_engine(deps, None));
-    (engine, captured)
+    (engine, captured, scope)
 }
 
 /// Create a test ScoutEngineDeps with a given store (for activity-level tests).
@@ -1653,17 +1666,17 @@ pub fn search_results(query: &str, urls: &[&str]) -> ArchivedSearchResults {
 }
 
 // ---------------------------------------------------------------------------
-// ScrapeRoleCompleted test builder
+// Scrape completion test builders
 // ---------------------------------------------------------------------------
 
 use typed_builder::TypedBuilder;
 
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
-use crate::domains::scrape::activities::{StatsDelta, UrlExtraction};
+use crate::domains::scrape::activities::UrlExtraction;
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
 #[derive(TypedBuilder)]
-pub struct TestScrapeRoleCompleted {
+pub struct TestWebScrapeCompleted {
     role: ScrapeRole,
     #[builder(default)]
     urls_scraped: u32,
@@ -1681,9 +1694,9 @@ pub struct TestScrapeRoleCompleted {
     expansion_queries: Vec<String>,
 }
 
-impl From<TestScrapeRoleCompleted> for ScrapeEvent {
-    fn from(t: TestScrapeRoleCompleted) -> Self {
-        ScrapeEvent::ScrapeRoleCompleted {
+impl From<TestWebScrapeCompleted> for ScrapeEvent {
+    fn from(t: TestWebScrapeCompleted) -> Self {
+        ScrapeEvent::WebScrapeCompleted {
             run_id: Uuid::new_v4(),
             role: t.role,
             urls_scraped: t.urls_scraped,
@@ -1693,10 +1706,36 @@ impl From<TestScrapeRoleCompleted> for ScrapeEvent {
             source_signal_counts: t.source_signal_counts,
             collected_links: t.collected_links,
             expansion_queries: t.expansion_queries,
-            stats_delta: StatsDelta::default(),
             page_previews: t.page_previews,
             extracted_batches: t.extracted_batches,
         }
+    }
+}
+
+/// Build an empty SocialScrapeCompleted for completing role sets in tests.
+pub fn empty_social_scrape(role: ScrapeRole) -> ScrapeEvent {
+    ScrapeEvent::SocialScrapeCompleted {
+        run_id: Uuid::new_v4(),
+        role,
+        sources_scraped: 0,
+        signals_extracted: 0,
+        source_signal_counts: Default::default(),
+        collected_links: Default::default(),
+        expansion_queries: Default::default(),
+        stats_delta: Default::default(),
+        extracted_batches: Default::default(),
+    }
+}
+
+/// Build an empty TopicDiscoveryCompleted for completing role sets in tests.
+pub fn empty_topic_discovery() -> ScrapeEvent {
+    ScrapeEvent::TopicDiscoveryCompleted {
+        run_id: Uuid::new_v4(),
+        source_signal_counts: Default::default(),
+        collected_links: Default::default(),
+        expansion_queries: Default::default(),
+        stats_delta: Default::default(),
+        extracted_batches: Default::default(),
     }
 }
 

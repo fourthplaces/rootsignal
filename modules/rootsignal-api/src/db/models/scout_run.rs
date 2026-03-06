@@ -585,6 +585,7 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
             let signals = json_u32(data, "signals_extracted").unwrap_or(0);
             Some(format!("{ck} {posts} posts, {signals} signals"))
         }
+        // Legacy: persisted events from before the split into WebScrapeCompleted etc.
         "scrape_role_completed" => {
             let role = json_str(data, "role").unwrap_or_default();
             let scraped = json_u32(data, "urls_scraped").unwrap_or(0);
@@ -592,6 +593,31 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
             let failed = json_u32(data, "urls_failed").unwrap_or(0);
             let signals = json_u32(data, "signals_extracted").unwrap_or(0);
             Some(format!("{role}: {scraped} scraped, {unchanged} unchanged, {failed} failed, {signals} signals"))
+        }
+        "web_scrape_completed" => {
+            let role = json_str(data, "role").unwrap_or_default();
+            let scraped = json_u32(data, "urls_scraped").unwrap_or(0);
+            let unchanged = json_u32(data, "urls_unchanged").unwrap_or(0);
+            let failed = json_u32(data, "urls_failed").unwrap_or(0);
+            let signals = json_u32(data, "signals_extracted").unwrap_or(0);
+            Some(format!("{role}: {scraped} scraped, {unchanged} unchanged, {failed} failed, {signals} signals"))
+        }
+        "social_scrape_completed" => {
+            let role = json_str(data, "role").unwrap_or_default();
+            let scraped = json_u32(data, "sources_scraped").unwrap_or(0);
+            let signals = json_u32(data, "signals_extracted").unwrap_or(0);
+            Some(format!("{role}: {scraped} sources, {signals} signals"))
+        }
+        "topic_discovery_completed" => {
+            let signals: u32 = data.get("source_signal_counts")
+                .and_then(|v| v.as_object())
+                .map(|m| m.values().filter_map(|v| v.as_u64()).sum::<u64>() as u32)
+                .unwrap_or(0);
+            Some(format!("{signals} signals from topics"))
+        }
+        "response_scrape_skipped" => {
+            let reason = json_str(data, "reason").unwrap_or_default();
+            Some(format!("skipped: {reason}"))
         }
 
         // ── Signal domain ──────────────────────────────────────────

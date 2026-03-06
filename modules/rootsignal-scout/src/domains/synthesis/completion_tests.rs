@@ -24,7 +24,7 @@ fn has_run_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> bool {
 #[tokio::test]
 async fn five_of_six_synthesis_roles_does_not_trigger_finalize() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -57,7 +57,7 @@ async fn five_of_six_synthesis_roles_does_not_trigger_finalize() {
 #[tokio::test]
 async fn sixth_synthesis_role_triggers_finalize() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
@@ -93,7 +93,7 @@ async fn missing_deps_skips_synthesis_with_immediate_finalize() {
     let store = Arc::new(MockSignalReader::new());
     // No region, no graph_client, no budget — each handler guards its own deps
     // and emits SynthesisRoleCompleted (fact: "completed with nothing to do")
-    let (engine, captured) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         None,
     );

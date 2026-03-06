@@ -12,13 +12,13 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::domains::scheduling::activities::budget::OperationCost;
 
 /// Run situation weaving: discover signals, weave via LLM, emit events.
-pub async fn weave_situations(deps: &ScoutEngineDeps) -> seesaw_core::Events {
+pub async fn weave_situations(deps: &ScoutEngineDeps, region: Option<&rootsignal_common::ScoutScope>) -> seesaw_core::Events {
     let mut events = seesaw_core::Events::new();
 
     let (graph, ai, region, budget) = match (
         deps.graph.as_ref(),
         deps.ai.as_deref(),
-        deps.run_scope.region(),
+        region,
         deps.budget.as_ref(),
     ) {
         (Some(g), Some(k), Some(r), Some(b)) => (g, k, r, b),
