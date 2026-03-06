@@ -174,11 +174,16 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
 
   // Causal flow
   const [flowSelection, setFlowSelection] = useState<FlowSelection>(() => parseFlowSelection(searchParams));
-  const [flowRunId, setFlowRunId] = useState<string | null>(searchParams.get("flow"));
+  const [flowRunId, setFlowRunId] = useState<string | null>(searchParams.get("runId") || null);
   const [flowEvents, setFlowEvents] = useState<AdminEvent[] | null>(null);
   const [fetchFlow, { data: flowQueryData, loading: flowLoading }] = useLazyQuery<{
     adminCausalFlow: { events: AdminEvent[] };
   }>(ADMIN_CAUSAL_FLOW);
+
+  // Auto-open flow when runId filter is set
+  useEffect(() => {
+    setFlowRunId(runId || null);
+  }, [runId]);
 
   useEffect(() => {
     if (flowRunId) {
@@ -199,9 +204,9 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
   // Selected run ID — tracks which run the user last clicked on
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  // Atomic open: sets run + optional initial selection together.
-  const openFlow = useCallback((runId: string, initialSelection?: FlowSelection) => {
-    setFlowRunId(runId);
+  // Atomic open: sets run filter (which auto-opens flow) + optional initial selection.
+  const openFlow = useCallback((id: string, initialSelection?: FlowSelection) => {
+    setRunId(id);
     setFlowSelection(initialSelection ?? null);
   }, []);
 
@@ -216,14 +221,13 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
     if (timeFrom) params.from = timeFrom;
     if (timeTo) params.to = timeTo;
     if (selectedSeq != null) params.seq = String(selectedSeq);
-    if (flowRunId) params.flow = flowRunId;
     serializeFlowSelection(flowSelection, params);
     const serialized = JSON.stringify(params);
     if (serialized !== lastParamsRef.current) {
       lastParamsRef.current = serialized;
       setSearchParams(params, { replace: true });
     }
-  }, [layers, search, runId, timeFrom, timeTo, selectedSeq, flowRunId, flowSelection, setSearchParams]);
+  }, [layers, search, runId, timeFrom, timeTo, selectedSeq, flowSelection, setSearchParams]);
 
   // Query
   const queryVars = useMemo(

@@ -99,41 +99,26 @@ impl FeedService {
 
     /// Discover RSS/Atom feed URLs from a webpage's HTML.
     pub(crate) fn discover_feed_urls(html: &str, base_url: &str) -> Vec<String> {
-        let mut feeds = Vec::new();
-        let pattern = regex::Regex::new(
-            r#"<link[^>]+type\s*=\s*["']application/(rss\+xml|atom\+xml)["'][^>]*>"#,
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_document(html);
+        let selector = Selector::parse(
+            r#"head link[type="application/rss+xml"], head link[type="application/atom+xml"]"#,
         )
-        .expect("Invalid RSS link regex");
+        .expect("valid CSS selector");
 
-        let href_pattern =
-            regex::Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).expect("Invalid href regex");
+        let base = url::Url::parse(base_url).ok();
 
-        for cap in pattern.captures_iter(html) {
-            let tag = cap.get(0).map(|m| m.as_str()).unwrap_or("");
-            if let Some(href_cap) = href_pattern.captures(tag) {
-                if let Some(href) = href_cap.get(1) {
-                    let href_str = href.as_str();
-                    let full_url = if href_str.starts_with("http") {
-                        href_str.to_string()
-                    } else if href_str.starts_with('/') {
-                        if let Ok(base) = url::Url::parse(base_url) {
-                            format!(
-                                "{}://{}{}",
-                                base.scheme(),
-                                base.host_str().unwrap_or(""),
-                                href_str
-                            )
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    };
-                    feeds.push(full_url);
+        document
+            .select(&selector)
+            .filter_map(|el| {
+                let href = el.value().attr("href")?;
+                if href.starts_with("http://") || href.starts_with("https://") {
+                    Some(href.to_string())
+                } else {
+                    Some(base.as_ref()?.join(href).ok()?.to_string())
                 }
-            }
-        }
-
-        feeds
+            })
+            .collect()
     }
 }

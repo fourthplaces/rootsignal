@@ -24,6 +24,7 @@ regex = { workspace = true }
 sqlx = { workspace = true }
 ai-client = { workspace = true }
 schemars = { workspace = true }
+scraper = "0.22"
 base64 = "0.22"
 futures = "0.3"
 url = "2"

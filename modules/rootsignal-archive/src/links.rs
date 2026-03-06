@@ -1,10 +1,4 @@
-use regex::Regex;
-use std::sync::LazyLock;
-
-/// Matches `href` attributes — the only semantic "link" in HTML.
-/// Covers `<a href>`, `<link href>`, `<area href>`.
-static HREF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).expect("valid regex"));
+use scraper::{Html, Selector};
 
 /// Resolve a raw href against a base URL, returning an absolute URL with fragment stripped.
 fn resolve_href(raw: &str, base: Option<&url::Url>) -> Option<String> {
@@ -17,17 +11,62 @@ fn resolve_href(raw: &str, base: Option<&url::Url>) -> Option<String> {
     Some(parsed.to_string())
 }
 
-/// Extract all links from raw HTML.
-/// Only extracts URLs from `href` attributes (`<a>`, `<link>`, `<area>`),
-/// ignoring URLs in `src`, `xmlns`, data attributes, JS, CSS, and plain text.
-/// Resolves relative hrefs against `base_url`. Deduplicates.
+/// Returns true if this element or any ancestor has `hidden` attribute
+/// or inline style containing `display:none` or `visibility:hidden`.
+fn is_hidden(element: &scraper::ElementRef) -> bool {
+    use scraper::node::Element;
+
+    let check_element = |el: &Element| -> bool {
+        if el.attr("hidden").is_some() {
+            return true;
+        }
+        if let Some(style) = el.attr("style") {
+            let s = style.replace(' ', "").to_lowercase();
+            if s.contains("display:none") || s.contains("visibility:hidden") {
+                return true;
+            }
+        }
+        false
+    };
+
+    // Check self
+    if check_element(element.value()) {
+        return true;
+    }
+
+    // Walk ancestors
+    for ancestor in element.ancestors() {
+        if let Some(el) = ancestor.value().as_element() {
+            if check_element(el) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Extract all visible `<a href>` links from inside `<body>`.
+/// Resolves relative hrefs against `base_url`. Deduplicates. Strips fragments.
 pub fn extract_all_links(html: &str, base_url: &str) -> Vec<String> {
     let base = url::Url::parse(base_url).ok();
+    let document = Html::parse_document(html);
+
+    let selector = Selector::parse("body a[href]").expect("valid CSS selector");
+
     let mut seen = std::collections::HashSet::new();
     let mut links = Vec::new();
 
-    for cap in HREF_RE.captures_iter(html) {
-        let raw = &cap[1];
+    for element in document.select(&selector) {
+        if is_hidden(&element) {
+            continue;
+        }
+
+        let raw = match element.value().attr("href") {
+            Some(h) => h,
+            None => continue,
+        };
+
         if let Some(resolved) = resolve_href(raw, base.as_ref()) {
             if seen.insert(resolved.clone()) {
                 links.push(resolved);
@@ -39,7 +78,7 @@ pub fn extract_all_links(html: &str, base_url: &str) -> Vec<String> {
 }
 
 /// Extract links from raw HTML that match a given URL pattern.
-/// Only extracts from `href` attributes; deduplicates.
+/// Only extracts visible `<a href>` from `<body>`; deduplicates.
 pub fn extract_links_by_pattern(html: &str, base_url: &str, pattern: &str) -> Vec<String> {
     extract_all_links(html, base_url)
         .into_iter()
@@ -55,17 +94,17 @@ mod tests {
 
     #[test]
     fn href_links_are_extracted() {
-        let html = r#"<a href="https://instagram.com/org">IG</a>"#;
+        let html = r#"<body><a href="https://instagram.com/org">IG</a></body>"#;
         let links = extract_all_links(html, "https://example.com");
         assert_eq!(links, vec!["https://instagram.com/org"]);
     }
 
     #[test]
     fn extracts_multiple_hrefs() {
-        let html = r#"
+        let html = r#"<body>
             <a href="https://a.com">A</a>
             <a href="https://b.com">B</a>
-        "#;
+        </body>"#;
         let links = extract_all_links(html, "https://example.com");
         assert!(links.contains(&"https://a.com/".to_string()));
         assert!(links.contains(&"https://b.com/".to_string()));
@@ -73,7 +112,7 @@ mod tests {
 
     #[test]
     fn single_quoted_href() {
-        let html = "<a href='https://example.com/page'>link</a>";
+        let html = "<body><a href='https://example.com/page'>link</a></body>";
         let links = extract_all_links(html, "https://base.com");
         assert!(links.contains(&"https://example.com/page".to_string()));
     }
@@ -82,8 +121,8 @@ mod tests {
 
     #[test]
     fn namespace_uris_are_not_extracted() {
-        let html = r#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>
-            <div about="http://purl.org/dc/terms/">RDF</div>"#;
+        let html = r#"<body><svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>
+            <div about="http://purl.org/dc/terms/">RDF</div></body>"#;
         let links = extract_all_links(html, "https://example.com");
         assert!(
             links.is_empty(),
@@ -93,15 +132,15 @@ mod tests {
 
     #[test]
     fn image_src_is_not_extracted() {
-        let html = r#"<img src="https://avatars.githubusercontent.com/u/123">"#;
+        let html = r#"<body><img src="https://avatars.githubusercontent.com/u/123"></body>"#;
         let links = extract_all_links(html, "https://example.com");
         assert!(links.is_empty(), "img src should not be extracted");
     }
 
     #[test]
     fn script_urls_are_not_extracted() {
-        let html = r#"<script src="https://cdn.example.com/app.js"></script>
-            <script>var u = "https://api.example.com/v1";</script>"#;
+        let html = r#"<body><script src="https://cdn.example.com/app.js"></script>
+            <script>var u = "https://api.example.com/v1";</script></body>"#;
         let links = extract_all_links(html, "https://example.com");
         assert!(
             links.is_empty(),
@@ -111,14 +150,14 @@ mod tests {
 
     #[test]
     fn plain_text_urls_are_not_extracted() {
-        let html = "Visit us at https://example.com/about for more info";
+        let html = "<body>Visit us at https://example.com/about for more info</body>";
         let links = extract_all_links(html, "https://base.com");
         assert!(links.is_empty(), "plain text URLs should not be extracted");
     }
 
     #[test]
     fn data_attribute_urls_are_not_extracted() {
-        let html = r#"<div data-url="https://cdn.example.com/img.png">content</div>"#;
+        let html = r#"<body><div data-url="https://cdn.example.com/img.png">content</div></body>"#;
         let links = extract_all_links(html, "https://base.com");
         assert!(
             links.is_empty(),
@@ -126,18 +165,57 @@ mod tests {
         );
     }
 
+    // --- Head-only links are excluded ---
+
+    #[test]
+    fn head_link_stylesheet_is_not_extracted() {
+        let html = r#"<html><head><link rel="stylesheet" href="https://cdn.example.com/style.css"></head><body></body></html>"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert!(links.is_empty(), "stylesheet links should not be extracted");
+    }
+
+    #[test]
+    fn head_link_canonical_is_not_extracted() {
+        let html = r#"<html><head><link rel="canonical" href="https://example.com/page"></head><body></body></html>"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert!(links.is_empty(), "canonical links should not be extracted");
+    }
+
+    // --- Hidden elements are excluded ---
+
+    #[test]
+    fn hidden_attribute_link_is_excluded() {
+        let html = r#"<body><div hidden><a href="https://hidden.com">hidden</a></div><a href="https://visible.com">visible</a></body>"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert_eq!(links, vec!["https://visible.com/"]);
+    }
+
+    #[test]
+    fn display_none_link_is_excluded() {
+        let html = r#"<body><div style="display:none"><a href="https://hidden.com">hidden</a></div><a href="https://visible.com">visible</a></body>"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert_eq!(links, vec!["https://visible.com/"]);
+    }
+
+    #[test]
+    fn visibility_hidden_link_is_excluded() {
+        let html = r#"<body><a style="visibility: hidden" href="https://hidden.com">hidden</a><a href="https://visible.com">visible</a></body>"#;
+        let links = extract_all_links(html, "https://example.com");
+        assert_eq!(links, vec!["https://visible.com/"]);
+    }
+
     // --- Relative URL resolution ---
 
     #[test]
     fn relative_hrefs_still_resolve() {
-        let html = r#"<a href="/about">About</a>"#;
+        let html = r#"<body><a href="/about">About</a></body>"#;
         let links = extract_all_links(html, "https://example.com");
         assert!(links.contains(&"https://example.com/about".to_string()));
     }
 
     #[test]
     fn resolves_relative_path() {
-        let html = r#"<a href="events/today">Events</a>"#;
+        let html = r#"<body><a href="events/today">Events</a></body>"#;
         let links = extract_all_links(html, "https://example.com/calendar/");
         assert!(links.contains(&"https://example.com/calendar/events/today".to_string()));
     }
@@ -146,10 +224,10 @@ mod tests {
 
     #[test]
     fn deduplication_still_works() {
-        let html = r#"
+        let html = r#"<body>
             <a href="https://example.com/page">link1</a>
             <a href="https://example.com/page">link2</a>
-        "#;
+        </body>"#;
         let links = extract_all_links(html, "https://base.com");
         let count = links
             .iter()
@@ -162,32 +240,32 @@ mod tests {
 
     #[test]
     fn fragment_is_stripped_from_absolute_href() {
-        let html = r#"<a href="https://example.com/page#section">link</a>"#;
+        let html = r#"<body><a href="https://example.com/page#section">link</a></body>"#;
         let links = extract_all_links(html, "https://base.com");
         assert_eq!(links, vec!["https://example.com/page"]);
     }
 
     #[test]
     fn fragment_is_stripped_from_relative_href() {
-        let html = r#"<a href="/page#breadcrumb">link</a>"#;
+        let html = r#"<body><a href="/page#breadcrumb">link</a></body>"#;
         let links = extract_all_links(html, "https://example.com");
         assert_eq!(links, vec!["https://example.com/page"]);
     }
 
     #[test]
     fn same_page_with_different_fragments_deduplicates() {
-        let html = r#"
+        let html = r#"<body>
             <a href="/page#breadcrumb">one</a>
             <a href="/page#primaryimage">two</a>
             <a href="/page#footer">three</a>
-        "#;
+        </body>"#;
         let links = extract_all_links(html, "https://example.com");
         assert_eq!(links, vec!["https://example.com/page"]);
     }
 
     #[test]
     fn bare_fragment_resolves_to_base_url() {
-        let html = r##"<a href="#top">back to top</a>"##;
+        let html = r##"<body><a href="#top">back to top</a></body>"##;
         let links = extract_all_links(html, "https://example.com/page");
         assert_eq!(links, vec!["https://example.com/page"]);
     }
@@ -202,14 +280,14 @@ mod tests {
 
     #[test]
     fn no_links_returns_empty() {
-        let html = "<p>Just some text with no links</p>";
+        let html = "<body><p>Just some text with no links</p></body>";
         let links = extract_all_links(html, "https://example.com");
         assert!(links.is_empty());
     }
 
     #[test]
     fn empty_href_skipped() {
-        let html = r#"<a href="">empty</a>"#;
+        let html = r#"<body><a href="">empty</a></body>"#;
         let links = extract_all_links(html, "https://example.com");
         // Empty href resolves to base URL
         assert!(links.len() <= 1);
@@ -217,7 +295,7 @@ mod tests {
 
     #[test]
     fn malformed_base_url_does_not_crash() {
-        let html = r#"<a href="/about">link</a>"#;
+        let html = r#"<body><a href="/about">link</a></body>"#;
         let links = extract_all_links(html, "not a url");
         // Should not panic; relative hrefs just get skipped
         assert!(links.is_empty() || !links.is_empty());
@@ -227,12 +305,12 @@ mod tests {
 
     #[test]
     fn linktree_style_page() {
-        let html = r#"
+        let html = r#"<body>
             <a href="https://instagram.com/mplsmutualaid">Instagram</a>
             <a href="https://gofundme.com/f/help-families?utm_source=linktree">GoFundMe</a>
             <a href="https://docs.google.com/document/d/ABC123/edit">Resource Doc</a>
             <a href="/terms">Terms</a>
-        "#;
+        </body>"#;
         let links = extract_all_links(html, "https://linktr.ee/mplsmutualaid");
         assert!(links.contains(&"https://instagram.com/mplsmutualaid".to_string()));
         assert!(
@@ -247,11 +325,11 @@ mod tests {
 
     #[test]
     fn pattern_filter_instagram() {
-        let html = r#"
+        let html = r#"<body>
             <a href="https://instagram.com/org">IG</a>
             <a href="https://facebook.com/org">FB</a>
             <a href="https://instagram.com/other">IG2</a>
-        "#;
+        </body>"#;
         let links = extract_links_by_pattern(html, "https://base.com", "instagram.com");
         assert_eq!(links.len(), 2);
         assert!(links.iter().all(|u| u.contains("instagram.com")));
@@ -259,7 +337,7 @@ mod tests {
 
     #[test]
     fn pattern_empty_returns_all() {
-        let html = r#"<a href="https://a.com">A</a><a href="https://b.com">B</a>"#;
+        let html = r#"<body><a href="https://a.com">A</a><a href="https://b.com">B</a></body>"#;
         let links = extract_links_by_pattern(html, "https://base.com", "");
         assert_eq!(links.len(), 2);
     }

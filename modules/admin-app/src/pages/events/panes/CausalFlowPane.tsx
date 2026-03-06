@@ -1,9 +1,23 @@
-import { useMemo, useCallback, useEffect } from "react";
-import { ReactFlow, Background, Controls, useReactFlow, type Node, type Edge, type NodeChange, Position } from "@xyflow/react";
+import { useMemo, useCallback, useEffect, memo } from "react";
+import { ReactFlow, Background, Controls, useReactFlow, Handle, type Node, type Edge, type NodeChange, type NodeProps, Position } from "@xyflow/react";
+import { useQuery } from "@apollo/client";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
 import { eventBg, eventBorder } from "../eventColor";
+import { ADMIN_HANDLER_DESCRIPTIONS } from "../../../graphql/queries";
+
+// ---------------------------------------------------------------------------
+// Block DSL types (mirrors rootsignal-common::describe)
+// ---------------------------------------------------------------------------
+
+type Block =
+  | { type: "label"; text: string }
+  | { type: "counter"; label: string; value: number; total: number }
+  | { type: "progress"; label: string; fraction: number }
+  | { type: "checklist"; label: string; items: { text: string; done: boolean }[] }
+  | { type: "key_value"; key: string; value: string }
+  | { type: "status"; label: string; state: "waiting" | "running" | "done" | "error" };
 
 // ---------------------------------------------------------------------------
 // Flow node data (discriminated union for structured identity)
@@ -11,12 +25,98 @@ import { eventBg, eventBorder } from "../eventColor";
 
 type FlowNodeData =
   | { nodeKind: "event-type"; handlerId: string | null; eventName: string; label: string }
-  | { nodeKind: "handler"; handlerId: string; label: string };
+  | { nodeKind: "handler"; handlerId: string; label: string; blocks?: Block[] };
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 50;
-const HANDLER_WIDTH = 160;
+const HANDLER_WIDTH = 180;
 const HANDLER_HEIGHT = 36;
+
+// ---------------------------------------------------------------------------
+// Block renderers
+// ---------------------------------------------------------------------------
+
+function BlockRenderer({ block }: { block: Block }) {
+  switch (block.type) {
+    case "checklist":
+      return (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ fontSize: 9, color: "#71717a", marginBottom: 2 }}>{block.label}</div>
+          {block.items.map((item, i) => (
+            <div key={i} style={{ fontSize: 9, color: item.done ? "#22c55e" : "#52525b", display: "flex", gap: 3, alignItems: "center" }}>
+              <span>{item.done ? "✓" : "○"}</span>
+              <span>{item.text}</span>
+            </div>
+          ))}
+        </div>
+      );
+    case "counter":
+      return (
+        <div style={{ fontSize: 9, color: "#a1a1aa", marginTop: 2 }}>
+          {block.label}: {block.value}/{block.total}
+        </div>
+      );
+    case "progress": {
+      const pct = Math.round(block.fraction * 100);
+      return (
+        <div style={{ marginTop: 2 }}>
+          <div style={{ fontSize: 9, color: "#a1a1aa" }}>{block.label}: {pct}%</div>
+          <div style={{ height: 3, background: "#3f3f46", borderRadius: 2, marginTop: 1 }}>
+            <div style={{ height: "100%", width: `${pct}%`, background: "#22c55e", borderRadius: 2 }} />
+          </div>
+        </div>
+      );
+    }
+    case "label":
+      return <div style={{ fontSize: 9, color: "#a1a1aa", marginTop: 2 }}>{block.text}</div>;
+    case "key_value":
+      return (
+        <div style={{ fontSize: 9, color: "#a1a1aa", marginTop: 2 }}>
+          <span style={{ color: "#71717a" }}>{block.key}:</span> {block.value}
+        </div>
+      );
+    case "status": {
+      const colors: Record<string, string> = { waiting: "#71717a", running: "#eab308", done: "#22c55e", error: "#ef4444" };
+      return (
+        <div style={{ fontSize: 9, color: colors[block.state] ?? "#a1a1aa", marginTop: 2 }}>
+          {block.label}: {block.state}
+        </div>
+      );
+    }
+    default:
+      return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Custom handler node with optional block rendering
+// ---------------------------------------------------------------------------
+
+const HandlerNode = memo(({ data }: NodeProps) => {
+  const d = data as FlowNodeData & { nodeKind: "handler" };
+  const blocks = d.blocks;
+  const hasBlocks = blocks && blocks.length > 0;
+
+  return (
+    <div style={{
+      background: "#27272a",
+      border: "1px solid #52525b",
+      borderRadius: hasBlocks ? 8 : 20,
+      fontSize: 10,
+      padding: hasBlocks ? "6px 10px" : "4px 12px",
+      width: HANDLER_WIDTH,
+      color: "#a1a1aa",
+      fontStyle: "italic",
+    }}>
+      <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
+      <div>{d.label}</div>
+      {hasBlocks && blocks.map((block, i) => <BlockRenderer key={i} block={block} />)}
+      <Handle type="source" position={Position.Bottom} style={{ visibility: "hidden" }} />
+    </div>
+  );
+});
+
+const nodeTypes = { handler: HandlerNode };
 
 // ---------------------------------------------------------------------------
 // Graph building
@@ -24,7 +124,7 @@ const HANDLER_HEIGHT = 36;
 
 type FlowGraph = { nodes: Node[]; edges: Edge[] };
 
-function buildFlowGraph(events: AdminEvent[]): FlowGraph {
+function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]>): FlowGraph {
   // Group events by (handlerId, name) for event-type nodes
   // and create handler nodes from unique handlerIds
   const eventGroups = new Map<string, { name: string; layer: string; count: number; events: AdminEvent[] }>();
@@ -103,21 +203,12 @@ function buildFlowGraph(events: AdminEvent[]): FlowGraph {
 
   // Create handler nodes
   for (const handlerId of handlerIds) {
+    const blocks = descriptions?.get(handlerId);
     nodes.push({
       id: `hdl:${handlerId}`,
-      type: "default",
+      type: "handler",
       position: { x: 0, y: 0 },
-      data: { label: handlerId, nodeKind: "handler" as const, handlerId },
-      style: {
-        background: "#27272a",
-        border: "1px solid #52525b",
-        borderRadius: 20,
-        fontSize: 10,
-        padding: "4px 12px",
-        width: HANDLER_WIDTH,
-        color: "#a1a1aa",
-        fontStyle: "italic",
-      },
+      data: { label: handlerId, nodeKind: "handler" as const, handlerId, blocks },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
     });
@@ -184,16 +275,32 @@ function buildFlowGraph(events: AdminEvent[]): FlowGraph {
   return layoutGraph(nodes, edges);
 }
 
+function estimateHandlerHeight(data: FlowNodeData): number {
+  if (data.nodeKind !== "handler" || !data.blocks?.length) return HANDLER_HEIGHT;
+  let h = 24; // base label height
+  for (const block of data.blocks) {
+    if (block.type === "checklist") {
+      h += 14 + block.items.length * 12;
+    } else {
+      h += 14;
+    }
+  }
+  return h;
+}
+
 function layoutGraph(nodes: Node[], edges: Edge[]): FlowGraph {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "TB", ranksep: 60, nodesep: 30 });
 
+  const heights = new Map<string, number>();
   for (const node of nodes) {
     const isHandler = node.id.startsWith("hdl:");
+    const h = isHandler ? estimateHandlerHeight(node.data as FlowNodeData) : NODE_HEIGHT;
+    heights.set(node.id, h);
     g.setNode(node.id, {
       width: isHandler ? HANDLER_WIDTH : NODE_WIDTH,
-      height: isHandler ? HANDLER_HEIGHT : NODE_HEIGHT,
+      height: h,
     });
   }
 
@@ -207,7 +314,7 @@ function layoutGraph(nodes: Node[], edges: Edge[]): FlowGraph {
     const pos = g.node(node.id);
     const isHandler = node.id.startsWith("hdl:");
     const w = isHandler ? HANDLER_WIDTH : NODE_WIDTH;
-    const h = isHandler ? HANDLER_HEIGHT : NODE_HEIGHT;
+    const h = heights.get(node.id) ?? NODE_HEIGHT;
     return {
       ...node,
       position: { x: pos.x - w / 2, y: pos.y - h / 2 },
@@ -237,7 +344,7 @@ function FocusOnSelection({ nodes, flowData }: { nodes: Node[]; flowData: AdminE
 
     const isHandler = node.id.startsWith("hdl:");
     const w = isHandler ? HANDLER_WIDTH : NODE_WIDTH;
-    const h = isHandler ? HANDLER_HEIGHT : NODE_HEIGHT;
+    const h = isHandler ? estimateHandlerHeight(node.data as FlowNodeData) : NODE_HEIGHT;
 
     setCenter(
       node.position.x + w / 2,
@@ -254,12 +361,29 @@ function FocusOnSelection({ nodes, flowData }: { nodes: Node[]; flowData: AdminE
 // ---------------------------------------------------------------------------
 
 export function CausalFlowPane() {
-  const { flowRunId, closeFlow, flowData, flowLoading, flowSelection, setFlowSelection, selectSeq } = useEventsPaneContext();
+  const { flowRunId, closeFlow, flowData, flowLoading, flowSelection, setFlowSelection, selectSeq, setLogsFilter } = useEventsPaneContext();
+
+  const { data: descData } = useQuery<{
+    adminHandlerDescriptions: { handlerId: string; blocks: unknown }[];
+  }>(ADMIN_HANDLER_DESCRIPTIONS, {
+    variables: flowRunId ? { runId: flowRunId } : undefined,
+    skip: !flowRunId,
+    pollInterval: 5000,
+  });
+
+  const descriptions = useMemo(() => {
+    if (!descData?.adminHandlerDescriptions) return undefined;
+    const map = new Map<string, Block[]>();
+    for (const d of descData.adminHandlerDescriptions) {
+      map.set(d.handlerId, d.blocks as Block[]);
+    }
+    return map;
+  }, [descData]);
 
   const { nodes: rawNodes, edges } = useMemo(() => {
     if (!flowData || flowData.length === 0) return { nodes: [], edges: [] };
-    return buildFlowGraph(flowData);
-  }, [flowData]);
+    return buildFlowGraph(flowData, descriptions);
+  }, [flowData, descriptions]);
 
   // Derive selected node ID from flowSelection
   const selectedNodeId = useMemo(() => {
@@ -286,6 +410,14 @@ export function CausalFlowPane() {
     if (match) selectSeq(match.seq, match.runId ?? undefined);
   }, [flowData, selectSeq]);
 
+  const openLogsForHandler = useCallback((handlerId: string) => {
+    if (!flowData) return;
+    const evt = flowData.find(e => e.handlerId === handlerId && e.parentId);
+    if (evt) {
+      setLogsFilter({ eventId: evt.parentId!, handlerId, runId: evt.runId });
+    }
+  }, [flowData, setLogsFilter]);
+
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     const d = node.data as FlowNodeData;
 
@@ -306,9 +438,10 @@ export function CausalFlowPane() {
       } else {
         setFlowSelection({ kind: "handler", handlerId: d.handlerId });
         syncTree(d);
+        openLogsForHandler(d.handlerId);
       }
     }
-  }, [flowSelection, setFlowSelection, syncTree]);
+  }, [flowSelection, setFlowSelection, syncTree, openLogsForHandler]);
 
   const onPaneClick = useCallback(() => setFlowSelection(null), [setFlowSelection]);
 
@@ -378,6 +511,7 @@ export function CausalFlowPane() {
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
