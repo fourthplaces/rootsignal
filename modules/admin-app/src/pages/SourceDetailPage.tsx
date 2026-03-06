@@ -138,8 +138,11 @@ function DiscoveryTreeView({ tree }: { tree: DiscoveryTree }) {
   // Find ancestors (walk up from root)
   const ancestors: string[] = [];
   let current = tree.rootId;
+  const visited = new Set<string>([current]);
   while (parentOf.has(current)) {
     const parent = parentOf.get(current)!;
+    if (visited.has(parent)) break;
+    visited.add(parent);
     ancestors.unshift(parent);
     current = parent;
   }
