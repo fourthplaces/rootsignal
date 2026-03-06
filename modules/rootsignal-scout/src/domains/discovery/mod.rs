@@ -67,7 +67,7 @@ pub mod handlers {
     ///
     /// Auto-accepts social/direct-action/query/admin sources.
     /// LLM-filters web URL sources via `filter_domains_batch`.
-    /// Emits `SourceRegistered` (accepted) or `SourceRejected` (audit).
+    /// Emits `SourcesRegistered` (accepted) or `SourceRejected` (audit).
     #[handle(on = [DiscoveryEvent::SourcesDiscovered], id = "discovery:filter_domains", extract(sources, discovered_by))]
     async fn filter_domains(
         sources: Vec<rootsignal_common::SourceNode>,
@@ -90,6 +90,7 @@ pub mod handlers {
             region_name.as_deref(),
             ai,
             &*deps.store,
+            &ctx.logger,
         )
         .await;
 

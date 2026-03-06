@@ -1244,7 +1244,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3121,7 +3121,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3629,7 +3629,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3814,9 +3814,9 @@ dependencies = [
 
 [[package]]
 name = "seesaw_core"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b26b43477793107e12637b1dcd61cad80e29f4cd5d1271a13d4e5d09bbabfaed"
+checksum = "7b9935cfcffb1e0adaadd3388ef5ae92ea70dcbae9b5ed1798be05098dadd321"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3835,9 +3835,9 @@ dependencies = [
 
 [[package]]
 name = "seesaw_core_macros"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e803cfd58bf59761df2cab4cdc17f956937f5afef98560362695d87e1534c866"
+checksum = "8d46ccea70d3a991e1a63abb23b2bb772c04a9b7b8fdc366779618adb426fc1f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4699,7 +4699,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

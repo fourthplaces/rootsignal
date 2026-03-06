@@ -3,11 +3,10 @@
 //! Every `SourcesDiscovered` event passes through this handler.
 //! Sources are either auto-accepted (social, direct-action, query, admin)
 //! or LLM-filtered via `filter_domains_batch`. Accepted sources emit
-//! `SystemEvent::SourceRegistered`; rejected ones emit `DiscoveryEvent::SourceRejected`.
+//! `SystemEvent::SourcesRegistered`; rejected ones emit `DiscoveryEvent::SourceRejected`.
 
 use ai_client::Agent;
-use seesaw_core::Events;
-use tracing::info;
+use seesaw_core::{Events, Logger};
 
 use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::types::{channel_type, ChannelType, SourceNode};
@@ -26,6 +25,7 @@ pub async fn filter_discovered_sources(
     region_name: Option<&str>,
     ai: Option<&dyn Agent>,
     store: &dyn SignalReader,
+    logger: &Logger,
 ) -> Events {
     let mut events = Events::new();
 
@@ -45,6 +45,13 @@ pub async fn filter_discovered_sources(
         }
     }
 
+    logger.info(format!(
+        "Source filter: {} total from {discovered_by} — {} auto-accepted, {} need LLM",
+        accepted.len() + needs_filter.len(),
+        accepted.len(),
+        needs_filter.len(),
+    ));
+
     // LLM filter for web URL sources
     if !needs_filter.is_empty() {
         match (ai, region_name) {
@@ -55,7 +62,7 @@ pub async fn filter_discovered_sources(
                     .collect();
 
                 let accepted_urls = domain_filter::filter_domains_batch(
-                    &urls, region, ai, store,
+                    &urls, region, ai, store, logger,
                 )
                 .await;
 
@@ -81,33 +88,22 @@ pub async fn filter_discovered_sources(
                 }
 
                 if rejected_count > 0 {
-                    info!(
-                        before,
-                        accepted = before - rejected_count,
-                        rejected = rejected_count,
-                        "Domain filter applied to discovered sources"
-                    );
+                    logger.info(format!(
+                        "Source filter outcome: {} accepted, {rejected_count} rejected out of {before}",
+                        before - rejected_count,
+                    ));
                 }
             }
             _ => {
-                // Fail-open: no AI or no region → accept all
+                let count = needs_filter.len();
                 accepted.extend(needs_filter);
+                logger.info(format!("No AI or region — auto-accepting all {count} sources"));
             }
         }
     }
 
-    // Emit SourceRegistered for each accepted source
-    for source in accepted {
-        events.push(SystemEvent::SourceRegistered {
-            source_id: source.id,
-            canonical_key: source.canonical_key,
-            canonical_value: source.canonical_value,
-            url: source.url,
-            discovery_method: source.discovery_method,
-            weight: source.weight,
-            source_role: source.source_role,
-            gap_context: source.gap_context,
-        });
+    if !accepted.is_empty() {
+        events.push(SystemEvent::SourcesRegistered { sources: accepted });
     }
 
     events
@@ -179,14 +175,16 @@ mod tests {
         )
     }
 
-    /// Count SourceRegistered events in the output.
+    /// Count sources in SourcesRegistered batch events.
     fn count_registered(events: &seesaw_core::Events) -> usize {
         let system_type = TypeId::of::<SystemEvent>();
         events
             .iter()
             .filter(|e| e.type_id == system_type)
-            .filter(|e| e.payload.get("type").and_then(|v| v.as_str()) == Some("source_registered"))
-            .count()
+            .filter(|e| e.payload.get("type").and_then(|v| v.as_str()) == Some("sources_registered"))
+            .filter_map(|e| e.payload.get("sources").and_then(|v| v.as_array()))
+            .map(|arr| arr.len())
+            .sum()
     }
 
     #[tokio::test]
@@ -200,6 +198,7 @@ mod tests {
             None,
             None,
             &store,
+            &Logger::new(),
         )
         .await;
 
@@ -220,6 +219,7 @@ mod tests {
             None,
             None,
             &store,
+            &Logger::new(),
         )
         .await;
 
@@ -237,6 +237,7 @@ mod tests {
             None,
             None,
             &store,
+            &Logger::new(),
         )
         .await;
 
@@ -257,6 +258,7 @@ mod tests {
             Some("Minneapolis"),
             None, // no AI
             &store,
+            &Logger::new(),
         )
         .await;
 

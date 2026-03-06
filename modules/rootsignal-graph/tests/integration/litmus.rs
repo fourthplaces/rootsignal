@@ -7,7 +7,7 @@ use chrono::Utc;
 use uuid::Uuid;
 use rootsignal_common::events::{Event, Location, WorldEvent};
 use rootsignal_common::system_events::SystemEvent;
-use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceRole};
+use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceNode, SourceRole};
 use rootsignal_events::StoredEvent;
 use rootsignal_graph::{query, BBox, GraphClient, GraphProjector, GraphStore, Pipeline};
 
@@ -1125,15 +1125,12 @@ async fn source_last_scraped_round_trip() {
     let source_id = Uuid::new_v4();
     let events = vec![stored(
         1,
-        &Event::System(SystemEvent::SourceRegistered {
-            source_id,
-            canonical_key: "https://example.org".into(),
-            canonical_value: "https://example.org".into(),
-            url: Some("https://example.org".into()),
-            discovery_method: DiscoveryMethod::Curated,
-            weight: 0.5,
-            source_role: SourceRole::Mixed,
-            gap_context: None,
+        &Event::System(SystemEvent::SourcesRegistered {
+            sources: vec![SourceNode::new(
+                "https://example.org".into(), "https://example.org".into(),
+                Some("https://example.org".into()),
+                DiscoveryMethod::Curated, 0.5, SourceRole::Mixed, None,
+            )],
         }),
     )];
 
@@ -2929,15 +2926,12 @@ async fn signal_expansion_source_created_with_correct_method() {
 
     let events = vec![stored(
         1,
-        &Event::System(SystemEvent::SourceRegistered {
-            source_id,
-            canonical_key: canonical_key.into(),
-            canonical_value: "emergency housing Minneapolis".into(),
-            url: None,
-            discovery_method: DiscoveryMethod::SignalExpansion,
-            weight: 0.5,
-            source_role: SourceRole::Mixed,
-            gap_context: Some("Expanded from: Emergency bail fund for detained immigrants".into()),
+        &Event::System(SystemEvent::SourcesRegistered {
+            sources: vec![SourceNode::new(
+                canonical_key.into(), "emergency housing Minneapolis".into(),
+                None, DiscoveryMethod::SignalExpansion, 0.5, SourceRole::Mixed,
+                Some("Expanded from: Emergency bail fund for detained immigrants".into()),
+            )],
         }),
     )];
 

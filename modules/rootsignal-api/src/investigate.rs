@@ -606,6 +606,7 @@ pub(crate) const BREAKDOWN_VARIANTS: &[&str] = &[
     "source_discovered",
     "sources_discovered",
     "source_registered",
+    "sources_registered",
     "source_rejected",
     "expansion_query_collected",
     "handler_failed",
@@ -620,7 +621,8 @@ pub(crate) const SAMPLE_VARIANTS: &[(&str, &str, i64)] = &[
     ("Signals Created", "new_signal_accepted", 15),
     ("Sources Discovered (old)", "source_discovered", 15),
     ("Sources Proposed", "sources_discovered", 10),
-    ("Sources Registered", "source_registered", 15),
+    ("Sources Registered (old)", "source_registered", 15),
+    ("Sources Registered", "sources_registered", 15),
     ("Sources Rejected", "source_rejected", 10),
     ("Dedup Matches", "cross_source_match_detected", 10),
 ];

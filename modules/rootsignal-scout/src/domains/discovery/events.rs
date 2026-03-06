@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DiscoveryEvent {
     /// Batch of proposed sources — not projected directly.
-    /// The domain_filter handler decides which become SourceRegistered.
+    /// The domain_filter handler decides which become SourcesRegistered.
     SourcesDiscovered {
         sources: Vec<SourceNode>,
         discovered_by: String,

@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use ai_client::{ai_extract, Agent};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tracing::{info, warn};
+use seesaw_core::Logger;
 
 use rootsignal_common::extract_domain;
 
@@ -67,6 +67,7 @@ pub async fn filter_domains_batch(
     region_name: &str,
     ai: &dyn Agent,
     _store: &dyn SignalReader,
+    logger: &Logger,
 ) -> Vec<String> {
     if urls.is_empty() {
         return Vec::new();
@@ -101,10 +102,7 @@ pub async fn filter_domains_batch(
     let mut verdicts: HashMap<String, bool> = cached;
 
     if !unchecked.is_empty() {
-        info!(
-            count = unchecked.len(),
-            "Evaluating unchecked domains via LLM"
-        );
+        logger.info(format!("LLM domain filter: evaluating {} unique domains for {region_name}", unchecked.len()));
 
         let domain_list = unchecked
             .iter()
@@ -118,14 +116,17 @@ pub async fn filter_domains_batch(
             .await
         {
             Ok(response) => {
-                let mut new_verdicts: Vec<(String, bool)> = Vec::new();
+                let mut accepted_count = 0u32;
+                let mut rejected_count = 0u32;
                 for v in &response.domains {
                     let norm = normalize_domain(&v.domain);
                     if unchecked.contains(&norm) {
-                        verdicts.insert(norm.clone(), v.accept);
-                        new_verdicts.push((norm, v.accept));
-                        if !v.accept {
-                            info!(domain = %v.domain, reason = %v.reason, "Domain rejected");
+                        verdicts.insert(norm, v.accept);
+                        if v.accept {
+                            accepted_count += 1;
+                        } else {
+                            rejected_count += 1;
+                            logger.info(format!("Rejected domain {}: {}", v.domain, v.reason));
                         }
                     }
                 }
@@ -133,14 +134,16 @@ pub async fn filter_domains_batch(
                 for d in &unchecked {
                     if !verdicts.contains_key(d.as_str()) {
                         verdicts.insert(d.clone(), false);
-                        new_verdicts.push((d.clone(), false));
+                        rejected_count += 1;
+                        logger.warn(format!("Domain {d} missing from LLM response, rejecting"));
                     }
                 }
-                // TODO: Cache new verdicts once SignalReader trait has cache_domain_verdicts
-                let _ = &new_verdicts;
+                logger.info(format!(
+                    "LLM domain filter complete: {accepted_count} accepted, {rejected_count} rejected"
+                ));
             }
             Err(e) => {
-                warn!(error = %e, "Domain filter LLM call failed, passing all URLs through");
+                logger.warn(format!("LLM domain filter failed ({e}), passing all URLs through"));
                 return urls.to_vec();
             }
         }

@@ -204,7 +204,7 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
             // SourcesDiscovered is a proposal — the domain_filter handler decides
-            // which become SourceRegistered. SourceRejected is audit-only.
+            // which become SourcesRegistered. SourceRejected is audit-only.
             "discovery:sources_discovered" | "discovery:source_rejected" => {
                 Ok(ApplyResult::NoOp)
             }
@@ -1933,50 +1933,44 @@ impl GraphProjector {
             // ---------------------------------------------------------
             // Source registry
             // ---------------------------------------------------------
-            SystemEvent::SourceRegistered {
-                source_id,
-                canonical_key,
-                canonical_value,
-                url,
-                discovery_method,
-                weight,
-                source_role,
-                gap_context,
-            } => {
-                let q = query(
-                    "MERGE (s:Source {canonical_key: $canonical_key})
-                     ON CREATE SET
-                         s.id = $id,
-                         s.canonical_value = $canonical_value,
-                         s.url = $url,
-                         s.discovery_method = $discovery_method,
-                         s.created_at = datetime($ts),
-                         s.signals_produced = 0,
-                         s.signals_corroborated = 0,
-                         s.consecutive_empty_runs = 0,
-                         s.active = true,
-                         s.gap_context = $gap_context,
-                         s.weight = $weight,
-                         s.avg_signals_per_scrape = 0.0,
-                         s.quality_penalty = 1.0,
-                         s.source_role = $source_role,
-                         s.scrape_count = 0,
-                         s.sources_discovered = 0
-                     ON MATCH SET
-                         s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
-                         s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
-                )
-                .param("id", source_id.to_string())
-                .param("canonical_key", canonical_key.as_str())
-                .param("canonical_value", canonical_value.as_str())
-                .param("url", url.as_deref().unwrap_or(""))
-                .param("discovery_method", discovery_method.to_string())
-                .param("ts", format_dt_from_stored(event))
-                .param("weight", weight)
-                .param("source_role", source_role.to_string())
-                .param("gap_context", gap_context.unwrap_or_default());
+            SystemEvent::SourcesRegistered { sources } => {
+                let ts = format_dt_from_stored(event);
+                for source in sources {
+                    let q = query(
+                        "MERGE (s:Source {canonical_key: $canonical_key})
+                         ON CREATE SET
+                             s.id = $id,
+                             s.canonical_value = $canonical_value,
+                             s.url = $url,
+                             s.discovery_method = $discovery_method,
+                             s.created_at = datetime($ts),
+                             s.signals_produced = 0,
+                             s.signals_corroborated = 0,
+                             s.consecutive_empty_runs = 0,
+                             s.active = true,
+                             s.gap_context = $gap_context,
+                             s.weight = $weight,
+                             s.avg_signals_per_scrape = 0.0,
+                             s.quality_penalty = 1.0,
+                             s.source_role = $source_role,
+                             s.scrape_count = 0,
+                             s.sources_discovered = 0
+                         ON MATCH SET
+                             s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
+                             s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
+                    )
+                    .param("id", source.id.to_string())
+                    .param("canonical_key", source.canonical_key.as_str())
+                    .param("canonical_value", source.canonical_value.as_str())
+                    .param("url", source.url.as_deref().unwrap_or(""))
+                    .param("discovery_method", source.discovery_method.to_string())
+                    .param("ts", ts.as_str())
+                    .param("weight", source.weight)
+                    .param("source_role", source.source_role.to_string())
+                    .param("gap_context", source.gap_context.unwrap_or_default());
 
-                self.client.run(q).await?;
+                    self.client.run(q).await?;
+                }
                 Ok(ApplyResult::Applied)
             }
 

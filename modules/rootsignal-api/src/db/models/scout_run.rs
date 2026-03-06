@@ -751,6 +751,10 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
             let method = json_str(data, "discovery_method").unwrap_or_default();
             Some(format!("\"{key}\" via {method}"))
         }
+        "sources_registered" => {
+            let count = data.get("sources").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("{count} sources registered"))
+        }
         "source_changed" | "source_system_changed" => json_str(data, "canonical_key").map(|k| format!("\"{k}\"")),
         "source_deactivated" => {
             let ids = data.get("source_ids").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);

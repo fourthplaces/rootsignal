@@ -17,7 +17,7 @@ use crate::events::{
 };
 use crate::safety::SensitivityLevel;
 use crate::types::{
-    ActorType, DiscoveryMethod, DispatchType, NodeType, Severity, SituationArc, SourceRole, Tone,
+    ActorType, DispatchType, NodeType, Severity, SituationArc, SourceNode, Tone,
     Urgency,
 };
 
@@ -369,16 +369,8 @@ pub enum SystemEvent {
     // -----------------------------------------------------------------------
     // Source registry — Root Signal's source management
     // -----------------------------------------------------------------------
-    SourceRegistered {
-        source_id: Uuid,
-        canonical_key: String,
-        canonical_value: String,
-        url: Option<String>,
-        discovery_method: DiscoveryMethod,
-        weight: f64,
-        source_role: SourceRole,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        gap_context: Option<String>,
+    SourcesRegistered {
+        sources: Vec<SourceNode>,
     },
 
     SourceChanged {
@@ -613,7 +605,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::FakeCoordinatesNulled { .. } => "fake_coordinates_nulled",
             SystemEvent::OrphanedCitationsCleaned { .. } => "orphaned_citations_cleaned",
             SystemEvent::SourceSystemChanged { .. } => "source_system_changed",
-            SystemEvent::SourceRegistered { .. } => "source_registered",
+            SystemEvent::SourcesRegistered { .. } => "sources_registered",
             SystemEvent::SourceChanged { .. } => "source_changed",
             SystemEvent::SourceDeactivated { .. } => "source_deactivated",
             SystemEvent::SourceDeleted { .. } => "source_deleted",

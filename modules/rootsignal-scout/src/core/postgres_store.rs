@@ -16,7 +16,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use seesaw_core::store::Store;
-use seesaw_core::types::{HandlerResolution, EventOutcome, LogLevel, QueueStatus};
+use seesaw_core::types::{AppendResult, HandlerResolution, EventOutcome, LogLevel, QueueStatus};
 use seesaw_core::{
     HandlerCompletion, HandlerDlq, EventCommit, ExpiredJoinWindow, JoinAppendParams, JoinEntry,
     NewEvent, PersistedEvent, QueuedHandler, QueuedEvent, Snapshot,
@@ -410,7 +410,7 @@ impl Store for PostgresStore {
 
     // ── Event persistence (existing `events` table) ──────────────────
 
-    async fn append_event(&self, event: NewEvent) -> Result<u64> {
+    async fn append_event(&self, event: NewEvent) -> Result<AppendResult> {
         let run_id = event
             .metadata
             .get("run_id")
@@ -456,7 +456,7 @@ impl Store for PostgresStore {
                     .bind(seq)
                     .execute(&self.pool)
                     .await;
-                Ok(seq as u64)
+                Ok(AppendResult { position: seq as u64, version: None })
             }
             None => {
                 // Duplicate event_id — return existing position
@@ -466,7 +466,7 @@ impl Store for PostgresStore {
                 .bind(event.event_id)
                 .fetch_one(&self.pool)
                 .await?;
-                Ok(seq as u64)
+                Ok(AppendResult { position: seq as u64, version: None })
             }
         }
     }

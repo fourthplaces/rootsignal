@@ -387,14 +387,10 @@ async fn link_promotion_promotes_links_on_phase_completed() {
 
     let names = event_names(&captured);
 
-    // SourceRegistered events emitted for promoted links (via domain_filter chokepoint)
-    let source_registered_count = names
-        .iter()
-        .filter(|n| n.contains("source_registered"))
-        .count();
+    // SourcesRegistered batch emitted for promoted links (via domain_filter chokepoint)
     assert!(
-        source_registered_count >= 1,
-        "expected at least 1 SourceRegistered, got: {names:?}"
+        names.iter().any(|n| n.contains("sources_registered")),
+        "expected SourcesRegistered, got: {names:?}"
     );
 
     // Reducer cleared collected_links after link promotion
@@ -425,8 +421,8 @@ async fn link_promotion_skips_when_no_links() {
 
     // No handler output — link promotion filter skips when no links
     assert!(
-        !names.iter().any(|n| n.contains("source_registered")),
-        "should not emit SourceRegistered with no links, got: {names:?}"
+        !names.iter().any(|n| n.contains("sources_registered")),
+        "should not emit SourcesRegistered with no links, got: {names:?}"
     );
 }
 
@@ -467,9 +463,8 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
     complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
-    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert!(
-        source_count >= 2,
+        names.iter().any(|n| n.contains("sources_registered")),
         "social handles should be promoted even from zero-signal pages, got: {names:?}"
     );
 }
@@ -518,9 +513,8 @@ async fn productive_page_content_links_promoted_without_ai_triage() {
     complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
-    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert!(
-        source_count >= 2,
+        names.iter().any(|n| n.contains("sources_registered")),
         "content links from productive page should be promoted, got: {names:?}"
     );
 }
@@ -559,7 +553,7 @@ async fn zero_signal_page_content_links_not_promoted_without_ai() {
     complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
-    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
+    let source_count = names.iter().filter(|n| n.contains("sources_registered")).count();
     assert_eq!(
         source_count, 0,
         "content links from zero-signal page should NOT be promoted without AI, got: {names:?}"
@@ -618,9 +612,8 @@ async fn zero_signal_page_triaged_and_promoted() {
     let names = event_names(&captured);
 
     // Content links promoted from triage-passed page
-    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
     assert!(
-        source_count >= 2,
+        names.iter().any(|n| n.contains("sources_registered")),
         "content links from triage-passed page should be promoted, got: {names:?}"
     );
 }
@@ -673,7 +666,7 @@ async fn zero_signal_page_triaged_and_rejected() {
     let names = event_names(&captured);
 
     // No content links promoted
-    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
+    let source_count = names.iter().filter(|n| n.contains("sources_registered")).count();
     assert_eq!(
         source_count, 0,
         "content links from rejected page should NOT be promoted, got: {names:?}"
@@ -724,7 +717,7 @@ async fn ai_error_fails_closed_no_content_links_promoted_from_triage() {
     let names = event_names(&captured);
 
     // No content links promoted
-    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
+    let source_count = names.iter().filter(|n| n.contains("sources_registered")).count();
     assert_eq!(
         source_count, 0,
         "AI error should fail closed — no content links promoted, got: {names:?}"
@@ -768,7 +761,7 @@ async fn content_links_capped_per_source() {
     complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
-    let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
+    let source_count = names.iter().filter(|n| n.contains("sources_registered")).count();
     assert!(
         source_count <= 10,
         "content links should be capped at 10 per source, got {source_count}: {names:?}"
@@ -1059,14 +1052,17 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
     assert_eq!(urls_scraped, 3, "should scrape all 3 linktree pages");
 
     // 3. Social handles extracted from page links and promoted as sources
-    //    Sources flow through SourcesDiscovered → domain_filter → SourceRegistered
+    //    Sources flow through SourcesDiscovered → domain_filter → SourcesRegistered
     let promoted_urls: Vec<String> = events
         .iter()
         .filter_map(|e| e.downcast_ref::<SystemEvent>())
         .filter_map(|e| match e {
-            SystemEvent::SourceRegistered { url, .. } => url.clone(),
+            SystemEvent::SourcesRegistered { sources } => {
+                Some(sources.iter().filter_map(|s| s.url.clone()).collect::<Vec<_>>())
+            }
             _ => None,
         })
+        .flatten()
         .collect();
 
     assert!(

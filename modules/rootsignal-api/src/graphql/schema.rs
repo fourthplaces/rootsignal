@@ -2074,37 +2074,46 @@ impl ScoutRunOutcomes {
     ) -> Result<OutcomePage<OutcomeSourceDiscovered>> {
         let pool = get_pool(ctx)?;
         let limit = limit.unwrap_or(50).min(200) as i64;
-        // Old runs: source_discovered (pipeline event). New runs: source_registered (system event).
-        let total_old = count_events_by_variant(pool, &self.run_id, "source_discovered")
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let total_new = count_events_by_variant(pool, &self.run_id, "source_registered")
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let total = total_old + total_new;
-        let mut rows = list_events_by_variant(pool, &self.run_id, "source_discovered", limit)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let rows_new = list_events_by_variant(pool, &self.run_id, "source_registered", limit)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        rows.extend(rows_new);
+        // Three eras: source_discovered (old pipeline), source_registered (individual), sources_registered (batch).
+        let variants = &["source_discovered", "source_registered", "sources_registered"];
+        let mut total = 0i64;
+        let mut rows = Vec::new();
+        for variant in variants {
+            total += count_events_by_variant(pool, &self.run_id, variant)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            let batch = list_events_by_variant(pool, &self.run_id, variant, limit)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            rows.extend(batch);
+        }
         let items = rows
             .into_iter()
-            .map(|r| {
-                // Old format: fields nested under "source". New format (source_registered): top-level.
+            .flat_map(|r| {
+                // Batch format (sources_registered): sources array
+                if let Some(sources) = r.data.get("sources").and_then(|v| v.as_array()) {
+                    return sources.iter().map(|s| {
+                        OutcomeSourceDiscovered {
+                            canonical_key: s.get("canonical_key").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+                            url: s.get("url").and_then(|v| v.as_str()).map(String::from),
+                            discovery_method: s.get("discovery_method").and_then(|v| v.as_str()).map(String::from),
+                            gap_context: s.get("gap_context").and_then(|v| v.as_str()).map(String::from),
+                        }
+                    }).collect::<Vec<_>>();
+                }
+                // Legacy formats: fields nested under "source" or top-level
                 let src = r.data.get("source");
                 let get_field = |field: &str| -> Option<&str> {
                     src.and_then(|s| s.get(field))
                         .or_else(|| r.data.get(field))
                         .and_then(|v| v.as_str())
                 };
-                OutcomeSourceDiscovered {
+                vec![OutcomeSourceDiscovered {
                     canonical_key: get_field("canonical_key").unwrap_or("?").to_string(),
                     url: get_field("url").map(String::from),
                     discovery_method: get_field("discovery_method").map(String::from),
                     gap_context: get_field("gap_context").map(String::from),
-                }
+                }]
             })
             .collect();
         Ok(OutcomePage { items, total })

@@ -139,7 +139,7 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     // System: Source editorial
     "source_system_changed",
     // System: Source registry
-    "source_registered",
+    "sources_registered",
     "source_changed",
     "source_deactivated",
     // System: Actor-source links
@@ -826,15 +826,11 @@ fn build_all_events() -> Vec<Event> {
             change: SystemSourceChange::QualityPenalty { old: 0.0, new: 0.0 },
         }),
         // Source registry
-        Event::System(SystemEvent::SourceRegistered {
-            source_id: id,
-            canonical_key: "".into(),
-            canonical_value: "".into(),
-            url: None,
-            discovery_method: DiscoveryMethod::Curated,
-            weight: 0.5,
-            source_role: SourceRole::Mixed,
-            gap_context: None,
+        Event::System(SystemEvent::SourcesRegistered {
+            sources: vec![SourceNode::new(
+                "".into(), "".into(), None,
+                DiscoveryMethod::Curated, 0.5, SourceRole::Mixed, None,
+            )],
         }),
         Event::System(SystemEvent::SourceChanged {
             source_id: id,
