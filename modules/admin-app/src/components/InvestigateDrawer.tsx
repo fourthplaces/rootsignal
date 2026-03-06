@@ -219,6 +219,26 @@ async function streamInvestigation(
 }
 
 // ---------------------------------------------------------------------------
+// Clipboard helper — falls back to execCommand when Clipboard API unavailable
+// ---------------------------------------------------------------------------
+
+function copyToClipboard(text: string): boolean {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).catch(() => {});
+    return true;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(ta);
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
 // InvestigateDrawer
 // ---------------------------------------------------------------------------
 
@@ -339,12 +359,11 @@ export function InvestigateDrawer({
       await streamInvestigation(
         config.buildBody(synthMessages),
         (text) => { result += text; },
-        async () => {
-          try {
-            await navigator.clipboard.writeText(result);
+        () => {
+          if (copyToClipboard(result)) {
             setToast("Copied to clipboard");
             setTimeout(() => setToast(null), 2500);
-          } catch {
+          } else {
             setFallbackReport(result);
           }
           setCopyState("copied");
@@ -471,14 +490,11 @@ export function InvestigateDrawer({
               <h3 className="text-sm font-semibold text-foreground">Problem Report</h3>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(fallbackReport);
+                  onClick={() => {
+                    if (copyToClipboard(fallbackReport)) {
                       setToast("Copied to clipboard");
                       setTimeout(() => setToast(null), 2500);
                       setFallbackReport(null);
-                    } catch {
-                      // clipboard still blocked — user can manually select
                     }
                   }}
                   className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
@@ -495,11 +511,12 @@ export function InvestigateDrawer({
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              <div className="max-w-none">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {fallbackReport}
-                </ReactMarkdown>
-              </div>
+              <textarea
+                readOnly
+                value={fallbackReport}
+                className="w-full h-full min-h-[200px] resize-none bg-background text-foreground text-xs font-mono p-2 border border-border rounded focus:outline-none focus:ring-1 focus:ring-ring"
+                onFocus={(e) => e.target.select()}
+              />
             </div>
           </div>
         </div>
