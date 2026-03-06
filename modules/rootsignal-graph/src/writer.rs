@@ -1150,6 +1150,7 @@ impl GraphReader {
                     source_role: SourceRole::Mixed,
                     scrape_count: 0,
                     sources_discovered: 0,
+                    discovered_from_key: None,
                 });
             }
 
@@ -1370,6 +1371,7 @@ impl GraphReader {
                 source_role: SourceRole::Mixed,
                 scrape_count: 0,
                 sources_discovered: 0,
+                discovered_from_key: None,
             };
             results.push((pin, source));
         }
@@ -4518,6 +4520,7 @@ pub fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
         ),
         scrape_count: row.get::<i64>("scrape_count").unwrap_or(0) as u32,
         sources_discovered: row.get::<i64>("sources_discovered").unwrap_or(0) as u32,
+        discovered_from_key: None,
     })
 }
 

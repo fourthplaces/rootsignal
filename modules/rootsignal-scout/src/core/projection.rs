@@ -208,6 +208,21 @@ pub fn scout_runs_handler() -> Handler<ScoutEngineDeps> {
                     _ => {}
                 }
 
+                if let Some(scrape) = event.downcast_ref::<ScrapeEvent>() {
+                    if matches!(scrape, ScrapeEvent::ResponseScrapeSkipped { .. }) {
+                        let (_, state) = ctx.singleton::<PipelineState>();
+                        let stats_json = serde_json::to_value(&state.stats)?;
+                        sqlx::query(
+                            "UPDATE scout_runs SET finished_at = now(), stats = $2 \
+                             WHERE run_id = $1",
+                        )
+                        .bind(deps.run_id.to_string())
+                        .bind(stats_json)
+                        .execute(pool)
+                        .await?;
+                    }
+                }
+
                 Ok(events![])
             }
         })

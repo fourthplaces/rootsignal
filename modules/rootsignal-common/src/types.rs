@@ -1141,6 +1141,9 @@ pub struct SourceNode {
     pub scrape_count: u32,
     /// Number of child sources discovered via link promotion from this source's pages.
     pub sources_discovered: u32,
+    /// canonical_key of the source whose pages linked to this one.
+    #[serde(default)]
+    pub discovered_from_key: Option<String>,
 }
 
 impl SourceNode {
@@ -1175,6 +1178,7 @@ impl SourceNode {
             source_role,
             scrape_count: 0,
             sources_discovered: 0,
+            discovered_from_key: None,
         }
     }
 

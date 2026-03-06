@@ -25,6 +25,7 @@ fn trusted_source() -> SourceNode {
         source_role: SourceRole::Mixed,
         scrape_count: 30,
         sources_discovered: 0,
+        discovered_from_key: None,
     }
 }
 
@@ -50,6 +51,7 @@ fn new_source() -> SourceNode {
         source_role: SourceRole::Mixed,
         scrape_count: 2,
         sources_discovered: 0,
+        discovered_from_key: None,
     }
 }
 

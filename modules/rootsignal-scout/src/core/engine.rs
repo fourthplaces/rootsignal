@@ -133,6 +133,8 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
         .with_handlers(synthesis::handlers::handlers())
         // Scrape chain finalize — triggers when all synthesis roles complete
         .with_handler(lifecycle::__seesaw_effect_finalize_scrape_run())
+        // ResponseScrapeSkipped is terminal — skip enrichment/expansion/synthesis, finalize directly
+        .with_handler(lifecycle::__seesaw_effect_finalize_on_scrape_skip())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),
@@ -205,6 +207,8 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         .with_handlers(supervisor::handlers::handlers())
         // Full chain finalize — triggers on SupervisionCompleted/NothingToSupervise
         .with_handler(lifecycle::__seesaw_effect_finalize_full_run())
+        // ResponseScrapeSkipped is terminal — skip enrichment/expansion/synthesis, finalize directly
+        .with_handler(lifecycle::__seesaw_effect_finalize_on_scrape_skip())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),

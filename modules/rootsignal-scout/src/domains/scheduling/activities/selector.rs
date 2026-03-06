@@ -537,6 +537,7 @@ mod tests {
             source_role: SourceRole::default(),
             scrape_count: 0,
             sources_discovered: 0,
+            discovered_from_key: None,
         }
     }
 
@@ -815,6 +816,7 @@ mod tests {
             source_role: SourceRole::Response,
             scrape_count: 0,
             sources_discovered: 0,
+            discovered_from_key: None,
         }
     }
 

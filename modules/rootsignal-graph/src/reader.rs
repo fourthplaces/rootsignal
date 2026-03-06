@@ -1315,6 +1315,62 @@ impl PublicGraphReader {
         }
         Ok(signals)
     }
+
+    /// Fetch the LINKED_FROM neighbourhood around a source for the discovery tree.
+    /// Returns (nodes, edges) where edges are (child_id, parent_id) pairs.
+    pub async fn discovery_tree(
+        &self,
+        source_id: &Uuid,
+    ) -> Result<(Vec<DiscoveryTreeRow>, Vec<(String, String)>), neo4rs::Error> {
+        let cypher = "
+            MATCH (root:Source {id: $id})
+            OPTIONAL MATCH (root)-[:LINKED_FROM*1..3]->(ancestor:Source)
+            OPTIONAL MATCH (child:Source)-[:LINKED_FROM]->(root)
+            WITH root,
+                 COLLECT(DISTINCT ancestor) AS ancestors,
+                 COLLECT(DISTINCT child) AS children
+            UNWIND (ancestors + [root] + children) AS node
+            WITH DISTINCT node
+            OPTIONAL MATCH (node)-[:LINKED_FROM]->(parent:Source)
+            RETURN node.id AS id, node.canonical_value AS canonical_value,
+                   node.discovery_method AS discovery_method, node.active AS active,
+                   node.signals_produced AS signals_produced,
+                   parent.id AS parent_id";
+
+        let q = query(cypher).param("id", source_id.to_string());
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            if id.is_empty() || !seen.insert(id.clone()) {
+                continue;
+            }
+            nodes.push(DiscoveryTreeRow {
+                id: id.clone(),
+                canonical_value: row.get("canonical_value").unwrap_or_default(),
+                discovery_method: row.get("discovery_method").unwrap_or_default(),
+                active: row.get("active").unwrap_or(true),
+                signals_produced: row.get::<i64>("signals_produced").unwrap_or(0) as u32,
+            });
+            let parent_id: String = row.get("parent_id").unwrap_or_default();
+            if !parent_id.is_empty() {
+                edges.push((id, parent_id));
+            }
+        }
+        Ok((nodes, edges))
+    }
+}
+
+/// Row from the discovery tree query.
+#[derive(Debug, Clone)]
+pub struct DiscoveryTreeRow {
+    pub id: String,
+    pub canonical_value: String,
+    pub discovery_method: String,
+    pub active: bool,
+    pub signals_produced: u32,
 }
 
 /// A row from the ValidationIssue query.

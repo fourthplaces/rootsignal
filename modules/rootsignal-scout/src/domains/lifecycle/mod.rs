@@ -15,6 +15,7 @@ use rootsignal_common::{Block, ChecklistItem};
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::expansion::events::ExpansionEvent;
+use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::supervisor::events::SupervisorEvent;
 use crate::domains::synthesis::events::{all_synthesis_roles, SynthesisEvent};
 use events::LifecycleEvent;
@@ -27,6 +28,10 @@ fn all_synthesis_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> boo
     if !matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. }) { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
     state.completed_synthesis_roles.is_superset(&all_synthesis_roles())
+}
+
+fn is_response_scrape_skipped(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, ScrapeEvent::ResponseScrapeSkipped { .. })
 }
 
 fn is_supervision_done(e: &SupervisorEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -200,6 +205,15 @@ pub async fn finalize_full_run(
     finalize_impl(ctx).await
 }
 
+/// ResponseScrapeSkipped is terminal — no enrichment, expansion, or synthesis work possible.
+#[handle(on = ScrapeEvent, id = "lifecycle:finalize_on_scrape_skip", filter = is_response_scrape_skipped)]
+pub async fn finalize_on_scrape_skip(
+    _event: ScrapeEvent,
+    ctx: Context<ScoutEngineDeps>,
+) -> Result<Events> {
+    finalize_impl(ctx).await
+}
+
 /// Kickoff handler for weave engine: emits ExpansionCompleted on ScoutRunRequested.
 /// The weave engine skips scrape/enrichment/expansion, so this provides the
 /// trigger that synthesis handlers need to start.
@@ -310,5 +324,28 @@ mod tests {
             .expect("should emit RunCompleted");
 
         assert_eq!(stats.handler_failures, 2, "RunCompleted stats should carry accumulated handler failure count");
+    }
+
+    #[tokio::test]
+    async fn response_scrape_skipped_finalizes_run_directly() {
+        let (engine, sink) = build_test_engine();
+
+        engine
+            .emit(crate::domains::scrape::events::ScrapeEvent::ResponseScrapeSkipped {
+                reason: "missing region or graph".into(),
+            })
+            .settled()
+            .await
+            .unwrap();
+
+        let events = sink.lock().unwrap();
+        let has_run_completed = events
+            .iter()
+            .any(|e| {
+                e.downcast_ref::<crate::domains::lifecycle::events::LifecycleEvent>()
+                    .is_some_and(|le| matches!(le, crate::domains::lifecycle::events::LifecycleEvent::RunCompleted { .. }))
+            });
+
+        assert!(has_run_completed, "ResponseScrapeSkipped should finalize the run directly");
     }
 }

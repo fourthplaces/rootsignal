@@ -114,6 +114,8 @@ pub struct SourceScrapeStats {
 }
 
 pub async fn source_scrape_stats(pool: &PgPool, source_id: &str) -> Result<SourceScrapeStats> {
+    let source_json = serde_json::json!([source_id]);
+
     let row = sqlx::query(
         r#"
         SELECT
@@ -124,49 +126,35 @@ pub async fn source_scrape_stats(pool: &PgPool, source_id: &str) -> Result<Sourc
           AND finished_at IS NOT NULL
         "#,
     )
-    .bind(serde_json::json!([source_id]))
+    .bind(&source_json)
     .fetch_one(pool)
     .await?;
 
     let last_scraped: Option<DateTime<Utc>> = row.try_get("last_scraped").ok().flatten();
     let scrape_count: i32 = row.try_get("scrape_count").unwrap_or(0);
 
-    // Consecutive empty runs: count trailing finished runs with 0 signals_extracted
-    let empty: i64 = sqlx::query_scalar(
+    // Fetch recent signal counts to count trailing empty runs
+    let recent_counts: Vec<i32> = sqlx::query_scalar(
         r#"
-        WITH recent AS (
-            SELECT (stats->>'signals_extracted')::int AS extracted
-            FROM scout_runs
-            WHERE source_ids @> $1::jsonb
-              AND finished_at IS NOT NULL
-            ORDER BY finished_at DESC
-        )
-        SELECT COUNT(*)
-        FROM (
-            SELECT extracted,
-                   ROW_NUMBER() OVER () AS rn
-            FROM recent
-        ) t
-        WHERE t.extracted = 0
-          AND t.rn <= (
-              SELECT COALESCE(MIN(rn) - 1, COUNT(*))
-              FROM (
-                  SELECT extracted, ROW_NUMBER() OVER () AS rn
-                  FROM recent
-              ) t2
-              WHERE t2.extracted > 0
-          )
+        SELECT COALESCE((stats->>'signals_extracted')::int, 0)
+        FROM scout_runs
+        WHERE source_ids @> $1::jsonb
+          AND finished_at IS NOT NULL
+        ORDER BY finished_at DESC
+        LIMIT 20
         "#,
     )
-    .bind(serde_json::json!([source_id]))
-    .fetch_one(pool)
+    .bind(&source_json)
+    .fetch_all(pool)
     .await
-    .unwrap_or(0);
+    .unwrap_or_default();
+
+    let consecutive_empty_runs = recent_counts.iter().take_while(|&&c| c == 0).count() as u32;
 
     Ok(SourceScrapeStats {
         last_scraped,
         scrape_count: scrape_count as u32,
-        consecutive_empty_runs: empty as u32,
+        consecutive_empty_runs,
     })
 }
 
@@ -1113,6 +1101,53 @@ pub async fn handler_logs_by_run(
             message,
             data,
             logged_at,
+        })
+        .collect())
+}
+
+pub struct HandlerOutcomeRow {
+    pub handler_id: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub attempts: i64,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+pub async fn handler_outcomes(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<Vec<HandlerOutcomeRow>> {
+    let correlation_id = Uuid::parse_str(run_id)
+        .map_err(|e| anyhow::anyhow!("Invalid run_id as UUID: {e}"))?;
+
+    let rows = sqlx::query_as::<_, (String, String, Option<String>, i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+        "SELECT handler_id, \
+                CASE WHEN bool_or(status = 'error') THEN 'error' \
+                     WHEN bool_or(status = 'running') THEN 'running' \
+                     WHEN bool_or(status = 'pending') THEN 'pending' \
+                     ELSE 'completed' END AS status, \
+                string_agg(DISTINCT error, '; ') FILTER (WHERE error IS NOT NULL) AS error, \
+                COALESCE(SUM(attempts), 0) AS attempts, \
+                MIN(created_at) AS started_at, \
+                MAX(updated_at) FILTER (WHERE status = 'completed') AS completed_at \
+         FROM seesaw_effect_executions \
+         WHERE correlation_id = $1 \
+         GROUP BY handler_id",
+    )
+    .bind(correlation_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(handler_id, status, error, attempts, started_at, completed_at)| HandlerOutcomeRow {
+            handler_id,
+            status,
+            error,
+            attempts,
+            started_at,
+            completed_at,
         })
         .collect())
 }

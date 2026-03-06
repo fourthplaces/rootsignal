@@ -1968,6 +1968,17 @@ impl GraphProjector {
                     .param("gap_context", source.gap_context.unwrap_or_default());
 
                     self.client.run(q).await?;
+
+                    if let Some(parent_key) = &source.discovered_from_key {
+                        let link_q = query(
+                            "MATCH (child:Source {canonical_key: $child_key})
+                             MATCH (parent:Source {canonical_key: $parent_key})
+                             MERGE (child)-[:LINKED_FROM]->(parent)",
+                        )
+                        .param("child_key", source.canonical_key.as_str())
+                        .param("parent_key", parent_key.as_str());
+                        self.client.run(link_q).await?;
+                    }
                 }
                 Ok(ApplyResult::Applied)
             }

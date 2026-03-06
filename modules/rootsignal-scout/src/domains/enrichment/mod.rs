@@ -22,9 +22,8 @@ use crate::domains::lifecycle::events::LifecycleEvent;
 
 // ── Enrichment role filters: response roles done + own role not started ──
 
-/// Enrichment gates fire on any scrape completion event (including ResponseScrapeSkipped).
 fn is_scrape_completion(e: &ScrapeEvent) -> bool {
-    e.completed_role().is_some() || matches!(e, ScrapeEvent::ResponseScrapeSkipped { .. })
+    e.completed_role().is_some()
 }
 
 fn response_scrape_done(state: &PipelineState) -> bool {

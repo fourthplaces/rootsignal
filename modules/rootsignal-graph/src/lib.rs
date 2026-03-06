@@ -23,7 +23,8 @@ pub use embedding_store::EmbeddingStore;
 pub use enrich::{compute_diversity_metrics, DiversityMetrics};
 pub use pipeline::{BBox, Pipeline, PipelineStats};
 pub use reader::{
-    PublicGraphReader, ResourceGap, ResourceMatch, ValidationIssueRow, ValidationIssueSummary,
+    DiscoveryTreeRow, PublicGraphReader, ResourceGap, ResourceMatch, ValidationIssueRow,
+    ValidationIssueSummary,
 };
 pub use projector::{ApplyResult, GraphProjector};
 pub use writer::{

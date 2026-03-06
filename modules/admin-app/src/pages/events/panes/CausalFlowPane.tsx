@@ -5,7 +5,7 @@ import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
 import { eventBg, eventBorder } from "../eventColor";
-import { ADMIN_HANDLER_DESCRIPTIONS } from "../../../graphql/queries";
+import { ADMIN_HANDLER_DESCRIPTIONS, ADMIN_HANDLER_OUTCOMES, ADMIN_SCOUT_RUN } from "../../../graphql/queries";
 
 // ---------------------------------------------------------------------------
 // Block DSL types (mirrors rootsignal-common::describe)
@@ -20,12 +20,25 @@ type Block =
   | { type: "status"; label: string; state: "waiting" | "running" | "done" | "error" };
 
 // ---------------------------------------------------------------------------
+// Handler outcome (from seesaw_effect_executions aggregation)
+// ---------------------------------------------------------------------------
+
+type HandlerOutcome = {
+  handlerId: string;
+  status: string;
+  error: string | null;
+  attempts: number;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
+// ---------------------------------------------------------------------------
 // Flow node data (discriminated union for structured identity)
 // ---------------------------------------------------------------------------
 
 type FlowNodeData =
   | { nodeKind: "event-type"; handlerId: string | null; eventName: string; label: string }
-  | { nodeKind: "handler"; handlerId: string; label: string; blocks?: Block[] };
+  | { nodeKind: "handler"; handlerId: string; label: string; blocks?: Block[]; outcome?: HandlerOutcome };
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 50;
@@ -92,25 +105,51 @@ function BlockRenderer({ block }: { block: Block }) {
 // Custom handler node with optional block rendering
 // ---------------------------------------------------------------------------
 
+function formatDuration(startedAt: string, completedAt: string): string {
+  const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+const STATUS_BORDER: Record<string, string> = {
+  pending: "#52525b",
+  running: "#eab308",
+  completed: "#22c55e",
+  error: "#ef4444",
+};
+
 const HandlerNode = memo(({ data }: NodeProps) => {
   const d = data as FlowNodeData & { nodeKind: "handler" };
   const blocks = d.blocks;
+  const outcome = d.outcome;
   const hasBlocks = blocks && blocks.length > 0;
+  const borderColor = STATUS_BORDER[outcome?.status ?? "pending"] ?? "#52525b";
+  const isRunning = outcome?.status === "running";
+  const duration = outcome?.status === "completed" && outcome.startedAt && outcome.completedAt
+    ? formatDuration(outcome.startedAt, outcome.completedAt)
+    : null;
 
   return (
     <div style={{
       background: "#27272a",
-      border: "1px solid #52525b",
+      border: `1px solid ${borderColor}`,
       borderRadius: hasBlocks ? 8 : 20,
       fontSize: 10,
       padding: hasBlocks ? "6px 10px" : "4px 12px",
       width: HANDLER_WIDTH,
       color: "#a1a1aa",
       fontStyle: "italic",
+      animation: isRunning ? "pulse 2s ease-in-out infinite" : undefined,
     }}>
       <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
-      <div>{d.label}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>{d.label}</span>
+        {duration && <span style={{ fontSize: 9, color: "#71717a", fontStyle: "normal" }}>{duration}</span>}
+      </div>
       {hasBlocks && blocks.map((block, i) => <BlockRenderer key={i} block={block} />)}
+      {outcome?.status === "error" && outcome.error && (
+        <div style={{ fontSize: 9, color: "#ef4444", marginTop: 4 }}>{outcome.error}</div>
+      )}
       <Handle type="source" position={Position.Bottom} style={{ visibility: "hidden" }} />
     </div>
   );
@@ -124,7 +163,7 @@ const nodeTypes = { handler: HandlerNode };
 
 type FlowGraph = { nodes: Node[]; edges: Edge[] };
 
-function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]>): FlowGraph {
+function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]>, outcomes?: Map<string, HandlerOutcome>): FlowGraph {
   // Group events by (handlerId, name) for event-type nodes
   // and create handler nodes from unique handlerIds
   const eventGroups = new Map<string, { name: string; layer: string; count: number; events: AdminEvent[] }>();
@@ -204,11 +243,12 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
   // Create handler nodes
   for (const handlerId of handlerIds) {
     const blocks = descriptions?.get(handlerId);
+    const outcome = outcomes?.get(handlerId);
     nodes.push({
       id: `hdl:${handlerId}`,
       type: "handler",
       position: { x: 0, y: 0 },
-      data: { label: handlerId, nodeKind: "handler" as const, handlerId, blocks },
+      data: { label: handlerId, nodeKind: "handler" as const, handlerId, blocks, outcome },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
     });
@@ -233,18 +273,20 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
     }
   }
 
-  // Edges: handler -> child event groups
+  // Edges: handler -> child event groups (with count labels)
   for (const [handlerId, childGroupKeys] of handlerToChildren) {
     for (const groupKey of childGroupKeys) {
       const edgeKey = `hdl:${handlerId}->evt:${groupKey}`;
       if (!edgeSet.has(edgeKey)) {
         edgeSet.add(edgeKey);
+        const count = eventGroups.get(groupKey)?.count ?? 0;
         edges.push({
           id: edgeKey,
           source: `hdl:${handlerId}`,
           target: `evt:${groupKey}`,
           style: { stroke: "#52525b", strokeWidth: 1 },
           animated: false,
+          ...(count > 1 ? { label: `×${count}`, labelStyle: { fontSize: 9, fill: "#71717a" } } : {}),
         });
       }
     }
@@ -276,15 +318,21 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
 }
 
 function estimateHandlerHeight(data: FlowNodeData): number {
-  if (data.nodeKind !== "handler" || !data.blocks?.length) return HANDLER_HEIGHT;
+  if (data.nodeKind !== "handler") return HANDLER_HEIGHT;
+  const hasBlocks = data.blocks && data.blocks.length > 0;
+  const outcome = data.outcome;
+  if (!hasBlocks && !outcome) return HANDLER_HEIGHT;
   let h = 24; // base label height
-  for (const block of data.blocks) {
-    if (block.type === "checklist") {
-      h += 14 + block.items.length * 12;
-    } else {
-      h += 14;
+  if (data.blocks) {
+    for (const block of data.blocks) {
+      if (block.type === "checklist") {
+        h += 14 + block.items.length * 12;
+      } else {
+        h += 14;
+      }
     }
   }
+  if (outcome?.status === "error" && outcome.error) h += 14;
   return h;
 }
 
@@ -371,6 +419,32 @@ export function CausalFlowPane() {
     pollInterval: 5000,
   });
 
+  const { data: outcomesData } = useQuery<{
+    adminHandlerOutcomes: HandlerOutcome[];
+  }>(ADMIN_HANDLER_OUTCOMES, {
+    variables: flowRunId ? { runId: flowRunId } : undefined,
+    skip: !flowRunId,
+    pollInterval: 5000,
+  });
+
+  const { data: runData } = useQuery<{
+    adminScoutRun: {
+      startedAt: string;
+      finishedAt: string | null;
+      stats: {
+        urlsScraped: number | null;
+        urlsUnchanged: number | null;
+        urlsFailed: number | null;
+        signalsExtracted: number | null;
+        handlerFailures: number | null;
+      };
+    } | null;
+  }>(ADMIN_SCOUT_RUN, {
+    variables: flowRunId ? { runId: flowRunId } : undefined,
+    skip: !flowRunId,
+    pollInterval: 5000,
+  });
+
   const descriptions = useMemo(() => {
     if (!descData?.adminHandlerDescriptions) return undefined;
     const map = new Map<string, Block[]>();
@@ -380,10 +454,19 @@ export function CausalFlowPane() {
     return map;
   }, [descData]);
 
+  const outcomes = useMemo(() => {
+    if (!outcomesData?.adminHandlerOutcomes) return undefined;
+    const map = new Map<string, HandlerOutcome>();
+    for (const o of outcomesData.adminHandlerOutcomes) {
+      map.set(o.handlerId, o);
+    }
+    return map;
+  }, [outcomesData]);
+
   const { nodes: rawNodes, edges } = useMemo(() => {
     if (!flowData || flowData.length === 0) return { nodes: [], edges: [] };
-    return buildFlowGraph(flowData, descriptions);
-  }, [flowData, descriptions]);
+    return buildFlowGraph(flowData, descriptions, outcomes);
+  }, [flowData, descriptions, outcomes]);
 
   // Derive selected node ID from flowSelection
   const selectedNodeId = useMemo(() => {
@@ -500,6 +583,21 @@ export function CausalFlowPane() {
         <span className="text-xs text-muted-foreground">
           {flowData?.length ?? 0} events, {nodes.length} nodes
         </span>
+        {runData?.adminScoutRun && (() => {
+          const run = runData.adminScoutRun;
+          const s = run.stats;
+          const elapsed = run.finishedAt
+            ? `${((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000).toFixed(0)}s`
+            : "running\u2026";
+          return (
+            <span className="text-xs text-muted-foreground font-mono">
+              signals: {s.signalsExtracted ?? 0}
+              {" | "}urls: {s.urlsScraped ?? 0}/{s.urlsUnchanged ?? 0}/{s.urlsFailed ?? 0}
+              {" | "}failures: {s.handlerFailures ?? 0}
+              {" | "}{elapsed}
+            </span>
+          );
+        })()}
         <button
           onClick={handleClose}
           className="ml-auto text-xs text-muted-foreground hover:text-foreground px-1"

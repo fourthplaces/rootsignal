@@ -914,6 +914,19 @@ export const ADMIN_HANDLER_LOGS_BY_RUN = gql`
   }
 `;
 
+export const ADMIN_HANDLER_OUTCOMES = gql`
+  query AdminHandlerOutcomes($runId: String!) {
+    adminHandlerOutcomes(runId: $runId) {
+      handlerId
+      status
+      error
+      attempts
+      startedAt
+      completedAt
+    }
+  }
+`;
+
 export const ADMIN_HANDLER_DESCRIPTIONS = gql`
   query AdminHandlerDescriptions($runId: String!) {
     adminHandlerDescriptions(runId: $runId) {

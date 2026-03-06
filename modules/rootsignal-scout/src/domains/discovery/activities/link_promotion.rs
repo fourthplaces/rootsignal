@@ -69,8 +69,8 @@ pub async fn promote_scraped_links(
     ).await;
 
     let mut seen = HashSet::new();
-    let social = build_social_sources(links, &mut seen);
-    let content = build_content_sources(&by_parent, &productive, &mut seen, config);
+    let social = build_social_sources(links, &mut seen, url_to_ck);
+    let content = build_content_sources(&by_parent, &productive, &mut seen, config, url_to_ck);
 
     let all: Vec<_> = social.into_iter().chain(content).collect();
     let credit = tally_credit(&all, url_to_ck);
@@ -165,6 +165,7 @@ async fn find_productive_pages(
 fn build_social_sources(
     links: &[CollectedLink],
     seen: &mut HashSet<String>,
+    url_to_ck: &HashMap<String, String>,
 ) -> Vec<Candidate> {
     let all_urls: Vec<String> = links.iter().map(|l| l.url.clone()).collect();
     let url_to_parent: HashMap<&str, &str> = links
@@ -195,11 +196,14 @@ fn build_social_sources(
             None => format!("{platform:?} handle @{handle} found on scraped page"),
         };
 
+        let discovered_from_key = parent_url.and_then(|u| url_to_ck.get(u)).cloned();
+        let mut source = SourceNode::new(
+            cv.clone(), cv, Some(url),
+            DiscoveryMethod::LinkedFrom, 0.25, SourceRole::Mixed, Some(gap),
+        );
+        source.discovered_from_key = discovered_from_key;
         candidates.push(Candidate {
-            source: SourceNode::new(
-                cv.clone(), cv, Some(url),
-                DiscoveryMethod::LinkedFrom, 0.25, SourceRole::Mixed, Some(gap),
-            ),
+            source,
             parent_url: parent_url.map(str::to_string),
         });
     }
@@ -216,6 +220,7 @@ fn build_content_sources(
     productive: &HashSet<String>,
     seen: &mut HashSet<String>,
     config: &PromotionConfig,
+    url_to_ck: &HashMap<String, String>,
 ) -> Vec<Candidate> {
     let mut candidates = Vec::new();
 
@@ -223,6 +228,7 @@ fn build_content_sources(
         if !productive.contains(parent_url) {
             continue;
         }
+        let discovered_from_key = url_to_ck.get(parent_url).cloned();
         let mut count = 0usize;
         for link_url in child_links {
             if count >= config.max_content_links_per_source {
@@ -232,12 +238,14 @@ fn build_content_sources(
             if !seen.insert(cv.clone()) {
                 continue;
             }
+            let mut source = SourceNode::new(
+                cv.clone(), cv, Some(link_url.clone()),
+                DiscoveryMethod::LinkedFrom, 0.25, SourceRole::Mixed,
+                Some(format!("Linked from {parent_url}")),
+            );
+            source.discovered_from_key = discovered_from_key.clone();
             candidates.push(Candidate {
-                source: SourceNode::new(
-                    cv.clone(), cv, Some(link_url.clone()),
-                    DiscoveryMethod::LinkedFrom, 0.25, SourceRole::Mixed,
-                    Some(format!("Linked from {parent_url}")),
-                ),
+                source,
                 parent_url: Some(parent_url.clone()),
             });
             count += 1;

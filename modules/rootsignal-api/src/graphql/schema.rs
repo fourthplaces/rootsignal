@@ -575,16 +575,37 @@ impl QueryRoot {
             0.0
         };
 
-        let discovery_tree = AdminDiscoveryTree {
-            nodes: vec![AdminDiscoveryTreeNode {
-                id: source.id.to_string(),
-                canonical_value: source.canonical_value.clone(),
-                discovery_method: format!("{:?}", source.discovery_method),
-                active: source.active,
-                signals_produced,
-            }],
-            edges: vec![],
-            root_id: source.id.to_string(),
+        let (tree_nodes, tree_edges) = reader.discovery_tree(&id).await.unwrap_or_default();
+        let discovery_tree = if tree_nodes.is_empty() {
+            AdminDiscoveryTree {
+                nodes: vec![AdminDiscoveryTreeNode {
+                    id: source.id.to_string(),
+                    canonical_value: source.canonical_value.clone(),
+                    discovery_method: format!("{:?}", source.discovery_method),
+                    active: source.active,
+                    signals_produced,
+                }],
+                edges: vec![],
+                root_id: source.id.to_string(),
+            }
+        } else {
+            AdminDiscoveryTree {
+                nodes: tree_nodes
+                    .into_iter()
+                    .map(|n| AdminDiscoveryTreeNode {
+                        id: n.id,
+                        canonical_value: n.canonical_value,
+                        discovery_method: n.discovery_method,
+                        active: n.active,
+                        signals_produced: n.signals_produced,
+                    })
+                    .collect(),
+                edges: tree_edges
+                    .into_iter()
+                    .map(|(child_id, parent_id)| AdminDiscoveryTreeEdge { child_id, parent_id })
+                    .collect(),
+                root_id: source.id.to_string(),
+            }
         };
 
         Ok(Some(AdminSourceDetail {
@@ -1403,6 +1424,35 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    /// Fetch aggregated handler execution outcomes for a run.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_handler_outcomes(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<Vec<HandlerOutcome>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::handler_outcomes(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load handler outcomes: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| HandlerOutcome {
+                handler_id: r.handler_id,
+                status: r.status,
+                error: r.error,
+                attempts: r.attempts,
+                started_at: r.started_at,
+                completed_at: r.completed_at,
+            })
+            .collect())
+    }
 }
 
 // ========== Admin GQL Types ==========
@@ -1714,6 +1764,18 @@ struct HandlerLog {
 struct HandlerDescription {
     handler_id: String,
     blocks: serde_json::Value,
+}
+
+// ========== Handler Outcome Types ==========
+
+#[derive(SimpleObject)]
+struct HandlerOutcome {
+    handler_id: String,
+    status: String,
+    error: Option<String>,
+    attempts: i64,
+    started_at: Option<DateTime<Utc>>,
+    completed_at: Option<DateTime<Utc>>,
 }
 
 // ========== Scout Run Types ==========

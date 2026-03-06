@@ -295,7 +295,7 @@ export function EventsPaneProvider({ children }: { children: React.ReactNode }) 
 
   const { data: subData } = useSubscription<{ events: AdminEvent }>(EVENTS_SUBSCRIPTION, {
     variables: subscriptionVars,
-    skip: hasFilters,
+    skip: hasFilters && !flowRunId,
   });
 
   // Prepend live events
