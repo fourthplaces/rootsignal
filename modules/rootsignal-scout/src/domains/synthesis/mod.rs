@@ -27,7 +27,7 @@ use crate::domains::synthesis::events::{
     all_synthesis_roles, SynthesisEvent, SynthesisRole,
 };
 
-fn is_signal_expansion_completed(e: &LifecycleEvent) -> bool {
+fn is_signal_expansion_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
@@ -35,11 +35,11 @@ fn is_signal_expansion_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-fn is_synthesis_role_completed(e: &SynthesisEvent) -> bool {
+fn is_synthesis_role_completed(e: &SynthesisEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. })
 }
 
-fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
+fn is_synthesis_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }

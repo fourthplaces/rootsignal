@@ -16,7 +16,7 @@ use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_metrics_completed(e: &LifecycleEvent) -> bool {
+fn is_metrics_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::MetricsCompleted)
 }
 

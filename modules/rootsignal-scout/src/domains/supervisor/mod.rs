@@ -7,7 +7,7 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_situation_weaving_completed(e: &LifecycleEvent) -> bool {
+fn is_situation_weaving_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }

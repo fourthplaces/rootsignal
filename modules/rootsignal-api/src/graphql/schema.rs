@@ -456,7 +456,7 @@ impl QueryRoot {
             .map(|s| {
                 let effective_weight = s.weight * s.quality_penalty;
                 let cadence = s.cadence_hours.unwrap_or_else(|| {
-                    rootsignal_scout::domains::scheduling::activities::scheduler::cadence_hours_for_weight(
+                    rootsignal_scout::domains::scheduling::activities::selector::cadence_hours_for_weight(
                         effective_weight,
                     )
                 });
@@ -489,7 +489,7 @@ impl QueryRoot {
             .map(|s| {
                 let effective_weight = s.weight * s.quality_penalty;
                 let cadence = s.cadence_hours.unwrap_or_else(|| {
-                    rootsignal_scout::domains::scheduling::activities::scheduler::cadence_hours_for_weight(
+                    rootsignal_scout::domains::scheduling::activities::selector::cadence_hours_for_weight(
                         effective_weight,
                     )
                 });
@@ -527,7 +527,7 @@ impl QueryRoot {
 
         let effective_weight = source.weight * source.quality_penalty;
         let cadence = source.cadence_hours.unwrap_or_else(|| {
-            rootsignal_scout::domains::scheduling::activities::scheduler::cadence_hours_for_weight(
+            rootsignal_scout::domains::scheduling::activities::selector::cadence_hours_for_weight(
                 effective_weight,
             )
         });

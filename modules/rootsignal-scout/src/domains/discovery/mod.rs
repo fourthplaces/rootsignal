@@ -23,11 +23,11 @@ use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole
 use rootsignal_common::system_events::SystemEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_scout_run_requested(e: &LifecycleEvent) -> bool {
+fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
-fn is_scrape_or_expansion_completed(e: &LifecycleEvent) -> bool {
+fn is_scrape_or_expansion_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
@@ -35,7 +35,7 @@ fn is_scrape_or_expansion_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-fn is_tension_scrape_completed(e: &LifecycleEvent) -> bool {
+fn is_tension_scrape_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
@@ -43,7 +43,7 @@ fn is_tension_scrape_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-fn is_sources_discovered(e: &DiscoveryEvent) -> bool {
+fn is_sources_discovered(e: &DiscoveryEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, DiscoveryEvent::SourcesDiscovered { .. })
 }
 

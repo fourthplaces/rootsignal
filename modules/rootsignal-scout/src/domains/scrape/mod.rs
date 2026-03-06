@@ -28,11 +28,11 @@ use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
-fn is_sources_prepared(e: &LifecycleEvent) -> bool {
+fn is_sources_prepared(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::SourcesPrepared { .. })
 }
 
-fn is_source_expansion_completed(e: &LifecycleEvent) -> bool {
+fn is_source_expansion_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
@@ -40,15 +40,15 @@ fn is_source_expansion_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-fn is_sources_resolved(e: &ScrapeEvent) -> bool {
+fn is_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, ScrapeEvent::SourcesResolved { .. })
 }
 
-fn is_response_sources_resolved(e: &ScrapeEvent) -> bool {
+fn is_response_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, ScrapeEvent::SourcesResolved { web_role: ScrapeRole::ResponseWeb, .. })
 }
 
-fn is_scrape_role_completed(e: &ScrapeEvent) -> bool {
+fn is_scrape_role_completed(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. })
 }
 

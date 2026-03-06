@@ -13,7 +13,7 @@ use crate::domains::signals::activities::{creation, dedup};
 use crate::domains::signals::events::SignalEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 
-fn is_scrape_role_completed(e: &ScrapeEvent) -> bool {
+fn is_scrape_role_completed(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. })
 }
 

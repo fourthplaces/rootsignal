@@ -19,7 +19,7 @@ use crate::domains::enrichment::events::{
 };
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_response_scrape_completed(e: &LifecycleEvent) -> bool {
+fn is_response_scrape_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
@@ -27,7 +27,7 @@ fn is_response_scrape_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-fn is_actor_enrichment_completed(e: &LifecycleEvent) -> bool {
+fn is_actor_enrichment_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
         LifecycleEvent::PhaseCompleted { phase }
@@ -35,7 +35,7 @@ fn is_actor_enrichment_completed(e: &LifecycleEvent) -> bool {
     )
 }
 
-fn is_enrichment_role_completed(e: &EnrichmentEvent) -> bool {
+fn is_enrichment_role_completed(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, EnrichmentEvent::EnrichmentRoleCompleted { .. })
 }
 

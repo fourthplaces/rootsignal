@@ -8,7 +8,7 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_news_scan_requested(e: &LifecycleEvent) -> bool {
+fn is_news_scan_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::NewsScanRequested)
 }
 

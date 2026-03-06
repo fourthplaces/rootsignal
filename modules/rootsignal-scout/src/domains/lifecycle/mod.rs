@@ -15,15 +15,15 @@ use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use events::LifecycleEvent;
 
-fn is_scout_run_requested(e: &LifecycleEvent) -> bool {
+fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
-fn is_synthesis_completed(e: &LifecycleEvent) -> bool {
+fn is_synthesis_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Synthesis))
 }
 
-fn is_supervisor_completed(e: &LifecycleEvent) -> bool {
+fn is_supervisor_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Supervisor))
 }
 
