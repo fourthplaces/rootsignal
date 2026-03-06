@@ -113,3 +113,34 @@ async fn missing_deps_skips_enrichment_with_immediate_role_completed() {
         "All 4 roles should complete (with skip) when deps are missing"
     );
 }
+
+#[tokio::test]
+async fn response_scrape_skipped_short_circuits_to_metrics_completed() {
+    let store = Arc::new(MockSignalReader::new());
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
+        store as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
+
+    use crate::testing::sources_prepared_event;
+    engine.emit(sources_prepared_event(false)).settled().await.unwrap();
+
+    engine
+        .emit(ScrapeEvent::ResponseScrapeSkipped {
+            reason: "missing region or graph".into(),
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let state = engine.singleton::<PipelineState>();
+    assert_eq!(
+        state.completed_enrichment_roles.len(),
+        4,
+        "Reducer should mark all enrichment roles done on ResponseScrapeSkipped"
+    );
+    assert!(
+        has_metrics_completed(&captured),
+        "ResponseScrapeSkipped should short-circuit directly to MetricsCompleted"
+    );
+}

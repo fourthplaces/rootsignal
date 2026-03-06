@@ -106,6 +106,70 @@ pub async fn list_by_source_id(pool: &PgPool, source_id: &str, limit: u32) -> Re
     Ok(rows.iter().map(row_to_scout_run).collect())
 }
 
+/// Scrape stats for a single source, derived from scout_runs.
+pub struct SourceScrapeStats {
+    pub last_scraped: Option<DateTime<Utc>>,
+    pub scrape_count: u32,
+    pub consecutive_empty_runs: u32,
+}
+
+pub async fn source_scrape_stats(pool: &PgPool, source_id: &str) -> Result<SourceScrapeStats> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            MAX(finished_at) AS last_scraped,
+            COUNT(*)::int     AS scrape_count
+        FROM scout_runs
+        WHERE source_ids @> $1::jsonb
+          AND finished_at IS NOT NULL
+        "#,
+    )
+    .bind(serde_json::json!([source_id]))
+    .fetch_one(pool)
+    .await?;
+
+    let last_scraped: Option<DateTime<Utc>> = row.try_get("last_scraped").ok().flatten();
+    let scrape_count: i32 = row.try_get("scrape_count").unwrap_or(0);
+
+    // Consecutive empty runs: count trailing finished runs with 0 signals_extracted
+    let empty: i64 = sqlx::query_scalar(
+        r#"
+        WITH recent AS (
+            SELECT (stats->>'signals_extracted')::int AS extracted
+            FROM scout_runs
+            WHERE source_ids @> $1::jsonb
+              AND finished_at IS NOT NULL
+            ORDER BY finished_at DESC
+        )
+        SELECT COUNT(*)
+        FROM (
+            SELECT extracted,
+                   ROW_NUMBER() OVER () AS rn
+            FROM recent
+        ) t
+        WHERE t.extracted = 0
+          AND t.rn <= (
+              SELECT COALESCE(MIN(rn) - 1, COUNT(*))
+              FROM (
+                  SELECT extracted, ROW_NUMBER() OVER () AS rn
+                  FROM recent
+              ) t2
+              WHERE t2.extracted > 0
+          )
+        "#,
+    )
+    .bind(serde_json::json!([source_id]))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    Ok(SourceScrapeStats {
+        last_scraped,
+        scrape_count: scrape_count as u32,
+        consecutive_empty_runs: empty as u32,
+    })
+}
+
 pub async fn list_recent(pool: &PgPool, limit: u32) -> Result<Vec<ScoutRunRow>> {
     let limit = limit.min(100) as i64;
 

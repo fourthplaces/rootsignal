@@ -525,6 +525,24 @@ impl QueryRoot {
 
         let signals = reader.signals_for_source(&id).await?;
 
+        // Scrape stats from Postgres (source of truth) instead of Neo4j counters
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let scrape_stats = if let Some(pool) = pool.as_ref() {
+            crate::db::scout_run::source_scrape_stats(pool, &id.to_string())
+                .await
+                .unwrap_or_else(|_| crate::db::scout_run::SourceScrapeStats {
+                    last_scraped: None,
+                    scrape_count: 0,
+                    consecutive_empty_runs: 0,
+                })
+        } else {
+            crate::db::scout_run::SourceScrapeStats {
+                last_scraped: None,
+                scrape_count: 0,
+                consecutive_empty_runs: 0,
+            }
+        };
+
         let effective_weight = source.weight * source.quality_penalty;
         let cadence = source.cadence_hours.unwrap_or_else(|| {
             rootsignal_scout::domains::scheduling::activities::selector::cadence_hours_for_weight(
@@ -545,13 +563,25 @@ impl QueryRoot {
             })
             .collect();
 
+        // Signal stats computed from the actual graph relationships
+        let signals_produced = admin_signals.len() as u32;
+        let last_produced_signal = admin_signals
+            .iter()
+            .filter_map(|s| s.extracted_at)
+            .max();
+        let avg_signals_per_scrape = if scrape_stats.scrape_count > 0 {
+            signals_produced as f64 / scrape_stats.scrape_count as f64
+        } else {
+            0.0
+        };
+
         let discovery_tree = AdminDiscoveryTree {
             nodes: vec![AdminDiscoveryTreeNode {
                 id: source.id.to_string(),
                 canonical_value: source.canonical_value.clone(),
                 discovery_method: format!("{:?}", source.discovery_method),
                 active: source.active,
-                signals_produced: source.signals_produced,
+                signals_produced,
             }],
             edges: vec![],
             root_id: source.id.to_string(),
@@ -566,18 +596,18 @@ impl QueryRoot {
             quality_penalty: source.quality_penalty,
             effective_weight,
             discovery_method: format!("{:?}", source.discovery_method),
-            last_scraped: source.last_scraped,
+            last_scraped: scrape_stats.last_scraped,
             cadence_hours: cadence as f64,
-            signals_produced: source.signals_produced,
+            signals_produced,
             signals_corroborated: source.signals_corroborated,
-            consecutive_empty_runs: source.consecutive_empty_runs,
+            consecutive_empty_runs: scrape_stats.consecutive_empty_runs,
             active: source.active,
             gap_context: source.gap_context.clone(),
-            scrape_count: source.scrape_count,
-            avg_signals_per_scrape: source.avg_signals_per_scrape,
+            scrape_count: scrape_stats.scrape_count,
+            avg_signals_per_scrape,
             source_role: format!("{:?}", source.source_role),
             created_at: source.created_at,
-            last_produced_signal: source.last_produced_signal,
+            last_produced_signal,
             signals: admin_signals,
             archive_summary: None,
             discovery_tree,
