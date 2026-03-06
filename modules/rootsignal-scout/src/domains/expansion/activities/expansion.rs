@@ -45,19 +45,16 @@ const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 pub(crate) struct Expansion<'a> {
     graph: &'a GraphReader,
     embedder: &'a dyn TextEmbedder,
-    region_slug: &'a str,
 }
 
 impl<'a> Expansion<'a> {
     pub fn new(
         graph: &'a GraphReader,
         embedder: &'a dyn TextEmbedder,
-        region_slug: &'a str,
     ) -> Self {
         Self {
             graph,
             embedder,
-            region_slug,
         }
     }
 

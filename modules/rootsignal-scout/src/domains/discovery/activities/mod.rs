@@ -21,19 +21,21 @@ pub struct SourceExpansionOutput {
     pub social_topics: Vec<String>,
 }
 
-/// Run source expansion: discover new sources based on tension scrape findings.
+/// Run source expansion: discover new sources based on scrape findings.
+///
+/// Region is optional context — actor discovery runs always (pure graph),
+/// while the LLM curiosity engine requires a geographic anchor.
 ///
 /// Pure: no state mutation. Social topics returned for caller to stash.
 pub async fn discover_expansion_sources(
     graph: &GraphReader,
-    region_name: &str,
+    region_name: Option<&str>,
     embedder: &dyn TextEmbedder,
     ai: Option<&dyn Agent>,
     budget: &BudgetTracker,
 ) -> SourceExpansionOutput {
     let discoverer = source_finder::SourceFinder::new(
         graph,
-        region_name,
         region_name,
         ai,
         budget,

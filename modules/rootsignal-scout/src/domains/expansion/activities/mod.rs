@@ -35,7 +35,7 @@ pub async fn expand_and_discover(
     deps: Option<&ScoutEngineDeps>,
     state: &PipelineState,
     graph: &GraphReader,
-    region_name: &str,
+    region_name: Option<&str>,
     ai: Option<&dyn Agent>,
     budget: &BudgetTracker,
     embedder: &dyn TextEmbedder,
@@ -57,7 +57,6 @@ pub async fn expand_and_discover(
     // End-of-run discovery
     let end_discoverer = SourceFinder::new(
         graph,
-        region_name,
         region_name,
         ai,
         budget,

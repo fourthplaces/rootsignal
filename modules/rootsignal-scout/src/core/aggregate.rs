@@ -284,12 +284,6 @@ impl PipelineState {
                 for role in &self.expected_response_roles.clone() {
                     self.completed_scrape_roles.insert(*role);
                 }
-                // No graph/region = no enrichment work possible — mark all roles done
-                // so enrichment handlers reject via filter and update_source_weights
-                // fires directly on this event.
-                for role in crate::domains::enrichment::events::all_enrichment_roles() {
-                    self.completed_enrichment_roles.insert(role);
-                }
             }
         }
     }

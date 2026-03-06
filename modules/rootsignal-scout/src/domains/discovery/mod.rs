@@ -188,24 +188,20 @@ pub mod handlers {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
 
-        // Requires graph + budget — skip in tests
-        let (region, graph, budget) = match (
-            state.run_scope.region(),
-            deps.graph.as_ref(),
-            deps.budget.as_ref(),
-        ) {
-            (Some(r), Some(g), Some(b)) => (r, g, b),
+        let (graph, budget) = match (deps.graph.as_ref(), deps.budget.as_ref()) {
+            (Some(g), Some(b)) => (g, b),
             _ => {
-                ctx.logger.debug("Skipped source expansion: missing region, graph, or budget");
+                ctx.logger.debug("Skipped source expansion: missing graph or budget");
                 return Ok(events![DiscoveryEvent::SourceExpansionSkipped {
-                    reason: "missing region, graph, or budget".into(),
+                    reason: "missing graph or budget".into(),
                 }]);
             }
         };
+        let region_name = state.run_scope.region().map(|r| r.name.as_str());
 
         let output = discover_expansion_sources(
             graph,
-            &region.name,
+            region_name,
             &*deps.embedder,
             deps.ai.as_deref(),
             budget,

@@ -49,7 +49,7 @@ pub struct DiscoveryBriefing {
     pub successes: Vec<SourceBrief>,
     pub failures: Vec<SourceBrief>,
     pub existing_queries: Vec<String>,
-    pub region_name: String,
+    pub region_name: Option<String>,
     pub gap_type_stats: Vec<GapTypeStats>,
     pub extraction_yield: Vec<ExtractionYield>,
     pub response_shapes: Vec<ConcernResponseShape>,
@@ -430,8 +430,8 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
     graph: &'a GraphReader,
-    region_slug: String,
-    region_name: String,
+    region_slug: Option<String>,
+    region_name: Option<String>,
     ai: Option<&'a dyn Agent>,
     budget: &'a BudgetTracker,
     embedder: Option<&'a dyn TextEmbedder>,
@@ -445,15 +445,14 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 impl<'a> SourceFinder<'a> {
     pub fn new(
         graph: &'a GraphReader,
-        region_slug: &str,
-        region_name: &str,
+        region_name: Option<&str>,
         ai: Option<&'a dyn Agent>,
         budget: &'a BudgetTracker,
     ) -> Self {
         Self {
             graph,
-            region_slug: region_slug.to_string(),
-            region_name: region_name.to_string(),
+            region_slug: region_name.map(|n| n.to_string()),
+            region_name: region_name.map(|n| n.to_string()),
             ai,
             budget,
             embedder: None,
@@ -480,8 +479,11 @@ impl<'a> SourceFinder<'a> {
         self.discover_from_actors(&mut stats, &mut sources).await;
 
         // 2. LLM-driven curiosity engine (with mechanical fallback)
-        self.discover_from_curiosity(&mut stats, &mut social_topics, &mut sources, &mut events)
-            .await;
+        // Requires region — geographic anchor keeps queries focused
+        if self.region_name.is_some() {
+            self.discover_from_curiosity(&mut stats, &mut social_topics, &mut sources, &mut events)
+                .await;
+        }
 
         if stats.actor_sources + stats.link_sources + stats.gap_sources > 0 {
             info!("{stats}");
@@ -654,8 +656,9 @@ impl<'a> SourceFinder<'a> {
 
         // LLM call
         let formatted = briefing.format_prompt();
-        let system = discovery_system_prompt(&self.region_name);
-        let user = discovery_user_prompt(&self.region_name, &formatted);
+        let region = self.region_name.as_deref().expect("curiosity engine requires region");
+        let system = discovery_system_prompt(region);
+        let user = discovery_user_prompt(region, &formatted);
 
         let plan: DiscoveryPlan = match ai_extract(ai, &system, &user).await {
             Ok(p) => p,
@@ -913,7 +916,8 @@ impl<'a> SourceFinder<'a> {
             }
 
             let help_text = t.opposing.as_deref().unwrap_or(&t.title);
-            let query = format!("{} resources services {}", help_text, self.region_slug);
+            let region_slug = self.region_slug.as_deref().expect("mechanical fallback requires region");
+            let query = format!("{} resources services {}", help_text, region_slug);
             let query_lower = query.to_lowercase();
 
             // Skip if we already have a similar query
@@ -955,7 +959,8 @@ impl<'a> SourceFinder<'a> {
         const MAX_MECHANICAL_SOCIAL_TOPICS: usize = 3;
         for t in tensions.iter().take(MAX_MECHANICAL_SOCIAL_TOPICS) {
             let help_text = t.opposing.as_deref().unwrap_or(&t.title);
-            social_topics.push(format!("{} {}", help_text, self.region_name));
+            let region = self.region_name.as_deref().expect("mechanical fallback requires region");
+            social_topics.push(format!("{} {}", help_text, region));
         }
     }
 }
@@ -1072,7 +1077,7 @@ mod tests {
                 "affordable housing programs Minneapolis".to_string(),
                 "food shelf locations Minneapolis".to_string(),
             ],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             situations: vec![SituationBrief {
@@ -1218,7 +1223,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1238,7 +1243,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1264,7 +1269,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1300,7 +1305,7 @@ mod tests {
             ],
             failures: vec![],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1328,7 +1333,7 @@ mod tests {
                 false,
             )],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1349,7 +1354,7 @@ mod tests {
             successes: vec![make_source_brief("good query", 10, 0.7, 0, "worked", true)],
             failures: vec![make_source_brief("bad query", 0, 0.2, 8, "failed", false)],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1383,7 +1388,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1427,7 +1432,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],
@@ -1692,7 +1697,7 @@ mod tests {
             successes: vec![],
             failures: vec![],
             existing_queries: vec![],
-            region_name: "Minneapolis".to_string(),
+            region_name: Some("Minneapolis".to_string()),
             gap_type_stats: vec![],
             extraction_yield: vec![],
             response_shapes: vec![],

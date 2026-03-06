@@ -66,12 +66,6 @@ fn all_enrichment_done(e: &EnrichmentEvent, ctx: &Context<ScoutEngineDeps>) -> b
     state.completed_enrichment_roles.is_superset(&all_enrichment_roles())
 }
 
-fn scrape_skipped_all_enrichment_done(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(e, ScrapeEvent::ResponseScrapeSkipped { .. }) { return false; }
-    let (_, state) = ctx.singleton::<PipelineState>();
-    state.completed_enrichment_roles.is_superset(&all_enrichment_roles())
-}
-
 fn describe_enrichment_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
     let scrape_done = &state.completed_scrape_roles;
@@ -294,14 +288,4 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// ResponseScrapeSkipped short-circuit: reducer pre-filled all enrichment roles,
-    /// so this fires directly — no enrichment handlers needed.
-    #[handle(on = ScrapeEvent, id = "enrichment:update_source_weights_on_skip", filter = scrape_skipped_all_enrichment_done)]
-    async fn update_source_weights_on_skip(
-        _event: ScrapeEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        ctx.logger.debug("Scrape skipped — emitting MetricsCompleted directly");
-        Ok(events![LifecycleEvent::MetricsCompleted])
-    }
 }

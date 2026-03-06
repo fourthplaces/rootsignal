@@ -32,15 +32,10 @@ pub mod handlers {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
 
-        // Requires region + graph + budget — skip in tests
-        let (region, graph, budget) = match (
-            state.run_scope.region(),
-            deps.graph.as_ref(),
-            deps.budget.as_ref(),
-        ) {
-            (Some(r), Some(g), Some(b)) => (r, g, b),
+        let (graph, budget) = match (deps.graph.as_ref(), deps.budget.as_ref()) {
+            (Some(g), Some(b)) => (g, b),
             _ => {
-                ctx.logger.debug("Skipped signal expansion: missing region, graph, or budget");
+                ctx.logger.debug("Skipped signal expansion: missing graph or budget");
                 return Ok(events![ExpansionEvent::ExpansionCompleted {
                     social_expansion_topics: Vec::new(),
                     expansion_deferred_expanded: 0,
@@ -50,8 +45,9 @@ pub mod handlers {
                 }]);
             }
         };
+        let region_name = state.run_scope.region().map(|r| r.name.as_str());
 
-        let expansion = Expansion::new(graph, &*deps.embedder, &region.name);
+        let expansion = Expansion::new(graph, &*deps.embedder);
 
         let (_, state) = ctx.singleton::<PipelineState>();
         let output = activities::expand_and_discover(
@@ -59,7 +55,7 @@ pub mod handlers {
             Some(deps),
             &state,
             &graph,
-            &region.name,
+            region_name,
             deps.ai.as_deref(),
             budget,
             &*deps.embedder,

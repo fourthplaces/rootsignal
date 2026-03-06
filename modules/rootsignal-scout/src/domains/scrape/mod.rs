@@ -411,7 +411,7 @@ pub mod handlers {
         let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
-                ctx.logger.debug("Skipped response scrape resolve: missing region or graph");
+                ctx.logger.debug("Skipped response scrape: missing region or graph");
                 return Ok(events![ScrapeEvent::ResponseScrapeSkipped {
                     reason: "missing region or graph".into(),
                 }]);
