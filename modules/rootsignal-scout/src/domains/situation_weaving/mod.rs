@@ -1,37 +1,37 @@
 // Situation weaving domain: assign signals to situations, source boost, curiosity.
 
 pub mod activities;
+pub mod events;
 
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 
+use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::PipelinePhase;
-use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::situation_weaving::events::SituationWeavingEvent;
+use crate::domains::synthesis::events::{all_synthesis_roles, SynthesisEvent};
 
-fn is_synthesis_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(
-        e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::Synthesis)
-    )
+fn all_synthesis_done_and_not_yet_weaved(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. }) {
+        return false;
+    }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_synthesis_roles.is_superset(&all_synthesis_roles())
 }
 
 #[handlers]
 pub mod handlers {
     use super::*;
 
-    /// PhaseCompleted(Synthesis) → weave situations, emit PhaseCompleted(SituationWeaving).
-    #[handle(on = LifecycleEvent, id = "situation_weaving:run", filter = is_synthesis_completed)]
+    /// All synthesis roles done → weave situations, emit SituationsWeaved.
+    #[handle(on = SynthesisEvent, id = "situation_weaving:run", filter = all_synthesis_done_and_not_yet_weaved)]
     async fn situation_weaving(
-        _event: LifecycleEvent,
+        _event: SynthesisEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
         let mut all_events = activities::weave_situations(&deps).await;
-        all_events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::SituationWeaving,
-        });
+        all_events.push(SituationWeavingEvent::SituationsWeaved);
         Ok(all_events)
     }
 }

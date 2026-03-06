@@ -37,6 +37,12 @@ pub enum DiscoveryEvent {
         relevant: bool,
         reason: String,
     },
+    /// Source expansion completed — handler finished its work.
+    SourceExpansionCompleted,
+    /// Source expansion skipped — missing deps or no data.
+    SourceExpansionSkipped {
+        reason: String,
+    },
 }
 
 impl DiscoveryEvent {
@@ -53,6 +59,8 @@ impl DiscoveryEvent {
             Self::SocialTopicCollected { .. } => "social_topic_collected",
             Self::SocialTopicsDiscovered { .. } => "social_topics_discovered",
             Self::PageTriaged { .. } => "page_triaged",
+            Self::SourceExpansionCompleted => "source_expansion_completed",
+            Self::SourceExpansionSkipped { .. } => "source_expansion_skipped",
         };
         format!("discovery:{variant}")
     }

@@ -15,7 +15,8 @@ mod engine_tests {
 
     use super::aggregate::PipelineState;
     use super::engine::{build_engine, ScoutEngineDeps};
-    use crate::domains::scrape::events::ScrapeEvent;
+    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+    use crate::testing::TestScrapeRoleCompleted;
 
     #[tokio::test]
     async fn scrape_event_updates_aggregate_state() {
@@ -26,23 +27,11 @@ mod engine_tests {
         );
         let engine = build_engine(deps, None);
 
-        use crate::domains::scrape::events::ScrapeRole;
-        let event = ScrapeEvent::ScrapeRoleCompleted {
-            run_id: uuid::Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 0,
-            source_signal_counts: Default::default(),
-            collected_links: vec![],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: Default::default(),
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        };
-        let result = engine.emit(event).settled().await;
+        let event = TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .build();
+        let result = engine.emit(ScrapeEvent::from(event)).settled().await;
         assert!(result.is_ok(), "settled should succeed: {:?}", result.err());
 
         let state = engine.singleton::<PipelineState>();

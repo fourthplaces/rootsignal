@@ -25,6 +25,8 @@ use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::SignalEvent;
+use crate::domains::situation_weaving::events::SituationWeavingEvent;
+use crate::domains::supervisor::events::SupervisorEvent;
 use crate::domains::synthesis::events::SynthesisEvent;
 
 // Priority-0: event persistence — handled by seesaw's unified Store (PostgresStore in production).
@@ -58,6 +60,8 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                     EventDomain::Enrichment => return Ok(events![]),
                     EventDomain::Expansion => return Ok(events![]),
                     EventDomain::Synthesis => return Ok(events![]),
+                    EventDomain::SituationWeaving => return Ok(events![]),
+                    EventDomain::Supervisor => return Ok(events![]),
                 }
 
                 let (event_type, payload) = match (event_type, payload) {
@@ -139,6 +143,10 @@ fn classify_event(
         (EventDomain::Expansion, None, None)
     } else if event.downcast_ref::<SynthesisEvent>().is_some() {
         (EventDomain::Synthesis, None, None)
+    } else if event.downcast_ref::<SituationWeavingEvent>().is_some() {
+        (EventDomain::SituationWeaving, None, None)
+    } else if event.downcast_ref::<SupervisorEvent>().is_some() {
+        (EventDomain::Supervisor, None, None)
     } else {
         // Genuinely unknown event type — log at debug, not warn.
         // If this fires frequently, a new event type needs adding above.

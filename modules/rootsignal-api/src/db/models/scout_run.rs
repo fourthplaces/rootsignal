@@ -523,7 +523,6 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
         }
 
         // ── Lifecycle ──────────────────────────────────────────────
-        "phase_started" | "phase_completed" => json_str(data, "phase"),
         "engine_started" => json_str(data, "run_id").map(|id| format!("run {id}")),
         "run_completed" => {
             let stats = data.get("stats").unwrap_or(data);
@@ -797,7 +796,11 @@ pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Opt
             let n = data.get("signal_ids").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
             Some(format!("{n} signals"))
         }
-        "entity_expired" | "entity_purged" => {
+        "signals_expired" => {
+            let n = data.get("signals").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Some(format!("{n} signals expired"))
+        }
+        "entity_purged" => {
             let sid = json_str(data, "signal_id").unwrap_or_default();
             let reason = json_str(data, "reason").unwrap_or_default();
             Some(format!("signal {sid}: {reason}"))

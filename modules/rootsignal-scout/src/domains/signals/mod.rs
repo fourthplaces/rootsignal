@@ -33,10 +33,7 @@ pub mod handlers {
         };
 
         if extracted_batches.is_empty() {
-            return Ok(events![crate::core::pipeline_events::PipelineEvent::HandlerSkipped {
-                handler_id: "signals:dedup".into(),
-                reason: "no extracted batches".into(),
-            }]);
+            return Ok(Events::new());
         }
 
         let deps = ctx.deps();

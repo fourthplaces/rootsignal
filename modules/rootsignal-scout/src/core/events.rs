@@ -6,22 +6,6 @@ use serde::{Deserialize, Serialize};
 // Supporting types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PipelinePhase {
-    FindStale,
-    TensionScrape,
-    SourceExpansion,
-    ResponseScrape,
-    SignalExpansion,
-    SocialScrape,
-    SocialDiscovery,
-    ActorEnrichment,
-    Synthesis,
-    SituationWeaving,
-    Supervisor,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FreshnessBucket {

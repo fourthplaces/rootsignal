@@ -4,6 +4,8 @@ pub mod events;
 #[cfg(test)]
 mod completion_tests;
 
+use std::collections::HashSet;
+
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
@@ -12,31 +14,51 @@ use tracing::info;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::PipelinePhase;
-use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::enrichment::events::{
     all_enrichment_roles, EnrichmentEvent, EnrichmentRole,
 };
+use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_response_scrape_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(
-        e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::ResponseScrape)
-    )
+/// Expected roles for response scrape phase.
+fn response_roles() -> HashSet<ScrapeRole> {
+    HashSet::from([ScrapeRole::ResponseWeb, ScrapeRole::ResponseSocial, ScrapeRole::TopicDiscovery])
 }
 
-fn is_actor_enrichment_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(
-        e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::ActorEnrichment)
-    )
+// ── Enrichment role filters: response_roles done + own role not started ──
+
+fn response_done_actor_extraction_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. }) { return false; }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_scrape_roles.is_superset(&response_roles())
+        && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorExtraction)
 }
 
-fn is_enrichment_role_completed(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, EnrichmentEvent::EnrichmentRoleCompleted { .. })
+fn response_done_diversity_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. }) { return false; }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_scrape_roles.is_superset(&response_roles())
+        && !state.completed_enrichment_roles.contains(&EnrichmentRole::Diversity)
+}
+
+fn response_done_actor_stats_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. }) { return false; }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_scrape_roles.is_superset(&response_roles())
+        && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorStats)
+}
+
+fn response_done_actor_location_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. }) { return false; }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_scrape_roles.is_superset(&response_roles())
+        && !state.completed_enrichment_roles.contains(&EnrichmentRole::ActorLocation)
+}
+
+fn all_enrichment_done(e: &EnrichmentEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, EnrichmentEvent::EnrichmentRoleCompleted { .. }) { return false; }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_enrichment_roles.is_superset(&all_enrichment_roles())
 }
 
 #[handlers]
@@ -44,13 +66,13 @@ pub mod handlers {
     use super::*;
 
     // ---------------------------------------------------------------
-    // Role handlers: each listens for PhaseCompleted(ResponseScrape)
+    // Role handlers: each listens for ScrapeRoleCompleted + state gate
     // ---------------------------------------------------------------
 
     /// Pin cleanup + actor extraction → EnrichmentRoleCompleted(ActorExtraction)
-    #[handle(on = LifecycleEvent, id = "enrichment:actor_extraction", filter = is_response_scrape_completed)]
+    #[handle(on = ScrapeEvent, id = "enrichment:actor_extraction", filter = response_done_actor_extraction_pending)]
     async fn actor_extraction(
-        _event: LifecycleEvent,
+        _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -108,9 +130,9 @@ pub mod handlers {
     }
 
     /// Diversity metrics → EnrichmentRoleCompleted(Diversity)
-    #[handle(on = LifecycleEvent, id = "enrichment:diversity", filter = is_response_scrape_completed)]
+    #[handle(on = ScrapeEvent, id = "enrichment:diversity", filter = response_done_diversity_pending)]
     async fn diversity(
-        _event: LifecycleEvent,
+        _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -134,9 +156,9 @@ pub mod handlers {
     }
 
     /// Actor stats → EnrichmentRoleCompleted(ActorStats)
-    #[handle(on = LifecycleEvent, id = "enrichment:actor_stats", filter = is_response_scrape_completed)]
+    #[handle(on = ScrapeEvent, id = "enrichment:actor_stats", filter = response_done_actor_stats_pending)]
     async fn actor_stats(
-        _event: LifecycleEvent,
+        _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -160,9 +182,9 @@ pub mod handlers {
     }
 
     /// Actor location triangulation → EnrichmentRoleCompleted(ActorLocation)
-    #[handle(on = LifecycleEvent, id = "enrichment:actor_location", filter = is_response_scrape_completed)]
+    #[handle(on = ScrapeEvent, id = "enrichment:actor_location", filter = response_done_actor_location_pending)]
     async fn actor_location(
-        _event: LifecycleEvent,
+        _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -189,50 +211,13 @@ pub mod handlers {
     }
 
     // ---------------------------------------------------------------
-    // Completion: all 4 roles done → PhaseCompleted(ActorEnrichment)
+    // Metrics: all 4 enrichment roles done → update source weights
     // ---------------------------------------------------------------
 
-    #[handle(on = EnrichmentEvent, id = "enrichment:phase_complete", filter = is_enrichment_role_completed)]
-    async fn phase_complete(
-        _event: EnrichmentEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (_, state) = ctx.singleton::<PipelineState>();
-
-        // Idempotency: if this phase already completed, skip
-        if state.completed_phases.contains(&PipelinePhase::ActorEnrichment) {
-            return Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "enrichment:phase_complete".into(),
-                reason: "ActorEnrichment already completed".into(),
-            }]);
-        }
-
-        if state
-            .completed_enrichment_roles
-            .is_superset(&all_enrichment_roles())
-        {
-            info!("All enrichment roles complete, emitting PhaseCompleted");
-            Ok(events![LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::ActorEnrichment,
-            }])
-        } else {
-            let completed: Vec<_> = state.completed_enrichment_roles.iter().collect();
-            let expected: Vec<_> = all_enrichment_roles().into_iter().collect();
-            Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "enrichment:phase_complete".into(),
-                reason: format!("waiting for ActorEnrichment: completed {completed:?}, need {expected:?}"),
-            }])
-        }
-    }
-
-    // ---------------------------------------------------------------
-    // Source metrics: unchanged, triggers on PhaseCompleted(ActorEnrichment)
-    // ---------------------------------------------------------------
-
-    /// PhaseCompleted(ActorEnrichment) → update source weights/cadence, emit MetricsCompleted.
-    #[handle(on = LifecycleEvent, id = "enrichment:metrics", filter = is_actor_enrichment_completed)]
+    /// All enrichment roles done → update source weights/cadence, emit MetricsCompleted.
+    #[handle(on = EnrichmentEvent, id = "enrichment:metrics", filter = all_enrichment_done)]
     async fn update_source_weights(
-        _event: LifecycleEvent,
+        _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();

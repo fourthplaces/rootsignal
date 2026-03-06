@@ -13,8 +13,6 @@ use tracing::info;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::PipelinePhase;
-use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::activities::page_triage::{self, PageTriageInput};
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
@@ -22,29 +20,51 @@ use crate::domains::discovery::activities::{bootstrap, discover_expansion_source
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_common::system_events::SystemEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
 fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
-fn is_scrape_or_expansion_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(
-        e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::TensionScrape | PipelinePhase::ResponseScrape | PipelinePhase::SignalExpansion)
-    )
-}
-
-fn is_tension_scrape_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(
-        e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::TensionScrape)
-    )
-}
-
 fn is_sources_discovered(e: &DiscoveryEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, DiscoveryEvent::SourcesDiscovered { .. })
+}
+
+/// Expected roles for each scrape phase, used for completion tracking.
+fn tension_roles() -> HashSet<ScrapeRole> {
+    HashSet::from([ScrapeRole::TensionWeb, ScrapeRole::TensionSocial])
+}
+
+fn response_roles() -> HashSet<ScrapeRole> {
+    HashSet::from([ScrapeRole::ResponseWeb, ScrapeRole::ResponseSocial, ScrapeRole::TopicDiscovery])
+}
+
+/// Link promotion filter: fires at tension/response/expansion phase boundaries
+/// when there are links to promote.
+fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    let role = match event {
+        ScrapeEvent::ScrapeRoleCompleted { role, .. } => *role,
+        _ => return false,
+    };
+    let (_, state) = ctx.singleton::<PipelineState>();
+    if state.collected_links.is_empty() {
+        return false;
+    }
+    match role {
+        ScrapeRole::TensionWeb | ScrapeRole::TensionSocial =>
+            state.completed_scrape_roles.is_superset(&tension_roles()),
+        _ => state.completed_scrape_roles.is_superset(&response_roles()),
+    }
+}
+
+/// Source expansion filter: fires when tension roles done + expansion not yet run.
+fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(event, ScrapeEvent::ScrapeRoleCompleted { .. }) {
+        return false;
+    }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_scrape_roles.is_superset(&tension_roles())
+        && !state.source_expansion_completed
 }
 
 #[handlers]
@@ -66,10 +86,7 @@ pub mod handlers {
         };
 
         if sources.is_empty() {
-            return Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "discovery:domain_filter".into(),
-                reason: "empty sources batch".into(),
-            }]);
+            return Ok(Events::new());
         }
 
         let deps = ctx.deps();
@@ -100,26 +117,20 @@ pub mod handlers {
         Ok(events)
     }
 
-    /// PhaseCompleted(TensionScrape|ResponseScrape|SignalExpansion) → promote links from collected pages.
+    /// ScrapeRoleCompleted → promote links from collected pages.
     ///
+    /// Filter gates on: tension_roles or response_roles done + links not empty.
     /// Two-path gate:
     /// - Social handles: promoted from ALL pages (unchanged behavior)
     /// - Content links: promoted only from "productive" pages (signal_count > 0)
     ///   or pages that pass lightweight LLM triage
-    #[handle(on = LifecycleEvent, id = "discovery:link_promotion", filter = is_scrape_or_expansion_completed)]
+    #[handle(on = ScrapeEvent, id = "discovery:link_promotion", filter = should_promote_links)]
     async fn link_promotion(
-        _event: LifecycleEvent,
+        _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
-
-        if state.collected_links.is_empty() {
-            return Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "discovery:link_promotion".into(),
-                reason: "no collected links to promote".into(),
-            }]);
-        }
 
         let config = PromotionConfig::default();
         let links = state.collected_links.clone();
@@ -295,10 +306,11 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    /// PhaseCompleted(TensionScrape) → expand source pool, emit PhaseCompleted(SourceExpansion).
-    #[handle(on = LifecycleEvent, id = "discovery:source_expansion", filter = is_tension_scrape_completed)]
+    /// ScrapeRoleCompleted → expand source pool when tension roles done.
+    /// Emits SourceExpansionCompleted or SourceExpansionSkipped.
+    #[handle(on = ScrapeEvent, id = "discovery:source_expansion", filter = tension_done_expansion_pending)]
     async fn source_expansion(
-        _event: LifecycleEvent,
+        _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         info!("=== Source Expansion ===");
@@ -313,8 +325,8 @@ pub mod handlers {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
                 ctx.logger.debug("Skipped source expansion: missing region, graph, or budget");
-                return Ok(events![LifecycleEvent::PhaseCompleted {
-                    phase: PipelinePhase::SourceExpansion,
+                return Ok(events![DiscoveryEvent::SourceExpansionSkipped {
+                    reason: "missing region, graph, or budget".into(),
                 }]);
             }
         };
@@ -334,9 +346,7 @@ pub mod handlers {
                 topics: output.social_topics,
             });
         }
-        all_events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::SourceExpansion,
-        });
+        all_events.push(DiscoveryEvent::SourceExpansionCompleted);
         Ok(all_events)
     }
 }

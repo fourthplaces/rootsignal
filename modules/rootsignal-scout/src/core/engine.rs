@@ -102,7 +102,7 @@ pub type ScoutEngine = SeesawEngine;
 /// Build a scrape-chain engine: reap → schedule → scrape → enrichment →
 /// expansion → synthesis → finalize.
 ///
-/// Finalize triggers on PhaseCompleted(Synthesis). Does NOT include
+/// Finalize triggers when all synthesis roles complete. Does NOT include
 /// situation_weaving or supervisor handlers.
 ///
 /// When `seesaw_store` is provided, it replaces the default in-memory store
@@ -136,7 +136,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
         .with_handlers(enrichment::handlers::handlers())
         .with_handlers(expansion::handlers::handlers())
         .with_handlers(synthesis::handlers::handlers())
-        // Scrape chain finalize — triggers on PhaseCompleted(Synthesis)
+        // Scrape chain finalize — triggers when all synthesis roles complete
         .with_handler(lifecycle::__seesaw_effect_scrape_finalize())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
@@ -176,7 +176,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
 /// Build a full-chain engine: extends the scrape chain with situation_weaving →
 /// supervisor → finalize.
 ///
-/// Finalize triggers on PhaseCompleted(Supervisor).
+/// Finalize triggers on SupervisionCompleted or NothingToSupervise.
 pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
@@ -208,7 +208,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         .with_handlers(synthesis::handlers::handlers())
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
-        // Full chain finalize — triggers on PhaseCompleted(Supervisor)
+        // Full chain finalize — triggers on SupervisionCompleted/NothingToSupervise
         .with_handler(lifecycle::__seesaw_effect_full_finalize())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
@@ -250,7 +250,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
 /// Includes: lifecycle, signals, synthesis, situation_weaving, supervisor.
 /// Excludes: scrape, discovery, enrichment, expansion (those are scrape-time only).
 ///
-/// Finalize triggers on PhaseCompleted(Supervisor).
+/// Finalize triggers on SupervisionCompleted or NothingToSupervise.
 pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
@@ -277,7 +277,9 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn se
         .with_handlers(synthesis::handlers::handlers())
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
-        // Full chain finalize — triggers on PhaseCompleted(Supervisor)
+        // Weave kickoff — emits ExpansionCompleted on ScoutRunRequested
+        .with_handler(lifecycle::__seesaw_effect_weave_kickoff())
+        // Full chain finalize — triggers on SupervisionCompleted/NothingToSupervise
         .with_handler(lifecycle::__seesaw_effect_full_finalize())
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),

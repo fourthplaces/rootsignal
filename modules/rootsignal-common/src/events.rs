@@ -400,6 +400,10 @@ pub enum EventDomain {
     Pipeline,
     /// `synthesis:*` — cross-signal analysis, response mapping.
     Synthesis,
+    /// `situation_weaving:*` — signal-to-situation assignment.
+    SituationWeaving,
+    /// `supervisor:*` — region supervision.
+    Supervisor,
 }
 
 impl EventDomain {
@@ -658,13 +662,15 @@ mod tests {
         .into();
         assert_eq!(w.event_type(), "observation_corroborated");
 
-        let s: Event = SystemEvent::EntityExpired {
-            signal_id: Uuid::new_v4(),
-            node_type: crate::types::NodeType::Gathering,
-            reason: "test".into(),
+        let s: Event = SystemEvent::SignalsExpired {
+            signals: vec![crate::system_events::StaleSignal {
+                signal_id: Uuid::new_v4(),
+                node_type: crate::types::NodeType::Gathering,
+                reason: "test".into(),
+            }],
         }
         .into();
-        assert_eq!(s.event_type(), "entity_expired");
+        assert_eq!(s.event_type(), "signals_expired");
 
         let t: Event = TelemetryEvent::BudgetCheckpoint {
             spent_cents: 100,

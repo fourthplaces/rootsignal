@@ -14,7 +14,6 @@ use uuid::Uuid;
 
 use rootsignal_common::Node;
 
-use crate::core::events::PipelinePhase;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::scrape::events::ScrapeRole;
 use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
@@ -25,6 +24,8 @@ use crate::core::stats::ScoutStats;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::SignalEvent;
+use crate::domains::situation_weaving::events::SituationWeavingEvent;
+use crate::domains::supervisor::events::SupervisorEvent;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
 use crate::core::extractor::ResourceTag;
@@ -86,14 +87,6 @@ pub struct PipelineState {
     /// Edge-wiring context stashed by reducer on `SignalCreated` for `wire_signal_edges`.
     pub wiring_contexts: HashMap<Uuid, WiringContext>,
 
-    /// Sources discovered during scrape (topic discovery), accumulated by reducer.
-    #[serde(default)]
-    pub scrape_discovered_sources: Vec<rootsignal_common::SourceNode>,
-
-    /// Sources discovered during synthesis, accumulated by reducer.
-    #[serde(default)]
-    pub synthesis_discovered_sources: Vec<rootsignal_common::SourceNode>,
-
     /// Source plan stashed by prepare_sources, consumed by scrape handlers.
     pub source_plan: Option<SourcePlan>,
 
@@ -112,9 +105,9 @@ pub struct PipelineState {
     #[serde(default)]
     pub completed_enrichment_roles: HashSet<EnrichmentRole>,
 
-    /// Pipeline phases already completed — guards phase_complete handlers against duplicates.
+    /// Whether source expansion has completed (guards against re-triggering).
     #[serde(default)]
-    pub completed_phases: HashSet<PipelinePhase>,
+    pub source_expansion_completed: bool,
 }
 
 /// A batch of extracted nodes for a single URL, carried on `ScrapeRoleCompleted`
@@ -164,14 +157,12 @@ impl PipelineState {
             collected_links: Vec::new(),
             page_previews: HashMap::new(),
             wiring_contexts: HashMap::new(),
-            scrape_discovered_sources: Vec::new(),
-            synthesis_discovered_sources: Vec::new(),
             source_plan: None,
             social_topics: Vec::new(),
             completed_scrape_roles: HashSet::new(),
             completed_synthesis_roles: HashSet::new(),
             completed_enrichment_roles: HashSet::new(),
-            completed_phases: HashSet::new(),
+            source_expansion_completed: false,
         }
     }
 
@@ -220,7 +211,6 @@ impl PipelineState {
                 expansion_queries,
                 stats_delta,
                 page_previews,
-                discovered_sources,
                 ..
             } => {
                 self.stats.urls_scraped += urls_scraped;
@@ -237,7 +227,6 @@ impl PipelineState {
                 self.stats.social_media_posts += stats_delta.social_media_posts;
                 self.stats.discovery_posts_found += stats_delta.discovery_posts_found;
                 self.stats.discovery_accounts_found += stats_delta.discovery_accounts_found;
-                self.scrape_discovered_sources.extend(discovered_sources.clone());
                 if *role == ScrapeRole::TopicDiscovery {
                     self.social_topics.clear();
                     self.social_expansion_topics.clear();
@@ -294,16 +283,20 @@ impl PipelineState {
                 self.social_topics = topics.clone();
             }
             DiscoveryEvent::PageTriaged { .. } => {}
-
+            DiscoveryEvent::SourceExpansionCompleted => {
+                self.source_expansion_completed = true;
+            }
+            DiscoveryEvent::SourceExpansionSkipped { .. } => {
+                self.source_expansion_completed = true;
+            }
         }
     }
 
     /// Apply a synthesis domain event.
     pub fn apply_synthesis(&mut self, event: &SynthesisEvent) {
         match event {
-            SynthesisEvent::SynthesisRoleCompleted { role, discovered_sources, .. } => {
+            SynthesisEvent::SynthesisRoleCompleted { role, .. } => {
                 self.completed_synthesis_roles.insert(*role);
-                self.synthesis_discovered_sources.extend(discovered_sources.clone());
             }
         }
     }
@@ -340,9 +333,6 @@ impl PipelineState {
     /// Apply a lifecycle domain event.
     pub fn apply_lifecycle(&mut self, event: &LifecycleEvent) {
         match event {
-            LifecycleEvent::PhaseCompleted { phase } => {
-                self.completed_phases.insert(phase.clone());
-            }
             LifecycleEvent::SourcesPrepared {
                 source_plan,
                 actor_contexts,
@@ -379,7 +369,6 @@ impl PipelineState {
     /// Apply a pipeline event to aggregate state.
     pub fn apply_pipeline(&mut self, event: &PipelineEvent) {
         match event {
-            PipelineEvent::HandlerSkipped { .. } => {}
             PipelineEvent::HandlerFailed { .. } => {
                 self.stats.handler_failures += 1;
             }
@@ -432,6 +421,10 @@ pub mod pipeline_aggregators {
     fn on_lifecycle(state: &mut PipelineState, event: LifecycleEvent) {
         state.apply_lifecycle(&event);
     }
+
+    fn on_situation_weaving(_state: &mut PipelineState, _event: SituationWeavingEvent) {}
+
+    fn on_supervisor(_state: &mut PipelineState, _event: SupervisorEvent) {}
 }
 
 #[cfg(test)]
@@ -481,16 +474,5 @@ mod tests {
         assert_eq!(state.stats.handler_failures, 1);
     }
 
-    #[test]
-    fn handler_skipped_does_not_increment_failures() {
-        let mut state = PipelineState::default();
-
-        state.apply_pipeline(&PipelineEvent::HandlerSkipped {
-            handler_id: "scrape:fetch".to_string(),
-            reason: "no sources scheduled".to_string(),
-        });
-
-        assert_eq!(state.stats.handler_failures, 0);
-    }
 }
 

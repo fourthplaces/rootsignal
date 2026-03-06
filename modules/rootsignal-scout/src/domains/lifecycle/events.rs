@@ -1,11 +1,10 @@
-//! Lifecycle domain events: engine start, phase transitions, run completion.
+//! Lifecycle domain events: engine start, run completion.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::core::aggregate::SourcePlan;
-use crate::core::events::PipelinePhase;
 use crate::core::stats::ScoutStats;
 use rootsignal_common::types::ActorContext;
 
@@ -14,12 +13,6 @@ use rootsignal_common::types::ActorContext;
 pub enum LifecycleEvent {
     ScoutRunRequested {
         run_id: String,
-    },
-    PhaseStarted {
-        phase: PipelinePhase,
-    },
-    PhaseCompleted {
-        phase: PipelinePhase,
     },
     SourcesPrepared {
         tension_count: u32,
@@ -39,8 +32,6 @@ impl LifecycleEvent {
     pub fn event_type_str(&self) -> String {
         let variant = match self {
             Self::ScoutRunRequested { .. } => "scout_run_requested",
-            Self::PhaseStarted { .. } => "phase_started",
-            Self::PhaseCompleted { .. } => "phase_completed",
             Self::SourcesPrepared { .. } => "sources_prepared",
             Self::RunCompleted { .. } => "run_completed",
             Self::MetricsCompleted => "metrics_completed",

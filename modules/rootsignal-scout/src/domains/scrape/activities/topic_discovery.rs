@@ -319,8 +319,13 @@ pub(crate) async fn discover_from_topics(
             }
         }
 
-        // Collect discovered sources as data (emitted at phase boundary)
-        output.discovered_sources.extend(new_sources);
+        // Emit discovered sources directly
+        if !new_sources.is_empty() {
+            output.events.push(crate::domains::discovery::events::DiscoveryEvent::SourcesDiscovered {
+                sources: new_sources,
+                discovered_by: "topic_discovery".to_string(),
+            });
+        }
 
         output.stats_delta.discovery_accounts_found = new_accounts;
         info!(

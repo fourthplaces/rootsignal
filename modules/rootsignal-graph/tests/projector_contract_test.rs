@@ -100,7 +100,7 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "freshness_confirmed",
     "confidence_scored",
     "corroboration_scored",
-    "entity_expired",
+    "signals_expired",
     "entity_purged",
     "review_verdict_reached",
     "implied_queries_consumed",
@@ -654,10 +654,12 @@ fn build_all_events() -> Vec<Event> {
             source_url: "".into(),
             reason: "".into(),
         }),
-        Event::System(SystemEvent::EntityExpired {
-            signal_id: id,
-            node_type: NodeType::Gathering,
-            reason: "".into(),
+        Event::System(SystemEvent::SignalsExpired {
+            signals: vec![rootsignal_common::system_events::StaleSignal {
+                signal_id: id,
+                node_type: NodeType::Gathering,
+                reason: "".into(),
+            }],
         }),
         Event::System(SystemEvent::EntityPurged {
             signal_id: id,

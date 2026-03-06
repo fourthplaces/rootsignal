@@ -58,7 +58,7 @@ const GRAPH_MUTATING_TYPES: &[&str] = &[
     "freshness_confirmed",
     "confidence_scored",
     "corroboration_scored",
-    "entity_expired",
+    "signals_expired",
     "entity_purged",
     "review_verdict_reached",
     "implied_queries_consumed",
@@ -448,19 +448,28 @@ fn review_verdict_event_captures_status_change() {
 }
 
 #[test]
-fn bulk_operation_decomposes_into_individual_events() {
-    let expired: Vec<Event> = (0..5)
-        .map(|_| {
-            Event::System(SystemEvent::EntityExpired {
-                signal_id: Uuid::new_v4(),
-                node_type: NodeType::Gathering,
-                reason: "gathering_past_end_date".into(),
-            })
+fn batched_signals_expired_carries_all_stale_signals() {
+    use rootsignal_common::system_events::StaleSignal;
+
+    let signals: Vec<StaleSignal> = (0..5)
+        .map(|_| StaleSignal {
+            signal_id: Uuid::new_v4(),
+            node_type: NodeType::Gathering,
+            reason: "gathering_past_end_date".into(),
         })
         .collect();
 
-    assert_eq!(expired.len(), 5);
-    assert!(expired.iter().all(|e| e.event_type() == "entity_expired"));
+    let event = Event::System(SystemEvent::SignalsExpired {
+        signals: signals.clone(),
+    });
+
+    assert_eq!(event.event_type(), "signals_expired");
+    match &event {
+        Event::System(SystemEvent::SignalsExpired { signals }) => {
+            assert_eq!(signals.len(), 5);
+        }
+        _ => panic!("Expected SignalsExpired"),
+    }
 }
 
 // =========================================================================
@@ -814,10 +823,12 @@ fn build_all_events() -> Vec<Event> {
             source_url: "y".into(),
             reason: "z".into(),
         }),
-        Event::System(SystemEvent::EntityExpired {
-            signal_id: id,
-            node_type: NodeType::Gathering,
-            reason: "past_end_date".into(),
+        Event::System(SystemEvent::SignalsExpired {
+            signals: vec![rootsignal_common::system_events::StaleSignal {
+                signal_id: id,
+                node_type: NodeType::Gathering,
+                reason: "past_end_date".into(),
+            }],
         }),
         Event::System(SystemEvent::EntityPurged {
             signal_id: id,

@@ -118,6 +118,8 @@ impl GraphProjector {
             EventDomain::Enrichment => Ok(ApplyResult::NoOp),
             EventDomain::Expansion => Ok(ApplyResult::NoOp),
             EventDomain::Synthesis => Ok(ApplyResult::NoOp),
+            EventDomain::SituationWeaving => Ok(ApplyResult::NoOp),
+            EventDomain::Supervisor => Ok(ApplyResult::NoOp),
         }
     }
 
@@ -913,24 +915,27 @@ impl GraphProjector {
                 Ok(ApplyResult::NoOp)
             }
 
-            SystemEvent::EntityExpired {
-                signal_id,
-                node_type,
-                reason,
-            } => {
-                let label = node_type_label(node_type);
-                let q = query(&format!(
-                    "MATCH (n:{label} {{id: $id}})
-                     SET n.expired = true,
-                         n.expired_at = datetime($ts),
-                         n.expired_reason = $reason"
-                ))
-                .param("id", signal_id.to_string())
-                .param("ts", format_dt_from_stored(event))
-                .param("reason", reason.as_str());
+            SystemEvent::SignalsExpired { signals } => {
+                let ts = format_dt_from_stored(event);
+                for s in signals.iter() {
+                    let label = node_type_label(s.node_type);
+                    let q = query(&format!(
+                        "MATCH (n:{label} {{id: $id}})
+                         SET n.expired = true,
+                             n.expired_at = datetime($ts),
+                             n.expired_reason = $reason"
+                    ))
+                    .param("id", s.signal_id.to_string())
+                    .param("ts", ts.clone())
+                    .param("reason", s.reason.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                    self.client.run(q).await?;
+                }
+                if signals.is_empty() {
+                    Ok(ApplyResult::NoOp)
+                } else {
+                    Ok(ApplyResult::Applied)
+                }
             }
 
             SystemEvent::EntityPurged {

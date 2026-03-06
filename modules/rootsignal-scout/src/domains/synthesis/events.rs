@@ -33,10 +33,6 @@ pub enum SynthesisEvent {
     SynthesisRoleCompleted {
         run_id: Uuid,
         role: SynthesisRole,
-        /// Sources discovered during this role (e.g. response_finder, gathering_finder).
-        /// In-memory only — skipped during serialization.
-        #[serde(skip)]
-        discovered_sources: Vec<rootsignal_common::SourceNode>,
     },
 }
 

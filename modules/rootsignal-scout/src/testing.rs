@@ -1653,6 +1653,54 @@ pub fn search_results(query: &str, urls: &[&str]) -> ArchivedSearchResults {
 }
 
 // ---------------------------------------------------------------------------
+// ScrapeRoleCompleted test builder
+// ---------------------------------------------------------------------------
+
+use typed_builder::TypedBuilder;
+
+use crate::domains::enrichment::activities::link_promoter::CollectedLink;
+use crate::domains::scrape::activities::{StatsDelta, UrlExtraction};
+use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
+
+#[derive(TypedBuilder)]
+pub struct TestScrapeRoleCompleted {
+    role: ScrapeRole,
+    #[builder(default)]
+    urls_scraped: u32,
+    #[builder(default)]
+    signals_extracted: u32,
+    #[builder(default)]
+    source_signal_counts: HashMap<String, u32>,
+    #[builder(default)]
+    collected_links: Vec<CollectedLink>,
+    #[builder(default)]
+    extracted_batches: Vec<UrlExtraction>,
+    #[builder(default)]
+    page_previews: HashMap<String, String>,
+    #[builder(default)]
+    expansion_queries: Vec<String>,
+}
+
+impl From<TestScrapeRoleCompleted> for ScrapeEvent {
+    fn from(t: TestScrapeRoleCompleted) -> Self {
+        ScrapeEvent::ScrapeRoleCompleted {
+            run_id: Uuid::new_v4(),
+            role: t.role,
+            urls_scraped: t.urls_scraped,
+            urls_unchanged: 0,
+            urls_failed: 0,
+            signals_extracted: t.signals_extracted,
+            source_signal_counts: t.source_signal_counts,
+            collected_links: t.collected_links,
+            expansion_queries: t.expansion_queries,
+            stats_delta: StatsDelta::default(),
+            page_previews: t.page_previews,
+            extracted_batches: t.extracted_batches,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MockSignalReader self-tests
 // ---------------------------------------------------------------------------
 

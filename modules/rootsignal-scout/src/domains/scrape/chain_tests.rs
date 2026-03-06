@@ -43,13 +43,10 @@ async fn scrape_and_dispatch(
     store: &Arc<MockSignalReader>,
 ) {
     use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-    use crate::domains::scrape::activities::StatsDelta;
-    use std::collections::HashMap;
 
     let mut output = output;
     let events = output.take_events();
     let extracted_batches = std::mem::take(&mut output.extracted_batches);
-    let discovered_sources = std::mem::take(&mut output.discovered_sources);
     ctx.apply_scrape_output(output);
 
     let engine = test_engine_for_store(store.clone() as Arc<dyn SignalReader>);
@@ -59,21 +56,10 @@ async fn scrape_and_dispatch(
 
     if !extracted_batches.is_empty() {
         let _ = engine
-            .emit(ScrapeEvent::ScrapeRoleCompleted {
-                run_id: uuid::Uuid::new_v4(),
-                role: ScrapeRole::TensionWeb,
-                urls_scraped: 0,
-                urls_unchanged: 0,
-                urls_failed: 0,
-                signals_extracted: 0,
-                source_signal_counts: HashMap::new(),
-                collected_links: vec![],
-                expansion_queries: vec![],
-                stats_delta: StatsDelta::default(),
-                page_previews: Default::default(),
-                extracted_batches,
-                discovered_sources,
-            })
+            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+                .role(ScrapeRole::TensionWeb)
+                .extracted_batches(extracted_batches)
+                .build()))
             .settled()
             .await;
     }
@@ -1080,28 +1066,16 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
     // Dispatch through engine: freshness events + extracted batches via ScrapeRoleCompleted
     {
         use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-        use crate::domains::scrape::activities::StatsDelta;
 
         let engine = test_engine_for_store(store.clone() as Arc<dyn SignalReader>);
         for out in result.events.into_outputs() {
             let _ = engine.emit_output(out).settled().await;
         }
         let _ = engine
-            .emit(ScrapeEvent::ScrapeRoleCompleted {
-                run_id: uuid::Uuid::new_v4(),
-                role: ScrapeRole::TensionWeb,
-                urls_scraped: 0,
-                urls_unchanged: 0,
-                urls_failed: 0,
-                signals_extracted: 0,
-                source_signal_counts: std::collections::HashMap::new(),
-                collected_links: vec![],
-                expansion_queries: vec![],
-                stats_delta: StatsDelta::default(),
-                page_previews: Default::default(),
-                extracted_batches: result.extracted_batches,
-                discovered_sources: Vec::new(),
-            })
+            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+                .role(ScrapeRole::TensionWeb)
+                .extracted_batches(result.extracted_batches)
+                .build()))
             .settled()
             .await;
         let state = engine.singleton::<crate::core::aggregate::PipelineState>();

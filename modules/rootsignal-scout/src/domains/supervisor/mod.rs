@@ -1,17 +1,17 @@
 pub mod activities;
+pub mod events;
 
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::PipelinePhase;
-use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::situation_weaving::events::SituationWeavingEvent;
+use crate::domains::supervisor::events::SupervisorEvent;
 
-fn is_situation_weaving_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+fn is_weaving_done(e: &SituationWeavingEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::SituationWeaving)
+        SituationWeavingEvent::SituationsWeaved | SituationWeavingEvent::NothingToWeave { .. }
     )
 }
 
@@ -19,16 +19,14 @@ fn is_situation_weaving_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngine
 pub mod handlers {
     use super::*;
 
-    /// PhaseCompleted(SituationWeaving) → supervise region, emit PhaseCompleted(Supervisor).
-    #[handle(on = LifecycleEvent, id = "supervisor:run", filter = is_situation_weaving_completed)]
+    /// SituationsWeaved or NothingToWeave → supervise region, emit SupervisionCompleted.
+    #[handle(on = SituationWeavingEvent, id = "supervisor:run", filter = is_weaving_done)]
     async fn supervisor(
-        _event: LifecycleEvent,
+        _event: SituationWeavingEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let mut out = events![LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::Supervisor,
-        }];
+        let mut out = events![SupervisorEvent::SupervisionCompleted];
         activities::supervise(&deps, &mut out).await;
         Ok(out)
     }

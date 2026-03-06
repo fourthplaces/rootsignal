@@ -10,7 +10,6 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::PipelinePhase;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
@@ -24,7 +23,7 @@ fn is_metrics_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> 
 pub mod handlers {
     use super::*;
 
-    /// MetricsCompleted → signal expansion + end-of-run discovery, emit PhaseCompleted(SignalExpansion).
+    /// MetricsCompleted → signal expansion + end-of-run discovery, emit ExpansionCompleted.
     #[handle(on = LifecycleEvent, id = "expansion:signal_expansion", filter = is_metrics_completed)]
     async fn signal_expansion(
         _event: LifecycleEvent,
@@ -41,8 +40,12 @@ pub mod handlers {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
                 ctx.logger.debug("Skipped signal expansion: missing region, graph, or budget");
-                return Ok(events![LifecycleEvent::PhaseCompleted {
-                    phase: PipelinePhase::SignalExpansion,
+                return Ok(events![ExpansionEvent::ExpansionCompleted {
+                    social_expansion_topics: Vec::new(),
+                    expansion_deferred_expanded: 0,
+                    expansion_queries_collected: 0,
+                    expansion_sources_created: 0,
+                    expansion_social_topics_queued: 0,
                 }]);
             }
         };
@@ -97,13 +100,9 @@ pub mod handlers {
                 stats_delta: topic_scrape.stats_delta,
                 page_previews: Default::default(),
                 extracted_batches: Vec::new(),
-                discovered_sources: Vec::new(),
             });
             all_events.extend(scrape_events);
         }
-        all_events.push(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::SignalExpansion,
-        });
         Ok(all_events)
     }
 }

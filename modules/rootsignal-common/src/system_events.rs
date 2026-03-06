@@ -21,6 +21,14 @@ use crate::types::{
     Urgency,
 };
 
+/// A signal found to be stale — expired by age or staleness rules.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaleSignal {
+    pub signal_id: Uuid,
+    pub node_type: NodeType,
+    pub reason: String,
+}
+
 /// A system event — an editorial judgment Root Signal made about world facts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -54,12 +62,10 @@ pub enum SystemEvent {
         reason: String,
     },
 
-    /// Batch of signals marked expired — sets `expired = true` on each node.
-    /// Grouped by (node_type, reason): past gatherings, stale help requests, stale announcements.
+    /// Batch of signals marked stale — sets `expired = true` on each node.
+    /// One event carries all stale signals found in a single run.
     SignalsExpired {
-        signal_ids: Vec<Uuid>,
-        node_type: NodeType,
-        reason: String,
+        signals: Vec<StaleSignal>,
     },
 
     EntityPurged {
@@ -567,7 +573,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::ConfidenceScored { .. } => "confidence_scored",
             SystemEvent::CorroborationScored { .. } => "corroboration_scored",
             SystemEvent::ObservationRejected { .. } => "observation_rejected",
-            SystemEvent::EntityExpired { .. } => "entity_expired",
+            SystemEvent::SignalsExpired { .. } => "signals_expired",
             SystemEvent::EntityPurged { .. } => "entity_purged",
             SystemEvent::DuplicateDetected { .. } => "duplicate_detected",
             SystemEvent::ExtractionDroppedNoDate { .. } => "extraction_dropped_no_date",

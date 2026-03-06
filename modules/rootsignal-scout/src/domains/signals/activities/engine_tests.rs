@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::aggregate::PipelineState;
-use crate::core::events::PipelinePhase;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::signals::events::SignalEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
@@ -22,6 +21,27 @@ use uuid::Uuid;
 use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
 use seesaw_core::AnyEvent;
+
+/// Emit a no-op TensionSocial ScrapeRoleCompleted to complete the tension roles set.
+/// Link promotion filter requires both TensionWeb + TensionSocial in completed_scrape_roles.
+async fn complete_tension_roles(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
+    engine
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder().role(ScrapeRole::TensionSocial).build()))
+        .settled()
+        .await
+        .unwrap();
+}
+
+/// Emit all 3 response ScrapeRoleCompleted events to complete the response roles set.
+async fn complete_response_roles(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
+    for role in [ScrapeRole::ResponseWeb, ScrapeRole::ResponseSocial, ScrapeRole::TopicDiscovery] {
+        engine
+            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder().role(role).build()))
+            .settled()
+            .await
+            .unwrap();
+    }
+}
 
 /// Helper: collect event variant names from captured events.
 fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
@@ -54,25 +74,18 @@ fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn scrape_completed_with_batch(url: &str, canonical_key: &str, batch: ExtractedBatch) -> ScrapeEvent {
-    ScrapeEvent::ScrapeRoleCompleted {
-        run_id: Uuid::new_v4(),
-        role: ScrapeRole::TensionWeb,
-        urls_scraped: 1,
-        urls_unchanged: 0,
-        urls_failed: 0,
-        signals_extracted: batch.nodes.len() as u32,
-        source_signal_counts: HashMap::new(),
-        collected_links: vec![],
-        expansion_queries: vec![],
-        stats_delta: Default::default(),
-        page_previews: Default::default(),
-        extracted_batches: vec![UrlExtraction {
+    let signals = batch.nodes.len() as u32;
+    TestScrapeRoleCompleted::builder()
+        .role(ScrapeRole::TensionWeb)
+        .urls_scraped(1)
+        .signals_extracted(signals)
+        .extracted_batches(vec![UrlExtraction {
             url: url.to_string(),
             canonical_key: canonical_key.to_string(),
             batch,
-        }],
-        discovered_sources: Vec::new(),
-    }
+        }])
+        .build()
+        .into()
 }
 
 // ---------------------------------------------------------------------------
@@ -340,7 +353,7 @@ async fn scrape_completed_with_existing_title_emits_freshness() {
 }
 
 // ---------------------------------------------------------------------------
-// Link promotion handler — PhaseCompleted(TensionScrape) promotes collected links
+// Link promotion handler — tension roles complete promotes collected links
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -352,18 +365,10 @@ async fn link_promotion_promotes_links_on_phase_completed() {
     );
 
     // Seed collected links via ScrapeRoleCompleted (simulates links found during scraping)
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 0,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 0,
-            source_signal_counts: HashMap::new(),
-            collected_links: vec![
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .collected_links(vec![
                 CollectedLink {
                     url: "https://instagram.com/mutual_aid_mpls".to_string(),
                     discovered_on: "https://localorg.org".to_string(),
@@ -372,13 +377,8 @@ async fn link_promotion_promotes_links_on_phase_completed() {
                     url: "https://twitter.com/mpls_community".to_string(),
                     discovered_on: "https://localorg.org".to_string(),
                 },
-            ],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: Default::default(),
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+            ])
+            .build()))
         .settled()
         .await
         .unwrap();
@@ -386,14 +386,8 @@ async fn link_promotion_promotes_links_on_phase_completed() {
     // Clear captured events from seeding so we only see link promotion events
     captured.lock().unwrap().clear();
 
-    // Dispatch LifecycleEvent::PhaseCompleted(TensionScrape) — link_promotion_handler fires
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    // Complete tension roles — link_promotion filter fires
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
 
@@ -435,17 +429,11 @@ async fn link_promotion_skips_when_no_links() {
 
     // No collected links
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
 
-    // Only the root PhaseCompleted event — no handler output
+    // No handler output — link promotion filter skips when no links
     assert!(
         !names.iter().any(|n| n.contains("source_registered")),
         "should not emit SourceRegistered with no links, got: {names:?}"
@@ -468,19 +456,12 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
         Some(mpls_region()),
     );
 
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     // Seed links from a page with zero signals — no source_signal_counts entry
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 0,
-            source_signal_counts: HashMap::new(), // zero signals
-            collected_links: vec![
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .collected_links(vec![
                 CollectedLink {
                     url: "https://instagram.com/mpls_mutual_aid".to_string(),
                     discovered_on: "https://hub-page.org".to_string(),
@@ -489,26 +470,15 @@ async fn social_handles_always_promoted_from_zero_signal_pages() {
                     url: "https://x.com/mpls_help".to_string(),
                     discovered_on: "https://hub-page.org".to_string(),
                 },
-            ],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: Default::default(),
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+            ])
+            .build()))
         .settled()
         .await
         .unwrap();
 
     captured.lock().unwrap().clear();
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
     let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
@@ -535,23 +505,18 @@ async fn productive_page_content_links_promoted_without_triage() {
         Some(mpls_region()),
     );
 
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     // Seed links from a productive page (signal_count > 0).
     // Use discovered_on URL as canonical key so url_to_canonical_key lookup succeeds.
     let mut signal_counts = HashMap::new();
     signal_counts.insert("https://hub-page.org/resources".to_string(), 3u32);
 
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 3,
-            source_signal_counts: signal_counts,
-            collected_links: vec![
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .signals_extracted(3)
+            .source_signal_counts(signal_counts)
+            .collected_links(vec![
                 CollectedLink {
                     url: "https://partner-org.org/programs".to_string(),
                     discovered_on: "https://hub-page.org/resources".to_string(),
@@ -560,26 +525,15 @@ async fn productive_page_content_links_promoted_without_triage() {
                     url: "https://foodshelf.org/volunteer".to_string(),
                     discovered_on: "https://hub-page.org/resources".to_string(),
                 },
-            ],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: Default::default(),
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+            ])
+            .build()))
         .settled()
         .await
         .unwrap();
 
     captured.lock().unwrap().clear();
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
     let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
@@ -602,43 +556,25 @@ async fn zero_signal_page_content_links_not_promoted_without_ai() {
         Some(mpls_region()),
     );
 
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     // Seed only non-social links from a zero-signal page
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 0,
-            source_signal_counts: HashMap::new(),
-            collected_links: vec![
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .collected_links(vec![
                 CollectedLink {
                     url: "https://partner-org.org/programs".to_string(),
                     discovered_on: "https://empty-page.org".to_string(),
                 },
-            ],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: Default::default(),
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+            ])
+            .build()))
         .settled()
         .await
         .unwrap();
 
     captured.lock().unwrap().clear();
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
     let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
@@ -670,18 +606,11 @@ async fn zero_signal_page_triaged_and_promoted() {
         Some(mpls_region()),
     );
 
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 0,
-            source_signal_counts: HashMap::new(),
-            collected_links: vec![
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .collected_links(vec![
                 CollectedLink {
                     url: "https://partner-org.org/programs".to_string(),
                     discovered_on: "https://directory-page.org/links".to_string(),
@@ -690,33 +619,19 @@ async fn zero_signal_page_triaged_and_promoted() {
                     url: "https://foodshelf.org/volunteer".to_string(),
                     discovered_on: "https://directory-page.org/links".to_string(),
                 },
-            ],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: {
-                let mut m = HashMap::new();
-                m.insert(
-                    "https://directory-page.org/links".to_string(),
-                    "Community Resources Directory: links to local orgs".to_string(),
-                );
-                m
-            },
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+            ])
+            .page_previews(HashMap::from([(
+                "https://directory-page.org/links".to_string(),
+                "Community Resources Directory: links to local orgs".to_string(),
+            )]))
+            .build()))
         .settled()
         .await
         .unwrap();
 
     captured.lock().unwrap().clear();
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
 
@@ -756,49 +671,28 @@ async fn zero_signal_page_triaged_and_rejected() {
         Some(mpls_region()),
     );
 
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 0,
-            source_signal_counts: HashMap::new(),
-            collected_links: vec![
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .collected_links(vec![
                 CollectedLink {
                     url: "https://other-news.com/article".to_string(),
                     discovered_on: "https://news-article.com/story".to_string(),
                 },
-            ],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: {
-                let mut m = HashMap::new();
-                m.insert(
-                    "https://news-article.com/story".to_string(),
-                    "Breaking: Local politics debate continues...".to_string(),
-                );
-                m
-            },
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+            ])
+            .page_previews(HashMap::from([(
+                "https://news-article.com/story".to_string(),
+                "Breaking: Local politics debate continues...".to_string(),
+            )]))
+            .build()))
         .settled()
         .await
         .unwrap();
 
     captured.lock().unwrap().clear();
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
 
@@ -834,49 +728,28 @@ async fn ai_error_fails_closed_no_content_links_promoted() {
         Some(mpls_region()),
     );
 
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 0,
-            source_signal_counts: HashMap::new(),
-            collected_links: vec![
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .collected_links(vec![
                 CollectedLink {
                     url: "https://partner-org.org/programs".to_string(),
                     discovered_on: "https://zero-signal-page.org".to_string(),
                 },
-            ],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: {
-                let mut m = HashMap::new();
-                m.insert(
-                    "https://zero-signal-page.org".to_string(),
-                    "Some page content".to_string(),
-                );
-                m
-            },
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+            ])
+            .page_previews(HashMap::from([(
+                "https://zero-signal-page.org".to_string(),
+                "Some page content".to_string(),
+            )]))
+            .build()))
         .settled()
         .await
         .unwrap();
 
     captured.lock().unwrap().clear();
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
 
@@ -906,12 +779,7 @@ async fn content_links_capped_per_source() {
         Some(mpls_region()),
     );
 
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     // Create 15 content links from a productive page — should be capped at 10
-    let mut signal_counts = HashMap::new();
-    signal_counts.insert("https://productive.org/resources".to_string(), 5u32);
-
     let collected_links: Vec<CollectedLink> = (0..15)
         .map(|i| CollectedLink {
             url: format!("https://site-{i}.org/page"),
@@ -920,34 +788,20 @@ async fn content_links_capped_per_source() {
         .collect();
 
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 5,
-            source_signal_counts: signal_counts,
-            collected_links,
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: Default::default(),
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .signals_extracted(5)
+            .source_signal_counts(HashMap::from([("https://productive.org/resources".to_string(), 5u32)]))
+            .collected_links(collected_links)
+            .build()))
         .settled()
         .await
         .unwrap();
 
     captured.lock().unwrap().clear();
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let names = event_names(&captured);
     let source_count = names.iter().filter(|n| n.contains("source_registered")).count();
@@ -973,33 +827,21 @@ async fn page_previews_cleared_after_links_promoted() {
         Some(mpls_region()),
     );
 
-    use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-
     engine
-        .emit(ScrapeEvent::ScrapeRoleCompleted {
-            run_id: Uuid::new_v4(),
-            role: ScrapeRole::TensionWeb,
-            urls_scraped: 1,
-            urls_unchanged: 0,
-            urls_failed: 0,
-            signals_extracted: 0,
-            source_signal_counts: HashMap::new(),
-            collected_links: vec![
+        .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+            .role(ScrapeRole::TensionWeb)
+            .urls_scraped(1)
+            .collected_links(vec![
                 CollectedLink {
                     url: "https://instagram.com/test_handle".to_string(),
                     discovered_on: "https://page.org".to_string(),
                 },
-            ],
-            expansion_queries: vec![],
-            stats_delta: Default::default(),
-            page_previews: {
-                let mut m = HashMap::new();
-                m.insert("https://page.org".to_string(), "some preview".to_string());
-                m
-            },
-            extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
-        })
+            ])
+            .page_previews(HashMap::from([(
+                "https://page.org".to_string(),
+                "some preview".to_string(),
+            )]))
+            .build()))
         .settled()
         .await
         .unwrap();
@@ -1010,13 +852,7 @@ async fn page_previews_cleared_after_links_promoted() {
         "page_previews should be populated after ScrapeRoleCompleted"
     );
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::TensionScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    complete_tension_roles(&engine).await;
 
     let state = engine.singleton::<PipelineState>();
     assert!(
@@ -1094,14 +930,8 @@ async fn actor_location_emits_events_on_response_complete() {
         Some(mpls_region()),
     );
 
-    // Dispatch LifecycleEvent::PhaseCompleted(ResponseScrape) — actor_location_handler fires
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::ResponseScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    // Complete response roles — enrichment actor_location filter fires
+    complete_response_roles(&engine).await;
 
     let names = event_names(&captured);
 

@@ -1,31 +1,37 @@
 //! Completion handler tests — enrichment phase completion tracking.
 //!
 //! MOCK → ENGINE.EMIT → OUTPUT
-//! Proves the superset check gates PhaseCompleted correctly.
+//! Proves the superset check gates MetricsCompleted correctly.
 
 use std::sync::Arc;
 
 use crate::core::aggregate::PipelineState;
-use crate::core::events::PipelinePhase;
 use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
 use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 use crate::testing::*;
 use seesaw_core::AnyEvent;
 
-fn has_phase_completed_actor_enrichment(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> bool {
+fn has_metrics_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> bool {
     captured.lock().unwrap().iter().any(|e| {
-        e.downcast_ref::<LifecycleEvent>().is_some_and(|le| {
-            matches!(
-                le,
-                LifecycleEvent::PhaseCompleted { phase }
-                    if matches!(phase, PipelinePhase::ActorEnrichment)
-            )
-        })
+        e.downcast_ref::<LifecycleEvent>()
+            .is_some_and(|le| matches!(le, LifecycleEvent::MetricsCompleted))
     })
 }
 
+/// Emit all 3 response ScrapeRoleCompleted events to trigger enrichment handlers.
+async fn emit_response_scrape_done(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
+    for role in [ScrapeRole::ResponseWeb, ScrapeRole::ResponseSocial, ScrapeRole::TopicDiscovery] {
+        engine
+            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder().role(role).build()))
+            .settled()
+            .await
+            .unwrap();
+    }
+}
+
 #[tokio::test]
-async fn three_of_four_enrichment_roles_does_not_emit_phase_completed() {
+async fn three_of_four_enrichment_roles_does_not_trigger_metrics() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
@@ -49,13 +55,13 @@ async fn three_of_four_enrichment_roles_does_not_emit_phase_completed() {
     let state = engine.singleton::<PipelineState>();
     assert_eq!(state.completed_enrichment_roles.len(), 3);
     assert!(
-        !has_phase_completed_actor_enrichment(&captured),
-        "PhaseCompleted(ActorEnrichment) should not fire with only 3 of 4 roles"
+        !has_metrics_completed(&captured),
+        "MetricsCompleted should not fire with only 3 of 4 roles"
     );
 }
 
 #[tokio::test]
-async fn fourth_enrichment_role_emits_phase_completed() {
+async fn fourth_enrichment_role_triggers_metrics() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
@@ -80,8 +86,8 @@ async fn fourth_enrichment_role_emits_phase_completed() {
     let state = engine.singleton::<PipelineState>();
     assert_eq!(state.completed_enrichment_roles.len(), 4);
     assert!(
-        has_phase_completed_actor_enrichment(&captured),
-        "PhaseCompleted(ActorEnrichment) should fire once all 4 roles complete"
+        has_metrics_completed(&captured),
+        "MetricsCompleted should fire once all 4 roles complete"
     );
 }
 
@@ -94,17 +100,12 @@ async fn missing_deps_skips_enrichment_with_immediate_role_completed() {
         None,
     );
 
-    engine
-        .emit(LifecycleEvent::PhaseCompleted {
-            phase: PipelinePhase::ResponseScrape,
-        })
-        .settled()
-        .await
-        .unwrap();
+    // Emit response scrape completion — triggers enrichment via state-gated filters
+    emit_response_scrape_done(&engine).await;
 
     assert!(
-        has_phase_completed_actor_enrichment(&captured),
-        "All role handlers should emit role completed when deps are missing, triggering PhaseCompleted(ActorEnrichment)"
+        has_metrics_completed(&captured),
+        "All role handlers should emit role completed when deps are missing, triggering MetricsCompleted"
     );
 
     let state = engine.singleton::<PipelineState>();

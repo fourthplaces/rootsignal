@@ -129,8 +129,6 @@ impl ScoutRunner {
         info!(region_id = region_id.as_str(), run_id = run_id.as_str(), "Spawning weave flow");
 
         tokio::spawn(async move {
-            use rootsignal_scout::core::events::PipelinePhase;
-
             let run_id_uuid = uuid::Uuid::parse_str(&run_id).unwrap();
 
             early_insert_flow_run(&deps, &run_id, Some(&region_id), "weave", None, &scope).await;

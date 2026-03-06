@@ -18,33 +18,21 @@ use rootsignal_common::events::SystemEvent;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::PipelinePhase;
-use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
-use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scheduling::activities::budget::OperationCost;
 use crate::domains::synthesis::events::{
     all_synthesis_roles, SynthesisEvent, SynthesisRole,
 };
 
-fn is_signal_expansion_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(
-        e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::SignalExpansion)
-    )
+fn is_expansion_completed(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, ExpansionEvent::ExpansionCompleted { .. })
 }
 
-fn is_synthesis_role_completed(e: &SynthesisEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. })
-}
-
-fn is_synthesis_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(
-        e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::Synthesis)
-    )
+fn all_synthesis_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. }) { return false; }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_synthesis_roles.is_superset(&all_synthesis_roles())
 }
 
 #[handlers]
@@ -55,9 +43,9 @@ pub mod handlers {
     // Similarity: single graph-wide operation, not atomized
     // ---------------------------------------------------------------
 
-    #[handle(on = LifecycleEvent, id = "synthesis:similarity", filter = is_signal_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:similarity", filter = is_expansion_completed)]
     async fn similarity(
-        _event: LifecycleEvent,
+        _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -69,7 +57,6 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Similarity,
-                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -83,7 +70,6 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Similarity,
-                    discovered_sources: Vec::new(),
                 });
                 Ok(out)
             }
@@ -92,7 +78,6 @@ pub mod handlers {
                 Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Similarity,
-                    discovered_sources: Vec::new(),
                 }])
             }
         }
@@ -102,9 +87,9 @@ pub mod handlers {
     // ConcernLinker: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = LifecycleEvent, id = "synthesis:concern_linker", filter = is_signal_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:concern_linker", filter = is_expansion_completed)]
     async fn concern_linker(
-        _event: LifecycleEvent,
+        _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -121,7 +106,6 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ConcernLinker,
-                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -136,7 +120,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ConcernLinker,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -157,7 +140,6 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ConcernLinker,
-                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -168,7 +150,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ConcernLinker,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -245,7 +226,6 @@ pub mod handlers {
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::ConcernLinker,
-            discovered_sources: Vec::new(),
         });
 
         Ok(out)
@@ -255,9 +235,9 @@ pub mod handlers {
     // ResponseFinder: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = LifecycleEvent, id = "synthesis:response_finder", filter = is_signal_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:response_finder", filter = is_expansion_completed)]
     async fn response_finder(
-        _event: LifecycleEvent,
+        _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -274,7 +254,6 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseFinder,
-                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -289,7 +268,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseFinder,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -305,7 +283,6 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseFinder,
-                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -316,7 +293,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseFinder,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -373,10 +349,16 @@ pub mod handlers {
             all_sources.extend(target_sources);
         }
 
+        if !all_sources.is_empty() {
+            out.push(DiscoveryEvent::SourcesDiscovered {
+                sources: all_sources,
+                discovered_by: "response_finder".to_string(),
+            });
+        }
+
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::ResponseFinder,
-            discovered_sources: all_sources,
         });
 
         Ok(out)
@@ -386,9 +368,9 @@ pub mod handlers {
     // GatheringFinder: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = LifecycleEvent, id = "synthesis:gathering_finder", filter = is_signal_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:gathering_finder", filter = is_expansion_completed)]
     async fn gathering_finder(
-        _event: LifecycleEvent,
+        _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -405,7 +387,6 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::GatheringFinder,
-                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -420,7 +401,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::GatheringFinder,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -436,7 +416,6 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::GatheringFinder,
-                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -447,7 +426,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::GatheringFinder,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -476,10 +454,16 @@ pub mod handlers {
             all_sources.extend(target_sources);
         }
 
+        if !all_sources.is_empty() {
+            out.push(DiscoveryEvent::SourcesDiscovered {
+                sources: all_sources,
+                discovered_by: "gathering_finder".to_string(),
+            });
+        }
+
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::GatheringFinder,
-            discovered_sources: all_sources,
         });
 
         Ok(out)
@@ -489,9 +473,9 @@ pub mod handlers {
     // Investigation: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = LifecycleEvent, id = "synthesis:investigation", filter = is_signal_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:investigation", filter = is_expansion_completed)]
     async fn investigation(
-        _event: LifecycleEvent,
+        _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -508,7 +492,6 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Investigation,
-                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -523,7 +506,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::Investigation,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -539,7 +521,6 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::Investigation,
-                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -552,7 +533,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::Investigation,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -580,7 +560,6 @@ pub mod handlers {
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::Investigation,
-            discovered_sources: Vec::new(),
         });
 
         Ok(out)
@@ -590,9 +569,9 @@ pub mod handlers {
     // ResponseMapping: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
     // ===============================================================
 
-    #[handle(on = LifecycleEvent, id = "synthesis:response_mapping", filter = is_signal_expansion_completed)]
+    #[handle(on = ExpansionEvent, id = "synthesis:response_mapping", filter = is_expansion_completed)]
     async fn response_mapping(
-        _event: LifecycleEvent,
+        _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -608,7 +587,6 @@ pub mod handlers {
                 return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseMapping,
-                    discovered_sources: Vec::new(),
                 }]);
             }
         };
@@ -621,7 +599,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseMapping,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -637,7 +614,6 @@ pub mod handlers {
                 out.push(SynthesisEvent::SynthesisRoleCompleted {
                     run_id,
                     role: SynthesisRole::ResponseMapping,
-                    discovered_sources: Vec::new(),
                 });
                 return Ok(out);
             }
@@ -648,7 +624,6 @@ pub mod handlers {
             out.push(SynthesisEvent::SynthesisRoleCompleted {
                 run_id,
                 role: SynthesisRole::ResponseMapping,
-                discovered_sources: Vec::new(),
             });
             return Ok(out);
         }
@@ -681,66 +656,20 @@ pub mod handlers {
         out.push(SynthesisEvent::SynthesisRoleCompleted {
             run_id,
             role: SynthesisRole::ResponseMapping,
-            discovered_sources: Vec::new(),
         });
 
         Ok(out)
     }
 
     // ---------------------------------------------------------------
-    // Completion: all 6 roles done → PhaseCompleted(Synthesis)
+    // Severity inference: triggers when all synthesis roles done
     // ---------------------------------------------------------------
 
-    #[handle(on = SynthesisEvent, id = "synthesis:phase_complete", filter = is_synthesis_role_completed)]
-    async fn phase_complete(
-        _event: SynthesisEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let (_, state) = ctx.singleton::<PipelineState>();
-
-        // Idempotency: if this phase already completed, skip
-        if state.completed_phases.contains(&PipelinePhase::Synthesis) {
-            return Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "synthesis:phase_complete".into(),
-                reason: "Synthesis already completed".into(),
-            }]);
-        }
-
-        if state
-            .completed_synthesis_roles
-            .is_superset(&all_synthesis_roles())
-        {
-            info!("All synthesis roles complete, emitting PhaseCompleted");
-            let mut out = events![LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::Synthesis,
-            }];
-            // Emit SourcesDiscovered from stashed sources at phase boundary
-            if !state.synthesis_discovered_sources.is_empty() {
-                out = out.add(DiscoveryEvent::SourcesDiscovered {
-                    sources: state.synthesis_discovered_sources.clone(),
-                    discovered_by: "synthesis".into(),
-                });
-            }
-            Ok(out)
-        } else {
-            let completed: Vec<_> = state.completed_synthesis_roles.iter().collect();
-            let expected: Vec<_> = all_synthesis_roles().into_iter().collect();
-            Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "synthesis:phase_complete".into(),
-                reason: format!("waiting for Synthesis: completed {completed:?}, need {expected:?}"),
-            }])
-        }
-    }
-
-    // ---------------------------------------------------------------
-    // Severity inference: unchanged, triggers on PhaseCompleted(Synthesis)
-    // ---------------------------------------------------------------
-
-    /// PhaseCompleted(Synthesis) → re-evaluate Notice severity now that
+    /// All synthesis roles done → re-evaluate Notice severity now that
     /// EVIDENCE_OF edges have been projected to Neo4j by the graph projector.
-    #[handle(on = LifecycleEvent, id = "synthesis:severity_inference", filter = is_synthesis_completed)]
+    #[handle(on = SynthesisEvent, id = "synthesis:severity_inference", filter = all_synthesis_done)]
     async fn severity_inference(
-        _event: LifecycleEvent,
+        _event: SynthesisEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -749,10 +678,7 @@ pub mod handlers {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped severity inference: missing region or graph");
-                return Ok(events![PipelineEvent::HandlerSkipped {
-                    handler_id: "synthesis:severity_inference".into(),
-                    reason: "missing region or graph".into(),
-                }]);
+                return Ok(Events::new());
             }
         };
 
@@ -776,10 +702,7 @@ pub mod handlers {
             Err(e) => {
                 warn!(error = %e, "Severity inference failed (non-fatal)");
                 ctx.logger.debug(&format!("Severity inference failed: {e}"));
-                Ok(events![PipelineEvent::HandlerSkipped {
-                    handler_id: "synthesis:severity_inference".into(),
-                    reason: format!("severity inference failed: {e}"),
-                }])
+                Ok(Events::new())
             }
         }
     }

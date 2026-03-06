@@ -79,13 +79,10 @@ async fn scrape_and_dispatch_with(
     embedder: Option<Arc<dyn TextEmbedder>>,
 ) {
     use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
-    use crate::domains::scrape::activities::StatsDelta;
-    use std::collections::HashMap;
 
     let mut output = output;
     let events = output.take_events();
     let extracted_batches = std::mem::take(&mut output.extracted_batches);
-    let discovered_sources = std::mem::take(&mut output.discovered_sources);
     ctx.apply_scrape_output(output);
 
     // Build engine and dispatch scrape events (freshness, etc.)
@@ -101,21 +98,10 @@ async fn scrape_and_dispatch_with(
     // Dispatch ScrapeRoleCompleted with extracted batches — triggers dedup handler
     if !extracted_batches.is_empty() {
         let _ = engine
-            .emit(ScrapeEvent::ScrapeRoleCompleted {
-                run_id: Uuid::new_v4(),
-                role: ScrapeRole::TensionWeb,
-                urls_scraped: 0,
-                urls_unchanged: 0,
-                urls_failed: 0,
-                signals_extracted: 0,
-                source_signal_counts: HashMap::new(),
-                collected_links: vec![],
-                expansion_queries: vec![],
-                stats_delta: StatsDelta::default(),
-                page_previews: Default::default(),
-                extracted_batches,
-                discovered_sources,
-            })
+            .emit(ScrapeEvent::from(TestScrapeRoleCompleted::builder()
+                .role(ScrapeRole::TensionWeb)
+                .extracted_batches(extracted_batches)
+                .build()))
             .settled()
             .await;
     }

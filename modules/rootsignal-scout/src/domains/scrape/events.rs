@@ -63,9 +63,6 @@ pub enum ScrapeEvent {
         /// On replay, deserializes as empty (correct: replay rebuilds from downstream facts).
         #[serde(skip)]
         extracted_batches: Vec<UrlExtraction>,
-        /// Sources discovered during this role (e.g. topic discovery) — in-memory only.
-        #[serde(skip)]
-        discovered_sources: Vec<rootsignal_common::SourceNode>,
     },
 }
 

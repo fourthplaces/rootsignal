@@ -8,7 +8,7 @@ mod chain_tests;
 #[cfg(test)]
 pub mod simweb_adapter;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
@@ -19,12 +19,9 @@ use uuid::Uuid;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::PipelinePhase;
-use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scrape::activities::StatsDelta;
-use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::domains::scrape::events::{ScrapeEvent, ScrapeRole};
 
@@ -32,11 +29,10 @@ fn is_sources_prepared(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> b
     matches!(e, LifecycleEvent::SourcesPrepared { .. })
 }
 
-fn is_source_expansion_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+fn is_source_expansion_done(e: &DiscoveryEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(
         e,
-        LifecycleEvent::PhaseCompleted { phase }
-            if matches!(phase, PipelinePhase::SourceExpansion)
+        DiscoveryEvent::SourceExpansionCompleted | DiscoveryEvent::SourceExpansionSkipped { .. }
     )
 }
 
@@ -46,19 +42,6 @@ fn is_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool
 
 fn is_response_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, ScrapeEvent::SourcesResolved { web_role: ScrapeRole::ResponseWeb, .. })
-}
-
-fn is_scrape_role_completed(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, ScrapeEvent::ScrapeRoleCompleted { .. })
-}
-
-/// Expected roles for each scrape phase, used for completion tracking.
-fn tension_roles() -> HashSet<ScrapeRole> {
-    HashSet::from([ScrapeRole::TensionWeb, ScrapeRole::TensionSocial])
-}
-
-fn response_roles() -> HashSet<ScrapeRole> {
-    HashSet::from([ScrapeRole::ResponseWeb, ScrapeRole::ResponseSocial, ScrapeRole::TopicDiscovery])
 }
 
 /// Build source_keys (canonical_key → source_id) from filtered sources.
@@ -145,7 +128,6 @@ pub mod handlers {
                 stats_delta: Default::default(),
                 page_previews: Default::default(),
                 extracted_batches: Default::default(),
-                discovered_sources: Default::default(),
             }]);
         }
 
@@ -176,7 +158,6 @@ pub mod handlers {
             stats_delta: StatsDelta::default(),
             page_previews: fetch_result.page_previews,
             extracted_batches: fetch_result.extracted_batches,
-            discovered_sources: Vec::new(),
         });
 
         Ok(all_events)
@@ -242,7 +223,6 @@ pub mod handlers {
                 stats_delta: Default::default(),
                 page_previews: Default::default(),
                 extracted_batches: Default::default(),
-                discovered_sources: Default::default(),
             }]);
         }
 
@@ -271,7 +251,6 @@ pub mod handlers {
             stats_delta: social_output.stats_delta,
             page_previews: Default::default(),
             extracted_batches: social_output.extracted_batches,
-            discovered_sources: Vec::new(),
         });
 
         Ok(all_events)
@@ -313,7 +292,6 @@ pub mod handlers {
                 stats_delta: Default::default(),
                 page_previews: Default::default(),
                 extracted_batches: Default::default(),
-                discovered_sources: Default::default(),
             });
         } else {
             let mut topic_output = activities::topic_discovery::discover_from_topics(
@@ -338,67 +316,16 @@ pub mod handlers {
                 stats_delta: topic_output.stats_delta,
                 page_previews: Default::default(),
                 extracted_batches: topic_output.extracted_batches,
-                discovered_sources: topic_output.discovered_sources,
             });
         }
 
         Ok(all_events)
     }
 
-    /// ScrapeRoleCompleted → check if all roles for current phase are done, emit PhaseCompleted.
-    #[handle(on = ScrapeEvent, id = "scrape:phase_complete", filter = is_scrape_role_completed)]
-    async fn phase_complete(
-        event: ScrapeEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let role = match &event {
-            ScrapeEvent::ScrapeRoleCompleted { role, .. } => *role,
-            _ => unreachable!("filter guarantees ScrapeRoleCompleted"),
-        };
-
-        let (_, state) = ctx.singleton::<PipelineState>();
-
-        let (phase, expected_roles) = match role {
-            ScrapeRole::TensionWeb | ScrapeRole::TensionSocial => {
-                (PipelinePhase::TensionScrape, tension_roles())
-            }
-            ScrapeRole::ResponseWeb | ScrapeRole::ResponseSocial | ScrapeRole::TopicDiscovery => {
-                (PipelinePhase::ResponseScrape, response_roles())
-            }
-        };
-
-        if state.completed_phases.contains(&phase) {
-            return Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "scrape:phase_complete".into(),
-                reason: format!("{phase:?} already completed"),
-            }]);
-        }
-
-        if state.completed_scrape_roles.is_superset(&expected_roles) {
-            info!(?phase, "All scrape roles complete, emitting PhaseCompleted");
-            let mut out = events![LifecycleEvent::PhaseCompleted { phase }];
-            // Emit SourcesDiscovered from stashed sources at phase boundary
-            if !state.scrape_discovered_sources.is_empty() {
-                out = out.add(DiscoveryEvent::SourcesDiscovered {
-                    sources: state.scrape_discovered_sources.clone(),
-                    discovered_by: "topic_discovery".into(),
-                });
-            }
-            Ok(out)
-        } else {
-            let completed: Vec<_> = state.completed_scrape_roles.iter().collect();
-            let expected: Vec<_> = expected_roles.iter().collect();
-            Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "scrape:phase_complete".into(),
-                reason: format!("waiting for {phase:?}: completed {completed:?}, need {expected:?}"),
-            }])
-        }
-    }
-
-    /// PhaseCompleted(SourceExpansion) → resolve response URLs, emit per-role events.
-    #[handle(on = LifecycleEvent, id = "scrape:resolve_response", filter = is_source_expansion_completed)]
+    /// SourceExpansionCompleted or SourceExpansionSkipped → resolve response URLs.
+    #[handle(on = DiscoveryEvent, id = "scrape:resolve_response", filter = is_source_expansion_done)]
     async fn resolve_response(
-        _event: LifecycleEvent,
+        _event: DiscoveryEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         info!("=== Phase B: Find Responses ===");
@@ -409,9 +336,52 @@ pub mod handlers {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped response scrape resolve: missing region or graph");
-                return Ok(events![LifecycleEvent::PhaseCompleted {
-                    phase: PipelinePhase::ResponseScrape,
-                }]);
+                let run_id = Uuid::parse_str(&deps.run_id).unwrap_or_else(|_| Uuid::new_v4());
+                // Emit empty role completions for all 3 response roles so enrichment gates pass
+                return Ok(events![
+                    ScrapeEvent::ScrapeRoleCompleted {
+                        run_id,
+                        role: ScrapeRole::ResponseWeb,
+                        urls_scraped: 0,
+                        urls_unchanged: 0,
+                        urls_failed: 0,
+                        signals_extracted: 0,
+                        source_signal_counts: Default::default(),
+                        collected_links: Default::default(),
+                        expansion_queries: Default::default(),
+                        stats_delta: Default::default(),
+                        page_previews: Default::default(),
+                        extracted_batches: Default::default(),
+                            },
+                    ScrapeEvent::ScrapeRoleCompleted {
+                        run_id,
+                        role: ScrapeRole::ResponseSocial,
+                        urls_scraped: 0,
+                        urls_unchanged: 0,
+                        urls_failed: 0,
+                        signals_extracted: 0,
+                        source_signal_counts: Default::default(),
+                        collected_links: Default::default(),
+                        expansion_queries: Default::default(),
+                        stats_delta: Default::default(),
+                        page_previews: Default::default(),
+                        extracted_batches: Default::default(),
+                            },
+                    ScrapeEvent::ScrapeRoleCompleted {
+                        run_id,
+                        role: ScrapeRole::TopicDiscovery,
+                        urls_scraped: 0,
+                        urls_unchanged: 0,
+                        urls_failed: 0,
+                        signals_extracted: 0,
+                        source_signal_counts: Default::default(),
+                        collected_links: Default::default(),
+                        expansion_queries: Default::default(),
+                        stats_delta: Default::default(),
+                        page_previews: Default::default(),
+                        extracted_batches: Default::default(),
+                            },
+                ]);
             }
         };
 

@@ -51,8 +51,6 @@ pub struct ScrapeOutput {
     pub stats_delta: StatsDelta,
     /// Extracted batches per URL — carried as data, not events.
     pub extracted_batches: Vec<UrlExtraction>,
-    /// Sources discovered during topic discovery (data, not events).
-    pub discovered_sources: Vec<SourceNode>,
 }
 
 /// Direct stat mutations accumulated during scraping.
@@ -75,7 +73,6 @@ impl ScrapeOutput {
             expansion_queries: Vec::new(),
             stats_delta: StatsDelta::default(),
             extracted_batches: Vec::new(),
-            discovered_sources: Vec::new(),
         }
     }
 
@@ -99,7 +96,6 @@ impl ScrapeOutput {
         self.stats_delta.discovery_posts_found += other.stats_delta.discovery_posts_found;
         self.stats_delta.discovery_accounts_found += other.stats_delta.discovery_accounts_found;
         self.extracted_batches.extend(other.extracted_batches);
-        self.discovered_sources.extend(other.discovered_sources);
     }
 }
 

@@ -11,20 +11,26 @@ use tracing::info;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::events::PipelinePhase;
-use crate::core::pipeline_events::PipelineEvent;
+use crate::domains::expansion::events::ExpansionEvent;
+use crate::domains::supervisor::events::SupervisorEvent;
+use crate::domains::synthesis::events::{all_synthesis_roles, SynthesisEvent};
 use events::LifecycleEvent;
 
 fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
-fn is_synthesis_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Synthesis))
+fn all_synthesis_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if !matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. }) { return false; }
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.completed_synthesis_roles.is_superset(&all_synthesis_roles())
 }
 
-fn is_supervisor_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, LifecycleEvent::PhaseCompleted { phase } if matches!(phase, PipelinePhase::Supervisor))
+fn is_supervision_done(e: &SupervisorEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(
+        e,
+        SupervisorEvent::SupervisionCompleted | SupervisorEvent::NothingToSupervise { .. }
+    )
 }
 
 #[handlers]
@@ -41,10 +47,7 @@ pub mod handlers {
         let stale = activities::find_stale_signals(&*deps.store).await;
 
         if stale.is_empty() {
-            return Ok(events![PipelineEvent::HandlerSkipped {
-                handler_id: "lifecycle:find_stale".into(),
-                reason: "no stale signals found".into(),
-            }]);
+            return Ok(Events::new());
         }
 
         Ok(events![rootsignal_common::events::SystemEvent::SignalsExpired {
@@ -106,22 +109,39 @@ async fn finalize_impl(ctx: Context<ScoutEngineDeps>) -> Result<Events> {
     Ok(events![LifecycleEvent::RunCompleted { stats }])
 }
 
-/// Finalize handler for the scrape chain: triggers on PhaseCompleted(Synthesis).
-#[handle(on = LifecycleEvent, id = "lifecycle:scrape_finalize", filter = is_synthesis_completed)]
+/// Finalize handler for the scrape chain: triggers when all synthesis roles done.
+#[handle(on = SynthesisEvent, id = "lifecycle:scrape_finalize", filter = all_synthesis_done)]
 pub async fn scrape_finalize(
-    _event: LifecycleEvent,
+    _event: SynthesisEvent,
     ctx: Context<ScoutEngineDeps>,
 ) -> Result<Events> {
     finalize_impl(ctx).await
 }
 
-/// Finalize handler for the full chain: triggers on PhaseCompleted(Supervisor).
-#[handle(on = LifecycleEvent, id = "lifecycle:full_finalize", filter = is_supervisor_completed)]
+/// Finalize handler for the full chain: triggers on SupervisionCompleted or NothingToSupervise.
+#[handle(on = SupervisorEvent, id = "lifecycle:full_finalize", filter = is_supervision_done)]
 pub async fn full_finalize(
-    _event: LifecycleEvent,
+    _event: SupervisorEvent,
     ctx: Context<ScoutEngineDeps>,
 ) -> Result<Events> {
     finalize_impl(ctx).await
+}
+
+/// Kickoff handler for weave engine: emits ExpansionCompleted on ScoutRunRequested.
+/// The weave engine skips scrape/enrichment/expansion, so this provides the
+/// trigger that synthesis handlers need to start.
+#[handle(on = LifecycleEvent, id = "lifecycle:weave_kickoff", filter = is_scout_run_requested)]
+pub async fn weave_kickoff(
+    _event: LifecycleEvent,
+    _ctx: Context<ScoutEngineDeps>,
+) -> Result<Events> {
+    Ok(events![ExpansionEvent::ExpansionCompleted {
+        social_expansion_topics: Vec::new(),
+        expansion_deferred_expanded: 0,
+        expansion_queries_collected: 0,
+        expansion_sources_created: 0,
+        expansion_social_topics_queued: 0,
+    }])
 }
 
 #[cfg(test)]
@@ -131,8 +151,7 @@ mod tests {
     use seesaw_core::AnyEvent;
 
     use crate::core::engine::{build_engine, ScoutEngineDeps};
-    use crate::core::events::PipelinePhase;
-    use crate::domains::lifecycle::events::LifecycleEvent;
+    use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
 
     fn build_test_engine(
         task_id: Option<&str>,
@@ -149,22 +168,30 @@ mod tests {
         (engine, sink)
     }
 
+    fn all_synthesis_role_completed_events() -> Vec<SynthesisEvent> {
+        use crate::domains::synthesis::events::all_synthesis_roles;
+        let run_id = uuid::Uuid::new_v4();
+        all_synthesis_roles().into_iter().map(|role| {
+            SynthesisEvent::SynthesisRoleCompleted {
+                run_id,
+                role,
+            }
+        }).collect()
+    }
+
     #[tokio::test]
     async fn finalize_emits_run_completed() {
         let (engine, sink) = build_test_engine(Some("task-1"));
 
-        engine
-            .emit(LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::Synthesis,
-            })
-            .settled()
-            .await
-            .unwrap();
+        // Emit all synthesis role completions to trigger finalize
+        for event in all_synthesis_role_completed_events() {
+            engine.emit(event).settled().await.unwrap();
+        }
 
         let events = sink.lock().unwrap();
         let has_run_completed = events
             .iter()
-            .any(|e| e.downcast_ref::<LifecycleEvent>().is_some_and(|le| matches!(le, LifecycleEvent::RunCompleted { .. })));
+            .any(|e| e.downcast_ref::<crate::domains::lifecycle::events::LifecycleEvent>().is_some_and(|le| matches!(le, crate::domains::lifecycle::events::LifecycleEvent::RunCompleted { .. })));
 
         assert!(has_run_completed, "should emit RunCompleted");
     }
@@ -197,21 +224,17 @@ mod tests {
             .await
             .unwrap();
 
-        // Trigger finalize
-        engine
-            .emit(LifecycleEvent::PhaseCompleted {
-                phase: PipelinePhase::Synthesis,
-            })
-            .settled()
-            .await
-            .unwrap();
+        // Trigger finalize — emit all synthesis role completions
+        for event in all_synthesis_role_completed_events() {
+            engine.emit(event).settled().await.unwrap();
+        }
 
         let events = sink.lock().unwrap();
         let stats = events
             .iter()
-            .filter_map(|e| e.downcast_ref::<LifecycleEvent>())
+            .filter_map(|e| e.downcast_ref::<crate::domains::lifecycle::events::LifecycleEvent>())
             .find_map(|le| match le {
-                LifecycleEvent::RunCompleted { stats } => Some(stats),
+                crate::domains::lifecycle::events::LifecycleEvent::RunCompleted { stats } => Some(stats),
                 _ => None,
             })
             .expect("should emit RunCompleted");
