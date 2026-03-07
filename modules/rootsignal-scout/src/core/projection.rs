@@ -172,10 +172,6 @@ fn classify_event(
 /// Terminal events are domain facts — the projection observes them
 /// and writes stats to the scout_runs table.
 fn is_terminal_event(event: &AnyEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if event.downcast_ref::<ScrapeEvent>()
-        .is_some_and(|e| matches!(e, ScrapeEvent::ResponseScrapeSkipped { .. }))
-    { return true; }
-
     if event.downcast_ref::<SynthesisEvent>()
         .is_some_and(|e| matches!(e, SynthesisEvent::SynthesisCompleted { .. }))
     {
