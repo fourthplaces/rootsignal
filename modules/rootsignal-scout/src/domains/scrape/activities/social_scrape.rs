@@ -377,7 +377,7 @@ pub(crate) async fn scrape_social_sources(
                     source_id,
                 };
 
-                output.source_signal_counts.entry(canonical_key).or_default();
+                *output.source_signal_counts.entry(canonical_key).or_default() += batch.nodes.len() as u32;
                 output.extracted_batches.push(UrlExtraction {
                     url: source_url,
                     canonical_key: ck,

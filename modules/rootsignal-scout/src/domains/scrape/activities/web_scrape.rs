@@ -254,7 +254,7 @@ async fn process_results(
                         source_id,
                     };
 
-                    result.source_signal_counts.entry(ck).or_default();
+                    *result.source_signal_counts.entry(ck).or_default() += batch.nodes.len() as u32;
                     result.extracted_batches.push(UrlExtraction {
                         url: url.clone(),
                         canonical_key,
