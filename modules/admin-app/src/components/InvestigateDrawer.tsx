@@ -58,7 +58,8 @@ export type InvestigateMode =
   | { mode: "event"; event: AdminEvent; treeEvents?: AdminEvent[] }
   | { mode: "sources"; sourceIds: string[]; sourceLabel: string }
   | { mode: "scout_run"; runId: string; runLabel: string }
-  | { mode: "logs"; runId?: string; handlerId?: string };
+  | { mode: "logs"; runId?: string; handlerId?: string }
+  | { mode: "source_dive"; sourceId: string; sourceLabel: string };
 
 type ChatMsg = {
   role: "user" | "assistant";
@@ -122,6 +123,15 @@ function getModeConfig(investigation: InvestigateMode): ModeConfig {
         buildBody: (messages) => ({ mode: "logs", run_id: investigation.runId, handler_id: investigation.handlerId, messages }),
       };
     }
+    case "source_dive":
+      return {
+        title: `Investigate: ${investigation.sourceLabel}`,
+        subtitle: `source_id=${investigation.sourceId}`,
+        autoMessage: "What's the story with this source? Anything unusual in its history, signal quality, or discovery network that's worth acting on?",
+        loadingLabel: "Investigating source...",
+        showSynthesis: false,
+        buildBody: (messages) => ({ mode: "source_dive", source_id: investigation.sourceId, messages }),
+      };
   }
 }
 

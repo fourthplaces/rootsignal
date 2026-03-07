@@ -21,8 +21,9 @@ use rootsignal_common::SourceNode;
 use crate::db::scout_run::{self, event_layer, event_summary, json_str};
 use crate::investigate_tools::{
     CreateGitHubIssueTool, DeactivateSourcesTool, FetchUrlTool, FindEventsForNodeTool,
-    GetEventTool, GetFindingsForNodeTool, GetRunInfoTool, GetSignalTool, GetSourceInfoTool,
-    LoadCausalTreeTool, SearchEventsTool,
+    GetDiscoveryTreeTool, GetEventTool, GetFindingsForNodeTool, GetRunInfoTool, GetSignalTool,
+    GetSignalsProducedTool, GetSourceHistoryTool, GetSourceInfoTool, LoadCausalTreeTool,
+    SearchEventsTool,
 };
 use crate::jwt;
 use crate::AppState;
@@ -53,6 +54,11 @@ pub enum InvestigateRequest {
     Logs {
         run_id: Option<String>,
         handler_id: Option<String>,
+        messages: Vec<ChatMessage>,
+    },
+    #[serde(rename = "source_dive")]
+    SourceDive {
+        source_id: Uuid,
         messages: Vec<ChatMessage>,
     },
 }
@@ -259,6 +265,122 @@ fn build_sources_context(sources: &[SourceNode]) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Source dive mode — system prompt + context builder
+// ---------------------------------------------------------------------------
+
+const SOURCE_DIVE_SYSTEM_PROMPT: &str = r#"You are a source investigation assistant for RootSignal, a community intelligence platform that scrapes web sources to extract signals about local communities. Your job is to help operators deeply understand a single source — its productivity, quality, role in the discovery network, and anything worth acting on.
+
+## What is a Source?
+
+A source is a web or social input to the scouting pipeline — a URL, social media handle, or search query that gets scraped on a cadence to extract signals (gatherings, resources, concerns, help requests, announcements, conditions). Sources form a discovery network: one source can discover child sources via link promotion, creating a tree of related inputs.
+
+## Source Metrics Explained
+
+- **weight** (0.0–1.0): Operator-assigned importance. Higher = scraped more often. Default 0.5.
+- **quality_penalty** (0.0–1.0): System-assigned penalty based on output quality. Default 1.0 (no penalty). Lower = system has flagged quality issues.
+- **effective_weight**: `weight × quality_penalty` — actual scheduling priority.
+- **signals_produced**: Total signals ever extracted from this source.
+- **scrape_count**: Total scrapes, regardless of signal yield.
+- **avg_signals_per_scrape**: Rolling average productivity.
+- **consecutive_empty_runs**: Recent scrapes in a row with zero signals. 5+ is a red flag for staleness.
+- **sources_discovered**: Child sources found via link promotion. A source with high discovery value is worth keeping even with low direct signal production.
+- **discovery_method**: How the source was found — curated (manually added), link_promotion (discovered from another source), web_query (search), human_submission.
+- **source_role**: What kind of signals this source tends to surface.
+- **gap_context**: Analyst notes explaining why this source matters or what coverage gap it fills.
+
+## What "Healthy" Looks Like
+
+- Consistent signal production (avg_signals_per_scrape > 0, low consecutive_empty_runs)
+- Reasonable effective_weight (not penalized into irrelevance)
+- Active and producing recent signals (last_produced_signal within scrape cadence)
+
+## Common Pathologies
+
+- **Declining productivity**: Was productive, now many empty runs. Content may have changed or site structure broke.
+- **Signal duplication**: Same signals appearing across multiple scrapes — check titles/summaries for repeats.
+- **Discovery-only value**: Zero direct signals but discovered many child sources. Still valuable as a seed.
+- **Quality penalty death spiral**: Low quality_penalty × decent weight = low effective_weight = rarely scraped = no chance to recover.
+- **Stale curated source**: Manually added, never productive. Gap_context might explain why it was kept.
+- **Orphaned branch**: Source is the root of a discovery tree where all descendants are also unproductive.
+
+## Your Tools
+
+The source profile is already loaded in context. Use tools to drill deeper:
+
+- `get_signals_produced` — list all signals this source has produced (type, title, confidence, date). Use this to spot duplicates, assess quality, and understand what the source contributes. Returns up to 50 signals with a total count.
+- `get_discovery_tree` — see this source's ancestors (who discovered it) and descendants (what it discovered), with productivity stats for each node.
+- `get_source_history` — timeline of lifecycle events for this source (scrapes, signal extractions, failures). Use to understand trends over time.
+- `search_events` — find events mentioning this source by keyword.
+- `find_events_for_node` — all events that touched this source by node_id.
+- `get_event` — load full payload of a specific event by seq number.
+- `get_run_info` — metadata about a scout run (stats, timing, region).
+- `fetch_url` — peek at what the source page actually contains right now. Useful to compare current content against what was extracted.
+- `get_source_info` — look up another source's metadata by URL substring (not UUID). Useful when comparing against related sources.
+- `get_findings_for_node` — check if the supervisor already flagged quality issues.
+- `deactivate_sources` — deactivate this source by UUID. Only call after the operator explicitly confirms.
+- `create_github_issue` — file a bug if something looks broken. Only after operator confirms.
+
+## How to Respond
+
+The operator is already looking at this source's detail page — they can see the stats, signals table, and discovery tree. Don't recite numbers they already see. Instead, interpret what the data means and tell the story.
+
+Talk like a colleague doing a deep review together. Be conversational and direct. When you spot something interesting — a pattern, an anomaly, a recommendation — say so plainly. Mention specifics (signal titles, event seq numbers, dates) when they help.
+
+If you find the source is unproductive and should be deactivated, explain your reasoning and offer to deactivate — but only call the tool after the operator says yes.
+
+If something looks like a bug (e.g., scraper failing silently, quality penalty applied incorrectly), say so and offer to file a GitHub issue.
+"#;
+
+fn build_source_dive_context(source: &SourceNode) -> String {
+    let eff = source.weight * source.quality_penalty;
+
+    let mut ctx = format!(
+        "## Source: {}\n\n\
+         | Field | Value |\n\
+         |-------|-------|\n\
+         | ID | `{}` |\n\
+         | discovery_method | {:?} |\n\
+         | active | {} |\n\
+         | weight | {:.2} |\n\
+         | quality_penalty | {:.2} |\n\
+         | effective_weight | {:.2} |\n\
+         | signals_produced | {} |\n\
+         | scrape_count | {} |\n\
+         | avg_signals_per_scrape | {:.1} |\n\
+         | consecutive_empty_runs | {} |\n\
+         | sources_discovered | {} |\n\
+         | source_role | {:?} |\n\
+         | cadence_hours | {} |\n\
+         | created_at | {} |\n\
+         | last_scraped | {} |\n\
+         | last_produced_signal | {} |\n",
+        source.canonical_value,
+        source.id,
+        source.discovery_method,
+        if source.active { "yes" } else { "no" },
+        source.weight,
+        source.quality_penalty,
+        eff,
+        source.signals_produced,
+        source.scrape_count,
+        source.avg_signals_per_scrape,
+        source.consecutive_empty_runs,
+        source.sources_discovered,
+        source.source_role,
+        source.cadence_hours.map_or("–".to_string(), |h| format!("{h}")),
+        source.created_at,
+        source.last_scraped.map_or("never".to_string(), |d| d.to_string()),
+        source.last_produced_signal.map_or("never".to_string(), |d| d.to_string()),
+    );
+
+    if let Some(gap) = &source.gap_context {
+        ctx.push_str(&format!("\n### Analyst Notes (gap_context)\n\n{gap}\n"));
+    }
+
+    ctx
+}
+
+// ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
@@ -318,6 +440,10 @@ pub async fn investigate_handler(
             handler_id,
             messages,
         } => handle_logs_mode(state, pool, &api_key, run_id, handler_id, messages).await,
+        InvestigateRequest::SourceDive {
+            source_id,
+            messages,
+        } => handle_source_dive_mode(state, pool, &api_key, source_id, messages).await,
     }
 }
 
@@ -452,6 +578,76 @@ async fn handle_sources_mode(
     );
 
     run_agent(claude, SOURCES_SYSTEM_PROMPT, &context, &chat_messages).await
+}
+
+// ---------------------------------------------------------------------------
+// Source dive mode — handler
+// ---------------------------------------------------------------------------
+
+async fn handle_source_dive_mode(
+    state: Arc<AppState>,
+    pool: Arc<sqlx::PgPool>,
+    api_key: &str,
+    source_id: Uuid,
+    chat_messages: Vec<ChatMessage>,
+) -> axum::response::Response {
+    let sources = match state.writer.get_sources_by_ids(&[source_id]).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to load source for investigation");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load source: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    let source = match sources.first() {
+        Some(s) => s,
+        None => return (StatusCode::NOT_FOUND, "Source not found").into_response(),
+    };
+
+    let context = build_source_dive_context(source);
+
+    let mut claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+        .tool(GetSignalsProducedTool {
+            reader: state.reader.clone(),
+        })
+        .tool(GetDiscoveryTreeTool {
+            reader: state.reader.clone(),
+        })
+        .tool(GetSourceHistoryTool { pool: pool.clone() })
+        .tool(SearchEventsTool { pool: pool.clone() })
+        .tool(GetEventTool { pool: pool.clone() })
+        .tool(FindEventsForNodeTool { pool: pool.clone() })
+        .tool(GetRunInfoTool { pool })
+        .tool(FetchUrlTool)
+        .tool(GetSourceInfoTool {
+            writer: state.writer.clone(),
+        })
+        .tool(GetFindingsForNodeTool {
+            reader: state.reader.clone(),
+        })
+        .tool(DeactivateSourcesTool {
+            writer: state.writer.clone(),
+        });
+
+    if let (Some(token), Some(repo)) = (&state.config.github_token, &state.config.github_repo) {
+        claude = claude.tool(CreateGitHubIssueTool {
+            github_token: token.clone(),
+            github_repo: repo.clone(),
+        });
+    }
+
+    tracing::info!(
+        message_count = chat_messages.len(),
+        source_id = %source_id,
+        canonical_value = %source.canonical_value,
+        "Starting source dive investigation"
+    );
+
+    run_agent(claude, SOURCE_DIVE_SYSTEM_PROMPT, &context, &chat_messages).await
 }
 
 // ---------------------------------------------------------------------------

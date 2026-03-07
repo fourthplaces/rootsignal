@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { SOURCE_DETAIL, ADMIN_SCOUT_RUNS_BY_SOURCE } from "@/graphql/queries";
 import { RUN_SCOUT_SOURCE } from "@/graphql/mutations";
+import { InvestigateDrawer, type InvestigateMode } from "@/components/InvestigateDrawer";
 
 const formatDate = (d: string | null | undefined) => {
   if (!d) return "Never";
@@ -208,6 +209,7 @@ export function SourceDetailPage() {
   const [runScoutSource] = useMutation(RUN_SCOUT_SOURCE);
   const [scouting, setScouting] = useState(false);
   const [scoutMsg, setScoutMsg] = useState<string | null>(null);
+  const [investigation, setInvestigation] = useState<InvestigateMode | null>(null);
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
@@ -292,6 +294,18 @@ export function SourceDetailPage() {
           >
             View Events
           </Link>
+          <button
+            onClick={() => setInvestigation({
+              mode: "source_dive",
+              sourceId: source.id,
+              sourceLabel: source.canonicalValue.length > 40
+                ? source.canonicalValue.slice(0, 40) + "..."
+                : source.canonicalValue,
+            })}
+            className="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+          >
+            Investigate
+          </button>
           {scoutMsg && <span className="text-xs text-muted-foreground">{scoutMsg}</span>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -581,6 +595,20 @@ export function SourceDetailPage() {
         <h3 className="text-sm font-medium">Discovery Tree</h3>
         <DiscoveryTreeView tree={source.discoveryTree} />
       </div>
+
+      {/* Investigation drawer */}
+      {investigation && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={() => setInvestigation(null)} />
+          <div className="w-[520px] bg-card border-l border-border flex flex-col">
+            <InvestigateDrawer
+              key={investigation.mode === "source_dive" ? investigation.sourceId : ""}
+              investigation={investigation}
+              onClose={() => setInvestigation(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

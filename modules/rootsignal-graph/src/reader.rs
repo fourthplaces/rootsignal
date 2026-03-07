@@ -1316,6 +1316,20 @@ impl PublicGraphReader {
         Ok(signals)
     }
 
+    pub async fn signal_count_for_source(&self, source_id: &Uuid) -> Result<i64, neo4rs::Error> {
+        let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
+            WHERE n.review_status IN ['staged', 'accepted', 'live']
+            RETURN count(n) AS cnt";
+
+        let q = query(cypher).param("id", source_id.to_string());
+        let mut stream = self.client.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("cnt").unwrap_or(0))
+        } else {
+            Ok(0)
+        }
+    }
+
     /// Fetch the LINKED_FROM neighbourhood around a source for the discovery tree.
     /// Returns (nodes, edges) where edges are (child_id, parent_id) pairs.
     pub async fn discovery_tree(

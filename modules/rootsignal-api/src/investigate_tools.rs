@@ -4,10 +4,11 @@ use ai_client::tool::{Tool, ToolDefinition};
 use async_trait::async_trait;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use chrono::{DateTime, Utc};
+use sqlx::{PgPool, Row};
 
 use rootsignal_common::Node;
-use rootsignal_graph::{GraphStore, PublicGraphReader};
+use rootsignal_graph::{DiscoveryTreeRow, GraphStore, PublicGraphReader, SignalBrief};
 use uuid::Uuid;
 
 use crate::db::scout_run::{self, EventRow, EventRowFull, json_str, event_layer, event_summary};
@@ -885,5 +886,278 @@ impl Tool for DeactivateSourcesTool {
             .map_err(|e| ToolError(format!("Failed to deactivate sources: {e}")))?;
 
         Ok(DeactivateSourcesOutput { deactivated })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 12. GetSignalsProducedTool
+// ---------------------------------------------------------------------------
+
+pub(crate) struct GetSignalsProducedTool {
+    pub(crate) reader: Arc<PublicGraphReader>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GetSignalsProducedArgs {
+    source_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SignalBriefOutput {
+    id: String,
+    title: String,
+    signal_type: String,
+    confidence: f32,
+    extracted_at: Option<String>,
+    source_url: String,
+}
+
+impl From<&SignalBrief> for SignalBriefOutput {
+    fn from(s: &SignalBrief) -> Self {
+        Self {
+            id: s.id.to_string(),
+            title: s.title.clone(),
+            signal_type: s.signal_type.clone(),
+            confidence: s.confidence,
+            extracted_at: s.extracted_at.map(|t| t.to_rfc3339()),
+            source_url: s.source_url.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetSignalsProducedOutput {
+    signals: Vec<SignalBriefOutput>,
+    total_count: i64,
+    truncated: bool,
+}
+
+#[async_trait]
+impl Tool for GetSignalsProducedTool {
+    const NAME: &'static str = "get_signals_produced";
+    type Error = ToolError;
+    type Args = GetSignalsProducedArgs;
+    type Output = GetSignalsProducedOutput;
+
+    async fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "List signals produced by a source. Returns up to 50 most recent signals with a total count. Use to assess productivity, spot duplicates, and understand what the source contributes.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "source_id": { "type": "string", "description": "The UUID of the source" }
+                },
+                "required": ["source_id"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let uuid = Uuid::parse_str(&args.source_id)
+            .map_err(|e| ToolError(format!("Invalid UUID: {e}")))?;
+
+        let signals = self.reader.signals_for_source(&uuid)
+            .await
+            .map_err(|e| ToolError(format!("Graph query failed: {e}")))?;
+
+        let total_count = self.reader.signal_count_for_source(&uuid)
+            .await
+            .map_err(|e| ToolError(format!("Count query failed: {e}")))?;
+
+        let truncated = total_count > signals.len() as i64;
+
+        Ok(GetSignalsProducedOutput {
+            signals: signals.iter().map(SignalBriefOutput::from).collect(),
+            total_count,
+            truncated,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 13. GetDiscoveryTreeTool
+// ---------------------------------------------------------------------------
+
+pub(crate) struct GetDiscoveryTreeTool {
+    pub(crate) reader: Arc<PublicGraphReader>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GetDiscoveryTreeArgs {
+    source_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TreeNodeOutput {
+    id: String,
+    canonical_value: String,
+    discovery_method: String,
+    active: bool,
+    signals_produced: u32,
+}
+
+impl From<&DiscoveryTreeRow> for TreeNodeOutput {
+    fn from(r: &DiscoveryTreeRow) -> Self {
+        Self {
+            id: r.id.clone(),
+            canonical_value: r.canonical_value.clone(),
+            discovery_method: r.discovery_method.clone(),
+            active: r.active,
+            signals_produced: r.signals_produced,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TreeEdgeOutput {
+    child_id: String,
+    parent_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetDiscoveryTreeOutput {
+    nodes: Vec<TreeNodeOutput>,
+    edges: Vec<TreeEdgeOutput>,
+    root_id: String,
+}
+
+#[async_trait]
+impl Tool for GetDiscoveryTreeTool {
+    const NAME: &'static str = "get_discovery_tree";
+    type Error = ToolError;
+    type Args = GetDiscoveryTreeArgs;
+    type Output = GetDiscoveryTreeOutput;
+
+    async fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Get the discovery tree for a source — its ancestors (who discovered it) and descendants (what it discovered), with productivity stats for each node.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "source_id": { "type": "string", "description": "The UUID of the source" }
+                },
+                "required": ["source_id"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let uuid = Uuid::parse_str(&args.source_id)
+            .map_err(|e| ToolError(format!("Invalid UUID: {e}")))?;
+
+        let (nodes, edges) = self.reader.discovery_tree(&uuid)
+            .await
+            .map_err(|e| ToolError(format!("Graph query failed: {e}")))?;
+
+        Ok(GetDiscoveryTreeOutput {
+            root_id: args.source_id,
+            nodes: nodes.iter().map(TreeNodeOutput::from).collect(),
+            edges: edges.iter().map(|(child, parent)| TreeEdgeOutput {
+                child_id: child.clone(),
+                parent_id: parent.clone(),
+            }).collect(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 14. GetSourceHistoryTool
+// ---------------------------------------------------------------------------
+
+pub(crate) struct GetSourceHistoryTool {
+    pub(crate) pool: Arc<PgPool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GetSourceHistoryArgs {
+    canonical_key: String,
+}
+
+const SOURCE_LIFECYCLE_VARIANTS: &[&str] = &[
+    "content_fetched",
+    "content_unchanged",
+    "content_fetch_failed",
+    "signals_extracted",
+    "new_signal_accepted",
+    "observation_rejected",
+    "cross_source_match_detected",
+    "same_source_reencountered",
+    "source_discovered",
+    "sources_discovered",
+    "handler_failed",
+];
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SourceHistoryEntry {
+    seq: i64,
+    event_type: String,
+    timestamp: String,
+    summary: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetSourceHistoryOutput {
+    events: Vec<SourceHistoryEntry>,
+    total_matched: usize,
+}
+
+#[async_trait]
+impl Tool for GetSourceHistoryTool {
+    const NAME: &'static str = "get_source_history";
+    type Error = ToolError;
+    type Args = GetSourceHistoryArgs;
+    type Output = GetSourceHistoryOutput;
+
+    async fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Get the lifecycle event timeline for a source. Returns scrapes, signal extractions, failures, and other key events in chronological order. Pass the source's canonical_value (URL or identifier) as the canonical_key.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "canonical_key": { "type": "string", "description": "The source's canonical_value (URL or identifier) to search for in event payloads" }
+                },
+                "required": ["canonical_key"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let variant_list: Vec<String> = SOURCE_LIFECYCLE_VARIANTS.iter().map(|s| s.to_string()).collect();
+
+        let rows = sqlx::query(
+            r#"
+            SELECT seq, ts, event_type, payload AS data
+            FROM events
+            WHERE payload::text ILIKE '%' || $1 || '%'
+              AND payload->>'type' = ANY($2)
+            ORDER BY seq ASC
+            LIMIT 100
+            "#,
+        )
+        .bind(&args.canonical_key)
+        .bind(&variant_list)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| ToolError(format!("Query failed: {e}")))?;
+
+        let events: Vec<SourceHistoryEntry> = rows.iter().map(|row| {
+            let seq: i64 = row.get("seq");
+            let ts: DateTime<Utc> = row.get("ts");
+            let data: serde_json::Value = row.get("data");
+            let event_type = json_str(&data, "type").unwrap_or_default();
+            let summary = event_summary(&event_type, &data);
+            SourceHistoryEntry {
+                seq,
+                event_type,
+                timestamp: ts.to_rfc3339(),
+                summary,
+            }
+        }).collect();
+
+        let total_matched = events.len();
+        Ok(GetSourceHistoryOutput { events, total_matched })
     }
 }

@@ -11,6 +11,8 @@ function investigationKey(investigation: NonNullable<ReturnType<typeof useEvents
       return `sources-${investigation.sourceIds.join(",")}`;
     case "scout_run":
       return `run-${investigation.runId}`;
+    case "source_dive":
+      return `source-${investigation.sourceId}`;
   }
 }
 
