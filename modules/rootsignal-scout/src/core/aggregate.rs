@@ -8,12 +8,10 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use rootsignal_common::types::{ActorContext, NodeType, SourceNode};
+use rootsignal_common::types::{ActorContext, SourceNode};
 use rootsignal_common::{scraping_strategy, ScrapingStrategy};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
-use rootsignal_common::Node;
 
 use crate::core::pipeline_events::PipelineEvent;
 use crate::core::run_scope::RunScope;
@@ -112,9 +110,6 @@ pub struct PipelineState {
     #[serde(default)]
     pub page_previews: HashMap<String, String>,
 
-    /// Edge-wiring context stashed by reducer on `SignalCreated` for `wire_signal_edges`.
-    pub wiring_contexts: HashMap<Uuid, WiringContext>,
-
     /// Source plan stashed by prepare_sources, consumed by scrape handlers.
     pub source_plan: Option<SourcePlan>,
 
@@ -151,31 +146,10 @@ pub struct PipelineState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedBatch {
     pub content: String,
-    pub nodes: Vec<Node>,
+    pub nodes: Vec<rootsignal_common::Node>,
     pub resource_tags: HashMap<Uuid, Vec<ResourceTag>>,
     pub signal_tags: HashMap<Uuid, Vec<String>>,
     pub author_actors: HashMap<Uuid, String>,
-    pub source_id: Option<Uuid>,
-}
-
-/// Node data stashed by the dedup handler for the creation handler to consume.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingNode {
-    pub node: rootsignal_common::Node,
-    pub content_hash: String,
-    pub resource_tags: Vec<ResourceTag>,
-    pub signal_tags: Vec<String>,
-    pub author_name: Option<String>,
-    pub source_id: Option<Uuid>,
-}
-
-/// Edge-wiring data stashed by `create_signal_events` for `wire_signal_edges`.
-/// Only the fields needed for wiring — the Node itself is already projected.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WiringContext {
-    pub resource_tags: Vec<ResourceTag>,
-    pub signal_tags: Vec<String>,
-    pub author_name: Option<String>,
     pub source_id: Option<Uuid>,
 }
 
@@ -193,7 +167,6 @@ impl PipelineState {
             url_to_pub_date: HashMap::new(),
             collected_links: Vec::new(),
             page_previews: HashMap::new(),
-            wiring_contexts: HashMap::new(),
             source_plan: None,
             social_topics: Vec::new(),
             tension_web_done: false,
@@ -337,24 +310,31 @@ impl PipelineState {
     /// Apply a signal domain event.
     pub fn apply_signal(&mut self, event: &SignalEvent) {
         match event {
-            SignalEvent::SignalCreated { node_id, node_type, wiring, .. } => {
-                self.stats.signals_stored += 1;
-                *self.stats.by_type.entry(*node_type).or_default() += 1;
-                if let Some(w) = wiring {
-                    self.wiring_contexts.insert(*node_id, w.clone());
-                }
-            }
             SignalEvent::DedupCompleted {
                 canonical_key,
-                signals_created,
-                signals_deduplicated,
+                verdicts,
                 ..
             } => {
+                use crate::domains::signals::events::DedupOutcome;
+                let mut created = 0u32;
+                let mut deduped = 0u32;
+                for v in verdicts {
+                    match v {
+                        DedupOutcome::Created { node_type, .. } => {
+                            created += 1;
+                            self.stats.signals_stored += 1;
+                            *self.stats.by_type.entry(*node_type).or_default() += 1;
+                        }
+                        DedupOutcome::Corroborated { .. } | DedupOutcome::Refreshed { .. } => {
+                            deduped += 1;
+                        }
+                    }
+                }
                 *self
                     .source_signal_counts
                     .entry(canonical_key.clone())
-                    .or_default() += signals_created;
-                self.stats.signals_deduplicated += *signals_deduplicated;
+                    .or_default() += created;
+                self.stats.signals_deduplicated += deduped;
             }
         }
     }

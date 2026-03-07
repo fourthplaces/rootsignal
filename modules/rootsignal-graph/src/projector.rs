@@ -52,6 +52,11 @@ impl GraphProjector {
         Self { client, embedding_store: None }
     }
 
+    /// Access the underlying graph client for direct Cypher queries.
+    pub fn client(&self) -> &GraphClient {
+        &self.client
+    }
+
     /// Attach an embedding store for computing embeddings at projection time.
     pub fn with_embedding_store(mut self, store: Arc<dyn EmbeddingLookup>) -> Self {
         self.embedding_store = Some(store);

@@ -13,7 +13,7 @@ use rootsignal_common::types::NodeType;
 use seesaw_core::Events;
 
 use crate::core::engine::ScoutEngineDeps;
-use crate::domains::signals::events::SignalEvent;
+use crate::domains::signals::events::{DedupOutcome, SignalEvent};
 use crate::core::aggregate::{ExtractedBatch, PipelineState};
 use crate::testing::*;
 
@@ -57,6 +57,17 @@ async fn run_dedup(
     extract_events(events)
 }
 
+/// Extract verdicts from signal events.
+fn verdicts(signal: &[SignalEvent]) -> Vec<&DedupOutcome> {
+    signal
+        .iter()
+        .filter_map(|e| match e {
+            SignalEvent::DedupCompleted { verdicts, .. } => Some(verdicts.iter()),
+        })
+        .flatten()
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Layer 2: URL-based title dedup
 // ---------------------------------------------------------------------------
@@ -89,12 +100,12 @@ async fn url_title_dedup_filters_existing_titles() {
     )
     .await;
 
-    // "Free Legal Clinic" filtered out, "Community Dinner" passes as new → SignalCreated
-    let created: Vec<_> = signal
-        .iter()
-        .filter(|e| matches!(e, SignalEvent::SignalCreated { .. }))
+    // "Free Legal Clinic" filtered out, "Community Dinner" passes as new → Created verdict
+    let created: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Created { .. }))
         .collect();
-    assert_eq!(created.len(), 1, "expected 1 SignalCreated, got {}", created.len());
+    assert_eq!(created.len(), 1, "expected 1 Created verdict, got {}", created.len());
 
     // World event for the new signal
     assert!(
@@ -128,9 +139,9 @@ async fn all_titles_deduped_emits_only_dedup_completed() {
     )
     .await;
 
-    // Only DedupCompleted (all titles filtered)
+    // Only DedupCompleted with empty verdicts (all titles filtered)
     assert_eq!(signal.len(), 1);
-    assert!(matches!(&signal[0], SignalEvent::DedupCompleted { .. }));
+    assert!(matches!(&signal[0], SignalEvent::DedupCompleted { verdicts, .. } if verdicts.is_empty()));
     assert!(world.is_empty());
     assert!(system.is_empty());
 }
@@ -171,8 +182,12 @@ async fn global_title_match_same_source_emits_freshness() {
         "expected FreshnessConfirmed for existing signal"
     );
 
-    // DedupCompleted
-    assert!(signal.iter().any(|e| matches!(e, SignalEvent::DedupCompleted { .. })));
+    // Refreshed verdict
+    let refreshed: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Refreshed { .. }))
+        .collect();
+    assert_eq!(refreshed.len(), 1, "expected 1 Refreshed verdict");
 }
 
 #[tokio::test]
@@ -213,8 +228,12 @@ async fn global_title_match_different_source_emits_corroboration() {
         "expected ObservationCorroborated"
     );
 
-    // DedupCompleted
-    assert!(signal.iter().any(|e| matches!(e, SignalEvent::DedupCompleted { .. })));
+    // Corroborated verdict
+    let corroborated: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Corroborated { .. }))
+        .collect();
+    assert_eq!(corroborated.len(), 1, "expected 1 Corroborated verdict");
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +241,7 @@ async fn global_title_match_different_source_emits_corroboration() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn new_signal_emits_world_facts_and_signal_created() {
+async fn new_signal_emits_world_facts_and_created_verdict() {
     let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let state = PipelineState::new(HashMap::new());
@@ -252,13 +271,19 @@ async fn new_signal_emits_world_facts_and_signal_created() {
     // System: at least sensitivity classification
     assert!(!system.is_empty(), "expected at least one System event");
 
-    // SignalCreated + DedupCompleted
-    assert!(signal.iter().any(|e| matches!(e, SignalEvent::SignalCreated { node_id: id, .. } if *id == node_id)));
+    // Created verdict with correct node_id
+    let created: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Created { node_id: id, .. } if *id == node_id))
+        .collect();
+    assert_eq!(created.len(), 1, "expected 1 Created verdict for node_id");
+
+    // DedupCompleted present
     assert!(signal.iter().any(|e| matches!(e, SignalEvent::DedupCompleted { .. })));
 }
 
 #[tokio::test]
-async fn create_carries_tags_and_author_from_extraction_id() {
+async fn create_carries_tags_and_source_on_verdict() {
     let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let state = PipelineState::new(HashMap::new());
@@ -290,12 +315,20 @@ async fn create_carries_tags_and_author_from_extraction_id() {
     )
     .await;
 
-    // SignalCreated emitted (tags and author wiring happens in wire_edges handler)
-    assert!(
-        signal.iter().any(|e| matches!(e, SignalEvent::SignalCreated { node_id: id, .. } if *id == node_id)),
-        "expected SignalCreated for the new signal"
-    );
-    assert!(signal.iter().any(|e| matches!(e, SignalEvent::DedupCompleted { .. })));
+    // Created verdict carries tags and source_id
+    let created: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Created { node_id: id, .. } if *id == node_id))
+        .collect();
+    assert_eq!(created.len(), 1, "expected Created verdict");
+
+    match created[0] {
+        DedupOutcome::Created { signal_tags, source_id: sid, .. } => {
+            assert_eq!(signal_tags.len(), 2, "expected 2 tags");
+            assert_eq!(*sid, Some(source_id));
+        }
+        _ => panic!("expected Created verdict"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +346,7 @@ async fn mixed_batch_emits_correct_verdicts() {
     let deps = test_deps(store);
     let state = PipelineState::new(HashMap::new());
 
-    let (world, system, signal) = run_dedup(
+    let (_world, system, signal) = run_dedup(
         "https://example.org/events",
         ExtractedBatch {
             content: "page content".to_string(),
@@ -331,20 +364,21 @@ async fn mixed_batch_emits_correct_verdicts() {
     )
     .await;
 
-    // Corroboration for "Existing Event" (cross-source match)
+    // Corroboration for "Existing Event"
     assert!(
         system.iter().any(|e| matches!(e, SystemEvent::ObservationCorroborated { .. })),
         "expected ObservationCorroborated for 'Existing Event'"
     );
 
-    // Creation for "Brand New Event"
+    let vs = verdicts(&signal);
     assert!(
-        signal.iter().any(|e| matches!(e, SignalEvent::SignalCreated { .. })),
-        "expected SignalCreated for 'Brand New Event'"
+        vs.iter().any(|v| matches!(v, DedupOutcome::Corroborated { .. })),
+        "expected Corroborated verdict"
     );
-
-    // DedupCompleted
-    assert!(signal.iter().any(|e| matches!(e, SignalEvent::DedupCompleted { .. })));
+    assert!(
+        vs.iter().any(|v| matches!(v, DedupOutcome::Created { .. })),
+        "expected Created verdict for 'Brand New Event'"
+    );
 }
 
 #[tokio::test]
@@ -369,5 +403,65 @@ async fn empty_batch_emits_only_dedup_completed() {
     .await;
 
     assert_eq!(signal.len(), 1);
-    assert!(matches!(&signal[0], SignalEvent::DedupCompleted { .. }));
+    assert!(matches!(&signal[0], SignalEvent::DedupCompleted { verdicts, .. } if verdicts.is_empty()));
+}
+
+// ---------------------------------------------------------------------------
+// Actor race condition: same author in batch
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn same_author_in_batch_creates_one_actor() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node1 = tension_at("Event A", 44.93, -93.26);
+    let node2 = tension_at("Event B", 44.95, -93.27);
+    let meta_id1 = node1.meta().unwrap().id;
+    let meta_id2 = node2.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id1, "Same Org".to_string());
+    author_actors.insert(meta_id2, "Same Org".to_string());
+
+    let (_world, system, signal) = run_dedup(
+        "https://www.instagram.com/same_org",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node1, node2],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    // Only one ActorIdentified — second signal reuses cached actor
+    let actor_identified_count = system
+        .iter()
+        .filter(|e| matches!(e, SystemEvent::ActorIdentified { .. }))
+        .count();
+    assert_eq!(actor_identified_count, 1, "expected exactly 1 ActorIdentified, got {actor_identified_count}");
+
+    // But both signals linked to the actor
+    let actor_linked_count = system
+        .iter()
+        .filter(|e| matches!(e, SystemEvent::ActorLinkedToSignal { .. }))
+        .count();
+    assert_eq!(actor_linked_count, 2, "expected 2 ActorLinkedToSignal, got {actor_linked_count}");
+
+    // Both verdicts have the same actor_id
+    let created: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter_map(|v| match v {
+            DedupOutcome::Created { actor, .. } => actor.as_ref().map(|a| a.actor_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(created.len(), 2);
+    assert_eq!(created[0], created[1], "both signals should have the same actor_id");
 }

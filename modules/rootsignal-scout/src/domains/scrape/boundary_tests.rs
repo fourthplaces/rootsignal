@@ -109,8 +109,6 @@ async fn scrape_and_dispatch_with(
     // Sync engine stats back to ctx so test assertions work.
     let state = engine.singleton::<PipelineState>();
     ctx.stats = state.stats.clone();
-    // Also sync wiring contexts for tests that check them
-    ctx.wiring_contexts = state.wiring_contexts.clone();
 }
 
 /// Build a CollectedLink for testing.

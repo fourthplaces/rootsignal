@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::core::aggregate::PipelineState;
 use crate::domains::lifecycle::events::LifecycleEvent;
-use crate::domains::signals::events::SignalEvent;
+use crate::domains::signals::events::{DedupOutcome, SignalEvent};
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::core::aggregate::ExtractedBatch;
@@ -57,6 +57,20 @@ fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
                 Some("unknown".to_string())
             }
         })
+        .collect()
+}
+
+/// Extract DedupOutcome verdicts from captured events.
+fn captured_verdicts(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<DedupOutcome> {
+    captured
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e.downcast_ref::<SignalEvent>())
+        .filter_map(|e| match e {
+            SignalEvent::DedupCompleted { verdicts, .. } => Some(verdicts.clone()),
+        })
+        .flatten()
         .collect()
 }
 
@@ -126,20 +140,28 @@ async fn new_signal_dispatches_full_event_chain() {
 
     let names = event_names(&captured);
 
-    // Tags emitted via SignalTagged event
-    assert!(
-        names.iter().any(|n| n == "signal_tagged"),
-        "expected SignalTagged event, got: {names:?}"
-    );
-
-    // Author actor emitted via ActorIdentified event
+    // Actor events emitted directly by dedup handler
     assert!(
         names.iter().any(|n| n == "actor_identified"),
         "expected ActorIdentified event, got: {names:?}"
     );
 
-    // Wiring contexts stay until end of run
-    assert!(!state.wiring_contexts.is_empty());
+    assert!(
+        names.iter().any(|n| n == "actor_linked_to_signal"),
+        "expected ActorLinkedToSignal event, got: {names:?}"
+    );
+
+    // Created verdict carries signal_tags
+    let vs = captured_verdicts(&captured);
+    let created = vs.iter().find(|v| matches!(v, DedupOutcome::Created { .. }));
+    assert!(created.is_some(), "expected Created verdict");
+    match created.unwrap() {
+        DedupOutcome::Created { signal_tags, actor, .. } => {
+            assert_eq!(signal_tags, &["legal".to_string()]);
+            assert!(actor.is_some(), "expected resolved actor on verdict");
+        }
+        _ => unreachable!(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +210,10 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
     assert!(names.contains(&"citation_published".to_string()), "expected CitationPublished, got: {names:?}");
     assert!(names.contains(&"observation_corroborated".to_string()), "expected ObservationCorroborated, got: {names:?}");
     assert!(names.contains(&"corroboration_scored".to_string()), "expected CorroborationScored, got: {names:?}");
+
+    // Corroborated verdict
+    let vs = captured_verdicts(&captured);
+    assert!(vs.iter().any(|v| matches!(v, DedupOutcome::Corroborated { .. })));
 }
 
 // ---------------------------------------------------------------------------
@@ -275,19 +301,17 @@ async fn scrape_completed_dispatches_dedup_and_creation_chain() {
     // Reducer counted creation
     assert_eq!(state.stats.signals_stored, 1);
 
-    // Wiring contexts stay until end of run
-    assert!(!state.wiring_contexts.is_empty());
-
     let names = event_names(&captured);
 
-    // Dedup emitted directly: DedupCompleted + SignalCreated + World/System facts
+    // DedupCompleted emitted with Created verdict
     assert!(
         names.iter().any(|n| n == "signal:dedup_completed"),
         "expected DedupCompleted, got: {names:?}"
     );
+    let vs = captured_verdicts(&captured);
     assert!(
-        names.iter().any(|n| n == "signal:signal_created"),
-        "expected SignalCreated, got: {names:?}"
+        vs.iter().any(|v| matches!(v, DedupOutcome::Created { .. })),
+        "expected Created verdict"
     );
 }
 
@@ -1076,4 +1100,3 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
         state.stats.signals_extracted,
     );
 }
-
