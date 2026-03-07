@@ -97,7 +97,7 @@ pub type ScoutEngine = SeesawEngine;
 /// Build a scrape-chain engine: reap → schedule → scrape → enrichment →
 /// expansion → synthesis.
 ///
-/// Terminal event: SynthesisCompleted (Similarity + ResponseMapping done).
+/// Terminal event: SeverityInferred (after similarity + response mapping).
 /// Does NOT include situation_weaving or supervisor handlers.
 ///
 /// When `seesaw_store` is provided, it replaces the default in-memory store

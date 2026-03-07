@@ -5,7 +5,7 @@
 //!
 //! - Create: WorldEvent + SystemEvents + CitationPublished + DedupOutcome::Created
 //! - Corroborate: CitationPublished + DedupOutcome::Corroborated
-//! - Refresh: CitationPublished + DedupOutcome::Refreshed
+//! - Refresh: DedupOutcome::Refreshed (no events — freshness is the default)
 //!
 //! Layer 1 (batch title dedup) is applied by the caller before stashing.
 //! This handler runs layers 2–4.
@@ -13,7 +13,6 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use chrono::Utc;
 use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
 use seesaw_core::Events;
@@ -136,11 +135,7 @@ pub async fn deduplicate_extracted_batch(
                     source = url,
                     "Same-source title match"
                 );
-                let (fresh_events, verdict) = build_freshness(
-                    existing_id, node.node_type(), url,
-                );
-                events.extend(fresh_events);
-                verdicts.push(verdict);
+                verdicts.push(build_freshness(existing_id, node.node_type(), url));
             }
             DedupVerdict::Create => {
                 remaining_nodes.push(node);
@@ -272,11 +267,7 @@ pub async fn deduplicate_extracted_batch(
                         );
                     }
                 }
-                let (fresh_events, verdict) = build_freshness(
-                    existing_id, node_type, url,
-                );
-                events.extend(fresh_events);
-                verdicts.push(verdict);
+                verdicts.push(build_freshness(existing_id, node_type, url));
             }
             DedupVerdict::Corroborate {
                 existing_id,
@@ -450,39 +441,20 @@ async fn build_corroboration(
     Ok((new_count, (events, verdict)))
 }
 
-/// Build freshness events + verdict for a same-source re-encounter.
+/// Build verdict for a same-source re-encounter.
+///
+/// No events emitted — "still there" is the default assumption.
+/// The projection bumps `last_confirmed_active` from the verdict directly.
 fn build_freshness(
     existing_id: Uuid,
     node_type: NodeType,
     source_url: &str,
-) -> (Events, DedupOutcome) {
-    let now = Utc::now();
-    let mut events = Events::new();
-
-    events.push(WorldEvent::CitationPublished {
-        citation_id: Uuid::new_v4(),
-        signal_id: existing_id,
-        url: source_url.to_string(),
-        content_hash: String::new(),
-        snippet: None,
-        relevance: None,
-        channel_type: Some(rootsignal_common::channel_type(source_url)),
-        evidence_confidence: None,
-    });
-
-    events.push(SystemEvent::FreshnessConfirmed {
-        signal_ids: vec![existing_id],
-        node_type,
-        confirmed_at: now,
-    });
-
-    let verdict = DedupOutcome::Refreshed {
+) -> DedupOutcome {
+    DedupOutcome::Refreshed {
         existing_id,
         node_type,
         source_url: source_url.to_string(),
-    };
-
-    (events, verdict)
+    }
 }
 
 /// Resolve author → Actor node on owned sources.

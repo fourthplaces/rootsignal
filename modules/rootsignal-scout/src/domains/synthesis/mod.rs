@@ -18,55 +18,40 @@ use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scheduling::activities::budget::OperationCost;
-use crate::domains::synthesis::events::{
-    all_synthesis_roles, SynthesisEvent, SynthesisRole,
-};
+use crate::domains::synthesis::events::SynthesisEvent;
 
 fn is_expansion_completed(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, ExpansionEvent::ExpansionCompleted { .. })
 }
 
-fn all_synthesis_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    let role = match e {
-        SynthesisEvent::SynthesisRoleCompleted { role, .. } => role,
-        _ => return false,
-    };
+fn similarity_and_mapping_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    if matches!(e, SynthesisEvent::SeverityInferred) { return false; }
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.synthesis_completing_role.as_ref() == Some(role)
+    state.similarity_computed && state.responses_mapped
 }
 
 fn describe_synthesis_progress(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let all = all_synthesis_roles();
-    let done = &state.completed_synthesis_roles;
-    let completed = done.len() as u32;
-    let total = all.len() as u32;
     vec![
         Block::Checklist {
-            label: "Synthesis roles".into(),
-            items: all.iter().map(|r| ChecklistItem {
-                text: format!("{r:?}"),
-                done: done.contains(r),
-            }).collect(),
-        },
-        Block::Progress {
-            label: "Overall".into(),
-            fraction: if total > 0 { completed as f32 / total as f32 } else { 0.0 },
+            label: "Synthesis".into(),
+            items: vec![
+                ChecklistItem { text: "Similarity".into(), done: state.similarity_computed },
+                ChecklistItem { text: "Response mapping".into(), done: state.responses_mapped },
+            ],
         },
     ]
 }
 
 fn describe_synthesis_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let all = all_synthesis_roles();
-    let done = &state.completed_synthesis_roles;
     vec![
         Block::Checklist {
-            label: "Synthesis roles".into(),
-            items: all.iter().map(|r| ChecklistItem {
-                text: format!("{r:?}"),
-                done: done.contains(r),
-            }).collect(),
+            label: "Synthesis".into(),
+            items: vec![
+                ChecklistItem { text: "Similarity".into(), done: state.similarity_computed },
+                ChecklistItem { text: "Response mapping".into(), done: state.responses_mapped },
+            ],
         },
     ]
 }
@@ -85,15 +70,11 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let run_id = deps.run_id;
 
         let graph = match deps.graph.as_ref() {
             Some(g) => g,
             None => {
-                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
-                    run_id,
-                    role: SynthesisRole::Similarity,
-                }]);
+                return Ok(events![SynthesisEvent::SimilarityComputed]);
             }
         };
 
@@ -103,24 +84,18 @@ pub mod handlers {
                 info!(edges = edges.len(), "Similarity edges computed");
                 let mut out = Events::new();
                 out.push(SystemEvent::SimilarityEdgesRebuilt { edges });
-                out.push(SynthesisEvent::SynthesisRoleCompleted {
-                    run_id,
-                    role: SynthesisRole::Similarity,
-                });
+                out.push(SynthesisEvent::SimilarityComputed);
                 Ok(out)
             }
             Err(e) => {
                 warn!(error = %e, "Similarity edge building failed (non-fatal)");
-                Ok(events![SynthesisEvent::SynthesisRoleCompleted {
-                    run_id,
-                    role: SynthesisRole::Similarity,
-                }])
+                Ok(events![SynthesisEvent::SimilarityComputed])
             }
         }
     }
 
     // ===============================================================
-    // ResponseMapping: guards deps, loads targets, processes all, emits SynthesisRoleCompleted
+    // ResponseMapping: guards deps, loads targets, processes all
     // ===============================================================
 
     #[handle(on = ExpansionEvent, id = "synthesis:map_responses", filter = is_expansion_completed, describe = describe_synthesis_progress)]
@@ -130,7 +105,6 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
-        let run_id = deps.run_id;
 
         let (region, graph, budget) = match (
             state.run_scope.region(),
@@ -139,20 +113,14 @@ pub mod handlers {
         ) {
             (Some(r), Some(g), Some(b)) => (r, g, b),
             _ => {
-                return Ok(events![SynthesisEvent::SynthesisRoleCompleted {
-                    run_id,
-                    role: SynthesisRole::ResponseMapping,
-                }]);
+                return Ok(events![SynthesisEvent::ResponsesMapped]);
             }
         };
 
         let mut out = Events::new();
         if !budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
             ctx.logger.debug("Skipped response mapping: insufficient budget");
-            out.push(SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::ResponseMapping,
-            });
+            out.push(SynthesisEvent::ResponsesMapped);
             return Ok(out);
         }
 
@@ -164,20 +132,14 @@ pub mod handlers {
             Ok(t) => t,
             Err(e) => {
                 warn!(error = %e, "Failed to get active tensions for response mapping");
-                out.push(SynthesisEvent::SynthesisRoleCompleted {
-                    run_id,
-                    role: SynthesisRole::ResponseMapping,
-                });
+                out.push(SynthesisEvent::ResponsesMapped);
                 return Ok(out);
             }
         };
 
         if tensions.is_empty() {
             info!("No active tensions for response mapping");
-            out.push(SynthesisEvent::SynthesisRoleCompleted {
-                run_id,
-                role: SynthesisRole::ResponseMapping,
-            });
+            out.push(SynthesisEvent::ResponsesMapped);
             return Ok(out);
         }
 
@@ -206,10 +168,7 @@ pub mod handlers {
             out.extend(target_events);
         }
 
-        out.push(SynthesisEvent::SynthesisRoleCompleted {
-            run_id,
-            role: SynthesisRole::ResponseMapping,
-        });
+        out.push(SynthesisEvent::ResponsesMapped);
 
         Ok(out)
     }
@@ -218,20 +177,19 @@ pub mod handlers {
     // Severity inference: triggers when all synthesis roles done
     // ---------------------------------------------------------------
 
-    #[handle(on = SynthesisEvent, id = "synthesis:infer_severity", filter = all_synthesis_done, describe = describe_synthesis_gate)]
+    #[handle(on = SynthesisEvent, id = "synthesis:infer_severity", filter = similarity_and_mapping_done, describe = describe_synthesis_gate)]
     async fn infer_severity(
         _event: SynthesisEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
-        let run_id = deps.run_id;
 
         let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped severity inference: missing region or graph");
-                return Ok(events![SynthesisEvent::SynthesisCompleted { run_id }]);
+                return Ok(events![SynthesisEvent::SeverityInferred]);
             }
         };
 
@@ -258,7 +216,7 @@ pub mod handlers {
                 Events::new()
             }
         };
-        all_events.push(SynthesisEvent::SynthesisCompleted { run_id });
+        all_events.push(SynthesisEvent::SeverityInferred);
         Ok(all_events)
     }
 }

@@ -156,21 +156,6 @@ pub(crate) async fn scrape_social_sources(
             })
             .collect();
 
-        // First-hand filter prefix for non-entity social sources
-        let firsthand_filter = "FIRST-HAND FILTER (applies to this content):\n\
-            This content comes from platform search results, which are flooded with \
-            political commentary from people not directly involved. Apply strict filtering:\n\n\
-            For each potential signal, assess: Is this person describing something happening \
-            to them, their family, their community, or their neighborhood? Or are they \
-            asking for help? If yes, mark is_firsthand: true. If this is political commentary \
-            from someone not personally affected — regardless of viewpoint — mark \
-            is_firsthand: false.\n\n\
-            Signal: \"My family was taken.\" → is_firsthand: true\n\
-            Signal: \"There were raids on 5th street today.\" → is_firsthand: true\n\
-            Signal: \"We need legal observers.\" → is_firsthand: true\n\
-            Noise: \"ICE is doing great work.\" → is_firsthand: false\n\
-            Noise: \"The housing crisis is a failure of capitalism.\" → is_firsthand: false\n\n\
-            Only extract signals where is_firsthand is true. Reject the rest.\n\n";
 
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
         let mut futures: Vec<Pin<Box<dyn Future<Output = Option<SocialFetchResult>> + Send>>> = Vec::new();
@@ -183,11 +168,6 @@ pub(crate) async fn scrape_social_sources(
             let platform = account.platform;
             let is_reddit = matches!(platform, SocialPlatform::Reddit);
             let actor_prefix = actor_prefixes.get(&canonical_key).cloned();
-            let firsthand_prefix = if actor_prefix.is_none() {
-                Some(firsthand_filter.to_string())
-            } else {
-                None
-            };
             let fetcher = fetcher.clone();
             let extractor = extractor.clone();
             let identifier = account.identifier.clone();
@@ -229,16 +209,18 @@ pub(crate) async fn scrape_social_sources(
                         if combined_text.is_empty() {
                             continue;
                         }
-                        // Prepend entity context for known actor sources,
-                        // or first-hand filter for non-entity sources
                         if let Some(ref prefix) = actor_prefix {
-                            combined_text = format!("{prefix}{combined_text}");
-                        } else if let Some(ref prefix) = firsthand_prefix {
                             combined_text = format!("{prefix}{combined_text}");
                         }
                         combined_all.push_str(&combined_text);
                         match extractor.extract(&combined_text, &source_url).await {
                             Ok(result) => {
+                                if !result.rejected.is_empty() {
+                                    logger.info(format!(
+                                        "{source_url}: reddit batch — {} signals, {} rejected",
+                                        result.nodes.len(), result.rejected.len(),
+                                    ));
+                                }
                                 all_nodes.extend(result.nodes);
                                 all_resource_tags.extend(result.resource_tags);
                                 all_signal_tags.extend(result.signal_tags);
@@ -250,10 +232,10 @@ pub(crate) async fn scrape_social_sources(
                         }
                     }
                     if all_nodes.is_empty() {
-                        logger.info(format!("{source_url}: no signals extracted from {post_count} posts"));
+                        logger.warn(format!("{source_url}: LLM returned 0 signals from {post_count} posts"));
                         return None;
                     }
-                    logger.info(format!("{source_url}: extracted {} signals from {post_count} posts", all_nodes.len()));
+                    logger.info(format!("{source_url}: {post_count} posts → {} signals", all_nodes.len()));
                     Some(SocialFetchResult {
                         canonical_key,
                         source_url,
@@ -278,24 +260,47 @@ pub(crate) async fn scrape_social_sources(
                     if combined_text.is_empty() {
                         return None;
                     }
-                    // Prepend entity context for known actor sources,
-                    // or first-hand filter for non-entity sources
                     if let Some(ref prefix) = actor_prefix {
                         combined_text = format!("{prefix}{combined_text}");
-                    } else if let Some(ref prefix) = firsthand_prefix {
-                        combined_text = format!("{prefix}{combined_text}");
                     }
-                    let result = match extractor.extract(&combined_text, &source_url).await {
+                    let mut result = match extractor.extract(&combined_text, &source_url).await {
                         Ok(r) => r,
                         Err(e) => {
                             logger.warn(format!("{source_url}: extraction failed — {e}"));
                             return None;
                         }
                     };
+                    // Retry once when LLM returns nothing from substantial content
+                    if result.nodes.is_empty() && result.raw_signal_count == 0 && post_count >= 5 {
+                        logger.info(format!("{source_url}: 0 signals from {post_count} posts, retrying"));
+                        result = match extractor.extract(&combined_text, &source_url).await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                logger.warn(format!("{source_url}: retry extraction failed — {e}"));
+                                return None;
+                            }
+                        };
+                    }
                     if result.nodes.is_empty() {
-                        logger.info(format!("{source_url}: no signals extracted from {post_count} posts"));
+                        if result.raw_signal_count == 0 {
+                            logger.warn(format!("{source_url}: LLM returned 0 signals from {post_count} posts"));
+                        } else {
+                            logger.info(format!(
+                                "{source_url}: LLM returned {} signals but all rejected ({} not firsthand) from {post_count} posts",
+                                result.raw_signal_count,
+                                result.rejected.len(),
+                            ));
+                        }
                     } else {
-                        logger.info(format!("{source_url}: extracted {} signals from {post_count} posts", result.nodes.len()));
+                        let rejected = result.rejected.len();
+                        if rejected > 0 {
+                            logger.info(format!(
+                                "{source_url}: {post_count} posts → {} signals ({rejected} rejected)",
+                                result.nodes.len(),
+                            ));
+                        } else {
+                            logger.info(format!("{source_url}: {post_count} posts → {} signals", result.nodes.len()));
+                        }
                     }
                     Some(SocialFetchResult {
                         canonical_key,
@@ -361,7 +366,14 @@ pub(crate) async fn scrape_social_sources(
             let nodes = score_and_filter(nodes, &source_url, actor_ctx);
 
             if !nodes.is_empty() {
+                let before_dedup = nodes.len();
                 let nodes = batch_title_dedup(nodes);
+                if nodes.len() < before_dedup {
+                    logger.info(format!(
+                        "{source_url}: batch title dedup dropped {} of {before_dedup}",
+                        before_dedup - nodes.len(),
+                    ));
+                }
 
                 let ck = url_to_canonical_key
                     .get(&source_url)

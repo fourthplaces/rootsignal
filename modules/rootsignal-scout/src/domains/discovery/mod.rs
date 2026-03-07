@@ -7,7 +7,7 @@ use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 
-use rootsignal_common::{Block, ChecklistItem};
+use rootsignal_common::Block;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -60,40 +60,37 @@ fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngine
 
 fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let link_count = state.collected_links.len() as u32;
+    let done = [
+        state.tension_web_done,
+        state.tension_social_done,
+        state.response_web_done,
+        state.response_social_done,
+        state.topic_discovery_done,
+    ]
+    .iter()
+    .filter(|&&d| d)
+    .count();
     vec![
-        Block::Checklist {
-            label: "Tension scrape".into(),
-            items: vec![
-                ChecklistItem { text: "Web".into(), done: state.tension_web_done },
-                ChecklistItem { text: "Social".into(), done: state.tension_social_done },
-            ],
+        Block::Progress {
+            label: "Scrape phases".into(),
+            fraction: done as f32 / 5.0,
         },
-        Block::Checklist {
-            label: "Response scrape".into(),
-            items: vec![
-                ChecklistItem { text: "Web".into(), done: state.response_web_done },
-                ChecklistItem { text: "Social".into(), done: state.response_social_done },
-                ChecklistItem { text: "Topics".into(), done: state.topic_discovery_done },
-            ],
-        },
-        Block::Counter {
-            label: "Collected links".into(),
-            value: link_count,
-            total: link_count,
+        Block::Label {
+            text: format!("{} links collected", state.collected_links.len()),
         },
     ]
 }
 
 fn describe_expansion_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
+    let done = [state.tension_web_done, state.tension_social_done]
+        .iter()
+        .filter(|&&d| d)
+        .count();
     vec![
-        Block::Checklist {
+        Block::Progress {
             label: "Tension scrape".into(),
-            items: vec![
-                ChecklistItem { text: "Web".into(), done: state.tension_web_done },
-                ChecklistItem { text: "Social".into(), done: state.tension_social_done },
-            ],
+            fraction: done as f32 / 2.0,
         },
         Block::Status {
             label: "Source expansion".into(),
@@ -178,6 +175,7 @@ pub mod handlers {
             &state.page_previews,
             deps.ai.as_deref(),
             &PromotionConfig::default(),
+            &ctx.logger,
         ).await;
 
         Ok(result.into_events())

@@ -12,21 +12,23 @@ use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::expansion::events::ExpansionEvent;
+use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::scrape::events::ScrapeEvent;
-use crate::domains::lifecycle::events::LifecycleEvent;
 
-fn is_metrics_completed(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, LifecycleEvent::MetricsCompleted)
+fn all_enrichment_done(e: &EnrichmentEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+    let _ = e;
+    let (_, state) = ctx.singleton::<PipelineState>();
+    state.all_enrichment_complete()
 }
 
 #[handlers]
 pub mod handlers {
     use super::*;
 
-    /// MetricsCompleted → signal expansion + end-of-run discovery, emit ExpansionCompleted.
-    #[handle(on = LifecycleEvent, id = "expansion:expand_signals", filter = is_metrics_completed)]
+    /// All enrichment done → compute source metrics, expand signals, emit ExpansionCompleted.
+    #[handle(on = EnrichmentEvent, id = "expansion:expand_signals", filter = all_enrichment_done)]
     async fn expand_signals(
-        _event: LifecycleEvent,
+        _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -45,8 +47,35 @@ pub mod handlers {
                 }]);
             }
         };
-        let region_name = state.run_scope.region().map(|r| r.name.as_str());
 
+        // Source metrics — preamble to expansion
+        let mut all_events = if let Some(region) = state.run_scope.region() {
+            let all_sources = state
+                .source_plan
+                .as_ref()
+                .map(|s| s.all_sources.clone())
+                .unwrap_or_default();
+            let source_signal_counts = state.source_signal_counts.clone();
+            let query_api_errors = state.query_api_errors.clone();
+
+            crate::domains::enrichment::activities::compute_source_metrics(
+                graph,
+                &region.name,
+                &all_sources,
+                &source_signal_counts,
+                &query_api_errors,
+            )
+            .await
+        } else {
+            Events::new()
+        };
+
+        if let Some(ref budget) = deps.budget {
+            budget.log_status();
+        }
+
+        // Signal expansion
+        let region_name = state.run_scope.region().map(|r| r.name.as_str());
         let expansion = Expansion::new(graph, &*deps.embedder);
 
         let (_, state) = ctx.singleton::<PipelineState>();
@@ -62,8 +91,7 @@ pub mod handlers {
         )
         .await;
 
-        // Emit pipeline events instead of direct state writes
-        let mut all_events = output.events;
+        all_events.extend(output.events);
         all_events.push(ExpansionEvent::ExpansionCompleted {
             social_expansion_topics: output.expansion.social_expansion_topics,
             expansion_deferred_expanded: output.expansion.expansion_deferred_expanded,

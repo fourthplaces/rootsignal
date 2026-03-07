@@ -151,9 +151,9 @@ async fn all_titles_deduped_emits_only_dedup_completed() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn global_title_match_same_source_emits_freshness() {
+async fn same_source_title_match_emits_no_events() {
     let store = Arc::new(MockSignalReader::new());
-    let existing_id = store.insert_signal(
+    store.insert_signal(
         "Community Dinner",
         NodeType::Concern,
         "https://example.org/events",
@@ -161,7 +161,7 @@ async fn global_title_match_same_source_emits_freshness() {
     let deps = test_deps(store);
     let state = PipelineState::new(HashMap::new());
 
-    let (_world, system, signal) = run_dedup(
+    let (world, system, signal) = run_dedup(
         "https://example.org/events",
         ExtractedBatch {
             content: "page content".to_string(),
@@ -176,13 +176,9 @@ async fn global_title_match_same_source_emits_freshness() {
     )
     .await;
 
-    // FreshnessConfirmed emitted (same-source match)
-    assert!(
-        system.iter().any(|e| matches!(e, SystemEvent::FreshnessConfirmed { signal_ids, .. } if signal_ids.contains(&existing_id))),
-        "expected FreshnessConfirmed for existing signal"
-    );
+    assert!(world.is_empty(), "refresh should emit no world events");
+    assert!(system.is_empty(), "refresh should emit no system events");
 
-    // Refreshed verdict
     let refreshed: Vec<_> = verdicts(&signal)
         .into_iter()
         .filter(|v| matches!(v, DedupOutcome::Refreshed { .. }))

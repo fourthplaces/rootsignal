@@ -1,84 +1,74 @@
 //! Completion handler tests — synthesis phase completion tracking.
 //!
 //! MOCK → ENGINE.EMIT → OUTPUT
-//! Proves the superset check gates completion correctly.
+//! Proves all synthesis facts gate severity inference correctly.
 
 use std::sync::Arc;
-
-use uuid::Uuid;
 
 use seesaw_core::AnyEvent;
 
 use crate::core::aggregate::PipelineState;
 use crate::domains::expansion::events::ExpansionEvent;
-use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
+use crate::domains::synthesis::events::SynthesisEvent;
 use crate::testing::*;
 
-fn count_synthesis_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> usize {
-    captured.lock().unwrap().iter().filter(|e| {
+fn has_severity_inferred(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> bool {
+    captured.lock().unwrap().iter().any(|e| {
         e.downcast_ref::<SynthesisEvent>()
-            .is_some_and(|se| matches!(se, SynthesisEvent::SynthesisCompleted { .. }))
-    }).count()
+            .is_some_and(|se| matches!(se, SynthesisEvent::SeverityInferred))
+    })
 }
 
 #[tokio::test]
-async fn one_of_two_roles_does_not_complete_synthesis() {
+async fn one_of_two_synthesis_facts_does_not_trigger_severity() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, _captured, _scope) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
-    let run_id = Uuid::new_v4();
     engine
-        .emit(SynthesisEvent::SynthesisRoleCompleted {
-            run_id,
-            role: SynthesisRole::Similarity,
-        })
+        .emit(SynthesisEvent::SimilarityComputed)
         .settled()
         .await
         .unwrap();
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(state.completed_synthesis_roles.len(), 1);
-    assert!(state.synthesis_completing_role.is_none());
+    assert!(state.similarity_computed);
+    assert!(!state.responses_mapped);
+    assert!(
+        !has_severity_inferred(&captured),
+        "Severity should not fire with only 1 of 2 synthesis facts"
+    );
 }
 
 #[tokio::test]
-async fn second_role_completes_all_synthesis() {
+async fn both_synthesis_facts_trigger_severity() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, _captured, _scope) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
-    let run_id = Uuid::new_v4();
-    let all_roles = [
-        SynthesisRole::Similarity,
-        SynthesisRole::ResponseMapping,
-    ];
-
-    for role in all_roles {
-        engine
-            .emit(SynthesisEvent::SynthesisRoleCompleted { run_id, role })
-            .settled()
-            .await
-            .unwrap();
-    }
+    engine.emit(SynthesisEvent::SimilarityComputed).settled().await.unwrap();
+    engine.emit(SynthesisEvent::ResponsesMapped).settled().await.unwrap();
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(state.completed_synthesis_roles.len(), 2);
+    assert!(state.similarity_computed && state.responses_mapped);
+    assert!(
+        has_severity_inferred(&captured),
+        "SeverityInferred should fire once both synthesis facts are recorded"
+    );
 }
 
 #[tokio::test]
-async fn missing_deps_emits_all_role_completions() {
+async fn missing_deps_emits_all_synthesis_facts() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         None,
     );
 
-    // ExpansionCompleted triggers both synthesis role handlers
     engine
         .emit(ExpansionEvent::ExpansionCompleted {
             social_expansion_topics: Vec::new(),
@@ -92,18 +82,12 @@ async fn missing_deps_emits_all_role_completions() {
         .unwrap();
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(
-        state.completed_synthesis_roles.len(),
-        2,
-        "Both roles should complete (each handler emits RoleCompleted even when skipping)"
+    assert!(
+        state.similarity_computed && state.responses_mapped,
+        "Both synthesis facts should be recorded (each handler emits its fact even when skipping)"
     );
     assert!(
-        state.synthesis_completing_role.is_some(),
-        "reducer should have recorded which role completed the set"
-    );
-    assert_eq!(
-        count_synthesis_completed(&captured),
-        1,
-        "SynthesisCompleted should fire exactly once, not per-role"
+        has_severity_inferred(&captured),
+        "SeverityInferred should fire exactly once"
     );
 }

@@ -1,12 +1,11 @@
-//! Tests for the first-hand filter prompt.
+//! Tests for is_firsthand classification.
 //!
-//! The first-hand filter is prepended to content from web search and social
-//! search results (in scrape_phase.rs) to distinguish actionable community
-//! signal from abstract political commentary. The LLM sets `is_firsthand`
-//! on each extracted signal.
+//! The system prompt instructs the LLM to classify each signal's `is_firsthand`
+//! field based on local specificity vs abstract political commentary.
+//! `convert_signals` then drops signals marked `is_firsthand: false`.
 //!
-//! These tests call the real LLM with the filter prepended — exactly as
-//! scrape_phase does — and assert that `is_firsthand` is classified correctly.
+//! These tests call the real LLM and assert that `is_firsthand` is classified
+//! correctly for various content types.
 //!
 //! **Snapshots:** Each test records the raw `ExtractionResponse` JSON on first
 //! run (or when `RECORD=1`). Subsequent runs replay from the snapshot.
@@ -17,31 +16,6 @@
 use std::path::{Path, PathBuf};
 
 use rootsignal_scout::core::extractor::{build_system_prompt, ExtractionResponse};
-
-// ---------------------------------------------------------------------------
-// The first-hand filter prompt — copied from scrape_phase.rs web search path.
-// If the prompt changes there, update it here (or extract to a shared constant).
-// ---------------------------------------------------------------------------
-
-const FIRSTHAND_FILTER: &str = "\
-FIRST-HAND FILTER (applies to this content):\n\
-This content comes from web search results, which may contain \
-abstract political commentary. Apply filtering based on LOCAL SPECIFICITY:\n\n\
-Mark is_firsthand: true when the content describes:\n\
-- Concrete events, services, or gatherings at specific times and places\n\
-- Local journalism reporting impacts on specific communities, schools, or neighborhoods\n\
-- Community organizing with actionable details (rallies, petitions, forums, resource centers)\n\
-- People or organizations describing what is happening in their area\n\
-- Event listings from organizers creating community activity\n\n\
-Mark is_firsthand: false when the content is:\n\
-- Abstract political opinion with no local specificity (\"ICE is doing great work\", \"open borders are wrong\")\n\
-- National punditry that mentions a city only in passing\n\
-- Social media hot takes expressing a viewpoint without describing concrete local reality\n\n\
-The question is NOT \"is the author personally affected?\" — a journalist reporting \
-on school closures with specific dates, locations, and community responses is firsthand. \
-The question IS \"does this describe concrete reality in a specific place, or is it \
-abstract political commentary?\"\n\n\
-Only extract signals where is_firsthand is true. Reject the rest.\n\n";
 
 // ---------------------------------------------------------------------------
 // Snapshot helpers
@@ -78,8 +52,8 @@ fn fixture(name: &str) -> String {
         .unwrap_or_else(|e| panic!("Failed to read fixture {}: {e}", path.display()))
 }
 
-/// Prepend the first-hand filter to content (mimicking scrape_phase.rs),
-/// send through the extractor, and return the raw ExtractionResponse.
+/// Send content through the extractor and return the raw ExtractionResponse.
+/// The system prompt handles is_firsthand classification.
 async fn extract_with_firsthand_filter(
     name: &str,
     content: &str,
@@ -91,14 +65,12 @@ async fn extract_with_firsthand_filter(
         return load_snapshot(&snap_path);
     }
 
-    // Record mode: call LLM with the first-hand filter prepended
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .expect("ANTHROPIC_API_KEY required to record firsthand filter snapshots");
 
     let system_prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
-    let filtered_content = format!("{FIRSTHAND_FILTER}{content}");
     let user_prompt = format!(
-        "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{filtered_content}"
+        "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
     );
 
     let claude = ai_client::claude::Claude::new(&api_key, "claude-haiku-4-5-20251001");

@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use ai_client::Agent;
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
-use seesaw_core::Events;
+use seesaw_core::{Events, Logger};
 use tracing::info;
 
 use crate::domains::discovery::events::DiscoveryEvent;
@@ -61,8 +61,14 @@ pub async fn promote_scraped_links(
     page_previews: &HashMap<String, String>,
     ai: Option<&dyn Agent>,
     config: &PromotionConfig,
+    logger: &Logger,
 ) -> PromotionResult {
     let by_parent = group_by_parent(links);
+    logger.info(format!(
+        "Link promotion: {} links from {} pages",
+        links.len(),
+        by_parent.len(),
+    ));
 
     let productive = find_productive_pages(
         &by_parent, url_to_ck, signal_counts, page_previews, ai,
@@ -71,6 +77,13 @@ pub async fn promote_scraped_links(
     let mut seen = HashSet::new();
     let social = build_social_sources(links, &mut seen, url_to_ck);
     let content = build_content_sources(&by_parent, &productive, &mut seen, config, url_to_ck);
+
+    logger.info(format!(
+        "Link promotion: {} social handles, {} content links from {} productive pages",
+        social.len(),
+        content.len(),
+        productive.len(),
+    ));
 
     let all: Vec<_> = social.into_iter().chain(content).collect();
     let credit = tally_credit(&all, url_to_ck);

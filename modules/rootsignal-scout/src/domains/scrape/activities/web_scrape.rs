@@ -16,7 +16,6 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
 use crate::infra::util::{content_hash, sanitize_url};
 
-use super::signal_events::refresh_url_signals_events;
 use super::types::{batch_title_dedup, score_and_filter, FetchExtractResult, FetchExtractStats, ScrapeOutcome, UrlExtraction};
 #[cfg(test)]
 use super::types::ScrapeOutput;
@@ -128,26 +127,21 @@ async fn fetch_pages(
                 }
             }
 
-            let filtered_content = format!(
-                "FIRST-HAND FILTER (applies to this content):\n\
-                This content comes from web search results, which may contain \
-                political commentary from people not directly involved. Apply strict filtering:\n\n\
-                For each potential signal, assess: Is this person describing something happening \
-                to them, their family, their community, or their neighborhood? Or are they \
-                asking for help? If yes, mark is_firsthand: true. If this is political commentary \
-                from someone not personally affected — regardless of viewpoint — mark \
-                is_firsthand: false.\n\n\
-                Only extract signals where is_firsthand is true. Reject the rest.\n\n\
-                {content}"
-            );
-
-            match extractor.extract(&filtered_content, &clean_url).await {
+            match extractor.extract(&content, &clean_url).await {
                 Ok(result) => {
                     let signal_count = result.nodes.len();
-                    if signal_count > 0 {
-                        logger.info(format!("{clean_url}: extracted {signal_count} signals"));
+                    let rejected = result.rejected.len();
+                    if signal_count > 0 && rejected > 0 {
+                        logger.info(format!("{clean_url}: {signal_count} signals ({rejected} rejected)"));
+                    } else if signal_count > 0 {
+                        logger.info(format!("{clean_url}: {signal_count} signals"));
+                    } else if result.raw_signal_count == 0 {
+                        logger.info(format!("{clean_url}: LLM returned 0 signals"));
                     } else {
-                        logger.info(format!("{clean_url}: no signals extracted"));
+                        logger.info(format!(
+                            "{clean_url}: LLM returned {} signals but all rejected ({rejected} not firsthand)",
+                            result.raw_signal_count,
+                        ));
                     }
                     (
                         clean_url,
@@ -268,14 +262,6 @@ async fn process_results(
             }
             ScrapeOutcome::Unchanged => {
                 result.stats.urls_unchanged += 1;
-                match refresh_url_signals_events(&*store, &url, now).await {
-                    Ok(events) if !events.is_empty() => {
-                        logger.info(format!("{url}: refreshed {} unchanged signals", events.len()));
-                        result.events.extend(events);
-                    }
-                    Ok(_) => {}
-                    Err(e) => logger.warn(format!("{url}: failed to refresh signals — {e}")),
-                }
                 result.source_signal_counts.entry(ck).or_default();
             }
             ScrapeOutcome::Failed => {

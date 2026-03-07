@@ -1,21 +1,21 @@
 //! Completion handler tests — enrichment phase completion tracking.
 //!
 //! MOCK → ENGINE.EMIT → OUTPUT
-//! Proves the superset check gates MetricsCompleted correctly.
+//! Proves all 4 enrichment facts gate expansion correctly.
 
 use std::sync::Arc;
 
 use crate::core::aggregate::PipelineState;
-use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
-use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::enrichment::events::EnrichmentEvent;
+use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::testing::*;
 use seesaw_core::AnyEvent;
 
-fn has_metrics_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> bool {
+fn has_expansion_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> bool {
     captured.lock().unwrap().iter().any(|e| {
-        e.downcast_ref::<LifecycleEvent>()
-            .is_some_and(|le| matches!(le, LifecycleEvent::MetricsCompleted))
+        e.downcast_ref::<ExpansionEvent>()
+            .is_some_and(|ee| matches!(ee, ExpansionEvent::ExpansionCompleted { .. }))
     })
 }
 
@@ -27,70 +27,64 @@ async fn emit_response_scrape_done(engine: &seesaw_core::Engine<crate::core::eng
 }
 
 #[tokio::test]
-async fn three_of_four_enrichment_roles_does_not_trigger_metrics() {
+async fn three_of_four_enrichment_facts_does_not_trigger_expansion() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
-    let three_roles = [
-        EnrichmentRole::Diversity,
-        EnrichmentRole::ActorStats,
-        EnrichmentRole::ActorLocation,
+    let three_events = [
+        EnrichmentEvent::DiversityScored,
+        EnrichmentEvent::ActorStatsComputed,
+        EnrichmentEvent::ActorsLocated,
     ];
 
-    for role in three_roles {
-        engine
-            .emit(EnrichmentEvent::EnrichmentRoleCompleted { role })
-            .settled()
-            .await
-            .unwrap();
+    for event in three_events {
+        engine.emit(event).settled().await.unwrap();
     }
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(state.completed_enrichment_roles.len(), 3);
+    assert!(!state.actors_extracted);
+    assert!(state.diversity_scored);
+    assert!(state.actor_stats_computed);
+    assert!(state.actors_located);
     assert!(
-        !has_metrics_completed(&captured),
-        "MetricsCompleted should not fire with only 3 of 4 roles"
+        !has_expansion_completed(&captured),
+        "Expansion should not fire with only 3 of 4 enrichment facts"
     );
 }
 
 #[tokio::test]
-async fn fourth_enrichment_role_triggers_metrics() {
+async fn fourth_enrichment_fact_triggers_expansion() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         Some(mpls_region()),
     );
 
-    let all_roles = [
-        EnrichmentRole::ActorExtraction,
-        EnrichmentRole::Diversity,
-        EnrichmentRole::ActorStats,
-        EnrichmentRole::ActorLocation,
+    let all_events = [
+        EnrichmentEvent::ActorsExtracted,
+        EnrichmentEvent::DiversityScored,
+        EnrichmentEvent::ActorStatsComputed,
+        EnrichmentEvent::ActorsLocated,
     ];
 
-    for role in all_roles {
-        engine
-            .emit(EnrichmentEvent::EnrichmentRoleCompleted { role })
-            .settled()
-            .await
-            .unwrap();
+    for event in all_events {
+        engine.emit(event).settled().await.unwrap();
     }
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(state.completed_enrichment_roles.len(), 4);
+    assert!(state.all_enrichment_complete());
     assert!(
-        has_metrics_completed(&captured),
-        "MetricsCompleted should fire once all 4 roles complete"
+        has_expansion_completed(&captured),
+        "ExpansionCompleted should fire once all 4 enrichment facts are recorded"
     );
 }
 
 #[tokio::test]
-async fn missing_deps_skips_enrichment_with_immediate_role_completed() {
+async fn missing_deps_skips_enrichment_with_immediate_completion() {
     let store = Arc::new(MockSignalReader::new());
-    // No region, no graph_client — role handlers should emit role completed immediately
     let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         None,
@@ -102,20 +96,19 @@ async fn missing_deps_skips_enrichment_with_immediate_role_completed() {
     emit_response_scrape_done(&engine).await;
 
     assert!(
-        has_metrics_completed(&captured),
-        "All role handlers should emit role completed when deps are missing, triggering MetricsCompleted"
+        has_expansion_completed(&captured),
+        "All handlers should emit their fact when deps are missing, triggering expansion"
     );
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(
-        state.completed_enrichment_roles.len(),
-        4,
-        "All 4 roles should complete (with skip) when deps are missing"
+    assert!(
+        state.all_enrichment_complete(),
+        "All 4 enrichment facts should be recorded (with skip) when deps are missing"
     );
 }
 
 #[tokio::test]
-async fn response_scrape_skipped_triggers_enrichment_and_metrics() {
+async fn response_scrape_skipped_triggers_enrichment_and_expansion() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
@@ -134,13 +127,12 @@ async fn response_scrape_skipped_triggers_enrichment_and_metrics() {
         .unwrap();
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(
-        state.completed_enrichment_roles.len(),
-        4,
-        "All enrichment roles should complete (with skip) when response scrape is skipped"
+    assert!(
+        state.all_enrichment_complete(),
+        "All enrichment facts should be recorded (with skip) when response scrape is skipped"
     );
     assert!(
-        has_metrics_completed(&captured),
-        "MetricsCompleted should fire — skipped response scrape still unlocks the curiosity loop"
+        has_expansion_completed(&captured),
+        "ExpansionCompleted should fire — skipped response scrape still unlocks expansion"
     );
 }

@@ -31,7 +31,6 @@ pub enum LifecycleEvent {
         pub_dates: HashMap<String, DateTime<Utc>>,
         query_api_errors: HashSet<String>,
     },
-    MetricsCompleted,
     NewsScanRequested,
 }
 
@@ -40,7 +39,6 @@ impl LifecycleEvent {
         let variant = match self {
             Self::ScoutRunRequested { .. } => "scout_run_requested",
             Self::SourcesPrepared { .. } => "sources_prepared",
-            Self::MetricsCompleted => "metrics_completed",
             Self::NewsScanRequested => "news_scan_requested",
         };
         format!("lifecycle:{variant}")

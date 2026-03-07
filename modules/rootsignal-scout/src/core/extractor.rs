@@ -220,6 +220,8 @@ pub struct ExtractionResult {
     pub resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
     /// Thematic tags paired with the signal node UUID they came from.
     pub signal_tags: Vec<(Uuid, Vec<String>)>,
+    /// How many signals the LLM returned before any filtering.
+    pub raw_signal_count: usize,
     /// Signals that were extracted but rejected by filters (for audit logging).
     pub rejected: Vec<RejectedSignal>,
     /// Schedule nodes paired with the signal node UUID they belong to.
@@ -315,6 +317,7 @@ impl Extractor {
     /// - Tag slugification
     /// - source_url fallback (signal-level → page-level)
     pub fn convert_signals(response: ExtractionResponse, source_url: &str) -> ExtractionResult {
+        let raw_signal_count = response.signals.len();
         let implied_queries: Vec<String> = response
             .signals
             .iter()
@@ -656,6 +659,7 @@ impl Extractor {
             implied_queries,
             resource_tags,
             signal_tags,
+            raw_signal_count,
             rejected,
             schedules,
             author_actors,
@@ -722,7 +726,7 @@ Your job: find real problems and the people addressing them. The most valuable s
   (Condition) or social friction (Concern), classify it as that instead.
 - **Condition**: A state of the world being described — infrastructure, environment, emergencies, public health, safety. The severity and urgency fields distinguish routine observations from acute events. If the content describes a physical state (pothole, pollution, outage, flood), that's a Condition. If it describes social friction (opposition, protest, dispute), that's a Concern.
 
-If content doesn't map to one of these types, return an empty signals array.
+If content genuinely contains no community-relevant information, return an empty signals array. But err on the side of extracting — social media posts from community organizations almost always contain actionable signals, even when the format is informal (lists of orgs, calls to action, resource roundups).
 
 ## Extracting from News and Crisis Content
 When a page describes a crisis, conflict, or problem, extract BOTH the underlying concern AND the community responses:
@@ -887,6 +891,26 @@ Tags describe the themes, issues, and topics the signal relates to.
 - A housing town hall → tags: ["housing", "governance", "displacement"]
 
 If no thematic tags apply, return an empty tags array.
+
+## First-Hand Classification (is_firsthand)
+
+For each signal, assess whether the content describes concrete local reality or abstract political commentary.
+
+Mark is_firsthand: **true** when the content describes:
+- Concrete events, services, or gatherings at specific times and places
+- Local journalism reporting impacts on specific communities, schools, or neighborhoods
+- Community organizing with actionable details (rallies, petitions, forums, resource centers)
+- People or organizations describing what is happening in their area
+- Event listings from organizers creating community activity
+
+Mark is_firsthand: **false** when the content is:
+- Abstract political opinion with no local specificity
+- National punditry that mentions a city only in passing
+- Social media hot takes expressing a viewpoint without describing concrete local reality
+
+The question is NOT "is the author personally affected?" — a journalist reporting on school closures with specific dates, locations, and community responses is firsthand. The question IS "does this describe concrete reality in a specific place, or is it abstract political commentary?"
+
+Leave is_firsthand null when the source is a known organization or entity page — these are grounded by nature.
 
 ## IMPLIED QUERIES (optional — signal quality is always the priority)
 
@@ -1187,6 +1211,7 @@ mod tests {
             implied_queries: vec!["query 1".to_string(), "query 2".to_string()],
             resource_tags: Vec::new(),
             signal_tags: Vec::new(),
+            raw_signal_count: 0,
             rejected: Vec::new(),
             schedules: Vec::new(),
             author_actors: Vec::new(),

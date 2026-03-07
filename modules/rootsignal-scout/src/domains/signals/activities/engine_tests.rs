@@ -217,13 +217,12 @@ async fn cross_source_match_dispatches_citation_and_scoring_events() {
 }
 
 // ---------------------------------------------------------------------------
-// Same-source reencounter via dedup — freshness events
+// Same-source reencounter via dedup — no freshness events
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn same_source_reencounter_dispatches_citation_and_freshness() {
+async fn same_source_reencounter_emits_no_freshness_events() {
     let store = Arc::new(MockSignalReader::new());
-    // Pre-populate: "Community Dinner" exists at the SAME source
     store.insert_signal(
         "Community Dinner",
         NodeType::Concern,
@@ -253,14 +252,12 @@ async fn same_source_reencounter_dispatches_citation_and_freshness() {
         .await
         .unwrap();
 
-    // Reducer counted the dedup
     let state = engine.singleton::<PipelineState>();
     assert_eq!(state.stats.signals_deduplicated, 1);
 
     let names = event_names(&captured);
-    // Dedup emits CitationPublished + FreshnessConfirmed directly
-    assert!(names.contains(&"citation_published".to_string()), "expected CitationPublished, got: {names:?}");
-    assert!(names.contains(&"freshness_confirmed".to_string()), "expected FreshnessConfirmed, got: {names:?}");
+    assert!(!names.contains(&"citation_published".to_string()), "refresh should not emit CitationPublished, got: {names:?}");
+    assert!(!names.contains(&"freshness_confirmed".to_string()), "refresh should not emit FreshnessConfirmed, got: {names:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -320,9 +317,8 @@ async fn scrape_completed_dispatches_dedup_and_creation_chain() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn scrape_completed_with_existing_title_emits_freshness() {
+async fn same_source_title_match_counts_dedup_without_events() {
     let store = Arc::new(MockSignalReader::new());
-    // Pre-populate: "Community Dinner" exists at same URL
     store.insert_signal(
         "Community Dinner",
         NodeType::Concern,
@@ -353,18 +349,11 @@ async fn scrape_completed_with_existing_title_emits_freshness() {
         .unwrap();
 
     let state = engine.singleton::<PipelineState>();
-
-    // Reducer counted dedup
     assert_eq!(state.stats.signals_deduplicated, 1);
     assert_eq!(state.stats.signals_stored, 0);
 
     let names = event_names(&captured);
-
-    // FreshnessConfirmed emitted directly by dedup
-    assert!(
-        names.contains(&"freshness_confirmed".to_string()),
-        "expected FreshnessConfirmed, got: {names:?}"
-    );
+    assert!(!names.contains(&"freshness_confirmed".to_string()), "refresh should not emit FreshnessConfirmed, got: {names:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -894,10 +883,10 @@ async fn actor_location_emits_events_on_response_complete() {
         "expected ActorLocationIdentified, got: {names:?}"
     );
 
-    // EnrichmentRoleCompleted event emitted (actor_location role)
+    // ActorsLocated enrichment fact emitted
     assert!(
-        names.iter().any(|n| n.contains("enrichment_role_completed")),
-        "expected EnrichmentRoleCompleted, got: {names:?}"
+        names.iter().any(|n| n.contains("actors_located")),
+        "expected ActorsLocated, got: {names:?}"
     );
 }
 
