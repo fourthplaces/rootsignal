@@ -4,13 +4,12 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use futures::stream::{self, StreamExt};
-use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::ActorContext;
 #[cfg(test)]
 use rootsignal_common::SourceNode;
-use seesaw_core::Events;
+use seesaw_core::{Events, Logger};
 
 use crate::core::aggregate::ExtractedBatch;
 use crate::core::engine::ScoutEngineDeps;
@@ -51,6 +50,7 @@ pub(crate) async fn scrape_web_sources(
         &url_to_ck,
         actor_contexts,
         &resolution.pub_dates,
+        &Logger::new(),
     ).await;
 
     ScrapeOutput::from((resolution, fetch_result))
@@ -65,6 +65,7 @@ pub(crate) async fn fetch_and_extract(
     url_to_ck: &HashMap<String, String>,
     actor_contexts: &HashMap<String, ActorContext>,
     pub_dates: &HashMap<String, DateTime<Utc>>,
+    logger: &Logger,
 ) -> FetchExtractResult {
     if urls.is_empty() {
         return FetchExtractResult {
@@ -78,8 +79,10 @@ pub(crate) async fn fetch_and_extract(
         };
     }
 
-    let pipeline_results = fetch_pages(deps, urls).await;
-    process_results(pipeline_results, deps, source_keys, url_to_ck, actor_contexts, pub_dates).await
+    logger.info(format!("Fetching {} web pages", urls.len()));
+
+    let pipeline_results = fetch_pages(deps, urls, logger).await;
+    process_results(pipeline_results, deps, source_keys, url_to_ck, actor_contexts, pub_dates, logger).await
 }
 
 /// Fetch pages and run LLM extraction in parallel.
@@ -87,6 +90,7 @@ pub(crate) async fn fetch_and_extract(
 async fn fetch_pages(
     deps: &ScoutEngineDeps,
     urls: &[String],
+    logger: &Logger,
 ) -> Vec<(String, ScrapeOutcome, Vec<String>)> {
     let fetcher = deps.fetcher.as_ref().expect("fetcher required").clone();
     let store = deps.store.clone();
@@ -96,14 +100,18 @@ async fn fetch_pages(
         let fetcher = fetcher.clone();
         let store = store.clone();
         let extractor = extractor.clone();
+        let logger = logger.clone();
         async move {
             let clean_url = sanitize_url(&url);
 
             let (content, page_links) = match fetcher.page(&url).await {
                 Ok(p) if !p.markdown.is_empty() => (p.markdown, p.links),
-                Ok(p) => return (clean_url, ScrapeOutcome::Failed, p.links),
+                Ok(p) => {
+                    logger.warn(format!("{clean_url}: fetched but content was empty"));
+                    return (clean_url, ScrapeOutcome::Failed, p.links);
+                }
                 Err(e) => {
-                    warn!(url, error = %e, "Scrape failed");
+                    logger.warn(format!("{clean_url}: fetch failed — {e}"));
                     return (clean_url, ScrapeOutcome::Failed, Vec::new());
                 }
             };
@@ -111,12 +119,12 @@ async fn fetch_pages(
             let hash = format!("{:x}", content_hash(&content));
             match store.content_already_processed(&hash, &clean_url).await {
                 Ok(true) => {
-                    info!(url = clean_url.as_str(), "Content unchanged, skipping extraction");
+                    logger.info(format!("{clean_url}: content unchanged, skipping extraction"));
                     return (clean_url, ScrapeOutcome::Unchanged, page_links);
                 }
                 Ok(false) => {}
                 Err(e) => {
-                    warn!(url = clean_url.as_str(), error = %e, "Hash check failed, proceeding with extraction");
+                    logger.warn(format!("{clean_url}: hash check failed ({e}), proceeding with extraction"));
                 }
             }
 
@@ -134,20 +142,28 @@ async fn fetch_pages(
             );
 
             match extractor.extract(&filtered_content, &clean_url).await {
-                Ok(result) => (
-                    clean_url,
-                    ScrapeOutcome::New {
-                        content,
-                        nodes: result.nodes,
-                        resource_tags: result.resource_tags,
-                        signal_tags: result.signal_tags,
-                        author_actors: result.author_actors.into_iter().collect(),
-                        logs: result.logs,
-                    },
-                    page_links,
-                ),
+                Ok(result) => {
+                    let signal_count = result.nodes.len();
+                    if signal_count > 0 {
+                        logger.info(format!("{clean_url}: extracted {signal_count} signals"));
+                    } else {
+                        logger.info(format!("{clean_url}: no signals extracted"));
+                    }
+                    (
+                        clean_url,
+                        ScrapeOutcome::New {
+                            content,
+                            nodes: result.nodes,
+                            resource_tags: result.resource_tags,
+                            signal_tags: result.signal_tags,
+                            author_actors: result.author_actors.into_iter().collect(),
+                            logs: result.logs,
+                        },
+                        page_links,
+                    )
+                }
                 Err(e) => {
-                    warn!(url = clean_url.as_str(), error = %e, "Extraction failed");
+                    logger.warn(format!("{clean_url}: extraction failed — {e}"));
                     (clean_url, ScrapeOutcome::Failed, page_links)
                 }
             }
@@ -166,6 +182,7 @@ async fn process_results(
     url_to_ck: &HashMap<String, String>,
     actor_contexts: &HashMap<String, ActorContext>,
     pub_dates: &HashMap<String, DateTime<Utc>>,
+    logger: &Logger,
 ) -> FetchExtractResult {
     let store = deps.store.clone();
     let mut result = FetchExtractResult {
@@ -253,11 +270,11 @@ async fn process_results(
                 result.stats.urls_unchanged += 1;
                 match refresh_url_signals_events(&*store, &url, now).await {
                     Ok(events) if !events.is_empty() => {
-                        info!(url, refreshed = events.len(), "Refreshed unchanged signals");
+                        logger.info(format!("{url}: refreshed {} unchanged signals", events.len()));
                         result.events.extend(events);
                     }
                     Ok(_) => {}
-                    Err(e) => warn!(url, error = %e, "Failed to refresh signals"),
+                    Err(e) => logger.warn(format!("{url}: failed to refresh signals — {e}")),
                 }
                 result.source_signal_counts.entry(ck).or_default();
             }
@@ -266,6 +283,14 @@ async fn process_results(
             }
         }
     }
+    logger.info(format!(
+        "Web scrape complete: {} scraped, {} unchanged, {} failed, {} signals extracted, {} batches with signals",
+        result.stats.urls_scraped,
+        result.stats.urls_unchanged,
+        result.stats.urls_failed,
+        result.stats.signals_extracted,
+        result.extracted_batches.len(),
+    ));
     result
 }
 

@@ -127,6 +127,7 @@ pub mod handlers {
             &state.url_to_canonical_key,
             &state.actor_contexts,
             &state.url_to_pub_date,
+            &ctx.logger,
         ).await;
 
         let mut all_events = Events::new();
@@ -191,6 +192,7 @@ pub mod handlers {
             &social_sources,
             &state.url_to_canonical_key,
             &state.actor_contexts,
+            &ctx.logger,
         ).await;
 
         let events = social_output.take_events();
@@ -256,6 +258,7 @@ pub mod handlers {
             &state.url_to_canonical_key,
             &state.actor_contexts,
             &state.url_to_pub_date,
+            &ctx.logger,
         ).await;
 
         let mut all_events = Events::new();
@@ -320,6 +323,7 @@ pub mod handlers {
             &social_sources,
             &state.url_to_canonical_key,
             &state.actor_contexts,
+            &ctx.logger,
         ).await;
 
         let events = social_output.take_events();

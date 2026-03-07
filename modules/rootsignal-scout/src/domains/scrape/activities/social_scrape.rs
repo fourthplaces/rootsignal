@@ -6,8 +6,9 @@ use std::pin::Pin;
 
 use chrono::{DateTime, Utc};
 use futures::stream::{self, StreamExt};
-use tracing::{info, warn};
 use uuid::Uuid;
+
+use seesaw_core::Logger;
 
 use rootsignal_common::{
     scraping_strategy, ActorContext, Node, ScrapingStrategy, SocialPlatform,
@@ -28,21 +29,23 @@ pub(crate) async fn scrape_social_sources(
     social_sources: &[&SourceNode],
     url_to_canonical_key: &HashMap<String, String>,
     actor_contexts: &HashMap<String, ActorContext>,
+    logger: &Logger,
 ) -> ScrapeOutput {
         let mut output = ScrapeOutput::new();
-        type SocialResult = Option<(
-            String,
-            String,
-            SocialPlatform,
-            String,
-            Vec<Node>,
-            Vec<(Uuid, Vec<ResourceTag>)>,
-            Vec<(Uuid, Vec<String>)>,
-            HashMap<Uuid, String>,
-            usize,
-            Vec<String>,
-            Option<DateTime<Utc>>, // most recent published_at for published_at fallback
-        )>; // (canonical_key, source_url, platform, combined_text, nodes, resource_tags, signal_tags, author_actors, post_count, mentions, newest_published_at)
+
+        struct SocialFetchResult {
+            canonical_key: String,
+            source_url: String,
+            platform: SocialPlatform,
+            combined_text: String,
+            nodes: Vec<Node>,
+            resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
+            signal_tags: Vec<(Uuid, Vec<String>)>,
+            author_actors: HashMap<Uuid, String>,
+            post_count: usize,
+            mentions: Vec<String>,
+            newest_published_at: Option<DateTime<Utc>>,
+        }
 
         // Build uniform list of (canonical_key, source_url, platform, fetch_identifier) from SourceNodes
         struct SocialEntry {
@@ -121,34 +124,18 @@ pub(crate) async fn scrape_social_sources(
             ));
         }
 
-        let ig_count = accounts
+        let source_names: Vec<String> = accounts
             .iter()
-            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Instagram))
-            .count();
-        let fb_count = accounts
-            .iter()
-            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Facebook))
-            .count();
-        let reddit_count = accounts
-            .iter()
-            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Reddit))
-            .count();
-        let twitter_count = accounts
-            .iter()
-            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::Twitter))
-            .count();
-        let tiktok_count = accounts
-            .iter()
-            .filter(|(_, _, a)| matches!(a.platform, SocialPlatform::TikTok))
-            .count();
-        info!(
-            ig = ig_count,
-            fb = fb_count,
-            reddit = reddit_count,
-            twitter = twitter_count,
-            tiktok = tiktok_count,
-            "Scraping social media..."
-        );
+            .map(|(ck, _, a)| format!("{} ({})", ck, match a.platform {
+                SocialPlatform::Instagram => "ig",
+                SocialPlatform::Facebook => "fb",
+                SocialPlatform::Reddit => "reddit",
+                SocialPlatform::Twitter => "twitter",
+                SocialPlatform::TikTok => "tiktok",
+                SocialPlatform::Bluesky => "bsky",
+            }))
+            .collect();
+        logger.info(format!("Scraping {} social sources: {}", accounts.len(), source_names.join(", ")));
 
         let actor_prefixes: HashMap<String, String> = accounts
             .iter()
@@ -186,7 +173,7 @@ pub(crate) async fn scrape_social_sources(
             Only extract signals where is_firsthand is true. Reject the rest.\n\n";
 
         // Collect all futures into a single Vec<Pin<Box<...>>> so types unify
-        let mut futures: Vec<Pin<Box<dyn Future<Output = SocialResult> + Send>>> = Vec::new();
+        let mut futures: Vec<Pin<Box<dyn Future<Output = Option<SocialFetchResult>> + Send>>> = Vec::new();
 
         let fetcher = deps.fetcher.as_ref().expect("fetcher required").clone();
         let extractor = deps.extractor.as_ref().expect("extractor required").clone();
@@ -204,16 +191,18 @@ pub(crate) async fn scrape_social_sources(
             let fetcher = fetcher.clone();
             let extractor = extractor.clone();
             let identifier = account.identifier.clone();
+            let logger = logger.clone();
 
             futures.push(Box::pin(async move {
                 let posts = match fetcher.posts(&identifier, 20).await {
                     Ok(posts) => posts,
                     Err(e) => {
-                        warn!(source_url, error = %e, "Social media scrape failed");
+                        logger.warn(format!("{source_url}: fetch failed — {e}"));
                         return None;
                     }
                 };
                 let post_count = posts.len();
+                logger.info(format!("{source_url}: fetched {post_count} posts"));
 
                 let newest_published_at = posts.iter().filter_map(|p| p.published_at).max();
 
@@ -256,27 +245,28 @@ pub(crate) async fn scrape_social_sources(
                                 all_author_actors.extend(result.author_actors);
                             }
                             Err(e) => {
-                                warn!(source_url, error = %e, "Reddit extraction failed");
+                                logger.warn(format!("{source_url}: reddit batch extraction failed — {e}"));
                             }
                         }
                     }
                     if all_nodes.is_empty() {
+                        logger.info(format!("{source_url}: no signals extracted from {post_count} posts"));
                         return None;
                     }
-                    info!(source_url, posts = post_count, "Reddit scrape complete");
-                    Some((
+                    logger.info(format!("{source_url}: extracted {} signals from {post_count} posts", all_nodes.len()));
+                    Some(SocialFetchResult {
                         canonical_key,
                         source_url,
                         platform,
-                        combined_all,
-                        all_nodes,
-                        all_resource_tags,
-                        all_signal_tags,
-                        all_author_actors,
+                        combined_text: combined_all,
+                        nodes: all_nodes,
+                        resource_tags: all_resource_tags,
+                        signal_tags: all_signal_tags,
+                        author_actors: all_author_actors,
                         post_count,
-                        source_mentions,
+                        mentions: source_mentions,
                         newest_published_at,
-                    ))
+                    })
                 } else {
                     // Instagram/Facebook/Twitter/TikTok: combine all posts then extract
                     let mut combined_text: String = posts
@@ -298,24 +288,28 @@ pub(crate) async fn scrape_social_sources(
                     let result = match extractor.extract(&combined_text, &source_url).await {
                         Ok(r) => r,
                         Err(e) => {
-                            warn!(source_url, error = %e, "Social extraction failed");
+                            logger.warn(format!("{source_url}: extraction failed — {e}"));
                             return None;
                         }
                     };
-                    info!(source_url, posts = post_count, "Social scrape complete");
-                    Some((
+                    if result.nodes.is_empty() {
+                        logger.info(format!("{source_url}: no signals extracted from {post_count} posts"));
+                    } else {
+                        logger.info(format!("{source_url}: extracted {} signals from {post_count} posts", result.nodes.len()));
+                    }
+                    Some(SocialFetchResult {
                         canonical_key,
                         source_url,
                         platform,
                         combined_text,
-                        result.nodes,
-                        result.resource_tags,
-                        result.signal_tags,
-                        result.author_actors.into_iter().collect(),
+                        nodes: result.nodes,
+                        resource_tags: result.resource_tags,
+                        signal_tags: result.signal_tags,
+                        author_actors: result.author_actors.into_iter().collect(),
                         post_count,
-                        source_mentions,
+                        mentions: source_mentions,
                         newest_published_at,
-                    ))
+                    })
                 }
             }));
         }
@@ -328,10 +322,10 @@ pub(crate) async fn scrape_social_sources(
             .map(|s| (s.canonical_key.clone(), s.id))
             .collect();
         for result in results.into_iter().flatten() {
-            let (
+            let SocialFetchResult {
                 canonical_key,
                 source_url,
-                result_platform,
+                platform: result_platform,
                 combined_text,
                 mut nodes,
                 resource_tags,
@@ -340,7 +334,7 @@ pub(crate) async fn scrape_social_sources(
                 post_count,
                 mentions,
                 newest_published_at,
-            ) = result;
+            } = result;
 
             // Apply social published_at as fallback published_at when LLM didn't extract one
             if let Some(pub_at) = newest_published_at {
@@ -391,6 +385,11 @@ pub(crate) async fn scrape_social_sources(
                 });
             }
         }
+        logger.info(format!(
+            "Social scrape complete: {} posts fetched, {} batches with signals",
+            output.stats_delta.social_media_posts,
+            output.extracted_batches.len(),
+        ));
         output
     }
 
