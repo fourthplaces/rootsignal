@@ -41,9 +41,7 @@ pub enum ScrapeEvent {
         expansion_queries: Vec<String>,
         #[serde(default)]
         page_previews: HashMap<String, String>,
-        /// Extracted batches per URL — in-memory only, skipped during serialization.
-        /// On replay, deserializes as empty (correct: replay rebuilds from downstream facts).
-        #[serde(skip)]
+        #[serde(default)]
         extracted_batches: Vec<UrlExtraction>,
     },
     /// Social scrape handler completed fetch+extract for social sources.
@@ -60,7 +58,7 @@ pub enum ScrapeEvent {
         expansion_queries: Vec<String>,
         #[serde(default)]
         stats_delta: StatsDelta,
-        #[serde(skip)]
+        #[serde(default)]
         extracted_batches: Vec<UrlExtraction>,
     },
     /// Topic discovery handler completed discovery from social topics.
@@ -74,7 +72,7 @@ pub enum ScrapeEvent {
         expansion_queries: Vec<String>,
         #[serde(default)]
         stats_delta: StatsDelta,
-        #[serde(skip)]
+        #[serde(default)]
         extracted_batches: Vec<UrlExtraction>,
     },
     /// Response scrape skipped entirely (missing region or graph).

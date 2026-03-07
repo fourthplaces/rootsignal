@@ -2,15 +2,11 @@ pub mod activities;
 pub mod events;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
-use uuid::Uuid;
-
-use rootsignal_common::types::NodeType;
+use seesaw_core::{handle, handlers, Context, Events};
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::domains::signals::activities::{creation, dedup};
-use crate::domains::signals::events::SignalEvent;
+use crate::domains::signals::activities::dedup;
 use crate::domains::scrape::events::ScrapeEvent;
 
 fn is_scrape_completed(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -28,6 +24,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let extracted_batches = event.into_extracted_batches();
+
 
         if extracted_batches.is_empty() {
             return Ok(Events::new());
@@ -49,20 +46,5 @@ pub mod handlers {
         }
 
         Ok(all_events)
-    }
-
-    /// SignalCreated → wire edges (source, actor, resources, tags).
-    #[handle(on = [SignalEvent::SignalCreated], id = "signals:wire_signal_edges", extract(node_id, node_type, source_url, canonical_key))]
-    async fn wire_signal_edges(
-        node_id: Uuid,
-        node_type: NodeType,
-        source_url: String,
-        canonical_key: String,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
-        creation::wire_signal_edges(node_id, node_type, &source_url, &canonical_key, &state, deps)
-            .await
     }
 }

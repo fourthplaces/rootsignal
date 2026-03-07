@@ -18,8 +18,8 @@ pub(crate) use crate::domains::signals::activities::dedup_utils::{
     DedupVerdict,
 };
 
-/// Per-URL extraction result carried on scrape completion events (in-memory only).
-#[derive(Debug, Clone)]
+/// Per-URL extraction result carried on scrape completion events.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UrlExtraction {
     pub url: String,
     pub canonical_key: String,

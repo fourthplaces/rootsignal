@@ -2011,6 +2011,7 @@ fn get_pool<'a>(ctx: &'a Context<'a>) -> Result<&'a sqlx::PgPool> {
 
 #[derive(SimpleObject)]
 struct OutcomeSourceScraped {
+    source_id: Option<String>,
     canonical_key: String,
     url: Option<String>,
     signals_produced: u32,
@@ -2088,20 +2089,78 @@ impl ScoutRunOutcomes {
     ) -> Result<OutcomePage<OutcomeSourceScraped>> {
         let pool = get_pool(ctx)?;
         let limit = limit.unwrap_or(100).min(200) as i64;
-        let total = count_events_by_variant(pool, &self.run_id, "source_scraped")
+
+        // Build canonical_key → source_id lookup from the sources_prepared event
+        let mut key_to_id: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let prepared = list_events_by_variant(pool, &self.run_id, "sources_prepared", 1)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let rows = list_events_by_variant(pool, &self.run_id, "source_scraped", limit)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let items = rows
+        if let Some(row) = prepared.first() {
+            if let Some(sources) = row.data.pointer("/source_plan/all_sources").and_then(|v| v.as_array()) {
+                for s in sources {
+                    if let (Some(id), Some(key)) = (
+                        s.get("id").and_then(|v| v.as_str()),
+                        s.get("canonical_key").and_then(|v| v.as_str()),
+                    ) {
+                        key_to_id.insert(key.to_string(), id.to_string());
+                    }
+                }
+            }
+        }
+
+        // Derive sources scraped from scrape completion events' source_signal_counts,
+        // falling back to source_scraped system events for older runs.
+        let scrape_variants = ["web_scrape_completed", "social_scrape_completed", "topic_discovery_completed"];
+        let mut merged: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for variant in &scrape_variants {
+            let rows = list_events_by_variant(pool, &self.run_id, variant, 50)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            for r in &rows {
+                if let Some(counts) = r.data.get("source_signal_counts").and_then(|v| v.as_object()) {
+                    for (key, val) in counts {
+                        let n = val.as_u64().unwrap_or(0) as u32;
+                        *merged.entry(key.clone()).or_default() += n;
+                    }
+                }
+            }
+        }
+
+        if merged.is_empty() {
+            // Fallback: older runs that have source_scraped system events
+            let total = count_events_by_variant(pool, &self.run_id, "source_scraped")
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            let rows = list_events_by_variant(pool, &self.run_id, "source_scraped", limit)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            let items = rows
+                .into_iter()
+                .map(|r| {
+                    let key = json_str(&r.data, "canonical_key").unwrap_or_default();
+                    OutcomeSourceScraped {
+                        source_id: key_to_id.get(&key).cloned(),
+                        canonical_key: key,
+                        url: json_str(&r.data, "url"),
+                        signals_produced: json_u32(&r.data, "signals_produced").unwrap_or(0),
+                    }
+                })
+                .collect();
+            return Ok(OutcomePage { items, total });
+        }
+
+        let total = merged.len() as i64;
+        let mut items: Vec<OutcomeSourceScraped> = merged
             .into_iter()
-            .map(|r| OutcomeSourceScraped {
-                canonical_key: json_str(&r.data, "canonical_key").unwrap_or_default(),
-                url: json_str(&r.data, "url"),
-                signals_produced: json_u32(&r.data, "signals_produced").unwrap_or(0),
+            .map(|(key, count)| OutcomeSourceScraped {
+                source_id: key_to_id.get(&key).cloned(),
+                canonical_key: key,
+                url: None,
+                signals_produced: count,
             })
             .collect();
+        items.sort_by(|a, b| b.signals_produced.cmp(&a.signals_produced));
+        items.truncate(limit as usize);
         Ok(OutcomePage { items, total })
     }
 

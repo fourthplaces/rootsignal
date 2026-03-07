@@ -205,6 +205,7 @@ pub fn promote_links(links: &[CollectedLink], config: &PromotionConfig) -> Vec<S
 
 /// Build a canonical URL for a social platform handle.
 pub fn platform_url(platform: &SocialPlatform, handle: &str) -> String {
+    let handle = handle.trim().trim_end_matches('.');
     match platform {
         SocialPlatform::Instagram => format!("https://instagram.com/{handle}"),
         SocialPlatform::Facebook => format!("https://facebook.com/{handle}"),
@@ -375,6 +376,38 @@ mod tests {
         assert_eq!(
             platform_url(&SocialPlatform::Bluesky, "user.bsky.social"),
             "https://bsky.app/profile/user.bsky.social"
+        );
+    }
+
+    #[test]
+    fn platform_url_strips_trailing_period() {
+        assert_eq!(
+            platform_url(&SocialPlatform::Instagram, "maskblocmsp."),
+            "https://instagram.com/maskblocmsp"
+        );
+    }
+
+    #[test]
+    fn platform_url_strips_trailing_whitespace() {
+        assert_eq!(
+            platform_url(&SocialPlatform::Instagram, "handle "),
+            "https://instagram.com/handle"
+        );
+    }
+
+    #[test]
+    fn platform_url_strips_multiple_trailing_periods() {
+        assert_eq!(
+            platform_url(&SocialPlatform::Twitter, "user.."),
+            "https://x.com/user"
+        );
+    }
+
+    #[test]
+    fn platform_url_preserves_mid_handle_period() {
+        assert_eq!(
+            platform_url(&SocialPlatform::Instagram, "bob.smith"),
+            "https://instagram.com/bob.smith"
         );
     }
 

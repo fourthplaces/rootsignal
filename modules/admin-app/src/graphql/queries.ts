@@ -419,7 +419,7 @@ export const ADMIN_SCOUT_RUN_OUTCOMES = gql`
   query AdminScoutRunOutcomes($runId: String!) {
     adminScoutRunOutcomes(runId: $runId) {
       sourcesScraped(limit: 100) {
-        items { canonicalKey url signalsProduced }
+        items { sourceId canonicalKey url signalsProduced }
         total
       }
       signalsCreated(limit: 100) {

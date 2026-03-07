@@ -171,7 +171,11 @@ export function ScoutRunDetailPage() {
             <SectionHeader title="Sources Scraped" total={outcomes.sourcesScraped.total} />
             <OutcomeTable
               columns={[
-                { key: "canonicalKey", label: "Source", render: (v: string) => <span className="font-mono">{truncate(v, 60)}</span> },
+                { key: "canonicalKey", label: "Source", render: (v: string, row: { sourceId: string }) =>
+                  row.sourceId
+                    ? <Link to={`/scout/sources/${row.sourceId}`} className="text-blue-400 hover:underline font-mono">{truncate(v, 60)}</Link>
+                    : <span className="font-mono">{truncate(v, 60)}</span>
+                },
                 { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 50)}</ExternalLink> : null },
                 { key: "signalsProduced", label: "Signals" },
               ]}
@@ -241,7 +245,7 @@ export function ScoutRunDetailPage() {
                 columns={[
                   { key: "canonicalKey", label: "Source", render: (v: string, row: { sourceId: string }) =>
                     row.sourceId
-                      ? <Link to={`/sources/${row.sourceId}`} className="text-blue-400 hover:underline font-mono">{truncate(v, 50)}</Link>
+                      ? <Link to={`/scout/sources/${row.sourceId}`} className="text-blue-400 hover:underline font-mono">{truncate(v, 50)}</Link>
                       : <span className="font-mono">{truncate(v, 50)}</span>
                   },
                   { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },

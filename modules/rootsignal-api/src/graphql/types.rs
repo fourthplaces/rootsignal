@@ -375,6 +375,9 @@ impl GqlGatheringSignal {
     async fn published_at(&self) -> Option<DateTime<Utc>> {
         self.meta().published_at
     }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
+    }
     async fn source_diversity(&self) -> u32 {
         self.meta().source_diversity
     }
@@ -488,6 +491,9 @@ impl GqlResourceSignal {
     async fn published_at(&self) -> Option<DateTime<Utc>> {
         self.meta().published_at
     }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
+    }
     async fn source_diversity(&self) -> u32 {
         self.meta().source_diversity
     }
@@ -593,6 +599,9 @@ impl GqlHelpRequestSignal {
         self.meta().extracted_at
     }
     async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
+    }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
         self.meta().published_at
     }
     async fn source_diversity(&self) -> u32 {
@@ -701,6 +710,9 @@ impl GqlAnnouncementSignal {
     async fn published_at(&self) -> Option<DateTime<Utc>> {
         self.meta().published_at
     }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
+    }
     async fn source_diversity(&self) -> u32 {
         self.meta().source_diversity
     }
@@ -754,6 +766,9 @@ impl GqlAnnouncementSignal {
     async fn severity(&self) -> GqlSeverity {
         self.0.severity.into()
     }
+    async fn subject(&self) -> Option<&str> {
+        self.0.subject.as_deref()
+    }
     async fn effective_date(&self) -> Option<DateTime<Utc>> {
         self.0.effective_date
     }
@@ -802,6 +817,9 @@ impl GqlConcernSignal {
         self.meta().extracted_at
     }
     async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
+    }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
         self.meta().published_at
     }
     async fn source_diversity(&self) -> u32 {
@@ -913,6 +931,9 @@ impl GqlConditionSignal {
         self.meta().extracted_at
     }
     async fn published_at(&self) -> Option<DateTime<Utc>> {
+        self.meta().published_at
+    }
+    async fn content_date(&self) -> Option<DateTime<Utc>> {
         self.meta().published_at
     }
     async fn source_diversity(&self) -> u32 {

@@ -209,7 +209,6 @@ async fn signal_stored_wires_tags_and_source_link() {
 
     let events = super::creation::wire_signal_edges(
         node_id,
-        NodeType::Concern,
         "https://localorg.org/events",
         "localorg.org",
         &state,
@@ -271,7 +270,6 @@ async fn signal_stored_with_author_emits_actor_linked() {
 
     let events = super::creation::wire_signal_edges(
         node_id,
-        NodeType::Concern,
         "https://instagram.com/northsidemutualaid",
         "instagram.com/northsidemutualaid",
         &state,
@@ -326,7 +324,6 @@ async fn blank_author_name_does_not_create_actor() {
 
     let events = super::creation::wire_signal_edges(
         node_id,
-        NodeType::Concern,
         "https://example.org",
         "example.org",
         &state,
