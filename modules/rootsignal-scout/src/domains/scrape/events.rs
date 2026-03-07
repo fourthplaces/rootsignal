@@ -90,6 +90,7 @@ impl ScrapeEvent {
             Self::WebScrapeCompleted { .. }
                 | Self::SocialScrapeCompleted { .. }
                 | Self::TopicDiscoveryCompleted { .. }
+                | Self::ResponseScrapeSkipped { .. }
         )
     }
 

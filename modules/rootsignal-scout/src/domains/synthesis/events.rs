@@ -34,12 +34,16 @@ pub enum SynthesisEvent {
         run_id: Uuid,
         role: SynthesisRole,
     },
+    SynthesisCompleted {
+        run_id: Uuid,
+    },
 }
 
 impl SynthesisEvent {
     pub fn run_id(&self) -> Uuid {
         match self {
-            Self::SynthesisRoleCompleted { run_id, .. } => *run_id,
+            Self::SynthesisRoleCompleted { run_id, .. }
+            | Self::SynthesisCompleted { run_id } => *run_id,
         }
     }
 }

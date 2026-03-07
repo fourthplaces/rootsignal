@@ -51,9 +51,12 @@ fn response_done_actor_location_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngi
 }
 
 fn all_enrichment_done(e: &EnrichmentEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(e, EnrichmentEvent::EnrichmentRoleCompleted { .. }) { return false; }
+    let role = match e {
+        EnrichmentEvent::EnrichmentRoleCompleted { role } => role,
+        _ => return false,
+    };
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.completed_enrichment_roles.is_superset(&all_enrichment_roles())
+    state.enrichment_completing_role.as_ref() == Some(role)
 }
 
 fn describe_enrichment_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {

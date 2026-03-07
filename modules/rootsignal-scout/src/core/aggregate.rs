@@ -15,9 +15,9 @@ use uuid::Uuid;
 
 use crate::core::pipeline_events::PipelineEvent;
 use crate::core::run_scope::RunScope;
-use crate::domains::enrichment::events::{EnrichmentEvent, EnrichmentRole};
+use crate::domains::enrichment::events::{all_enrichment_roles, EnrichmentEvent, EnrichmentRole};
 use crate::domains::expansion::events::ExpansionEvent;
-use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
+use crate::domains::synthesis::events::{all_synthesis_roles, SynthesisEvent, SynthesisRole};
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::core::stats::ScoutStats;
 use crate::domains::discovery::events::DiscoveryEvent;
@@ -139,6 +139,14 @@ pub struct PipelineState {
     /// Whether source expansion has completed (guards against re-triggering).
     #[serde(default)]
     pub source_expansion_completed: bool,
+
+    /// Tracks which role completed each superset gate — the filter only
+    /// fires for the event whose role caused the transition, giving
+    /// exactly-once semantics even when events are batch-reduced.
+    #[serde(default)]
+    pub enrichment_completing_role: Option<EnrichmentRole>,
+    #[serde(default)]
+    pub synthesis_completing_role: Option<SynthesisRole>,
 }
 
 /// A batch of extracted nodes for a single URL, carried on scrape completion events
@@ -177,6 +185,8 @@ impl PipelineState {
             completed_synthesis_roles: HashSet::new(),
             completed_enrichment_roles: HashSet::new(),
             source_expansion_completed: false,
+            enrichment_completing_role: None,
+            synthesis_completing_role: None,
         }
     }
 
@@ -373,8 +383,13 @@ impl PipelineState {
     pub fn apply_synthesis(&mut self, event: &SynthesisEvent) {
         match event {
             SynthesisEvent::SynthesisRoleCompleted { role, .. } => {
+                let was_complete = self.completed_synthesis_roles.is_superset(&all_synthesis_roles());
                 self.completed_synthesis_roles.insert(*role);
+                if !was_complete && self.completed_synthesis_roles.is_superset(&all_synthesis_roles()) {
+                    self.synthesis_completing_role = Some(*role);
+                }
             }
+            SynthesisEvent::SynthesisCompleted { .. } => {}
         }
     }
 
@@ -402,7 +417,11 @@ impl PipelineState {
     pub fn apply_enrichment(&mut self, event: &EnrichmentEvent) {
         match event {
             EnrichmentEvent::EnrichmentRoleCompleted { role } => {
+                let was_complete = self.completed_enrichment_roles.is_superset(&all_enrichment_roles());
                 self.completed_enrichment_roles.insert(*role);
+                if !was_complete && self.completed_enrichment_roles.is_superset(&all_enrichment_roles()) {
+                    self.enrichment_completing_role = Some(*role);
+                }
             }
         }
     }

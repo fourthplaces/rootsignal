@@ -30,7 +30,7 @@ use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::{DedupOutcome, SignalEvent};
 use crate::domains::situation_weaving::events::SituationWeavingEvent;
 use crate::domains::supervisor::events::SupervisorEvent;
-use crate::domains::synthesis::events::{all_synthesis_roles, SynthesisEvent};
+use crate::domains::synthesis::events::SynthesisEvent;
 
 // Priority-0: event persistence — handled by seesaw's unified Store (PostgresStore in production).
 // Priority-1: aggregate state — handled by seesaw aggregators.
@@ -177,12 +177,9 @@ fn is_terminal_event(event: &AnyEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
     { return true; }
 
     if event.downcast_ref::<SynthesisEvent>()
-        .is_some_and(|e| matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. }))
+        .is_some_and(|e| matches!(e, SynthesisEvent::SynthesisCompleted { .. }))
     {
-        let (_, state) = ctx.singleton::<PipelineState>();
-        if state.completed_synthesis_roles.is_superset(&all_synthesis_roles()) {
-            return true;
-        }
+        return true;
     }
 
     if event.downcast_ref::<SupervisorEvent>()

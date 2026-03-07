@@ -7,10 +7,19 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use seesaw_core::AnyEvent;
+
 use crate::core::aggregate::PipelineState;
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::synthesis::events::{SynthesisEvent, SynthesisRole};
 use crate::testing::*;
+
+fn count_synthesis_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> usize {
+    captured.lock().unwrap().iter().filter(|e| {
+        e.downcast_ref::<SynthesisEvent>()
+            .is_some_and(|se| matches!(se, SynthesisEvent::SynthesisCompleted { .. }))
+    }).count()
+}
 
 #[tokio::test]
 async fn five_of_six_roles_does_not_complete_synthesis() {
@@ -74,7 +83,7 @@ async fn sixth_role_completes_all_synthesis() {
 #[tokio::test]
 async fn missing_deps_emits_all_role_completions() {
     let store = Arc::new(MockSignalReader::new());
-    let (engine, _captured, _scope) = test_engine_with_capture_for_store(
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
         None,
     );
@@ -97,5 +106,14 @@ async fn missing_deps_emits_all_role_completions() {
         state.completed_synthesis_roles.len(),
         6,
         "All 6 roles should complete (each handler emits RoleCompleted even when skipping)"
+    );
+    assert!(
+        state.synthesis_completing_role.is_some(),
+        "reducer should have recorded which role completed the set"
+    );
+    assert_eq!(
+        count_synthesis_completed(&captured),
+        1,
+        "SynthesisCompleted should fire exactly once, not per-role"
     );
 }

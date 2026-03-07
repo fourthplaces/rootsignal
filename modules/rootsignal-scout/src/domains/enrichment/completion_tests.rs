@@ -115,7 +115,7 @@ async fn missing_deps_skips_enrichment_with_immediate_role_completed() {
 }
 
 #[tokio::test]
-async fn response_scrape_skipped_does_not_trigger_enrichment() {
+async fn response_scrape_skipped_triggers_enrichment_and_metrics() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
@@ -136,11 +136,11 @@ async fn response_scrape_skipped_does_not_trigger_enrichment() {
     let state = engine.singleton::<PipelineState>();
     assert_eq!(
         state.completed_enrichment_roles.len(),
-        0,
-        "Enrichment roles should not be touched — enrichment handlers never fire on skip"
+        4,
+        "All enrichment roles should complete (with skip) when response scrape is skipped"
     );
     assert!(
-        !has_metrics_completed(&captured),
-        "MetricsCompleted should not fire — enrichment pipeline is bypassed entirely"
+        has_metrics_completed(&captured),
+        "MetricsCompleted should fire — skipped response scrape still unlocks the curiosity loop"
     );
 }

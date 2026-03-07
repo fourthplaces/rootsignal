@@ -45,7 +45,17 @@ fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngine
         return false;
     }
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.tension_scrape_done() && !state.source_expansion_completed
+    let result = state.tension_scrape_done() && !state.source_expansion_completed;
+    ctx.logger.info(&format!(
+        "expand_sources filter: has_plan={}, tension_done={}, expansion_done={}, tension_web={}, tension_social={}, result={}",
+        state.source_plan.is_some(),
+        state.tension_scrape_done(),
+        state.source_expansion_completed,
+        state.tension_web_done,
+        state.tension_social_done,
+        result,
+    ));
+    result
 }
 
 fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {

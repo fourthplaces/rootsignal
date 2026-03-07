@@ -32,9 +32,12 @@ fn is_expansion_completed(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -
 }
 
 fn all_synthesis_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !matches!(e, SynthesisEvent::SynthesisRoleCompleted { .. }) { return false; }
+    let role = match e {
+        SynthesisEvent::SynthesisRoleCompleted { role, .. } => role,
+        _ => return false,
+    };
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.completed_synthesis_roles.is_superset(&all_synthesis_roles())
+    state.synthesis_completing_role.as_ref() == Some(role)
 }
 
 fn describe_synthesis_progress(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
@@ -717,18 +720,19 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
+        let run_id = deps.run_id;
 
         let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped severity inference: missing region or graph");
-                return Ok(Events::new());
+                return Ok(events![SynthesisEvent::SynthesisCompleted { run_id }]);
             }
         };
 
         let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
-        match rootsignal_graph::severity_inference::compute_severity_inference(
+        let mut all_events = match rootsignal_graph::severity_inference::compute_severity_inference(
             graph, min_lat, max_lat, min_lng, max_lng,
         )
         .await
@@ -737,17 +741,19 @@ pub mod handlers {
                 if updated > 0 {
                     info!(updated, "Severity inference updated notices");
                 }
-                let mut all_events = Events::new();
+                let mut evts = Events::new();
                 for ev in severity_events {
-                    all_events.push(ev);
+                    evts.push(ev);
                 }
-                Ok(all_events)
+                evts
             }
             Err(e) => {
                 warn!(error = %e, "Severity inference failed (non-fatal)");
                 ctx.logger.debug(&format!("Severity inference failed: {e}"));
-                Ok(Events::new())
+                Events::new()
             }
-        }
+        };
+        all_events.push(SynthesisEvent::SynthesisCompleted { run_id });
+        Ok(all_events)
     }
 }
