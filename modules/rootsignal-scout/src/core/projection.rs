@@ -333,6 +333,8 @@ async fn project_dedup_verdicts(
                              r.id = $id,
                              r.name = $name,
                              r.description = $description,
+                             r.sensitivity = 'general',
+                             r.confidence = 1.0,
                              r.signal_count = 1,
                              r.created_at = datetime(),
                              r.last_seen = datetime()
