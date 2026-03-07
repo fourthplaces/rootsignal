@@ -15,7 +15,7 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GatheringFinderTarget, GraphReader, ResponseHeuristic};
 use rootsignal_archive::Archive;
-use crate::domains::synthesis::util::{
+use crate::domains::curiosity::util::{
     self, build_future_query_source, build_node_meta, region_bounds, HAIKU_MODEL, MAX_TOOL_TURNS,
     MAX_FUTURE_QUERIES_PER_TENSION,
 };
@@ -26,6 +26,15 @@ use rootsignal_common::events::WorldEvent;
 
 const MAX_GRAVITY_TARGETS_PER_RUN: usize = 5;
 const MAX_GATHERINGS_PER_TENSION: usize = 8;
+
+/// Result of dedup classification for a discovered gathering.
+#[derive(Debug)]
+pub enum GatheringClassification {
+    /// Genuinely new — no existing match. Contains the pre-assigned ID.
+    New { signal_id: Uuid },
+    /// Matched an existing signal in the graph.
+    Duplicate { existing_id: Uuid },
+}
 
 // =============================================================================
 // Structured output types
@@ -331,6 +340,123 @@ impl<'a> GatheringFinderDeps<'a> {
             run_id,
         }
     }
+}
+
+/// LLM investigation + structuring. Returns findings without creating nodes or events.
+pub async fn investigate_target(
+    deps: &GatheringFinderDeps<'_>,
+    target: &GatheringFinderTarget,
+) -> Result<GravityFinding> {
+    let existing = deps
+        .graph
+        .get_existing_gathering_signals(
+            target.concern_id,
+            deps.region.center_lat,
+            deps.region.center_lng,
+            deps.region.radius_km,
+        )
+        .await
+        .unwrap_or_default();
+
+    let system = investigation_system_prompt(&deps.region.name);
+    let user = investigation_user_prompt(target, &existing);
+
+    let reasoning = deps
+        .tool_agent
+        .prompt(&user)
+        .preamble(&system)
+        .temperature(0.7)
+        .multi_turn(MAX_TOOL_TURNS)
+        .send()
+        .await?;
+
+    let structuring_user = format!(
+        "Tension investigated: {} — {}\n\nInvestigation findings:\n{}",
+        target.title, target.summary, reasoning,
+    );
+
+    let finding: GravityFinding = ai_extract(deps.ai, STRUCTURING_SYSTEM, &structuring_user)
+        .await?;
+
+    Ok(finding)
+}
+
+/// Embed + dedup a discovered gathering. Returns whether it's new or a duplicate.
+pub async fn classify_gathering(
+    deps: &GatheringFinderDeps<'_>,
+    gathering: &DiscoveredGathering,
+) -> Result<GatheringClassification> {
+    let node_type = match gathering.signal_type.to_lowercase().as_str() {
+        "gathering" => NodeType::Gathering,
+        "help_request" => NodeType::HelpRequest,
+        _ => NodeType::Resource,
+    };
+
+    let embed_text = format!("{} {}", gathering.title, gathering.summary);
+    let embedding = deps.embedder.embed(&embed_text).await?;
+
+    let existing = deps
+        .graph
+        .find_duplicate(
+            &embedding,
+            node_type,
+            0.85,
+            deps.min_lat,
+            deps.max_lat,
+            deps.min_lng,
+            deps.max_lng,
+        )
+        .await;
+
+    match existing {
+        Ok(Some(dup)) => {
+            info!(
+                existing_id = %dup.id,
+                similarity = dup.similarity,
+                title = gathering.title.as_str(),
+                "Matched existing signal for gathering"
+            );
+            Ok(GatheringClassification::Duplicate {
+                existing_id: dup.id,
+            })
+        }
+        _ => {
+            if let Err(ref e) = existing {
+                warn!(error = %e, "Gathering dedup check failed, creating new");
+            }
+            Ok(GatheringClassification::New {
+                signal_id: Uuid::new_v4(),
+            })
+        }
+    }
+}
+
+/// Resolve raw tension titles to concern_ids via embedding similarity.
+pub async fn resolve_also_addresses(
+    deps: &GatheringFinderDeps<'_>,
+    also_addresses: &[String],
+) -> Vec<(Uuid, f64)> {
+    let mut edges = Vec::new();
+    for tension_title in also_addresses {
+        match util::find_best_tension_match(
+            deps.embedder, deps.graph, &deps.region, tension_title, 0.85,
+        )
+        .await
+        {
+            Ok(Some((concern_id, sim))) => {
+                edges.push((concern_id, sim));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(
+                    tension_title = tension_title.as_str(),
+                    error = %e,
+                    "Failed to resolve also_addresses tension"
+                );
+            }
+        }
+    }
+    edges
 }
 
 pub async fn find_gatherings(

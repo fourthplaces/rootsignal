@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::eventlike::Eventlike;
-use crate::types::{ChannelType, Entity, Reference};
+use crate::types::{ChannelType, Entity, NodeType, Reference};
 use crate::values::{Location, Schedule};
 
 /// A world fact — something observed in reality, independent of Root Signal's
@@ -329,5 +329,89 @@ impl WorldEvent {
     /// Deserialize a world event from a JSON payload.
     pub fn from_payload(payload: &serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(payload.clone())
+    }
+
+    pub fn signal_id(&self) -> Option<Uuid> {
+        match self {
+            Self::GatheringAnnounced { id, .. }
+            | Self::ResourceOffered { id, .. }
+            | Self::HelpRequested { id, .. }
+            | Self::AnnouncementShared { id, .. }
+            | Self::ConcernRaised { id, .. }
+            | Self::ConditionObserved { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+
+    pub fn title(&self) -> Option<&str> {
+        match self {
+            Self::GatheringAnnounced { title, .. }
+            | Self::ResourceOffered { title, .. }
+            | Self::HelpRequested { title, .. }
+            | Self::AnnouncementShared { title, .. }
+            | Self::ConcernRaised { title, .. }
+            | Self::ConditionObserved { title, .. } => Some(title),
+            _ => None,
+        }
+    }
+
+    pub fn summary(&self) -> Option<&str> {
+        match self {
+            Self::GatheringAnnounced { summary, .. }
+            | Self::ResourceOffered { summary, .. }
+            | Self::HelpRequested { summary, .. }
+            | Self::AnnouncementShared { summary, .. }
+            | Self::ConcernRaised { summary, .. }
+            | Self::ConditionObserved { summary, .. } => Some(summary),
+            _ => None,
+        }
+    }
+
+    pub fn source_url(&self) -> Option<&str> {
+        match self {
+            Self::GatheringAnnounced { source_url, .. }
+            | Self::ResourceOffered { source_url, .. }
+            | Self::HelpRequested { source_url, .. }
+            | Self::AnnouncementShared { source_url, .. }
+            | Self::ConcernRaised { source_url, .. }
+            | Self::ConditionObserved { source_url, .. } => Some(source_url),
+            _ => None,
+        }
+    }
+
+    pub fn opposing(&self) -> Option<&str> {
+        match self {
+            Self::ConcernRaised { opposing, .. } => opposing.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn is_signal(&self) -> bool {
+        self.signal_id().is_some()
+    }
+
+    pub fn node_type(&self) -> Option<NodeType> {
+        match self {
+            Self::GatheringAnnounced { .. } => Some(NodeType::Gathering),
+            Self::ResourceOffered { .. } => Some(NodeType::Resource),
+            Self::HelpRequested { .. } => Some(NodeType::HelpRequest),
+            Self::AnnouncementShared { .. } => Some(NodeType::Announcement),
+            Self::ConcernRaised { .. } => Some(NodeType::Concern),
+            Self::ConditionObserved { .. } => Some(NodeType::Condition),
+            _ => None,
+        }
+    }
+
+    /// Label for the signal variant (e.g. "Concern", "Resource").
+    pub fn node_type_label(&self) -> Option<&'static str> {
+        match self {
+            Self::GatheringAnnounced { .. } => Some("Gathering"),
+            Self::ResourceOffered { .. } => Some("Resource"),
+            Self::HelpRequested { .. } => Some("HelpRequest"),
+            Self::AnnouncementShared { .. } => Some("Announcement"),
+            Self::ConcernRaised { .. } => Some("Concern"),
+            Self::ConditionObserved { .. } => Some("Condition"),
+            _ => None,
+        }
     }
 }

@@ -27,7 +27,7 @@ use crate::core::pipeline_events::PipelineEvent;
 use crate::core::postgres_store::PostgresStore;
 use crate::core::projection;
 use crate::domains::{
-    discovery, enrichment, expansion, lifecycle, news_scanning, scrape, signals,
+    curiosity, discovery, enrichment, expansion, lifecycle, news_scanning, scrape, signals,
     situation_weaving, supervisor, synthesis,
 };
 use crate::infra::embedder::TextEmbedder;
@@ -97,7 +97,7 @@ pub type ScoutEngine = SeesawEngine;
 /// Build a scrape-chain engine: reap → schedule → scrape → enrichment →
 /// expansion → synthesis.
 ///
-/// Terminal event: last SynthesisRoleCompleted (all 6 done).
+/// Terminal event: SynthesisCompleted (Similarity + ResponseMapping done).
 /// Does NOT include situation_weaving or supervisor handlers.
 ///
 /// When `seesaw_store` is provided, it replaces the default in-memory store
@@ -124,6 +124,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
     let mut engine = seesaw_core::Engine::new(deps)
         // Aggregators — PipelineState maintained by seesaw
         .with_aggregators(pipeline_aggregators::aggregators())
+        .with_aggregators(curiosity::aggregates::curiosity_aggregators::aggregators())
         .with_handlers(signals::handlers::handlers())
         .with_handlers(lifecycle::handlers::handlers())
         .with_handlers(scrape::handlers::handlers())
@@ -131,6 +132,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
         .with_handlers(enrichment::handlers::handlers())
         .with_handlers(expansion::handlers::handlers())
         .with_handlers(synthesis::handlers::handlers())
+        .with_handlers(curiosity::handlers::handlers())
         // Surface DLQ'd handlers as events in the causal chain
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
             handler_id: info.handler_id.clone(),
@@ -192,6 +194,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
     let mut engine = seesaw_core::Engine::new(deps)
         // Aggregators — PipelineState maintained by seesaw
         .with_aggregators(pipeline_aggregators::aggregators())
+        .with_aggregators(curiosity::aggregates::curiosity_aggregators::aggregators())
         .with_handlers(signals::handlers::handlers())
         .with_handlers(lifecycle::handlers::handlers())
         .with_handlers(scrape::handlers::handlers())
@@ -199,6 +202,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
         .with_handlers(enrichment::handlers::handlers())
         .with_handlers(expansion::handlers::handlers())
         .with_handlers(synthesis::handlers::handlers())
+        .with_handlers(curiosity::handlers::handlers())
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
         // Surface DLQ'd handlers as events in the causal chain

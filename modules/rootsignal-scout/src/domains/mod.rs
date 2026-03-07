@@ -1,3 +1,4 @@
+pub mod curiosity;
 pub mod discovery;
 pub mod enrichment;
 pub mod expansion;

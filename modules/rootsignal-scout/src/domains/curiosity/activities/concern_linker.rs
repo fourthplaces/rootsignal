@@ -53,6 +53,15 @@ pub struct DiscoveredTension {
     pub explanation: String,
 }
 
+/// Result of dedup classification for a discovered tension.
+#[derive(Debug)]
+pub enum TensionClassification {
+    /// Genuinely new — no existing match. Contains the pre-assigned ID.
+    New { tension_id: Uuid },
+    /// Matched an existing concern in the graph.
+    Duplicate { existing_id: Uuid },
+}
+
 // =============================================================================
 // Stats
 // =============================================================================
@@ -404,7 +413,7 @@ impl<'a> ConcernLinker<'a> {
         (events, stats)
     }
 
-    async fn investigate_signal(
+    pub async fn investigate_signal(
         &self,
         target: &ConcernLinkerTarget,
         tension_landscape: &str,
@@ -439,6 +448,50 @@ impl<'a> ConcernLinker<'a> {
             .await?;
 
         Ok(finding)
+    }
+
+    /// Embed + dedup a discovered tension. Returns whether it's new or a duplicate.
+    pub async fn classify_tension(
+        &self,
+        tension: &DiscoveredTension,
+    ) -> Result<TensionClassification> {
+        let embed_text = format!("{} {}", tension.title, tension.summary);
+        let embedding = self.embedder.embed(&embed_text).await?;
+
+        let existing = self
+            .graph
+            .find_duplicate(
+                &embedding,
+                NodeType::Concern,
+                0.85,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
+            .await;
+
+        match existing {
+            Ok(Some(dup)) => {
+                info!(
+                    existing_id = %dup.id,
+                    similarity = dup.similarity,
+                    tension_title = tension.title.as_str(),
+                    "Matched existing tension"
+                );
+                Ok(TensionClassification::Duplicate {
+                    existing_id: dup.id,
+                })
+            }
+            _ => {
+                if let Err(ref e) = existing {
+                    warn!(error = %e, "Tension dedup check failed, creating new");
+                }
+                Ok(TensionClassification::New {
+                    tension_id: Uuid::new_v4(),
+                })
+            }
+        }
     }
 
     async fn process_tension(

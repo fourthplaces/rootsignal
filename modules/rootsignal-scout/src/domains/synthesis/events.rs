@@ -9,10 +9,6 @@ use uuid::Uuid;
 pub enum SynthesisRole {
     Similarity,
     ResponseMapping,
-    ConcernLinker,
-    ResponseFinder,
-    GatheringFinder,
-    Investigation,
 }
 
 /// All synthesis roles — used for superset completion check.
@@ -20,10 +16,6 @@ pub fn all_synthesis_roles() -> std::collections::HashSet<SynthesisRole> {
     std::collections::HashSet::from([
         SynthesisRole::Similarity,
         SynthesisRole::ResponseMapping,
-        SynthesisRole::ConcernLinker,
-        SynthesisRole::ResponseFinder,
-        SynthesisRole::GatheringFinder,
-        SynthesisRole::Investigation,
     ])
 }
 

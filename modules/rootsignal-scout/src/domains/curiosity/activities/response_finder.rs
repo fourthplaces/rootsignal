@@ -17,7 +17,7 @@ use rootsignal_common::{
 };
 use rootsignal_graph::{GraphReader, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 use rootsignal_archive::Archive;
-use crate::domains::synthesis::util::{
+use crate::domains::curiosity::util::{
     self, build_future_query_source, build_node_meta, region_bounds, HAIKU_MODEL, MAX_TOOL_TURNS,
     MAX_FUTURE_QUERIES_PER_TENSION,
 };
@@ -28,6 +28,15 @@ use crate::core::extractor::{deserialize_resource_tags, ResourceRole, ResourceTa
 
 const MAX_RESPONSE_TARGETS_PER_RUN: usize = 5;
 const MAX_RESPONSES_PER_TENSION: usize = 8;
+
+/// Result of dedup classification for a discovered response.
+#[derive(Debug)]
+pub enum ResponseClassification {
+    /// Genuinely new — no existing match. Contains the pre-assigned ID.
+    New { signal_id: Uuid },
+    /// Matched an existing signal in the graph.
+    Duplicate { existing_id: Uuid },
+}
 
 // =============================================================================
 // Structured output types
@@ -212,7 +221,7 @@ fn investigation_user_prompt(
     prompt
 }
 
-fn format_situation_context(situations: &[SituationBrief]) -> String {
+pub fn format_situation_context(situations: &[SituationBrief]) -> String {
     if situations.is_empty() {
         return String::new();
     }
@@ -337,6 +346,189 @@ impl<'a> ResponseFinder<'a> {
             })),
         ];
         (self.ai.with_tools(tools), visited)
+    }
+
+    /// LLM investigation + structuring + URL validation.
+    /// Returns validated findings without creating any nodes or events.
+    pub async fn investigate_target(
+        &self,
+        target: &ResponseFinderTarget,
+        situation_context: &str,
+    ) -> Result<ResponseFinding> {
+        let existing = self
+            .graph
+            .get_existing_responses(target.concern_id)
+            .await
+            .unwrap_or_default();
+
+        let system = investigation_system_prompt(&self.region.name);
+        let user = investigation_user_prompt(target, &existing, situation_context);
+
+        let (agent, visited_urls) = self.build_tracked_agent();
+
+        let reasoning = agent
+            .prompt(&user)
+            .preamble(&system)
+            .temperature(0.7)
+            .multi_turn(MAX_TOOL_TURNS)
+            .send()
+            .await?;
+
+        let structuring_user = format!(
+            "Tension investigated: {} — {}\n\nInvestigation findings:\n{}",
+            target.title, target.summary, reasoning,
+        );
+
+        let finding: ResponseFinding = ai_extract(self.ai, STRUCTURING_SYSTEM, &structuring_user)
+            .await?;
+
+        let visited: HashSet<String> = {
+            let guard = visited_urls.lock().unwrap_or_else(|e| e.into_inner());
+            guard.clone()
+        };
+        let validated_responses: Vec<_> = finding
+            .responses
+            .into_iter()
+            .filter(|r| {
+                if visited.contains(&r.url) {
+                    true
+                } else {
+                    warn!(
+                        url = r.url.as_str(),
+                        title = r.title.as_str(),
+                        "Dropping response with unvisited URL (possible hallucination)"
+                    );
+                    false
+                }
+            })
+            .collect();
+
+        Ok(ResponseFinding {
+            responses: validated_responses,
+            emergent_tensions: finding.emergent_tensions,
+            future_queries: finding.future_queries,
+        })
+    }
+
+    /// Embed + dedup a discovered response. Returns whether it's new or a duplicate.
+    pub async fn classify_response(
+        &self,
+        response: &DiscoveredResponse,
+    ) -> Result<ResponseClassification> {
+        let node_type = match response.signal_type.to_lowercase().as_str() {
+            "resource" => NodeType::Resource,
+            "gathering" => NodeType::Gathering,
+            "help_request" => NodeType::HelpRequest,
+            other => {
+                anyhow::bail!("Unknown signal type: {}", other);
+            }
+        };
+
+        let embed_text = format!("{} {}", response.title, response.summary);
+        let embedding = self.embedder.embed(&embed_text).await?;
+
+        let existing = self
+            .graph
+            .find_duplicate(
+                &embedding,
+                node_type,
+                0.85,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
+            .await;
+
+        match existing {
+            Ok(Some(dup)) => {
+                info!(
+                    existing_id = %dup.id,
+                    similarity = dup.similarity,
+                    title = response.title.as_str(),
+                    "Matched existing signal for response"
+                );
+                Ok(ResponseClassification::Duplicate {
+                    existing_id: dup.id,
+                })
+            }
+            _ => {
+                if let Err(ref e) = existing {
+                    warn!(error = %e, "Response dedup check failed, creating new");
+                }
+                Ok(ResponseClassification::New {
+                    signal_id: Uuid::new_v4(),
+                })
+            }
+        }
+    }
+
+    /// Embed + dedup an emergent tension. Returns Some(tension_id) if new, None if duplicate.
+    pub async fn classify_emergent_tension(
+        &self,
+        tension: &EmergentTension,
+    ) -> Result<Option<Uuid>> {
+        let embed_text = format!("{} {}", tension.title, tension.summary);
+        let embedding = self.embedder.embed(&embed_text).await?;
+
+        let existing = self
+            .graph
+            .find_duplicate(
+                &embedding,
+                NodeType::Concern,
+                0.85,
+                self.min_lat,
+                self.max_lat,
+                self.min_lng,
+                self.max_lng,
+            )
+            .await;
+
+        match existing {
+            Ok(Some(dup)) => {
+                info!(
+                    existing_id = %dup.id,
+                    similarity = dup.similarity,
+                    title = tension.title.as_str(),
+                    "Emergent tension matched existing"
+                );
+                Ok(None)
+            }
+            _ => {
+                if let Err(ref e) = existing {
+                    warn!(error = %e, "Emergent tension dedup check failed, creating new");
+                }
+                Ok(Some(Uuid::new_v4()))
+            }
+        }
+    }
+
+    /// Resolve raw tension titles to concern_ids via embedding similarity.
+    pub async fn resolve_also_addresses(
+        &self,
+        also_addresses: &[String],
+    ) -> Vec<(Uuid, f64)> {
+        let mut edges = Vec::new();
+        for tension_title in also_addresses {
+            match util::find_best_tension_match(
+                self.embedder, self.graph, &self.region, tension_title, 0.85,
+            )
+            .await
+            {
+                Ok(Some((concern_id, sim))) => {
+                    edges.push((concern_id, sim));
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!(
+                        tension_title = tension_title.as_str(),
+                        error = %e,
+                        "Failed to resolve also_addresses tension"
+                    );
+                }
+            }
+        }
+        edges
     }
 
     pub async fn run(&self, events: &mut seesaw_core::Events) -> (ResponseFinderStats, Vec<SourceNode>) {

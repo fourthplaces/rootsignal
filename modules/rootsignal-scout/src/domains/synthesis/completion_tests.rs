@@ -22,7 +22,7 @@ fn count_synthesis_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) ->
 }
 
 #[tokio::test]
-async fn five_of_six_roles_does_not_complete_synthesis() {
+async fn one_of_two_roles_does_not_complete_synthesis() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, _captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
@@ -30,28 +30,22 @@ async fn five_of_six_roles_does_not_complete_synthesis() {
     );
 
     let run_id = Uuid::new_v4();
-    let five_roles = [
-        SynthesisRole::Similarity,
-        SynthesisRole::ResponseMapping,
-        SynthesisRole::ConcernLinker,
-        SynthesisRole::ResponseFinder,
-        SynthesisRole::GatheringFinder,
-    ];
-
-    for role in five_roles {
-        engine
-            .emit(SynthesisEvent::SynthesisRoleCompleted { run_id, role })
-            .settled()
-            .await
-            .unwrap();
-    }
+    engine
+        .emit(SynthesisEvent::SynthesisRoleCompleted {
+            run_id,
+            role: SynthesisRole::Similarity,
+        })
+        .settled()
+        .await
+        .unwrap();
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(state.completed_synthesis_roles.len(), 5);
+    assert_eq!(state.completed_synthesis_roles.len(), 1);
+    assert!(state.synthesis_completing_role.is_none());
 }
 
 #[tokio::test]
-async fn sixth_role_completes_all_synthesis() {
+async fn second_role_completes_all_synthesis() {
     let store = Arc::new(MockSignalReader::new());
     let (engine, _captured, _scope) = test_engine_with_capture_for_store(
         store as Arc<dyn crate::traits::SignalReader>,
@@ -62,10 +56,6 @@ async fn sixth_role_completes_all_synthesis() {
     let all_roles = [
         SynthesisRole::Similarity,
         SynthesisRole::ResponseMapping,
-        SynthesisRole::ConcernLinker,
-        SynthesisRole::ResponseFinder,
-        SynthesisRole::GatheringFinder,
-        SynthesisRole::Investigation,
     ];
 
     for role in all_roles {
@@ -77,7 +67,7 @@ async fn sixth_role_completes_all_synthesis() {
     }
 
     let state = engine.singleton::<PipelineState>();
-    assert_eq!(state.completed_synthesis_roles.len(), 6);
+    assert_eq!(state.completed_synthesis_roles.len(), 2);
 }
 
 #[tokio::test]
@@ -88,7 +78,7 @@ async fn missing_deps_emits_all_role_completions() {
         None,
     );
 
-    // ExpansionCompleted triggers all 6 synthesis role handlers
+    // ExpansionCompleted triggers both synthesis role handlers
     engine
         .emit(ExpansionEvent::ExpansionCompleted {
             social_expansion_topics: Vec::new(),
@@ -104,8 +94,8 @@ async fn missing_deps_emits_all_role_completions() {
     let state = engine.singleton::<PipelineState>();
     assert_eq!(
         state.completed_synthesis_roles.len(),
-        6,
-        "All 6 roles should complete (each handler emits RoleCompleted even when skipping)"
+        2,
+        "Both roles should complete (each handler emits RoleCompleted even when skipping)"
     );
     assert!(
         state.synthesis_completing_role.is_some(),
