@@ -43,6 +43,7 @@ pub mod handlers {
         let extracted_batches = event.into_extracted_batches();
 
         if extracted_batches.is_empty() {
+            ctx.logger.debug("No extracted batches, emitting NoNewSignals");
             return Ok(events![SignalEvent::NoNewSignals]);
         }
 
@@ -50,6 +51,9 @@ pub mod handlers {
         let (_, state) = ctx.singleton::<PipelineState>();
         let mut all_events = Events::new();
         let mut has_created = false;
+        let mut total_created = 0u32;
+        let mut total_corroborated = 0u32;
+        let mut total_refreshed = 0u32;
 
         for extraction in &extracted_batches {
             let result = dedup::deduplicate_extracted_batch(
@@ -60,6 +64,11 @@ pub mod handlers {
                 deps,
             ).await?;
 
+            total_created += result.created.len() as u32;
+            total_corroborated += result.corroborations.len() as u32;
+            total_refreshed += result.verdicts.iter()
+                .filter(|v| matches!(v, crate::domains::signals::events::DedupOutcome::Refreshed { .. }))
+                .count() as u32;
             has_created = has_created || !result.created.is_empty();
 
             // Created signals: world fact + system classifications + citation
@@ -127,6 +136,11 @@ pub mod handlers {
                 verdicts: result.verdicts,
             });
         }
+
+        ctx.logger.info(&format!(
+            "Dedup: {} created, {} corroborated, {} refreshed from {} batches",
+            total_created, total_corroborated, total_refreshed, extracted_batches.len(),
+        ));
 
         if !has_created {
             all_events.push(SignalEvent::NoNewSignals);

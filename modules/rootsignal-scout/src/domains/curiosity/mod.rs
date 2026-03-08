@@ -8,7 +8,6 @@ use anyhow::Result;
 use chrono::Utc;
 use seesaw_core::{handle, handlers, Context, Events};
 use tracing::{info, warn};
-use uuid::Uuid;
 
 use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
@@ -31,9 +30,11 @@ use crate::domains::curiosity::activities::response_finder::{
 };
 use crate::domains::curiosity::aggregates::{ConcernLifecycle, SignalLifecycle};
 use crate::domains::curiosity::events::{CuriosityEvent, ResolvedEdge};
+use crate::domains::curiosity::materializer::ConcernEdge;
 use crate::domains::curiosity::util::build_future_query_source;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::scheduling::activities::budget::OperationCost;
+use crate::store::event_sourced::{node_system_events, node_to_world_event};
 
 const MAX_TENSIONS_PER_SIGNAL: usize = 3;
 const MAX_RESPONSES_PER_CONCERN: usize = 8;
@@ -77,6 +78,26 @@ fn concern_not_gathering_scouted(e: &WorldEvent, ctx: &Context<ScoutEngineDeps>)
 
 fn is_curiosity_discovery(e: &CuriosityEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     e.is_discovery()
+}
+
+fn emit_concern_edge(out: &mut Events, edge: ConcernEdge) {
+    if edge.is_gravity {
+        out.push(SystemEvent::ConcernLinked {
+            signal_id: edge.signal_id,
+            concern_id: edge.concern_id,
+            strength: edge.strength,
+            explanation: edge.explanation,
+            source_url: None,
+        });
+    } else {
+        out.push(SystemEvent::ResponseLinked {
+            signal_id: edge.signal_id,
+            concern_id: edge.concern_id,
+            strength: edge.strength,
+            explanation: edge.explanation,
+            source_url: None,
+        });
+    }
 }
 
 #[handlers]
@@ -133,8 +154,37 @@ pub mod handlers {
 
         let ai = deps.ai.as_ref().expect("ai required for investigation");
         let investigator = Investigator::new(graph, archive, ai.as_ref(), region);
-        let (target_events, _stats) = investigator.investigate_single_signal(&target).await;
-        out.extend(target_events);
+        let result = investigator.investigate_single_signal(&target).await;
+
+        // Evidence citations
+        for ev in result.evidence {
+            out.push(WorldEvent::CitationPublished {
+                citation_id: ev.citation_id,
+                signal_id: ev.signal_id,
+                url: ev.source_url,
+                content_hash: ev.content_hash,
+                snippet: ev.snippet,
+                relevance: ev.relevance,
+                channel_type: ev.channel_type,
+                evidence_confidence: ev.evidence_confidence,
+            });
+        }
+
+        // Confidence revision
+        if let Some(rev) = result.confidence_revision {
+            out.push(SystemEvent::ConfidenceScored {
+                signal_id: rev.signal_id,
+                old_confidence: rev.old_confidence,
+                new_confidence: rev.new_confidence,
+            });
+        }
+
+        // Always mark investigated
+        out.push(SystemEvent::SignalInvestigated {
+            signal_id: target.signal_id,
+            node_type: target.node_type,
+            investigated_at: Utc::now(),
+        });
 
         out.push(CuriosityEvent::SignalInvestigated { signal_id });
         Ok(out)
@@ -201,7 +251,6 @@ pub mod handlers {
             deps.run_id.to_string(),
         );
 
-        // Load landscapes for LLM context
         let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
         let tension_landscape = match graph
@@ -257,7 +306,6 @@ pub mod handlers {
             }
         };
 
-        // Phase 1: LLM investigation
         let outcome = match cl
             .investigate_signal(&target, &tension_landscape, &situation_landscape)
             .await
@@ -271,7 +319,6 @@ pub mod handlers {
                     );
                     ConcernLinkerOutcome::Skipped
                 } else {
-                    // Phase 2: classify + emit for each tension
                     let mut any_failed = false;
                     for tension in finding.tensions.into_iter().take(MAX_TENSIONS_PER_SIGNAL) {
                         match cl.classify_tension(&tension).await {
@@ -400,7 +447,6 @@ pub mod handlers {
             deps.run_id.to_string(),
         );
 
-        // Load situation landscape for response gap analysis
         let situation_context = match graph.get_situation_landscape(15).await {
             Ok(situations) => response_finder::format_situation_context(&situations),
             Err(e) => {
@@ -422,7 +468,6 @@ pub mod handlers {
             }
         };
 
-        // Classify each response
         for response in finding.responses.into_iter().take(MAX_RESPONSES_PER_CONCERN) {
             match rf.classify_response(&response).await {
                 Ok(ResponseClassification::New { signal_id }) => {
@@ -480,7 +525,6 @@ pub mod handlers {
             }
         }
 
-        // Classify emergent tensions
         for tension in &finding.emergent_tensions {
             match rf.classify_emergent_tension(tension).await {
                 Ok(Some(tension_id)) => {
@@ -505,7 +549,6 @@ pub mod handlers {
             }
         }
 
-        // Future query sources
         let sources: Vec<_> = finding
             .future_queries
             .iter()
@@ -606,7 +649,6 @@ pub mod handlers {
             }
         };
 
-        // Handle no_gravity early termination
         if finding.no_gravity {
             info!(
                 concern_id = %concern_id,
@@ -631,14 +673,9 @@ pub mod handlers {
             return Ok(out);
         }
 
-        let mut found_any = false;
-
-        // Classify each gathering
         for gathering in finding.gatherings.into_iter().take(MAX_GATHERINGS_PER_CONCERN) {
             match gathering_finder::classify_gathering(&gf_deps, &gathering).await {
                 Ok(GatheringClassification::New { signal_id }) => {
-                    found_any = true;
-
                     let also_addresses: Vec<ResolvedEdge> = gathering_finder::resolve_also_addresses(
                         &gf_deps,
                         &gathering.also_addresses,
@@ -676,8 +713,6 @@ pub mod handlers {
                     });
                 }
                 Ok(GatheringClassification::Duplicate { existing_id }) => {
-                    found_any = true;
-
                     out.push(SystemEvent::ConcernLinked {
                         signal_id: existing_id,
                         concern_id,
@@ -702,7 +737,6 @@ pub mod handlers {
             }
         }
 
-        // Future query sources
         let sources: Vec<_> = finding
             .future_queries
             .iter()
@@ -732,6 +766,64 @@ pub mod handlers {
         event: CuriosityEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        materializer::materialize(event, &ctx).await
+        let (_, state) = ctx.singleton::<PipelineState>();
+        let region = state.run_scope.region();
+
+        let result = match materializer::materialize(event, region) {
+            Some(r) => r,
+            None => return Ok(Events::new()),
+        };
+
+        let mut out = Events::new();
+
+        // World fact + system classifications
+        out.push(node_to_world_event(&result.node));
+        for sys in node_system_events(&result.node) {
+            out.push(sys);
+        }
+
+        // Concern edges (responds-to or drawn-to)
+        for edge in result.concern_edges {
+            emit_concern_edge(&mut out, edge);
+        }
+
+        // Resource edges
+        for res in result.resources {
+            out.push(WorldEvent::ResourceIdentified {
+                resource_id: uuid::Uuid::new_v4(),
+                name: res.name,
+                slug: res.slug.clone(),
+                description: res.description,
+            });
+            out.push(WorldEvent::ResourceLinked {
+                signal_id: res.signal_id,
+                resource_slug: res.slug,
+                role: res.role,
+                confidence: res.confidence,
+                quantity: res.quantity,
+                notes: None,
+                capacity: res.capacity,
+            });
+        }
+
+        // Venue edges
+        if let Some(venue) = result.venue {
+            if let Some(r) = region {
+                out.push(SystemEvent::PlaceDiscovered {
+                    place_id: uuid::Uuid::new_v4(),
+                    name: venue.name,
+                    slug: venue.slug.clone(),
+                    lat: r.center_lat,
+                    lng: r.center_lng,
+                    discovered_at: Utc::now(),
+                });
+            }
+            out.push(SystemEvent::GathersAtPlaceLinked {
+                signal_id: venue.signal_id,
+                place_slug: venue.slug,
+            });
+        }
+
+        Ok(out)
     }
 }

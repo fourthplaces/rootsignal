@@ -1,33 +1,66 @@
-use anyhow::Result;
 use chrono::Utc;
-use seesaw_core::{Context, Events};
 use tracing::info;
 use uuid::Uuid;
 
-use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::{
     ConcernNode, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode, Node, NodeMeta,
     ResourceOfferNode, ReviewStatus, ScoutScope, Severity, SensitivityLevel, Urgency,
 };
 
-use crate::core::aggregate::PipelineState;
-use crate::core::engine::ScoutEngineDeps;
 use crate::core::extractor::{ResourceRole, ResourceTag};
 use crate::domains::curiosity::events::{CuriosityEvent, ResolvedEdge};
-use crate::store::event_sourced::{node_system_events, node_to_world_event};
 
-/// Materialize a discovery event into a WorldEvent + system events.
+// ---------------------------------------------------------------------------
+// Domain types returned by the materializer
+// ---------------------------------------------------------------------------
+
+/// A materialized signal node with its graph edges.
+pub struct MaterializedNode {
+    pub node: Node,
+    pub concern_edges: Vec<ConcernEdge>,
+    pub resources: Vec<MaterializedResource>,
+    pub venue: Option<VenueLink>,
+}
+
+/// An edge linking a signal to a concern (either responds-to or drawn-to).
+pub struct ConcernEdge {
+    pub signal_id: Uuid,
+    pub concern_id: Uuid,
+    pub strength: f64,
+    pub explanation: String,
+    pub is_gravity: bool,
+}
+
+/// A resource tag ready for event emission (pre-filtered, slug computed).
+pub struct MaterializedResource {
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+    pub signal_id: Uuid,
+    pub role: String,
+    pub confidence: f32,
+    pub quantity: Option<String>,
+    pub capacity: Option<String>,
+}
+
+/// A venue linked to a gathering signal.
+pub struct VenueLink {
+    pub signal_id: Uuid,
+    pub name: String,
+    pub slug: String,
+}
+
+// ---------------------------------------------------------------------------
+// Materializer: CuriosityEvent → domain types
+// ---------------------------------------------------------------------------
+
+/// Convert a discovery event into a materialized node with edges.
 ///
-/// Fires during RECURSE phase — the reducer has already marked the discovered
-/// entity's lifecycle (concern_linked, investigated) during REDUCE, preventing
-/// curiosity handlers from re-processing the materialized signal.
-pub async fn materialize(
+/// Returns None for non-discovery events (shouldn't happen due to handler filter).
+pub fn materialize(
     event: CuriosityEvent,
-    ctx: &Context<ScoutEngineDeps>,
-) -> Result<Events> {
-    let (_, state) = ctx.singleton::<PipelineState>();
-    let region = state.run_scope.region();
-
+    region: Option<&ScoutScope>,
+) -> Option<MaterializedNode> {
     match event {
         CuriosityEvent::TensionDiscovered {
             tension_id,
@@ -51,18 +84,22 @@ pub async fn materialize(
                 opposing: Some(opposing),
             });
 
-            let mut out = emit_node(&node);
-
-            out.push(SystemEvent::ResponseLinked {
+            let concern_edges = vec![ConcernEdge {
                 signal_id: parent_signal_id,
                 concern_id: tension_id,
                 strength: match_strength.clamp(0.0, 1.0),
                 explanation,
-                source_url: None,
-            });
+                is_gravity: false,
+            }];
 
             info!(tension_id = %tension_id, title = title.as_str(), "Materialized tension");
-            Ok(out)
+
+            Some(MaterializedNode {
+                node,
+                concern_edges,
+                resources: vec![],
+                venue: None,
+            })
         }
 
         CuriosityEvent::SignalDiscovered {
@@ -122,19 +159,33 @@ pub async fn materialize(
                 }),
             };
 
-            let mut out = emit_node(&node);
-
-            emit_concern_edge(&mut out, signal_id, parent_concern_id, match_strength, &explanation, is_gravity);
+            let mut concern_edges = vec![ConcernEdge {
+                signal_id,
+                concern_id: parent_concern_id,
+                strength: match_strength.clamp(0.0, 1.0),
+                explanation,
+                is_gravity,
+            }];
 
             for edge in &also_addresses {
-                emit_concern_edge(&mut out, signal_id, edge.concern_id, edge.similarity, "also addresses", is_gravity);
+                concern_edges.push(ConcernEdge {
+                    signal_id,
+                    concern_id: edge.concern_id,
+                    strength: edge.similarity.clamp(0.0, 1.0),
+                    explanation: "also addresses".to_string(),
+                    is_gravity,
+                });
             }
 
-            emit_resource_edges(&mut out, signal_id, &resources);
+            let materialized_resources = materialize_resources(signal_id, &resources);
 
-            if let Some(ref venue) = venue {
-                emit_place_edges(&mut out, signal_id, venue, region);
-            }
+            let venue_link = venue.as_deref()
+                .filter(|v| !v.is_empty())
+                .map(|v| VenueLink {
+                    signal_id,
+                    name: v.to_string(),
+                    slug: rootsignal_common::slugify(v),
+                });
 
             info!(
                 signal_id = %signal_id,
@@ -143,7 +194,13 @@ pub async fn materialize(
                 is_gravity,
                 "Materialized response"
             );
-            Ok(out)
+
+            Some(MaterializedNode {
+                node,
+                concern_edges,
+                resources: materialized_resources,
+                venue: venue_link,
+            })
         }
 
         CuriosityEvent::EmergentTensionDiscovered {
@@ -165,13 +222,17 @@ pub async fn materialize(
                 opposing: Some(opposing),
             });
 
-            let out = emit_node(&node);
-
             info!(tension_id = %tension_id, title = title.as_str(), "Materialized emergent tension (confidence 0.4)");
-            Ok(out)
+
+            Some(MaterializedNode {
+                node,
+                concern_edges: vec![],
+                resources: vec![],
+                venue: None,
+            })
         }
 
-        _ => Ok(Events::new()),
+        _ => None,
     }
 }
 
@@ -179,101 +240,31 @@ pub async fn materialize(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn emit_node(node: &Node) -> Events {
-    let mut out = Events::new();
-    out.push(node_to_world_event(node));
-    for se in node_system_events(node) {
-        out.push(se);
-    }
-    out
-}
+fn materialize_resources(signal_id: Uuid, resources: &[ResourceTag]) -> Vec<MaterializedResource> {
+    resources
+        .iter()
+        .filter(|t| t.confidence >= 0.3)
+        .map(|tag| {
+            let slug = rootsignal_common::slugify(&tag.slug);
+            let description = tag.context.as_deref().unwrap_or("").to_string();
+            let (quantity, capacity) = match tag.role {
+                ResourceRole::Requires => (tag.context.clone(), None),
+                ResourceRole::Prefers => (None, None),
+                ResourceRole::Offers => (None, tag.context.clone()),
+            };
 
-fn emit_concern_edge(
-    out: &mut Events,
-    signal_id: Uuid,
-    concern_id: Uuid,
-    strength: f64,
-    explanation: &str,
-    is_gravity: bool,
-) {
-    let strength = strength.clamp(0.0, 1.0);
-    if is_gravity {
-        out.push(SystemEvent::ConcernLinked {
-            signal_id,
-            concern_id,
-            strength,
-            explanation: explanation.to_string(),
-            source_url: None,
-        });
-    } else {
-        out.push(SystemEvent::ResponseLinked {
-            signal_id,
-            concern_id,
-            strength,
-            explanation: explanation.to_string(),
-            source_url: None,
-        });
-    }
-}
-
-fn emit_resource_edges(out: &mut Events, signal_id: Uuid, resources: &[ResourceTag]) {
-    for tag in resources.iter().filter(|t| t.confidence >= 0.3) {
-        let slug = rootsignal_common::slugify(&tag.slug);
-        let description = tag.context.as_deref().unwrap_or("");
-
-        out.push(WorldEvent::ResourceIdentified {
-            resource_id: Uuid::new_v4(),
-            name: tag.slug.clone(),
-            slug: slug.clone(),
-            description: description.to_string(),
-        });
-
-        let confidence = tag.confidence.clamp(0.0, 1.0) as f32;
-        let (quantity, capacity) = match tag.role {
-            ResourceRole::Requires => (tag.context.clone(), None),
-            ResourceRole::Prefers => (None, None),
-            ResourceRole::Offers => (None, tag.context.clone()),
-        };
-
-        out.push(WorldEvent::ResourceLinked {
-            signal_id,
-            resource_slug: slug,
-            role: tag.role.to_string(),
-            confidence,
-            quantity,
-            notes: None,
-            capacity,
-        });
-    }
-}
-
-fn emit_place_edges(
-    out: &mut Events,
-    signal_id: Uuid,
-    venue: &str,
-    region: Option<&ScoutScope>,
-) {
-    if venue.is_empty() {
-        return;
-    }
-
-    let slug = rootsignal_common::slugify(venue);
-
-    if let Some(r) = region {
-        out.push(SystemEvent::PlaceDiscovered {
-            place_id: Uuid::new_v4(),
-            name: venue.to_string(),
-            slug: slug.clone(),
-            lat: r.center_lat,
-            lng: r.center_lng,
-            discovered_at: Utc::now(),
-        });
-    }
-
-    out.push(SystemEvent::GathersAtPlaceLinked {
-        signal_id,
-        place_slug: slug,
-    });
+            MaterializedResource {
+                name: tag.slug.clone(),
+                slug,
+                description,
+                signal_id,
+                role: tag.role.to_string(),
+                confidence: tag.confidence.clamp(0.0, 1.0) as f32,
+                quantity,
+                capacity,
+            }
+        })
+        .collect()
 }
 
 fn parse_severity(s: &str) -> Severity {
