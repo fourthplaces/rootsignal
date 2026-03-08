@@ -18,6 +18,7 @@ use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::testing::*;
 use chrono::Utc;
 use uuid::Uuid;
+use rootsignal_common::canonical_value;
 use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
 use seesaw_core::AnyEvent;
@@ -246,7 +247,7 @@ async fn same_source_reencounter_emits_no_freshness_events() {
     engine
         .emit(scrape_completed_with_batch(
             "https://example.org/events",
-            "example.org",
+            &canonical_value("https://example.org/events"),
             batch,
         ))
         .settled()
