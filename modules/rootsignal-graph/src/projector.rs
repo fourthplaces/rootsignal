@@ -190,7 +190,12 @@ impl GraphProjector {
                          s.quality_penalty = 1.0,
                          s.source_role = $source_role,
                          s.scrape_count = 0,
-                         s.sources_discovered = 0
+                         s.sources_discovered = 0,
+                         s.cw_page = $cw_page,
+                         s.cw_feed = $cw_feed,
+                         s.cw_media = $cw_media,
+                         s.cw_discussion = $cw_discussion,
+                         s.cw_events = $cw_events
                      ON MATCH SET
                          s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                          s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END",
@@ -203,7 +208,12 @@ impl GraphProjector {
                 .param("ts", format_dt_from_stored(event))
                 .param("weight", s.weight)
                 .param("source_role", s.source_role.to_string())
-                .param("gap_context", s.gap_context.clone().unwrap_or_default());
+                .param("gap_context", s.gap_context.clone().unwrap_or_default())
+                .param("cw_page", s.channel_weights.page)
+                .param("cw_feed", s.channel_weights.feed)
+                .param("cw_media", s.channel_weights.media)
+                .param("cw_discussion", s.channel_weights.discussion)
+                .param("cw_events", s.channel_weights.events);
 
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -1959,7 +1969,12 @@ impl GraphProjector {
                              s.quality_penalty = 1.0,
                              s.source_role = $source_role,
                              s.scrape_count = 0,
-                             s.sources_discovered = 0
+                             s.sources_discovered = 0,
+                             s.cw_page = $cw_page,
+                             s.cw_feed = $cw_feed,
+                             s.cw_media = $cw_media,
+                             s.cw_discussion = $cw_discussion,
+                             s.cw_events = $cw_events
                          ON MATCH SET
                              s.active = CASE WHEN s.active = false AND $discovery_method = 'curated' THEN true ELSE s.active END,
                              s.url = CASE WHEN $url <> '' THEN $url ELSE s.url END"
@@ -1972,7 +1987,12 @@ impl GraphProjector {
                     .param("ts", ts.as_str())
                     .param("weight", source.weight)
                     .param("source_role", source.source_role.to_string())
-                    .param("gap_context", source.gap_context.unwrap_or_default());
+                    .param("gap_context", source.gap_context.clone().unwrap_or_default())
+                    .param("cw_page", source.channel_weights.page)
+                    .param("cw_feed", source.channel_weights.feed)
+                    .param("cw_media", source.channel_weights.media)
+                    .param("cw_discussion", source.channel_weights.discussion)
+                    .param("cw_events", source.channel_weights.events);
 
                     self.client.run(q).await?;
 
@@ -2032,6 +2052,16 @@ impl GraphProjector {
                                 .param("value", hours as i64);
                             self.client.run(q).await?;
                         }
+                    }
+                    SourceChange::ChannelWeight { channel, new, .. } => {
+                        let prop = format!("cw_{channel}");
+                        let cypher = format!(
+                            "MATCH (s:Source {{canonical_key: $key}}) SET s.{prop} = $value"
+                        );
+                        let q = query(&cypher)
+                            .param("key", key)
+                            .param("value", new);
+                        self.client.run(q).await?;
                     }
                 }
                 Ok(ApplyResult::Applied)

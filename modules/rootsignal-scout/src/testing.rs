@@ -20,7 +20,7 @@ use rootsignal_common::canonical_value;
 use rootsignal_common::safety::SensitivityLevel;
 use rootsignal_common::types::{
     ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeMeta,
-    NodeType, Post, ReviewStatus, ScoutScope, SourceNode,
+    NodeType, Post, ReviewStatus, ScoutScope, ShortVideo, SourceNode, Story,
 };
 use rootsignal_graph::DuplicateMatch;
 
@@ -50,6 +50,8 @@ pub struct MockFetcher {
     searches: HashMap<String, ArchivedSearchResults>,
     topic_searches: HashMap<String, Vec<Post>>,
     site_searches: HashMap<String, ArchivedSearchResults>,
+    stories: HashMap<String, Vec<Story>>,
+    short_videos: HashMap<String, Vec<ShortVideo>>,
 }
 
 impl MockFetcher {
@@ -61,6 +63,8 @@ impl MockFetcher {
             searches: HashMap::new(),
             topic_searches: HashMap::new(),
             site_searches: HashMap::new(),
+            stories: HashMap::new(),
+            short_videos: HashMap::new(),
         }
     }
 
@@ -93,6 +97,18 @@ impl MockFetcher {
     #[allow(dead_code)] // scaffolding for future site search tests
     pub fn on_site_search(mut self, query: &str, results: ArchivedSearchResults) -> Self {
         self.site_searches.insert(query.to_string(), results);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn on_stories(mut self, identifier: &str, stories: Vec<Story>) -> Self {
+        self.stories.insert(identifier.to_string(), stories);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn on_short_videos(mut self, identifier: &str, videos: Vec<ShortVideo>) -> Self {
+        self.short_videos.insert(identifier.to_string(), videos);
         self
     }
 }
@@ -146,6 +162,20 @@ impl ContentFetcher for MockFetcher {
             .get(query)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("MockFetcher: no site search registered for {query}"))
+    }
+
+    async fn stories(&self, identifier: &str) -> Result<Vec<Story>> {
+        self.stories
+            .get(identifier)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("MockFetcher: no stories registered for {identifier}"))
+    }
+
+    async fn short_videos(&self, identifier: &str, _limit: u32) -> Result<Vec<ShortVideo>> {
+        self.short_videos
+            .get(identifier)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("MockFetcher: no short videos registered for {identifier}"))
     }
 }
 
@@ -1457,6 +1487,39 @@ pub fn sources_prepared_event(include_social: bool) -> crate::domains::lifecycle
     }
 }
 
+/// Build SourcesPrepared with actual web_urls so `start_web_scrape` fetches pages.
+///
+/// The URL must match whatever MockFetcher/MockExtractor are registered for.
+pub fn sources_prepared_with_web_urls(url: &str) -> crate::domains::lifecycle::events::LifecycleEvent {
+    use crate::core::aggregate::SourcePlan;
+
+    let web = page_source(url);
+    let plan = SourcePlan {
+        all_sources: vec![web.clone()],
+        selected_sources: vec![web.clone()],
+        tension_phase_keys: HashSet::from([web.canonical_key.clone()]),
+        response_phase_keys: HashSet::new(),
+        selected_keys: HashSet::new(),
+        consumed_pin_ids: Vec::new(),
+    };
+
+    let mut web_source_keys = HashMap::new();
+    web_source_keys.insert(url.to_string(), web.id);
+
+    crate::domains::lifecycle::events::LifecycleEvent::SourcesPrepared {
+        tension_count: 1,
+        response_count: 0,
+        source_plan: plan,
+        actor_contexts: HashMap::new(),
+        url_mappings: HashMap::from([(url.to_string(), web.canonical_key.clone())]),
+        web_urls: vec![url.to_string()],
+        web_source_keys,
+        web_source_count: 1,
+        pub_dates: HashMap::new(),
+        query_api_errors: HashSet::new(),
+    }
+}
+
 /// Create a minimal Post for testing social scrape.
 pub fn test_post(text: &str) -> Post {
     Post {
@@ -1589,6 +1652,37 @@ pub fn test_engine_with_capture_for_store(
         Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         Uuid::new_v4(),
     );
+    deps.captured_events = Some(captured.clone());
+    let engine = Arc::new(build_engine(deps, None));
+    (engine, captured, scope)
+}
+
+/// Create a test engine with capture, fetcher, and extractor.
+///
+/// Wires scrape deps so `start_web_scrape` can actually fetch pages and extract signals,
+/// enabling tests that exercise the full scrape→dedup→enrichment cascade.
+pub fn test_engine_with_scrape_capture(
+    store: Arc<dyn SignalReader>,
+    fetcher: Arc<dyn ContentFetcher>,
+    extractor: Arc<dyn crate::core::extractor::SignalExtractor>,
+    region: Option<rootsignal_common::ScoutScope>,
+) -> (
+    Arc<ScoutEngine>,
+    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    crate::core::run_scope::RunScope,
+) {
+    let scope = match region {
+        Some(r) => crate::core::run_scope::RunScope::Region(r),
+        None => crate::core::run_scope::RunScope::Unscoped,
+    };
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let mut deps = ScoutEngineDeps::new(
+        store,
+        Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        Uuid::new_v4(),
+    );
+    deps.fetcher = Some(fetcher);
+    deps.extractor = Some(extractor);
     deps.captured_events = Some(captured.clone());
     let engine = Arc::new(build_engine(deps, None));
     (engine, captured, scope)
@@ -1779,6 +1873,24 @@ pub fn empty_topic_discovery() -> ScrapeEvent {
         expansion_queries: Default::default(),
         stats_delta: Default::default(),
         extracted_batches: Default::default(),
+    }
+}
+
+/// Minimal signal WorldEvent for tests that need to increment `signals_awaiting_review`.
+pub fn test_world_event() -> rootsignal_common::events::WorldEvent {
+    rootsignal_common::events::WorldEvent::AnnouncementShared {
+        id: Uuid::new_v4(),
+        title: "Test announcement".into(),
+        summary: "Test summary".into(),
+        source_url: "https://example.com/test".into(),
+        published_at: None,
+        extraction_id: None,
+        locations: vec![],
+        mentioned_entities: vec![],
+        references: vec![],
+        schedule: None,
+        subject: None,
+        effective_date: None,
     }
 }
 

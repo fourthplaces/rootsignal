@@ -3,11 +3,12 @@ use std::collections::HashSet;
 use anyhow::Result;
 use neo4rs::query;
 use schemars::JsonSchema;
+use seesaw_core::Events;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ScoutScope;
 use rootsignal_graph::GraphClient;
@@ -85,7 +86,7 @@ pub struct BatchReviewOutput {
     pub reviewed_signals: Vec<SignalForReview>,
     pub verdicts: Vec<Verdict>,
     /// Events describing all review decisions (for event store persistence).
-    pub events: Vec<SystemEvent>,
+    pub events: Events,
 }
 
 // =============================================================================
@@ -283,7 +284,7 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
 // =============================================================================
 
 pub async fn review_batch(
-    api_key: &str,
+    ai: &dyn Agent,
     region: &ScoutScope,
     signals: Vec<SignalForReview>,
     suspects: &[Suspect],
@@ -300,7 +301,7 @@ pub async fn review_batch(
             run_analysis: None,
             reviewed_signals: Vec::new(),
             verdicts: Vec::new(),
-            events: Vec::new(),
+            events: Events::new(),
         });
     }
 
@@ -312,8 +313,7 @@ pub async fn review_batch(
     let user = build_user_prompt(&signals);
 
     // 3. Call LLM
-    let claude = Claude::new(api_key, "claude-sonnet-4-5-20250929");
-    let result: BatchReviewResult = claude.extract(&system, &user).await?;
+    let result: BatchReviewResult = ai_extract(ai, &system, &user).await?;
 
     debug!(raw_verdicts = ?result.verdicts.len(), "Batch review LLM response");
 
@@ -335,7 +335,7 @@ pub async fn review_batch(
     let mut passed = 0u64;
     let mut rejected = 0u64;
     let mut issues = Vec::new();
-    let mut events = Vec::new();
+    let mut events = Events::new();
 
     for verdict in &valid_verdicts {
         let signal_id = Uuid::parse_str(&verdict.signal_id).unwrap_or(Uuid::nil());

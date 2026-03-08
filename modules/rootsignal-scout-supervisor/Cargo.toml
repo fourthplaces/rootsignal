@@ -12,6 +12,7 @@ path = "src/main.rs"
 rootsignal-common = { workspace = true }
 rootsignal-graph = { workspace = true }
 ai-client = { workspace = true }
+seesaw_core = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

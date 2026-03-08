@@ -5,6 +5,7 @@ pub mod diversity;
 pub mod domain_filter;
 pub mod link_promoter;
 pub mod quality;
+pub mod signal_reviewer;
 pub mod universe_check;
 
 use std::collections::{HashMap, HashSet};

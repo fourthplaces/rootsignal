@@ -689,6 +689,13 @@ export const SOURCE_DETAIL = gql`
         files
         lastFetchedAt
       }
+      channelWeights {
+        page
+        feed
+        media
+        discussion
+        events
+      }
       discoveryTree {
         nodes {
           id

@@ -749,6 +749,84 @@ impl Channels {
     }
 }
 
+// --- Channel Weights (per-source priority for each content channel) ---
+
+/// Per-source weights controlling which content channels to fetch and how
+/// aggressively. Weight 0.0 = off, > 0.0 = on. Higher values may drive
+/// fetch limits in the future.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelWeights {
+    pub page: f64,
+    pub feed: f64,
+    pub media: f64,
+    pub discussion: f64,
+    pub events: f64,
+}
+
+impl Default for ChannelWeights {
+    fn default() -> Self {
+        Self {
+            page: 0.0,
+            feed: 0.0,
+            media: 0.0,
+            discussion: 0.0,
+            events: 0.0,
+        }
+    }
+}
+
+impl ChannelWeights {
+    pub fn default_for(strategy: &ScrapingStrategy) -> Self {
+        match strategy {
+            ScrapingStrategy::WebPage | ScrapingStrategy::HtmlListing { .. } => Self {
+                page: 1.0,
+                ..Default::default()
+            },
+            ScrapingStrategy::Rss => Self {
+                feed: 1.0,
+                ..Default::default()
+            },
+            ScrapingStrategy::Social(_) => Self {
+                feed: 1.0,
+                ..Default::default()
+            },
+            ScrapingStrategy::WebQuery => Self::default(),
+        }
+    }
+
+    pub fn to_channels(&self) -> Channels {
+        Channels {
+            page: self.page > 0.0,
+            feed: self.feed > 0.0,
+            media: self.media > 0.0,
+            discussion: self.discussion > 0.0,
+            events: self.events > 0.0,
+        }
+    }
+
+    pub fn get(&self, channel: &str) -> f64 {
+        match channel {
+            "page" => self.page,
+            "feed" => self.feed,
+            "media" => self.media,
+            "discussion" => self.discussion,
+            "events" => self.events,
+            _ => 0.0,
+        }
+    }
+
+    pub fn set(&mut self, channel: &str, value: f64) {
+        match channel {
+            "page" => self.page = value,
+            "feed" => self.feed = value,
+            "media" => self.media = value,
+            "discussion" => self.discussion = value,
+            "events" => self.events = value,
+            _ => {}
+        }
+    }
+}
+
 /// A unified result item from a multi-channel fetch.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ArchiveItem {
@@ -1144,6 +1222,9 @@ pub struct SourceNode {
     /// canonical_key of the source whose pages linked to this one.
     #[serde(default)]
     pub discovered_from_key: Option<String>,
+    /// Per-channel fetch weights. 0.0 = off, > 0.0 = on.
+    #[serde(default)]
+    pub channel_weights: ChannelWeights,
 }
 
 impl SourceNode {
@@ -1157,6 +1238,8 @@ impl SourceNode {
         source_role: SourceRole,
         gap_context: Option<String>,
     ) -> Self {
+        let value = url.as_deref().unwrap_or(&canonical_value);
+        let channel_weights = ChannelWeights::default_for(&scraping_strategy(value));
         Self {
             id: Uuid::new_v4(),
             canonical_key,
@@ -1179,6 +1262,7 @@ impl SourceNode {
             scrape_count: 0,
             sources_discovered: 0,
             discovered_from_key: None,
+            channel_weights,
         }
     }
 

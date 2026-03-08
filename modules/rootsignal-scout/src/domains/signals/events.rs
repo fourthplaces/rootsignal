@@ -53,12 +53,14 @@ pub enum SignalEvent {
         canonical_key: String,
         verdicts: Vec<DedupOutcome>,
     },
+    NoNewSignals,
 }
 
 impl SignalEvent {
     pub fn event_type_str(&self) -> String {
         let variant = match self {
             Self::DedupCompleted { .. } => "dedup_completed",
+            Self::NoNewSignals => "no_new_signals",
         };
         format!("signal:{variant}")
     }

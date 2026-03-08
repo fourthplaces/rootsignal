@@ -538,6 +538,7 @@ mod tests {
             scrape_count: 0,
             sources_discovered: 0,
             discovered_from_key: None,
+            channel_weights: rootsignal_common::ChannelWeights::default(),
         }
     }
 
@@ -817,6 +818,7 @@ mod tests {
             scrape_count: 0,
             sources_discovered: 0,
             discovered_from_key: None,
+            channel_weights: rootsignal_common::ChannelWeights::default(),
         }
     }
 

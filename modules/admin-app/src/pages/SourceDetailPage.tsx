@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { SOURCE_DETAIL, ADMIN_SCOUT_RUNS_BY_SOURCE } from "@/graphql/queries";
-import { RUN_SCOUT_SOURCE } from "@/graphql/mutations";
+import { RUN_SCOUT_SOURCE, UPDATE_SOURCE } from "@/graphql/mutations";
 import { InvestigateDrawer, type InvestigateMode } from "@/components/InvestigateDrawer";
 
 const formatDate = (d: string | null | undefined) => {
@@ -106,6 +106,13 @@ type SourceDetail = {
   signals: SignalBrief[];
   archiveSummary: ArchiveSummary | null;
   discoveryTree: DiscoveryTree;
+  channelWeights: {
+    page: number;
+    feed: number;
+    media: number;
+    discussion: number;
+    events: number;
+  };
 };
 
 function MetaCard({ label, value }: { label: string; value: string | number }) {
@@ -207,6 +214,7 @@ export function SourceDetailPage() {
     skip: !id,
   });
   const [runScoutSource] = useMutation(RUN_SCOUT_SOURCE);
+  const [updateSource] = useMutation(UPDATE_SOURCE);
   const [scouting, setScouting] = useState(false);
   const [scoutMsg, setScoutMsg] = useState<string | null>(null);
   const [investigation, setInvestigation] = useState<InvestigateMode | null>(null);
@@ -404,6 +412,41 @@ export function SourceDetailPage() {
             />
             <MetaCard label="Role" value={source.sourceRole} />
           </dl>
+        </div>
+      </div>
+
+      {/* Channel weights */}
+      <div className="rounded-lg border border-border p-4 space-y-3">
+        <h3 className="text-sm font-medium text-muted-foreground">Channels</h3>
+        <div className="flex flex-wrap gap-3">
+          {(
+            ["page", "feed", "media", "discussion", "events"] as const
+          ).map((ch) => {
+            const w = source.channelWeights[ch];
+            const on = w > 0;
+            return (
+              <button
+                key={ch}
+                onClick={async () => {
+                  const newValue = on ? 0.0 : 1.0;
+                  await updateSource({
+                    variables: {
+                      id: source.id,
+                      channelWeights: [{ channel: ch, value: newValue }],
+                    },
+                    refetchQueries: [{ query: SOURCE_DETAIL, variables: { id } }],
+                  });
+                }}
+                className={`text-xs px-2.5 py-1 rounded-full border cursor-pointer transition-colors ${
+                  on
+                    ? "bg-green-900/30 text-green-400 border-green-500/30 hover:bg-red-900/30 hover:text-red-400 hover:border-red-500/30"
+                    : "bg-muted text-muted-foreground border-border hover:bg-green-900/30 hover:text-green-400 hover:border-green-500/30"
+                }`}
+              >
+                {ch}{on && w !== 1 ? ` (${w.toFixed(1)})` : ""}
+              </button>
+            );
+          })}
         </div>
       </div>
 

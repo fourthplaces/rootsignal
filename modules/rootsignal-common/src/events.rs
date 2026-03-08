@@ -78,6 +78,11 @@ pub enum SourceChange {
         old: Option<u32>,
         new: Option<u32>,
     },
+    ChannelWeight {
+        channel: String,
+        old: f64,
+        new: f64,
+    },
 }
 
 /// Diversity metrics for a single signal node, computed from Citation evidence edges.

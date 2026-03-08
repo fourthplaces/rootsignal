@@ -15,7 +15,8 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::types::{
-    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, NodeType, Post, SourceNode,
+    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, NodeType, Post, ShortVideo,
+    SourceNode, Story,
 };
 use rootsignal_graph::DuplicateMatch;
 
@@ -45,6 +46,12 @@ pub trait ContentFetcher: Send + Sync {
     /// Site-scoped web search. Absorbs the
     /// `archive.source(query).search(query).max_results(n)` two-step.
     async fn site_search(&self, query: &str, max_results: usize) -> Result<ArchivedSearchResults>;
+
+    /// Fetch stories (ephemeral content) for an account.
+    async fn stories(&self, identifier: &str) -> Result<Vec<Story>>;
+
+    /// Fetch short-form videos (reels, TikToks) for an account.
+    async fn short_videos(&self, identifier: &str, limit: u32) -> Result<Vec<ShortVideo>>;
 }
 
 #[async_trait]
@@ -78,6 +85,16 @@ impl ContentFetcher for rootsignal_archive::Archive {
     async fn site_search(&self, query: &str, max_results: usize) -> Result<ArchivedSearchResults> {
         let handle = self.source(query).await?;
         Ok(handle.search(query).max_results(max_results).await?)
+    }
+
+    async fn stories(&self, identifier: &str) -> Result<Vec<Story>> {
+        let handle = self.source(identifier).await?;
+        Ok(handle.stories().await?)
+    }
+
+    async fn short_videos(&self, identifier: &str, limit: u32) -> Result<Vec<ShortVideo>> {
+        let handle = self.source(identifier).await?;
+        Ok(handle.short_videos(limit).await?)
     }
 }
 

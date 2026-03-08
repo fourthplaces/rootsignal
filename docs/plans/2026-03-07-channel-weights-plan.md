@@ -11,14 +11,25 @@ Every source gets a `ChannelWeights` map that controls which content channels to
 ### Data flow
 
 ```
-SourceNode.channel_weights  →  to_channels()  →  Channels (booleans)
-                                                      ↓
-                            ContentFetcher::fetch(source, channels)
-                                                      ↓
-                                              Vec<ArchiveItem>
-                                                      ↓
-                                    scrape domain processes each item type
+SourceNode.channel_weights
+         ↓
+  scrape handler reads weights
+         ↓
+  calls fetcher methods gated by weight > 0
+  (page, feed, posts, stories, short_videos)
+         ↓
+  results processed through existing pipelines
 ```
+
+### Key design decision: keep the web/social handler split
+
+The web and social scrape pipelines have fundamentally different processing models:
+- **Web**: per-URL fetch → content hash check → LLM extract per page
+- **Social**: fetch N posts → combine into text → LLM extract per batch (Reddit sub-batches 10 at a time)
+
+These aren't cosmetic — they're different data flow shapes. Merging them into a unified `fetch(channels)` loop would force a 300+ line function that branches on type, lose the parallelism of concurrent web/social handlers, and require changing the `SourcesPrepared` event schema (which currently only carries `web_urls`).
+
+Channel weights gate *what* each handler fetches, not *how* results are processed. The social handler reads `source.channel_weights` and calls `posts()` (when feed > 0), `stories()` (when media > 0), `short_videos()` (when media > 0). The web handler calls `page()` (when page > 0), `feed()` (when feed > 0). No architectural change to the scrape domain.
 
 ## Changes by layer
 
@@ -40,8 +51,11 @@ pub struct ChannelWeights {
 With methods:
 - `ChannelWeights::default_for(strategy: &ScrapingStrategy) -> Self` — platform-aware defaults
 - `to_channels(&self) -> Channels` — threshold > 0.0 → on
+- `get(&self, channel: &str) -> f64` — lookup by name (for projector/API)
+- `set(&mut self, channel: &str, value: f64)` — set by name
 
 Default profiles:
+
 | Strategy | page | feed | media | discussion | events |
 |---|---|---|---|---|---|
 | WebPage | 1.0 | 0.0 | 0.0 | 0.0 | 0.0 |
@@ -54,7 +68,7 @@ Default profiles:
 | WebQuery | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | HtmlListing | 1.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 
-Media starts off by default — promoted later when the source proves valuable. `feed` is the universal "get me the latest content" channel (RSS for web, posts for social).
+Media starts off — promoted when the source proves valuable. `feed` is the universal "get me the latest content" channel (RSS for web, posts for social).
 
 **Add field to `SourceNode`:**
 
@@ -74,6 +88,8 @@ SourceChange::ChannelWeight {
 }
 ```
 
+This follows the existing pattern: `SourceChange::Weight`, `SourceChange::Cadence`, etc. The channel is a string to keep the enum flat (one variant, not five).
+
 ### 2. `rootsignal-graph` — Neo4j projection
 
 **Projector (`project_pipeline`):** On `source_discovered` and `SourcesRegistered`, write channel weights as individual properties:
@@ -90,99 +106,185 @@ On `SourceChange::ChannelWeight`, update the single property:
 
 ```cypher
 MATCH (s:Source {canonical_key: $key})
-SET s[$prop] = $value
+SET s.cw_media = $value   -- dynamically constructed from channel name
 ```
 
-**Reader (`row_to_source_node`):** Read `cw_*` properties back, default to platform defaults when missing (backward compat with existing sources that don't have them yet).
+**Reader (`row_to_source_node`):** Read `cw_*` properties back. For backward compat with existing sources that don't have them yet, fall back to `ChannelWeights::default_for(scraping_strategy(source.value()))`.
 
 **Writer queries:** Add `cw_*` to all `RETURN` clauses that read SourceNodes (`get_active_sources`, `search_sources`, `get_sources_by_ids`, `source_by_id`).
 
-### 3. `ContentFetcher` trait — add `fetch()`
+### 3. `ContentFetcher` trait — add media methods
 
-Add a new method to the trait alongside the existing individual methods:
-
-```rust
-async fn fetch(&self, url: &str, channels: Channels) -> Result<Vec<ArchiveItem>>;
-```
-
-The `Archive` impl delegates to `SourceHandle::fetch(channels)` which already exists and does the right dispatch. The individual methods (`page`, `feed`, `posts`, etc.) stay for cases that need them directly (topic search, site search, url resolution).
-
-`MockFetcher` gets a corresponding mock method. The existing per-method mocks (`on_page`, `on_posts`) can back the `fetch()` mock by decomposing `Channels` → individual calls internally.
-
-### 4. Scrape domain — use `fetch()` with channel weights
-
-**Key change:** The scrape handlers stop splitting sources into web/social. Instead, for each source:
-
-1. Read `source.channel_weights.to_channels()`
-2. Call `fetcher.fetch(source.value(), channels)`
-3. Process `Vec<ArchiveItem>` — each variant maps to the existing extraction pipeline
-
-This is the biggest refactor. Current shape:
-
-```
-SourcesPrepared → start_web_scrape (pages only)
-               → start_social_scrape (posts only)
-```
-
-New shape:
-
-```
-SourcesPrepared → start_scrape (all sources, fetch per channel_weights)
-```
-
-The `ScrapeOutcome` / extraction pipeline stays the same — it already handles different content types. The change is in _what_ gets fetched, not how results are processed.
-
-**Phasing this refactor:**
-
-Phase 1 (this plan): Add `ChannelWeights` to `SourceNode`, persist to Neo4j, wire through `ContentFetcher::fetch()`. The scrape domain calls `fetch()` with the source's channels instead of hardcoded `page()`/`posts()`. Behavior is identical to today because defaults match current behavior.
-
-Phase 2 (future): Supervisor promotes channels based on signal quality. This is a separate concern — it just writes `SourceChange::ChannelWeight` events, which the reducer and projector already handle from Phase 1.
-
-### 5. Processing `Vec<ArchiveItem>` in the scrape domain
-
-The scrape domain currently has separate pipelines for web content (markdown → extract) and social content (posts → combine → extract). With `fetch()` returning `Vec<ArchiveItem>`, each item type routes to the appropriate pipeline:
+Add methods for the content types the scout doesn't currently fetch:
 
 ```rust
-for item in items {
-    match item {
-        ArchiveItem::Page(page) => {
-            // existing web_scrape pipeline: page.markdown → extractor
-        }
-        ArchiveItem::Feed(feed) => {
-            // existing web_scrape pipeline per feed item
-        }
-        ArchiveItem::Posts(posts) => {
-            // existing social_scrape pipeline: combine → extractor
-        }
-        ArchiveItem::Stories(stories) => {
-            // new: similar to posts pipeline, text extraction from stories
-        }
-        ArchiveItem::ShortVideos(videos) => {
-            // new: similar to posts pipeline, caption extraction from reels
-        }
-    }
+async fn stories(&self, identifier: &str) -> Result<Vec<Story>>;
+async fn short_videos(&self, identifier: &str, limit: u32) -> Result<Vec<ShortVideo>>;
+```
+
+The `Archive` impl delegates to `InstagramService::fetch_stories()` / `fetch_short_videos()` which already exist as stubs.
+
+`MockFetcher` gets corresponding `on_stories()` / `on_short_videos()` methods.
+
+The existing individual methods (`page`, `feed`, `posts`, `search`) stay unchanged. No unified `fetch()` method — the scrape handlers already know which methods to call based on source type + channel weights.
+
+### 4. Scrape domain — gate fetches by channel weights
+
+**Social handler** (`social_scrape.rs`): After fetching posts (existing behavior), check `source.channel_weights.media > 0` and additionally call `stories()` / `short_videos()`. Process results through the same combine → extract pipeline that posts use.
+
+```rust
+// Existing: always fetch posts when feed channel is on
+if source_channel_weights.feed > 0.0 {
+    let posts = fetcher.posts(&identifier, 20).await?;
+    // ... existing extraction pipeline
+}
+
+// New: fetch stories/reels when media channel is on
+if source_channel_weights.media > 0.0 {
+    let stories = fetcher.stories(&identifier).await.unwrap_or_default();
+    let videos = fetcher.short_videos(&identifier, 10).await.unwrap_or_default();
+    // ... combine captions → extract → same pipeline
 }
 ```
 
-Stories and ShortVideos processing is stubbed initially (the archive returns empty vecs for these anyway until Apify support lands).
+**Web handler** (`web_scrape.rs`): Currently fetches pages unconditionally. Gate on `source.channel_weights.page > 0`. Could also add RSS feed fetching when `feed > 0` for web sources with known feed URLs.
+
+**No handler restructuring needed.** Web and social handlers stay separate, run in parallel, and process results through their respective pipelines. Channel weights just expand what each handler fetches.
+
+### 5. GraphQL API — expose channel weights
+
+**`AdminSourceDetail` struct** (`schema.rs:1571`): Add field:
+
+```rust
+pub channel_weights: AdminChannelWeights,
+```
+
+**New GraphQL type:**
+
+```rust
+#[derive(SimpleObject)]
+pub struct AdminChannelWeights {
+    pub page: f64,
+    pub feed: f64,
+    pub media: f64,
+    pub discussion: f64,
+    pub events: f64,
+}
+```
+
+**`source_detail()` resolver** (`schema.rs:517`): Map from `source.channel_weights`:
+
+```rust
+channel_weights: AdminChannelWeights {
+    page: source.channel_weights.page,
+    feed: source.channel_weights.feed,
+    media: source.channel_weights.media,
+    discussion: source.channel_weights.discussion,
+    events: source.channel_weights.events,
+},
+```
+
+### 6. Admin UI — display on source detail page
+
+**`SOURCE_DETAIL` query** (`queries.ts:650`): Add to query:
+
+```graphql
+channelWeights {
+  page
+  feed
+  media
+  discussion
+  events
+}
+```
+
+**`SourceDetailPage.tsx`**: Add a "Channels" card in the metadata grid (alongside Weight, Scrape Stats, Schedule, Output). Display each channel as a labeled weight with visual indication of on/off:
+
+```tsx
+<div className="rounded-lg border border-border p-4 space-y-3">
+  <h3 className="text-sm font-medium text-muted-foreground">Channels</h3>
+  <dl className="grid grid-cols-5 gap-4">
+    {["page", "feed", "media", "discussion", "events"].map((ch) => {
+      const w = source.channelWeights[ch];
+      return (
+        <MetaCard
+          key={ch}
+          label={ch}
+          value={w > 0 ? w.toFixed(1) : "off"}
+        />
+      );
+    })}
+  </dl>
+</div>
+```
+
+Channels with weight `0` show "off" in muted text. Channels with weight > 0 show the numeric weight. This gives immediate visibility into what the system is listening for.
+
+## Phase 2: Dynamic channel promotion (future)
+
+Phase 1 is purely structural — add the field, wire it through, display it. Behavior is identical to today because defaults match current hardcoded logic.
+
+Phase 2 adds the intelligence: the supervisor observes signal quality per source and promotes/demotes channels.
+
+### Where promotion decisions live
+
+The **supervisor domain** already adjusts source properties reactively:
+- `apply_source_penalties()` computes `quality_penalty` from validation issues
+- `reset_resolved_penalties()` resets penalties when issues are resolved
+- Scheduling recomputes `weight` and `cadence` from signal production history
+
+Channel promotion follows the same pattern. The supervisor would emit `SourceChange::ChannelWeight` events based on rules like:
+
+- Source consistently produces high-confidence signals → promote `media` to 0.5
+- Source's media channel produces noise for N consecutive runs → demote back to 0.0
+- Source corroborates signals from multiple other sources → promote `discussion`
+
+### How promotion triggers work
+
+The supervisor already has access to Neo4j (signal quality, corroboration) and Postgres (run history, validation issues). It can query:
+
+```
+For each source with media == 0:
+  - Has it produced N+ high-confidence signals in the last M runs?
+  - Is quality_penalty >= 0.8 (no validation issues)?
+  - Has it been active for K+ runs?
+If all true → emit SourceChange::ChannelWeight { channel: "media", old: 0.0, new: 0.5 }
+```
+
+### Weight as priority signal
+
+Beyond on/off gating, weights could influence fetch aggressiveness:
+- `media: 0.3` → `video_limit: 3` (tentative, small sample)
+- `media: 1.0` → `video_limit: 10` (proven, full fetch)
+
+This is a simple `(weight * max_limit).ceil() as u32` calculation in the scrape handler. Deferred until we have data showing it matters.
+
+### Decay and demotion
+
+Channels that stop producing should be demoted. The supervisor could run periodic checks:
+- Media channel on for N runs with 0 signals from media content → demote to 0.0
+- Gradual decay: reduce weight by 0.1 per empty run rather than hard cut
+
+All of this is domain logic in the supervisor — the infrastructure from Phase 1 (events, projection, UI) supports it without changes.
 
 ## Implementation order
 
 1. **`ChannelWeights` type + `SourceNode` field** — pure data, no behavior change
 2. **Neo4j write/read** — projector writes `cw_*`, reader populates field, backward-compat defaults
 3. **`SourceChange::ChannelWeight` variant** — event + projector handler
-4. **`ContentFetcher::fetch()`** — new trait method + `Archive` impl + `MockFetcher`
-5. **Scrape domain refactor** — replace web/social split with unified `fetch()` loop
-6. **Tests** — boundary tests for channel-gated fetching
+4. **GraphQL API** — `AdminChannelWeights` type, `source_detail` resolver, query
+5. **Admin UI** — Channels card on `SourceDetailPage`
+6. **`ContentFetcher` trait** — add `stories()`, `short_videos()` methods
+7. **Scrape domain** — gate fetches by channel weights
+8. **Tests** — boundary tests for channel-gated fetching
+
+Steps 1–5 are purely structural (data + display). Steps 6–7 are behavioral (actually fetching more content). Step 8 validates the behavior.
 
 ## What does NOT change
 
 - Archive crate internals (`FetchRequest`, `Channels`, platform services) — already correct
-- `ScrapingStrategy` — still used for default channel selection, not for dispatch
+- Web/social handler split — stays, reflects real processing differences
+- `ScrapingStrategy` — still used for default channel selection
 - Signal extraction pipeline — processes content the same way regardless of channel
-- Event model — `ChannelWeights` is source metadata, not a new event domain
-
-## Open questions
-
-- Should `ChannelWeights` use string keys (`HashMap<String, f64>`) instead of struct fields? More extensible but loses type safety. Struct fields match `Channels` 1:1 and the set of channels is stable enough.
-- Should weights influence fetch limits? e.g. `media: 0.3` → `video_limit: 3` vs `media: 1.0` → `video_limit: 10`. Deferred to Phase 2.
+- `SourcesPrepared` event schema — no changes needed
+- Completion gates (`tension_web_done` / `tension_social_done`) — unchanged

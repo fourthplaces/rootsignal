@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use async_graphql::{Context, Object, Result, SimpleObject};
+use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -29,6 +29,12 @@ pub struct ClientIp(pub IpAddr);
 pub struct ResponseHeaders(pub Mutex<Vec<(String, String)>>);
 
 pub struct MutationRoot;
+
+#[derive(InputObject)]
+struct ChannelWeightInput {
+    channel: String,
+    value: f64,
+}
 
 // --- Auth result types ---
 
@@ -229,6 +235,9 @@ impl MutationRoot {
             scrape_count: 0,
             sources_discovered: 0,
             discovered_from_key: None,
+            channel_weights: rootsignal_common::ChannelWeights::default_for(
+                &rootsignal_common::scraping_strategy(&input),
+            ),
         };
 
         engine
@@ -506,6 +515,9 @@ impl MutationRoot {
             scrape_count: 0,
             sources_discovered: 0,
             discovered_from_key: None,
+            channel_weights: rootsignal_common::ChannelWeights::default_for(
+                &rootsignal_common::scraping_strategy(&url),
+            ),
         };
 
         engine
@@ -610,6 +622,7 @@ impl MutationRoot {
         active: Option<bool>,
         weight: Option<f64>,
         quality_penalty: Option<f64>,
+        channel_weights: Option<Vec<ChannelWeightInput>>,
     ) -> Result<ScoutResult> {
         use rootsignal_common::events::{SourceChange, SystemSourceChange};
         use rootsignal_common::events::SystemEvent;
@@ -674,6 +687,27 @@ impl MutationRoot {
                     .settled()
                     .await
                     .map_err(|e| async_graphql::Error::new(format!("Failed to update quality_penalty: {e}")))?;
+            }
+        }
+
+        if let Some(updates) = channel_weights {
+            for cw in updates {
+                let old = source.channel_weights.get(&cw.channel);
+                if (cw.value - old).abs() > f64::EPSILON {
+                    engine
+                        .emit(SystemEvent::SourceChanged {
+                            source_id: source.id,
+                            canonical_key: source.canonical_key.clone(),
+                            change: SourceChange::ChannelWeight {
+                                channel: cw.channel,
+                                old,
+                                new: cw.value,
+                            },
+                        })
+                        .settled()
+                        .await
+                        .map_err(|e| async_graphql::Error::new(format!("Failed to update channel weight: {e}")))?;
+                }
             }
         }
 

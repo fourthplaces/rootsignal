@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
+use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::types::{ActorContext, SourceNode};
 use rootsignal_common::{scraping_strategy, ScrapingStrategy};
 use serde::{Deserialize, Serialize};
@@ -143,6 +144,10 @@ pub struct PipelineState {
     pub actor_stats_computed: bool,
     #[serde(default)]
     pub actors_located: bool,
+    #[serde(default)]
+    pub signals_awaiting_review: u32,
+    #[serde(default)]
+    pub signals_review_completed: u32,
 
     /// Whether source expansion has completed (guards against re-triggering).
     #[serde(default)]
@@ -190,6 +195,8 @@ impl PipelineState {
             diversity_scored: false,
             actor_stats_computed: false,
             actors_located: false,
+            signals_awaiting_review: 0,
+            signals_review_completed: 0,
             source_expansion_completed: false,
         }
     }
@@ -350,6 +357,7 @@ impl PipelineState {
                     .or_default() += created;
                 self.stats.signals_deduplicated += deduped;
             }
+            SignalEvent::NoNewSignals => {}
         }
     }
 
@@ -422,8 +430,27 @@ impl PipelineState {
         }
     }
 
+    /// Apply a world event (signal creation increments review counter).
+    pub fn apply_world(&mut self, event: &WorldEvent) {
+        if event.is_signal() {
+            self.signals_awaiting_review += 1;
+        }
+    }
+
+    /// Apply a system event (review verdict increments completed counter).
+    pub fn apply_system(&mut self, event: &SystemEvent) {
+        if matches!(event, SystemEvent::ReviewVerdictReached { .. }) {
+            self.signals_review_completed += 1;
+        }
+    }
+
+    pub fn review_complete(&self) -> bool {
+        self.signals_awaiting_review == self.signals_review_completed
+    }
+
     pub fn all_enrichment_complete(&self) -> bool {
-        self.actors_extracted
+        self.review_complete()
+            && self.actors_extracted
             && self.diversity_scored
             && self.actor_stats_computed
             && self.actors_located
@@ -526,6 +553,14 @@ pub mod pipeline_aggregators {
 
     fn on_lifecycle(state: &mut PipelineState, event: LifecycleEvent) {
         state.apply_lifecycle(&event);
+    }
+
+    fn on_world(state: &mut PipelineState, event: WorldEvent) {
+        state.apply_world(&event);
+    }
+
+    fn on_system(state: &mut PipelineState, event: SystemEvent) {
+        state.apply_system(&event);
     }
 
     fn on_situation_weaving(_state: &mut PipelineState, _event: SituationWeavingEvent) {}

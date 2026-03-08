@@ -7,7 +7,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use rootsignal_common::types::{
-    ArchivedFeed, ArchivedPage, ArchivedSearchResults, Post, SearchResult,
+    ArchivedFeed, ArchivedPage, ArchivedSearchResults, Post, SearchResult, ShortVideo, Story,
 };
 use simweb::SimulatedWeb;
 use crate::traits::ContentFetcher;
@@ -109,6 +109,14 @@ impl ContentFetcher for SimulatedWeb {
     async fn site_search(&self, query: &str, max_results: usize) -> Result<ArchivedSearchResults> {
         let sim_results = self.search(query, max_results).await?;
         Ok(to_archived_search(query, &sim_results))
+    }
+
+    async fn stories(&self, _identifier: &str) -> Result<Vec<Story>> {
+        Ok(Vec::new())
+    }
+
+    async fn short_videos(&self, _identifier: &str, _limit: u32) -> Result<Vec<ShortVideo>> {
+        Ok(Vec::new())
     }
 }
 

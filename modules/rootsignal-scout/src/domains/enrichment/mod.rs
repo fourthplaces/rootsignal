@@ -4,66 +4,46 @@ pub mod events;
 #[cfg(test)]
 mod completion_tests;
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use seesaw_core::{events, handle, handlers, AnyEvent, Context, Events};
 use tracing::info;
+use uuid::Uuid;
 
-
-
-use rootsignal_common::{Block, ChecklistItem};
+use rootsignal_common::events::{SystemEvent, WorldEvent};
+use rootsignal_scout_supervisor::checks::batch_review::{self, SignalForReview};
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::events::EnrichmentEvent;
-use crate::domains::scrape::events::ScrapeEvent;
+use crate::domains::signals::events::SignalEvent;
 
-// ── Enrichment filters: response scrape done + own fact not yet recorded ──
+// ── Enrichment filters: state-only gates (event-agnostic for multi-type handlers) ──
 
-fn response_done_actor_extraction_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !e.is_completion() { return false; }
+fn enrichment_actor_extraction_pending(ctx: &Context<ScoutEngineDeps>) -> bool {
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.response_scrape_done() && !state.actors_extracted
+    state.review_complete() && state.response_scrape_done() && !state.actors_extracted
 }
 
-fn response_done_diversity_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !e.is_completion() { return false; }
+fn enrichment_diversity_pending(ctx: &Context<ScoutEngineDeps>) -> bool {
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.response_scrape_done() && !state.diversity_scored
+    state.review_complete() && state.response_scrape_done() && !state.diversity_scored
 }
 
-fn response_done_actor_stats_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !e.is_completion() { return false; }
+fn enrichment_actor_stats_pending(ctx: &Context<ScoutEngineDeps>) -> bool {
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.response_scrape_done() && !state.actor_stats_computed
+    state.review_complete() && state.response_scrape_done() && !state.actor_stats_computed
 }
 
-fn response_done_actor_location_pending(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
-    if !e.is_completion() { return false; }
+fn enrichment_actor_location_pending(ctx: &Context<ScoutEngineDeps>) -> bool {
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.response_scrape_done() && !state.actors_located
+    state.review_complete() && state.response_scrape_done() && !state.actors_located
 }
 
-fn describe_enrichment_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
-    let (_, state) = ctx.singleton::<PipelineState>();
-    vec![
-        Block::Checklist {
-            label: "Response scrape".into(),
-            items: vec![
-                ChecklistItem { text: "Web".into(), done: state.response_web_done },
-                ChecklistItem { text: "Social".into(), done: state.response_social_done },
-                ChecklistItem { text: "Topics".into(), done: state.topic_discovery_done },
-            ],
-        },
-        Block::Checklist {
-            label: "Enrichment".into(),
-            items: vec![
-                ChecklistItem { text: "Actors extracted".into(), done: state.actors_extracted },
-                ChecklistItem { text: "Diversity scored".into(), done: state.diversity_scored },
-                ChecklistItem { text: "Actor stats computed".into(), done: state.actor_stats_computed },
-                ChecklistItem { text: "Actors located".into(), done: state.actors_located },
-            ],
-        },
-    ]
+fn is_signal_world_event(e: &WorldEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    e.is_signal()
 }
 
 #[handlers]
@@ -71,12 +51,12 @@ pub mod handlers {
     use super::*;
 
     // ---------------------------------------------------------------
-    // Enrichment handlers: each listens for scrape completion + state gate
+    // Enrichment handlers: fire when review + response scrape complete
     // ---------------------------------------------------------------
 
-    #[handle(on = ScrapeEvent, id = "enrichment:extract_actors", filter = response_done_actor_extraction_pending, describe = describe_enrichment_gate)]
+    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:extract_actors", filter = enrichment_actor_extraction_pending)]
     async fn extract_actors(
-        _event: ScrapeEvent,
+        _event: AnyEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -130,9 +110,9 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    #[handle(on = ScrapeEvent, id = "enrichment:score_diversity", filter = response_done_diversity_pending, describe = describe_enrichment_gate)]
+    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:score_diversity", filter = enrichment_diversity_pending)]
     async fn score_diversity(
-        _event: ScrapeEvent,
+        _event: AnyEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -151,9 +131,9 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    #[handle(on = ScrapeEvent, id = "enrichment:compute_actor_stats", filter = response_done_actor_stats_pending, describe = describe_enrichment_gate)]
+    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:compute_actor_stats", filter = enrichment_actor_stats_pending)]
     async fn compute_actor_stats(
-        _event: ScrapeEvent,
+        _event: AnyEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -172,9 +152,9 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    #[handle(on = ScrapeEvent, id = "enrichment:resolve_actor_locations", filter = response_done_actor_location_pending, describe = describe_enrichment_gate)]
+    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:resolve_actor_locations", filter = enrichment_actor_location_pending)]
     async fn resolve_actor_locations(
-        _event: ScrapeEvent,
+        _event: AnyEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -194,6 +174,94 @@ pub mod handlers {
         };
         all_events.push(EnrichmentEvent::ActorsLocated);
         Ok(all_events)
+    }
+
+    // ---------------------------------------------------------------
+    // Signal review: Batcher accumulates signals, flushes to reviewer
+    // ---------------------------------------------------------------
+
+    #[handle(on = WorldEvent, id = "enrichment:submit_signal_for_review", filter = is_signal_world_event)]
+    async fn submit_signal_for_review(
+        event: WorldEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let deps = ctx.deps();
+
+        let (ai, region) = match (deps.ai.as_ref(), {
+            let (_, state) = ctx.singleton::<PipelineState>();
+            state.run_scope.region().cloned()
+        }) {
+            (Some(a), Some(r)) => (a.clone(), r),
+            _ => return Ok(Events::new()),
+        };
+
+        let signal_id = match event.signal_id() {
+            Some(id) => id,
+            None => return Ok(Events::new()),
+        };
+
+        let review_item = activities::signal_reviewer::signal_for_review(
+            &event,
+            &deps.run_id.to_string(),
+        );
+        let review_item = match review_item {
+            Some(r) => r,
+            None => return Ok(Events::new()),
+        };
+
+        let result = deps.batcher
+            .submit("signal_review", signal_id, review_item)
+            .flush_when(|batch| batch.len() >= 10 || batch.age() >= Duration::from_secs(5))
+            .then(move |items: Vec<SignalForReview>| {
+                let ai = ai;
+                let region = region;
+                async move {
+                    // Collect signal IDs before passing to reviewer
+                    let ids: Vec<Uuid> = items.iter()
+                        .filter_map(|s| Uuid::parse_str(&s.id).ok())
+                        .collect();
+
+                    let output = batch_review::review_batch(&*ai, &region, items, &[]).await?;
+
+                    let mut results: std::collections::HashMap<Uuid, rootsignal_common::events::SystemEvent> =
+                        std::collections::HashMap::new();
+                    for verdict in &output.verdicts {
+                        let sid = Uuid::parse_str(&verdict.signal_id).unwrap_or(Uuid::nil());
+                        let event = match verdict.decision.as_str() {
+                            "reject" => rootsignal_common::events::SystemEvent::ReviewVerdictReached {
+                                signal_id: sid,
+                                old_status: "staged".into(),
+                                new_status: "rejected".into(),
+                                reason: verdict.rejection_reason.clone().unwrap_or_else(|| "unspecified".into()),
+                            },
+                            _ => rootsignal_common::events::SystemEvent::ReviewVerdictReached {
+                                signal_id: sid,
+                                old_status: "staged".into(),
+                                new_status: "live".into(),
+                                reason: "passed_review".into(),
+                            },
+                        };
+                        results.insert(sid, event);
+                    }
+
+                    // Default to pass for signals the LLM didn't return a verdict for
+                    for id in &ids {
+                        results.entry(*id).or_insert_with(|| {
+                            rootsignal_common::events::SystemEvent::ReviewVerdictReached {
+                                signal_id: *id,
+                                old_status: "staged".into(),
+                                new_status: "live".into(),
+                                reason: "passed_review".into(),
+                            }
+                        });
+                    }
+
+                    Ok(results)
+                }
+            })
+            .await?;
+
+        Ok(events![result])
     }
 
 }

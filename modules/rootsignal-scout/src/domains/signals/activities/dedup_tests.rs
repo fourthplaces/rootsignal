@@ -63,6 +63,7 @@ fn verdicts(signal: &[SignalEvent]) -> Vec<&DedupOutcome> {
         .iter()
         .filter_map(|e| match e {
             SignalEvent::DedupCompleted { verdicts, .. } => Some(verdicts.iter()),
+            SignalEvent::NoNewSignals => None,
         })
         .flatten()
         .collect()

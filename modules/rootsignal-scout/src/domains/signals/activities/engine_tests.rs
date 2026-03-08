@@ -69,6 +69,7 @@ fn captured_verdicts(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<Ded
         .filter_map(|e| e.downcast_ref::<SignalEvent>())
         .filter_map(|e| match e {
             SignalEvent::DedupCompleted { verdicts, .. } => Some(verdicts.clone()),
+            SignalEvent::NoNewSignals => None,
         })
         .flatten()
         .collect()

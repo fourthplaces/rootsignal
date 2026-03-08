@@ -1274,7 +1274,10 @@ impl PublicGraphReader {
                    s.avg_signals_per_scrape AS avg_signals_per_scrape,
                    s.quality_penalty AS quality_penalty,
                    s.source_role AS source_role,
-                   s.scrape_count AS scrape_count";
+                   s.scrape_count AS scrape_count,
+                   s.cw_page AS cw_page, s.cw_feed AS cw_feed,
+                   s.cw_media AS cw_media, s.cw_discussion AS cw_discussion,
+                   s.cw_events AS cw_events";
 
         let q = query(cypher).param("id", id.to_string());
         let mut stream = self.client.execute(q).await?;

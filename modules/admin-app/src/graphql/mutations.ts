@@ -113,12 +113,14 @@ export const UPDATE_SOURCE = gql`
     $active: Boolean
     $weight: Float
     $qualityPenalty: Float
+    $channelWeights: [ChannelWeightInput!]
   ) {
     updateSource(
       id: $id
       active: $active
       weight: $weight
       qualityPenalty: $qualityPenalty
+      channelWeights: $channelWeights
     ) {
       success
     }

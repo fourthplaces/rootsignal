@@ -152,6 +152,7 @@ export function ScoutRunDetailPage() {
       {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
         <StatCard label="URLs Scraped" value={run.stats.urlsScraped} />
+        <StatCard label="Signals Extracted" value={run.stats.signalsExtracted} />
         <StatCard label="Signals Stored" value={run.stats.signalsStored} />
         <StatCard label="Deduplicated" value={run.stats.signalsDeduplicated} />
         <StatCard label="Sources Discovered" value={run.stats.expansionSourcesCreated} />

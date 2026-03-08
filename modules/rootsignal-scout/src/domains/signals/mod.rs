@@ -2,11 +2,12 @@ pub mod activities;
 pub mod events;
 
 use anyhow::Result;
-use seesaw_core::{handle, handlers, Context, Events};
+use seesaw_core::{events, handle, handlers, Context, Events};
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::activities::dedup;
+use crate::domains::signals::events::SignalEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 
 fn is_scrape_completed(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -25,9 +26,8 @@ pub mod handlers {
     ) -> Result<Events> {
         let extracted_batches = event.into_extracted_batches();
 
-
         if extracted_batches.is_empty() {
-            return Ok(Events::new());
+            return Ok(events![SignalEvent::NoNewSignals]);
         }
 
         let deps = ctx.deps();
@@ -43,6 +43,14 @@ pub mod handlers {
                 deps,
             ).await?;
             all_events.extend(events);
+        }
+
+        // If dedup ran but created zero new signals, emit NoNewSignals
+        // so downstream gates see review_complete() as 0==0.
+        let world_type = std::any::TypeId::of::<rootsignal_common::events::WorldEvent>();
+        let has_world_events = all_events.iter().any(|e| e.type_id == world_type);
+        if !has_world_events {
+            all_events.push(SignalEvent::NoNewSignals);
         }
 
         Ok(all_events)

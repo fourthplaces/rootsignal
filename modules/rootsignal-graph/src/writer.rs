@@ -586,7 +586,10 @@ impl GraphReader {
                     s.discovery_method AS discovery_method,
                     s.last_scraped_at AS last_scraped_at,
                     s.scrape_count AS scrape_count,
-                    s.sources_discovered AS sources_discovered
+                    s.sources_discovered AS sources_discovered,
+                    s.cw_page AS cw_page, s.cw_feed AS cw_feed,
+                    s.cw_media AS cw_media, s.cw_discussion AS cw_discussion,
+                    s.cw_events AS cw_events
              ORDER BY s.canonical_key",
         )
         .param("region_id", region_id);
@@ -669,7 +672,10 @@ impl GraphReader {
                     s.quality_penalty AS quality_penalty,
                     s.source_role AS source_role,
                     s.scrape_count AS scrape_count,
-                    s.sources_discovered AS sources_discovered",
+                    s.sources_discovered AS sources_discovered,
+                    s.cw_page AS cw_page, s.cw_feed AS cw_feed,
+                    s.cw_media AS cw_media, s.cw_discussion AS cw_discussion,
+                    s.cw_events AS cw_events",
         )
         .param("ids", id_strings);
 
@@ -704,7 +710,10 @@ impl GraphReader {
                        s.quality_penalty AS quality_penalty,
                        s.source_role AS source_role,
                        s.scrape_count AS scrape_count,
-                       s.sources_discovered AS sources_discovered",
+                       s.sources_discovered AS sources_discovered,
+                    s.cw_page AS cw_page, s.cw_feed AS cw_feed,
+                    s.cw_media AS cw_media, s.cw_discussion AS cw_discussion,
+                    s.cw_events AS cw_events",
             None => "MATCH (s:Source)
                 RETURN s.id AS id, s.canonical_key AS canonical_key,
                        s.canonical_value AS canonical_value, s.url AS url,
@@ -720,7 +729,10 @@ impl GraphReader {
                        s.quality_penalty AS quality_penalty,
                        s.source_role AS source_role,
                        s.scrape_count AS scrape_count,
-                       s.sources_discovered AS sources_discovered",
+                       s.sources_discovered AS sources_discovered,
+                    s.cw_page AS cw_page, s.cw_feed AS cw_feed,
+                    s.cw_media AS cw_media, s.cw_discussion AS cw_discussion,
+                    s.cw_events AS cw_events",
         };
 
         let q = match search {
@@ -1129,6 +1141,11 @@ impl GraphReader {
                 let active: bool = sn.get("active").unwrap_or(true);
                 let weight: f64 = sn.get("weight").unwrap_or(0.7);
 
+                let channel_weights = rootsignal_common::ChannelWeights::default_for(
+                    &rootsignal_common::scraping_strategy(
+                        url.as_deref().unwrap_or(&canonical_value),
+                    ),
+                );
                 sources.push(SourceNode {
                     id: s_id,
                     canonical_key,
@@ -1151,6 +1168,7 @@ impl GraphReader {
                     scrape_count: 0,
                     sources_discovered: 0,
                     discovered_from_key: None,
+                    channel_weights,
                 });
             }
 
@@ -1372,6 +1390,14 @@ impl GraphReader {
                 scrape_count: 0,
                 sources_discovered: 0,
                 discovered_from_key: None,
+                channel_weights: {
+                    let val = s.get::<String>("url").ok()
+                        .filter(|u| !u.is_empty())
+                        .unwrap_or_else(|| s.get("canonical_value").unwrap_or_default());
+                    rootsignal_common::ChannelWeights::default_for(
+                        &rootsignal_common::scraping_strategy(&val),
+                    )
+                },
             };
             results.push((pin, source));
         }
@@ -4489,10 +4515,34 @@ pub fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
     let gap_context: String = row.get("gap_context").unwrap_or_default();
     let url: String = row.get("url").unwrap_or_default();
     let cadence: i64 = row.get::<i64>("cadence_hours").unwrap_or(0);
+    let canonical_value: String = row.get("canonical_value").unwrap_or_default();
+    let channel_weights = {
+        let has_cw = row.get::<f64>("cw_page").is_ok()
+            || row.get::<f64>("cw_feed").is_ok()
+            || row.get::<f64>("cw_media").is_ok();
+        if has_cw {
+            rootsignal_common::ChannelWeights {
+                page: row.get("cw_page").unwrap_or(0.0),
+                feed: row.get("cw_feed").unwrap_or(0.0),
+                media: row.get("cw_media").unwrap_or(0.0),
+                discussion: row.get("cw_discussion").unwrap_or(0.0),
+                events: row.get("cw_events").unwrap_or(0.0),
+            }
+        } else {
+            let value = if url.is_empty() {
+                &canonical_value
+            } else {
+                &url
+            };
+            rootsignal_common::ChannelWeights::default_for(
+                &rootsignal_common::scraping_strategy(value),
+            )
+        }
+    };
     Some(SourceNode {
         id,
         canonical_key: row.get("canonical_key").unwrap_or_default(),
-        canonical_value: row.get("canonical_value").unwrap_or_default(),
+        canonical_value,
         url: if url.is_empty() { None } else { Some(url) },
         discovery_method,
         created_at,
@@ -4521,6 +4571,7 @@ pub fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
         scrape_count: row.get::<i64>("scrape_count").unwrap_or(0) as u32,
         sources_discovered: row.get::<i64>("sources_discovered").unwrap_or(0) as u32,
         discovered_from_key: None,
+        channel_weights,
     })
 }
 

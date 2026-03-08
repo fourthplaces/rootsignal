@@ -632,6 +632,13 @@ impl QueryRoot {
             signals: admin_signals,
             archive_summary: None,
             discovery_tree,
+            channel_weights: AdminChannelWeights {
+                page: source.channel_weights.page,
+                feed: source.channel_weights.feed,
+                media: source.channel_weights.media,
+                discussion: source.channel_weights.discussion,
+                events: source.channel_weights.events,
+            },
         }))
     }
 
@@ -1592,6 +1599,16 @@ pub struct AdminSourceDetail {
     pub signals: Vec<AdminSignalBrief>,
     pub archive_summary: Option<AdminArchiveSummary>,
     pub discovery_tree: AdminDiscoveryTree,
+    pub channel_weights: AdminChannelWeights,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminChannelWeights {
+    pub page: f64,
+    pub feed: f64,
+    pub media: f64,
+    pub discussion: f64,
+    pub events: f64,
 }
 
 #[derive(SimpleObject)]

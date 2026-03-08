@@ -18,7 +18,7 @@ use uuid::Uuid;
 use seesaw_core::store::Store;
 use seesaw_core::types::{AppendResult, HandlerResolution, EventOutcome, LogLevel, QueueStatus};
 use seesaw_core::{
-    HandlerCompletion, HandlerDlq, EventCommit, ExpiredJoinWindow, JoinAppendParams, JoinEntry,
+    HandlerCompletion, HandlerDlq, EventCommit,
     NewEvent, PersistedEvent, QueuedHandler, QueuedEvent, Snapshot,
 };
 
@@ -156,8 +156,7 @@ impl Store for PostgresStore {
              ) \
              RETURNING event_id, handler_id, correlation_id, event_type, event_payload, \
                        parent_event_id, batch_id, batch_index, batch_size, \
-                       execute_at, timeout_seconds, max_attempts, priority, hops, attempts, \
-                       join_window_timeout_seconds",
+                       execute_at, timeout_seconds, max_attempts, priority, hops, attempts",
         )
         .bind(self.correlation_id)
         .fetch_optional(&self.pool)
@@ -226,186 +225,6 @@ impl Store for PostgresStore {
         .await?;
 
         Ok(())
-    }
-
-    // ── Join windows ─────────────────────────────────────────────────
-
-    async fn join_append_and_maybe_claim(
-        &self,
-        params: JoinAppendParams,
-    ) -> Result<Option<Vec<JoinEntry>>> {
-        let mut tx = self.pool.begin().await?;
-
-        let timeout_at = params
-            .join_window_timeout_seconds
-            .map(|secs| params.source_created_at + chrono::Duration::seconds(secs as i64));
-
-        sqlx::query(
-            "INSERT INTO seesaw_join_windows \
-             (join_handler_id, correlation_id, batch_id, batch_size, timeout_at) \
-             VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (join_handler_id, correlation_id, batch_id) DO NOTHING",
-        )
-        .bind(&params.join_handler_id)
-        .bind(self.correlation_id)
-        .bind(params.batch_id)
-        .bind(params.batch_size)
-        .bind(timeout_at)
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            "INSERT INTO seesaw_join_entries \
-             (join_handler_id, correlation_id, batch_id, batch_index, \
-              source_event_id, event_type, payload, batch_size, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-             ON CONFLICT (join_handler_id, correlation_id, batch_id, batch_index) DO NOTHING",
-        )
-        .bind(&params.join_handler_id)
-        .bind(self.correlation_id)
-        .bind(params.batch_id)
-        .bind(params.batch_index)
-        .bind(params.source_event_id)
-        .bind(&params.source_event_type)
-        .bind(&params.source_payload)
-        .bind(params.batch_size)
-        .bind(params.source_created_at)
-        .execute(&mut *tx)
-        .await?;
-
-        let (count,) = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM seesaw_join_entries \
-             WHERE join_handler_id = $1 AND correlation_id = $2 AND batch_id = $3",
-        )
-        .bind(&params.join_handler_id)
-        .bind(self.correlation_id)
-        .bind(params.batch_id)
-        .fetch_one(&mut *tx)
-        .await?;
-
-        if count < params.batch_size as i64 {
-            tx.commit().await?;
-            return Ok(None);
-        }
-
-        // All entries present — claim the window
-        let updated = sqlx::query(
-            "UPDATE seesaw_join_windows SET status = 'claimed' \
-             WHERE join_handler_id = $1 AND correlation_id = $2 AND batch_id = $3 \
-               AND status = 'open'",
-        )
-        .bind(&params.join_handler_id)
-        .bind(self.correlation_id)
-        .bind(params.batch_id)
-        .execute(&mut *tx)
-        .await?;
-
-        if updated.rows_affected() == 0 {
-            // Already claimed by another worker
-            tx.commit().await?;
-            return Ok(None);
-        }
-
-        let entries = sqlx::query_as::<_, JoinEntryRow>(
-            "SELECT source_event_id, event_type, payload, batch_id, batch_index, batch_size, created_at \
-             FROM seesaw_join_entries \
-             WHERE join_handler_id = $1 AND correlation_id = $2 AND batch_id = $3 \
-             ORDER BY batch_index ASC",
-        )
-        .bind(&params.join_handler_id)
-        .bind(self.correlation_id)
-        .bind(params.batch_id)
-        .fetch_all(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-        Ok(Some(entries.into_iter().map(|r| r.into_entry()).collect()))
-    }
-
-    async fn join_complete(
-        &self,
-        join_handler_id: String,
-        correlation_id: Uuid,
-        batch_id: Uuid,
-    ) -> Result<()> {
-        sqlx::query(
-            "UPDATE seesaw_join_windows SET status = 'completed' \
-             WHERE join_handler_id = $1 AND correlation_id = $2 AND batch_id = $3",
-        )
-        .bind(&join_handler_id)
-        .bind(correlation_id)
-        .bind(batch_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    async fn join_release(
-        &self,
-        join_handler_id: String,
-        correlation_id: Uuid,
-        batch_id: Uuid,
-        _error: String,
-    ) -> Result<()> {
-        sqlx::query(
-            "UPDATE seesaw_join_windows SET status = 'open' \
-             WHERE join_handler_id = $1 AND correlation_id = $2 AND batch_id = $3",
-        )
-        .bind(&join_handler_id)
-        .bind(correlation_id)
-        .bind(batch_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    async fn expire_join_windows(&self, now: DateTime<Utc>) -> Result<Vec<ExpiredJoinWindow>> {
-        let mut tx = self.pool.begin().await?;
-
-        // Find open windows past their timeout
-        let windows = sqlx::query_as::<_, JoinWindowRow>(
-            "SELECT join_handler_id, correlation_id, batch_id \
-             FROM seesaw_join_windows \
-             WHERE status = 'open' AND timeout_at IS NOT NULL AND timeout_at <= $1 \
-             FOR UPDATE SKIP LOCKED",
-        )
-        .bind(now)
-        .fetch_all(&mut *tx)
-        .await?;
-
-        let mut expired = Vec::new();
-
-        for w in &windows {
-            sqlx::query(
-                "UPDATE seesaw_join_windows SET status = 'expired' \
-                 WHERE join_handler_id = $1 AND correlation_id = $2 AND batch_id = $3",
-            )
-            .bind(&w.join_handler_id)
-            .bind(w.correlation_id)
-            .bind(w.batch_id)
-            .execute(&mut *tx)
-            .await?;
-
-            let entry_ids = sqlx::query_as::<_, (Uuid,)>(
-                "SELECT source_event_id FROM seesaw_join_entries \
-                 WHERE join_handler_id = $1 AND correlation_id = $2 AND batch_id = $3",
-            )
-            .bind(&w.join_handler_id)
-            .bind(w.correlation_id)
-            .bind(w.batch_id)
-            .fetch_all(&mut *tx)
-            .await?;
-
-            expired.push(ExpiredJoinWindow {
-                join_handler_id: w.join_handler_id.clone(),
-                correlation_id: w.correlation_id,
-                batch_id: w.batch_id,
-                source_event_ids: entry_ids.into_iter().map(|(id,)| id).collect(),
-            });
-        }
-
-        tx.commit().await?;
-        Ok(expired)
     }
 
     // ── Event persistence (existing `events` table) ──────────────────
@@ -698,9 +517,8 @@ impl PostgresStore {
                 "INSERT INTO seesaw_effect_executions \
                  (event_id, handler_id, correlation_id, event_type, event_payload, \
                   parent_event_id, batch_id, batch_index, batch_size, hops, \
-                  max_attempts, timeout_seconds, priority, execute_at, \
-                  join_window_timeout_seconds, status) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'pending')",
+                  max_attempts, timeout_seconds, priority, execute_at, status) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'pending')",
             )
             .bind(commit.event_id)
             .bind(&intent.handler_id)
@@ -716,7 +534,6 @@ impl PostgresStore {
             .bind(intent.timeout_seconds)
             .bind(intent.priority)
             .bind(intent.execute_at)
-            .bind(intent.join_window_timeout_seconds)
             .execute(&mut *tx)
             .await?;
         }
@@ -939,7 +756,6 @@ struct EffectRow {
     priority: i32,
     hops: i32,
     attempts: i32,
-    join_window_timeout_seconds: Option<i32>,
 }
 
 impl EffectRow {
@@ -960,42 +776,9 @@ impl EffectRow {
             priority: self.priority,
             hops: self.hops,
             attempts: self.attempts,
-            join_window_timeout_seconds: self.join_window_timeout_seconds,
             ephemeral: None,
         }
     }
-}
-
-#[derive(sqlx::FromRow)]
-struct JoinEntryRow {
-    source_event_id: Uuid,
-    event_type: String,
-    payload: serde_json::Value,
-    batch_id: Uuid,
-    batch_index: i32,
-    batch_size: i32,
-    created_at: DateTime<Utc>,
-}
-
-impl JoinEntryRow {
-    fn into_entry(self) -> JoinEntry {
-        JoinEntry {
-            source_event_id: self.source_event_id,
-            event_type: self.event_type,
-            payload: self.payload,
-            batch_id: self.batch_id,
-            batch_index: self.batch_index,
-            batch_size: self.batch_size,
-            created_at: self.created_at,
-        }
-    }
-}
-
-#[derive(sqlx::FromRow)]
-struct JoinWindowRow {
-    join_handler_id: String,
-    correlation_id: Uuid,
-    batch_id: Uuid,
 }
 
 #[derive(sqlx::FromRow)]

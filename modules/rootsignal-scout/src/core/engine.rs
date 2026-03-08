@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 use ai_client::Agent;
+use seesaw_utils::Batcher;
 use rootsignal_common::EmbeddingLookup;
 use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector, GraphReader};
 
@@ -61,6 +62,8 @@ pub struct ScoutEngineDeps {
     pub pg_pool: Option<PgPool>,
     /// Archive for web search/page reading in synthesis finders.
     pub archive: Option<Arc<rootsignal_archive::Archive>>,
+    /// Batcher for grouping items across handler invocations (e.g. signal review).
+    pub batcher: Batcher,
 }
 
 impl ScoutEngineDeps {
@@ -84,6 +87,7 @@ impl ScoutEngineDeps {
             budget: None,
             pg_pool: None,
             archive: None,
+            batcher: Batcher::new(),
         }
     }
 }

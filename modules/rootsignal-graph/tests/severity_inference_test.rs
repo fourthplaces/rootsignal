@@ -26,6 +26,7 @@ fn trusted_source() -> SourceNode {
         scrape_count: 30,
         sources_discovered: 0,
         discovered_from_key: None,
+        channel_weights: rootsignal_common::ChannelWeights::default(),
     }
 }
 
@@ -52,6 +53,7 @@ fn new_source() -> SourceNode {
         scrape_count: 2,
         sources_discovered: 0,
         discovered_from_key: None,
+        channel_weights: rootsignal_common::ChannelWeights::default(),
     }
 }
 
