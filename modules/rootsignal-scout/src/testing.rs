@@ -22,7 +22,17 @@ use rootsignal_common::types::{
     ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeMeta,
     NodeType, Post, ReviewStatus, ScoutScope, ShortVideo, SourceNode, Story,
 };
-use rootsignal_graph::DuplicateMatch;
+use rootsignal_common::events::{CauseHeatScore, SimilarityEdge, SystemEvent};
+use rootsignal_graph::{
+    DuplicateMatch, GraphQueries, UnlinkedSignal,
+};
+use rootsignal_graph::situation_temperature::TemperatureComponents;
+use rootsignal_graph::writer::{
+    ConcernLinkerTarget, ConcernResponseShape, ExtractionYield, GapTypeStats,
+    GatheringFinderTarget, InvestigationTarget, ResponseFinderTarget,
+    ResponseHeuristic, SignalTypeCounts, SituationBrief, SourceBrief, SourceStats,
+    UnmetTension, WeaveCandidate, WeaveSignal,
+};
 
 use crate::core::engine::{build_engine, ScoutEngine, ScoutEngineDeps};
 use crate::core::extractor::{ExtractionResult, SignalExtractor};
@@ -2069,5 +2079,306 @@ mod tests {
             .await
             .unwrap();
         assert!(store.actor_linked_to_signal("Legal Aid Org", "Free Legal Clinic"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MockGraphQueries — in-memory mock for GraphQueries trait
+// ---------------------------------------------------------------------------
+
+/// In-memory mock for `GraphQueries`. All methods return empty defaults.
+///
+/// Builder methods allow pre-loading specific return values for tests that need
+/// non-empty graph state.
+pub struct MockGraphQueries {
+    sources: Vec<SourceNode>,
+    source_exists_urls: HashSet<String>,
+}
+
+impl MockGraphQueries {
+    pub fn new() -> Self {
+        Self {
+            sources: Vec::new(),
+            source_exists_urls: HashSet::new(),
+        }
+    }
+
+    pub fn with_sources(mut self, sources: Vec<SourceNode>) -> Self {
+        self.sources = sources;
+        self
+    }
+
+    pub fn with_source_exists(mut self, url: &str) -> Self {
+        self.source_exists_urls.insert(url.to_string());
+        self
+    }
+}
+
+#[async_trait]
+impl GraphQueries for MockGraphQueries {
+    async fn source_exists(&self, url: &str) -> Result<bool> {
+        Ok(self.source_exists_urls.contains(url))
+    }
+    async fn get_active_sources(&self) -> Result<Vec<SourceNode>> {
+        Ok(self.sources.clone())
+    }
+    async fn get_sources_for_region(&self, _lat: f64, _lng: f64, _radius_km: f64) -> Result<Vec<SourceNode>> {
+        Ok(self.sources.clone())
+    }
+    async fn find_actors_in_region(&self, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<(ActorNode, Vec<SourceNode>)>> {
+        Ok(vec![])
+    }
+    async fn find_pins_in_region(&self, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<(rootsignal_common::PinNode, SourceNode)>> {
+        Ok(vec![])
+    }
+    async fn count_source_tensions(&self, _: &str) -> Result<u32> { Ok(0) }
+    async fn find_dead_sources(&self, _: u32) -> Result<Vec<Uuid>> { Ok(vec![]) }
+    async fn find_dead_web_queries(&self) -> Result<Vec<Uuid>> { Ok(vec![]) }
+    async fn get_active_web_queries(&self) -> Result<Vec<String>> { Ok(vec![]) }
+    async fn get_source_stats(&self) -> Result<SourceStats> { Ok(SourceStats::default()) }
+    async fn get_unmet_tensions(&self, _: u32) -> Result<Vec<UnmetTension>> { Ok(vec![]) }
+    async fn get_recently_linked_signals_with_queries(&self) -> Result<(Vec<String>, Vec<Uuid>)> { Ok((vec![], vec![])) }
+    async fn find_similar_query(&self, _: &[f32], _: f64) -> Result<Option<(String, f64)>> { Ok(None) }
+    async fn get_situation_landscape(&self, _: u32) -> Result<Vec<SituationBrief>> { Ok(vec![]) }
+    async fn find_curiosity_candidates(&self) -> Result<Vec<(Uuid, Vec<Uuid>)>> { Ok(vec![]) }
+    async fn get_signal_info(&self, _: Uuid) -> Result<Option<(String, String)>> { Ok(None) }
+    async fn discover_unassigned_signals(&self, _: &str) -> Result<Vec<WeaveSignal>> { Ok(vec![]) }
+    async fn load_weave_candidates(&self) -> Result<Vec<WeaveCandidate>> { Ok(vec![]) }
+    async fn find_affected_situations(&self, _: &str) -> Result<Vec<Uuid>> { Ok(vec![]) }
+    async fn unverified_dispatches(&self, _: usize) -> Result<Vec<(Uuid, String)>> { Ok(vec![]) }
+    async fn check_signal_ids_exist(&self, _: &[Uuid]) -> Result<Vec<Uuid>> { Ok(vec![]) }
+    async fn find_investigation_targets(&self, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<InvestigationTarget>> { Ok(vec![]) }
+    async fn find_tension_linker_targets(&self, _: u32, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<ConcernLinkerTarget>> { Ok(vec![]) }
+    async fn get_tension_landscape(&self, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<(String, String)>> { Ok(vec![]) }
+    async fn find_duplicate(&self, _: &[f32], _: NodeType, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Option<DuplicateMatch>> { Ok(None) }
+    async fn get_existing_responses(&self, _: Uuid) -> Result<Vec<ResponseHeuristic>> { Ok(vec![]) }
+    async fn find_response_finder_targets(&self, _: u32, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<ResponseFinderTarget>> { Ok(vec![]) }
+    async fn get_existing_gathering_signals(&self, _: Uuid, _: f64, _: f64, _: f64) -> Result<Vec<ResponseHeuristic>> { Ok(vec![]) }
+    async fn find_gathering_finder_targets(&self, _: u32, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<GatheringFinderTarget>> { Ok(vec![]) }
+    async fn get_active_tensions(&self, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<(Uuid, Vec<f64>)>> { Ok(vec![]) }
+    async fn find_response_candidates(&self, _: &[f64], _: f64, _: f64, _: f64, _: f64) -> Result<Vec<(Uuid, f64)>> { Ok(vec![]) }
+    async fn actor_signal_counts(&self) -> Result<Vec<(Uuid, u32)>> { Ok(vec![]) }
+    async fn signal_evidence_for_diversity(&self, _: &str) -> Result<Vec<(Uuid, String, Vec<(String, String)>)>> { Ok(vec![]) }
+    async fn get_actors_with_domains(&self, _: Option<u32>) -> Result<Vec<(String, Vec<String>, Vec<String>, String)>> { Ok(vec![]) }
+    async fn get_signal_type_counts(&self) -> Result<SignalTypeCounts> { Ok(SignalTypeCounts::default()) }
+    async fn get_discovery_performance(&self) -> Result<(Vec<SourceBrief>, Vec<SourceBrief>)> { Ok((vec![], vec![])) }
+    async fn get_gap_type_stats(&self) -> Result<Vec<GapTypeStats>> { Ok(vec![]) }
+    async fn get_extraction_yield(&self) -> Result<Vec<ExtractionYield>> { Ok(vec![]) }
+    async fn get_tension_response_shape(&self, _: u32) -> Result<Vec<ConcernResponseShape>> { Ok(vec![]) }
+    async fn find_duplicate_tension_pairs(&self, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<(Uuid, Uuid)>> { Ok(vec![]) }
+    async fn compute_similarity_edges(&self) -> Result<Vec<SimilarityEdge>> { Ok(vec![]) }
+    async fn find_signals_without_actors(&self, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<UnlinkedSignal>> { Ok(vec![]) }
+    async fn compute_situation_temperature(&self, _: &Uuid) -> Result<(TemperatureComponents, Vec<SystemEvent>)> {
+        Ok((TemperatureComponents {
+            tension_heat_agg: 0.0,
+            entity_velocity_norm: 0.0,
+            response_gap_norm: 0.0,
+            amplification_norm: 0.0,
+            clarity_need_norm: 0.0,
+            temperature: 0.0,
+            arc: rootsignal_common::types::SituationArc::Emerging,
+            clarity: rootsignal_common::types::Clarity::Fuzzy,
+            narrative_centroid: None,
+            centroid_lat: None,
+            centroid_lng: None,
+        }, vec![]))
+    }
+    async fn compute_severity_inference(&self, _: f64, _: f64, _: f64, _: f64) -> Result<(u32, Vec<SystemEvent>)> {
+        Ok((0, vec![]))
+    }
+    async fn compute_cause_heat(&self, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<CauseHeatScore>> {
+        Ok(vec![])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ScoutRunTest — production-topology test harness
+// ---------------------------------------------------------------------------
+
+use crate::core::run_scope::RunScope;
+use crate::domains::lifecycle::events::LifecycleEvent;
+
+/// Test harness that runs the full scout engine from `ScoutRunRequested`.
+///
+/// ```ignore
+/// let harness = ScoutRunTest::new()
+///     .source("https://localorg.org/events", archived_page(url, "Community dinner"))
+///     .extraction("https://localorg.org/events", ExtractionResult { ... })
+///     .build();
+/// harness.run().await;
+/// assert_eq!(harness.stats().signals_stored, 1);
+/// ```
+pub struct ScoutRunTest {
+    engine: Arc<ScoutEngine>,
+    run_id: Uuid,
+    scope: RunScope,
+    captured: Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    store: Arc<MockSignalReader>,
+}
+
+impl ScoutRunTest {
+    pub fn new() -> ScoutRunTestBuilder {
+        ScoutRunTestBuilder {
+            region: None,
+            sources: Vec::new(),
+            pages: HashMap::new(),
+            extractions: HashMap::new(),
+            embedder: None,
+            graph: None,
+            ai: None,
+        }
+    }
+
+    /// Emit ScoutRunRequested and settle — runs the full pipeline.
+    pub async fn run(&self) {
+        self.engine
+            .emit(LifecycleEvent::ScoutRunRequested {
+                run_id: self.run_id,
+                scope: self.scope.clone(),
+            })
+            .settled()
+            .await
+            .unwrap();
+    }
+
+    /// Access the pipeline stats from the aggregate.
+    pub fn stats(&self) -> crate::core::stats::ScoutStats {
+        self.state().stats.clone()
+    }
+
+    /// Access the full PipelineState aggregate.
+    pub fn state(&self) -> Arc<crate::core::aggregate::PipelineState> {
+        self.engine.singleton::<crate::core::aggregate::PipelineState>()
+    }
+
+    /// Access the MockSignalReader for node/actor assertions.
+    pub fn store(&self) -> &MockSignalReader {
+        &self.store
+    }
+
+    /// Access captured events for event-level assertions.
+    pub fn captured(&self) -> Vec<seesaw_core::AnyEvent> {
+        self.captured.lock().unwrap().clone()
+    }
+
+    /// Access the underlying engine for direct interaction.
+    pub fn engine(&self) -> &ScoutEngine {
+        &self.engine
+    }
+}
+
+pub struct ScoutRunTestBuilder {
+    region: Option<rootsignal_common::ScoutScope>,
+    sources: Vec<SourceNode>,
+    pages: HashMap<String, ArchivedPage>,
+    extractions: HashMap<String, ExtractionResult>,
+    embedder: Option<Arc<dyn TextEmbedder>>,
+    graph: Option<Arc<dyn GraphQueries>>,
+    ai: Option<Arc<dyn ai_client::Agent>>,
+}
+
+impl ScoutRunTestBuilder {
+    /// Set the region for a region-scoped run.
+    pub fn region(mut self, scope: rootsignal_common::ScoutScope) -> Self {
+        self.region = Some(scope);
+        self
+    }
+
+    /// Register a source URL with its archived page content.
+    ///
+    /// Internally creates a SourceNode in the store AND registers the page in the fetcher,
+    /// so both `prepare_sources` and `start_web_scrape` find it.
+    pub fn source(mut self, url: &str, page: ArchivedPage) -> Self {
+        self.sources.push(page_source(url));
+        self.pages.insert(url.to_string(), page);
+        self
+    }
+
+    /// Register a source URL without page content (for source-exists tests).
+    pub fn source_only(mut self, url: &str) -> Self {
+        self.sources.push(page_source(url));
+        self
+    }
+
+    /// Register a mock extraction result for a URL.
+    pub fn extraction(mut self, url: &str, result: ExtractionResult) -> Self {
+        self.extractions.insert(url.to_string(), result);
+        self
+    }
+
+    /// Override the default FixedEmbedder.
+    pub fn embedder(mut self, embedder: Arc<dyn TextEmbedder>) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
+    /// Inject a GraphQueries implementation (default: MockGraphQueries).
+    pub fn graph(mut self, graph: Arc<dyn GraphQueries>) -> Self {
+        self.graph = Some(graph);
+        self
+    }
+
+    /// Inject an AI agent (for LLM-dependent handlers like signal review).
+    pub fn ai(mut self, ai: Arc<dyn ai_client::Agent>) -> Self {
+        self.ai = Some(ai);
+        self
+    }
+
+    /// Build the harness: wire all mocks, create engine.
+    pub fn build(self) -> ScoutRunTest {
+        let store = Arc::new(MockSignalReader::new());
+
+        // Build fetcher from registered pages
+        let mut fetcher = MockFetcher::new();
+        for (url, page) in self.pages {
+            fetcher = fetcher.on_page(&url, page);
+        }
+
+        // Build extractor from registered extractions
+        let mut extractor = MockExtractor::new();
+        for (url, result) in self.extractions {
+            extractor = extractor.on_url(&url, result);
+        }
+
+        let embedder = self.embedder
+            .unwrap_or_else(|| Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)));
+
+        let run_id = Uuid::new_v4();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+
+        let scope = if !self.sources.is_empty() {
+            RunScope::Sources {
+                sources: self.sources.clone(),
+                region: self.region.clone(),
+            }
+        } else if let Some(ref region) = self.region {
+            RunScope::Region(region.clone())
+        } else {
+            RunScope::Unscoped
+        };
+
+        let mut deps = ScoutEngineDeps::new(
+            store.clone() as Arc<dyn SignalReader>,
+            embedder,
+            run_id,
+        );
+        deps.fetcher = Some(Arc::new(fetcher) as Arc<dyn ContentFetcher>);
+        deps.extractor = Some(Arc::new(extractor) as Arc<dyn SignalExtractor>);
+        deps.captured_events = Some(captured.clone());
+        deps.graph = self.graph.or_else(|| Some(Arc::new(MockGraphQueries::new())));
+
+        if let Some(ai) = self.ai {
+            deps.ai = Some(ai);
+        }
+
+        let engine = Arc::new(build_engine(deps, None));
+
+        ScoutRunTest {
+            engine,
+            run_id,
+            scope,
+            captured,
+            store,
+        }
     }
 }

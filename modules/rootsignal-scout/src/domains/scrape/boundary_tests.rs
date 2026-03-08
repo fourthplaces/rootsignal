@@ -4112,3 +4112,127 @@ async fn media_fetch_failure_does_not_block_feed() {
     assert_eq!(ctx.stats.signals_stored, 1, "media failure → feed signals still extracted");
 }
 
+// ---------------------------------------------------------------------------
+// ScoutRunTest harness — proof-of-concept
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn harness_page_with_content_produces_signal() {
+    let url = "https://localorg.org/events";
+    let harness = ScoutRunTest::new()
+        .source(url, archived_page(url, "# Community Dinner\nFree dinner at Powderhorn Park"))
+        .extraction(url, ExtractionResult {
+            nodes: vec![tension_at("Community Dinner at Powderhorn", 44.9489, -93.2583)],
+            ..Default::default()
+        })
+        .build();
+
+    harness.run().await;
+
+    assert_eq!(harness.stats().signals_stored, 1, "one signal should be created");
+}
+
+#[tokio::test]
+async fn harness_empty_page_produces_nothing() {
+    let url = "https://empty.org";
+    let harness = ScoutRunTest::new()
+        .source(url, archived_page(url, ""))
+        .extraction(url, ExtractionResult::default())
+        .build();
+
+    harness.run().await;
+
+    assert_eq!(harness.stats().signals_stored, 0);
+}
+
+#[tokio::test]
+async fn harness_unreachable_page_does_not_crash() {
+    let url = "https://broken.org";
+    let harness = ScoutRunTest::new()
+        .source_only(url)
+        .build();
+
+    harness.run().await;
+
+    assert_eq!(harness.stats().signals_stored, 0);
+}
+
+#[tokio::test]
+async fn harness_multiple_signals_from_one_page() {
+    let url = "https://news.org/article";
+    let harness = ScoutRunTest::new()
+        .source(url, archived_page(url, "# Multiple issues\nHousing and transit"))
+        .extraction(url, ExtractionResult {
+            nodes: vec![
+                tension_at("Housing Crisis Downtown", 44.975, -93.270),
+                tension_at("Bus Route 5 Cuts", 44.960, -93.265),
+                need_at("Volunteer Drivers Needed", 44.955, -93.260),
+            ],
+            ..Default::default()
+        })
+        .build();
+
+    harness.run().await;
+
+    assert_eq!(harness.stats().signals_stored, 3, "all three signals should be created");
+}
+
+#[tokio::test]
+async fn harness_duplicate_title_deduped_within_batch() {
+    let url = "https://news.org/dupe";
+    let harness = ScoutRunTest::new()
+        .source(url, archived_page(url, "# Repeated story"))
+        .extraction(url, ExtractionResult {
+            nodes: vec![
+                tension_at("Housing Crisis", 44.975, -93.270),
+                tension_at("Housing Crisis", 44.975, -93.270),
+                tension_at("Different Signal", 44.960, -93.265),
+            ],
+            ..Default::default()
+        })
+        .build();
+
+    harness.run().await;
+
+    assert_eq!(harness.stats().signals_stored, 2, "duplicate title+type deduped to 1");
+}
+
+#[tokio::test]
+async fn harness_far_away_signal_still_stored() {
+    let url = "https://news.org/far-away";
+    let harness = ScoutRunTest::new()
+        .region(mpls_region())
+        .source(url, archived_page(url, "# Far Away Signal"))
+        .extraction(url, ExtractionResult {
+            nodes: vec![tension_at("Issue in Duluth", DULUTH.0, DULUTH.1)],
+            ..Default::default()
+        })
+        .build();
+
+    harness.run().await;
+
+    assert_eq!(harness.stats().signals_stored, 1, "signals stored regardless of region");
+}
+
+#[tokio::test]
+async fn harness_two_sources_two_signals() {
+    let url1 = "https://org1.org/page";
+    let url2 = "https://org2.org/page";
+    let harness = ScoutRunTest::new()
+        .source(url1, archived_page(url1, "Page 1"))
+        .source(url2, archived_page(url2, "Page 2"))
+        .extraction(url1, ExtractionResult {
+            nodes: vec![tension_at("Signal One", 44.97, -93.27)],
+            ..Default::default()
+        })
+        .extraction(url2, ExtractionResult {
+            nodes: vec![tension_at("Signal Two", 44.96, -93.26)],
+            ..Default::default()
+        })
+        .build();
+
+    harness.run().await;
+
+    assert_eq!(harness.stats().signals_stored, 2);
+}
+
