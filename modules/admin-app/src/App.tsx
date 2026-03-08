@@ -5,6 +5,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { SignalsPage } from "@/pages/SignalsPage";
 import { SignalDetailPage } from "@/pages/SignalDetailPage";
 import { ActorsPage } from "@/pages/ActorsPage";
+import { ActorDetailPage } from "@/pages/ActorDetailPage";
 import { FindingsPage } from "@/pages/FindingsPage";
 import { ScoutPage } from "@/pages/ScoutPage";
 import { ScoutRunDetailPage } from "@/pages/ScoutRunDetailPage";
@@ -23,7 +24,7 @@ export default function App() {
       <Route element={<AdminLayout />}>
         <Route index element={<DashboardPage />} />
         <Route path="scout" element={<ScoutPage />} />
-        <Route path="scout/sources/:id" element={<SourceDetailPage />} />
+        <Route path="sources/:id" element={<SourceDetailPage />} />
         <Route path="graph" element={<GraphExplorerPage />} />
         <Route path="events" element={<EventsPage />} />
         <Route path="archive" element={<ArchivePage />} />
@@ -31,9 +32,10 @@ export default function App() {
         <Route path="signals/:id" element={<SignalDetailPage />} />
         <Route path="situations" element={<SituationsPage />} />
         <Route path="actors" element={<ActorsPage />} />
+        <Route path="actors/:id" element={<ActorDetailPage />} />
         <Route path="findings" element={<FindingsPage />} />
         <Route path="dangling-signals" element={<DanglingSignalsPage />} />
-        <Route path="scout/regions/:id" element={<RegionDetailPage />} />
+        <Route path="regions/:id" element={<RegionDetailPage />} />
         <Route path="scout-runs/:runId" element={<ScoutRunDetailPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

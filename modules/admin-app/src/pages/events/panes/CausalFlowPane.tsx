@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useEffect, memo } from "react";
-import { ReactFlow, Background, Controls, useReactFlow, Handle, type Node, type Edge, type NodeChange, type NodeProps, Position } from "@xyflow/react";
+import { ReactFlow, Background, Controls, useReactFlow, Handle, MarkerType, type Node, type Edge, type NodeChange, type NodeProps, Position } from "@xyflow/react";
 import { useQuery } from "@apollo/client";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
@@ -254,6 +254,8 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
     });
   }
 
+  const arrowMarker = { type: MarkerType.ArrowClosed, color: "#52525b", width: 16, height: 16 };
+
   // Edges: event group -> handler (via parentToHandler)
   for (const [parentId, handlers] of parentToHandler) {
     const sourceGroupKey = eventIdToGroup.get(parentId);
@@ -267,6 +269,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
           source: `evt:${sourceGroupKey}`,
           target: `hdl:${handlerId}`,
           style: { stroke: "#52525b", strokeWidth: 1 },
+          markerEnd: arrowMarker,
           animated: false,
         });
       }
@@ -285,6 +288,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
           source: `hdl:${handlerId}`,
           target: `evt:${groupKey}`,
           style: { stroke: "#52525b", strokeWidth: 1 },
+          markerEnd: arrowMarker,
           animated: false,
           ...(count > 1 ? { label: `×${count}`, labelStyle: { fontSize: 9, fill: "#71717a" } } : {}),
         });
@@ -308,6 +312,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
             source: `evt:${groupKey}`,
             target: `hdl:${handlerId}`,
             style: { stroke: "#52525b", strokeWidth: 1 },
+            markerEnd: arrowMarker,
           });
         }
       }

@@ -60,20 +60,31 @@ fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngine
 
 fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let done = [
-        state.tension_web_done,
-        state.tension_social_done,
-        state.response_web_done,
-        state.response_social_done,
-        state.topic_discovery_done,
-    ]
-    .iter()
-    .filter(|&&d| d)
-    .count();
+    let plan = state.source_plan.as_ref();
+    let mut total = 0u32;
+    let mut done = 0u32;
+    if plan.is_some_and(|p| p.has_tension_web_sources()) {
+        total += 1;
+        if state.tension_web_done { done += 1; }
+    }
+    if plan.is_some_and(|p| p.has_tension_social_sources()) {
+        total += 1;
+        if state.tension_social_done { done += 1; }
+    }
+    if plan.is_some() {
+        total += 2; // response_web + topic_discovery are always expected
+        if state.response_web_done { done += 1; }
+        if state.topic_discovery_done { done += 1; }
+    }
+    if plan.is_some_and(|p| p.has_response_social_sources()) {
+        total += 1;
+        if state.response_social_done { done += 1; }
+    }
+    let fraction = if total > 0 { done as f32 / total as f32 } else { 0.0 };
     vec![
         Block::Progress {
             label: "Scrape phases".into(),
-            fraction: done as f32 / 5.0,
+            fraction,
         },
         Block::Label {
             text: format!("{} links collected", state.collected_links.len()),
@@ -83,14 +94,22 @@ fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
 
 fn describe_expansion_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     let (_, state) = ctx.singleton::<PipelineState>();
-    let done = [state.tension_web_done, state.tension_social_done]
-        .iter()
-        .filter(|&&d| d)
-        .count();
+    let plan = state.source_plan.as_ref();
+    let mut total = 0u32;
+    let mut done = 0u32;
+    if plan.is_some_and(|p| p.has_tension_web_sources()) {
+        total += 1;
+        if state.tension_web_done { done += 1; }
+    }
+    if plan.is_some_and(|p| p.has_tension_social_sources()) {
+        total += 1;
+        if state.tension_social_done { done += 1; }
+    }
+    let fraction = if total > 0 { done as f32 / total as f32 } else { 0.0 };
     vec![
         Block::Progress {
             label: "Tension scrape".into(),
-            fraction: done as f32 / 2.0,
+            fraction,
         },
         Block::Status {
             label: "Source expansion".into(),

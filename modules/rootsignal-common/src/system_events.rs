@@ -384,6 +384,12 @@ pub enum SystemEvent {
         reason: String,
     },
 
+    /// Admin-initiated removal of all signals produced by a source.
+    SourceSignalsCleared {
+        source_id: Uuid,
+        canonical_key: String,
+    },
+
     /// Admin-initiated source deletion — removes the source and all edges.
     SourceDeleted {
         source_id: Uuid,
@@ -608,6 +614,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::SourcesRegistered { .. } => "sources_registered",
             SystemEvent::SourceChanged { .. } => "source_changed",
             SystemEvent::SourceDeactivated { .. } => "source_deactivated",
+            SystemEvent::SourceSignalsCleared { .. } => "source_signals_cleared",
             SystemEvent::SourceDeleted { .. } => "source_deleted",
             SystemEvent::PinCreated { .. } => "pin_created",
             SystemEvent::PinsConsumed { .. } => "pins_consumed",

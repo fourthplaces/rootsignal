@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { SOURCE_DETAIL, ADMIN_SCOUT_RUNS_BY_SOURCE } from "@/graphql/queries";
-import { RUN_SCOUT_SOURCE, UPDATE_SOURCE } from "@/graphql/mutations";
+import { RUN_SCOUT_SOURCE, UPDATE_SOURCE, CLEAR_SOURCE_SIGNALS } from "@/graphql/mutations";
 import { InvestigateDrawer, type InvestigateMode } from "@/components/InvestigateDrawer";
 
 const formatDate = (d: string | null | undefined) => {
@@ -31,6 +31,14 @@ type SignalBrief = {
   confidence: number;
   extractedAt: string | null;
   sourceUrl: string;
+  reviewStatus: string;
+};
+
+type ActorBrief = {
+  id: string;
+  name: string;
+  actorType: string;
+  signalCount: number;
 };
 
 type ArchiveSummary = {
@@ -104,6 +112,7 @@ type SourceDetail = {
   createdAt: string;
   lastProducedSignal: string | null;
   signals: SignalBrief[];
+  actors: ActorBrief[];
   archiveSummary: ArchiveSummary | null;
   discoveryTree: DiscoveryTree;
   channelWeights: {
@@ -171,7 +180,7 @@ function DiscoveryTreeView({ tree }: { tree: DiscoveryTree }) {
           <span className="text-muted-foreground text-xs">{"└─"}</span>
         )}
         <Link
-          to={`/scout/sources/${id}`}
+          to={`/sources/${id}`}
           className={`text-sm hover:underline ${
             isRoot ? "text-blue-400 font-medium" : "text-foreground"
           }`}
@@ -215,6 +224,7 @@ export function SourceDetailPage() {
   });
   const [runScoutSource] = useMutation(RUN_SCOUT_SOURCE);
   const [updateSource] = useMutation(UPDATE_SOURCE);
+  const [clearSourceSignals] = useMutation(CLEAR_SOURCE_SIGNALS);
   const [scouting, setScouting] = useState(false);
   const [scoutMsg, setScoutMsg] = useState<string | null>(null);
   const [investigation, setInvestigation] = useState<InvestigateMode | null>(null);
@@ -559,6 +569,20 @@ export function SourceDetailPage() {
             Signals Produced ({source.signals.length}
             {source.signals.length >= 50 ? "+" : ""})
           </h3>
+          {source.signals.length > 0 && (
+            <button
+              onClick={async () => {
+                if (!confirm(`Clear all ${source.signals.length} signals from this source?`)) return;
+                await clearSourceSignals({
+                  variables: { sourceId: source.id },
+                  refetchQueries: [{ query: SOURCE_DETAIL, variables: { id } }],
+                });
+              }}
+              className="text-xs px-2.5 py-1 rounded-md border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              Clear Signals
+            </button>
+          )}
         </div>
         {source.signals.length === 0 ? (
           <p className="px-4 py-3 text-sm text-muted-foreground">
@@ -570,6 +594,7 @@ export function SourceDetailPage() {
               <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
                 <th className="px-4 py-2 font-medium">Type</th>
                 <th className="px-4 py-2 font-medium">Title</th>
+                <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium text-right">
                   Confidence
                 </th>
@@ -600,6 +625,19 @@ export function SourceDetailPage() {
                       {s.title}
                     </Link>
                   </td>
+                  <td className="px-4 py-2">
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full border ${
+                        s.reviewStatus === "live"
+                          ? "bg-green-900/30 text-green-400 border-green-500/30"
+                          : s.reviewStatus === "accepted"
+                            ? "bg-blue-900/30 text-blue-400 border-blue-500/30"
+                            : "bg-amber-900/30 text-amber-400 border-amber-500/30"
+                      }`}
+                    >
+                      {s.reviewStatus}
+                    </span>
+                  </td>
                   <td className="px-4 py-2 text-right tabular-nums">
                     {(s.confidence * 100).toFixed(0)}%
                   </td>
@@ -612,6 +650,51 @@ export function SourceDetailPage() {
           </table>
         )}
       </div>
+
+      {/* Actors */}
+      {source.actors.length > 0 && (
+        <div className="rounded-lg border border-border">
+          <div className="px-4 py-3 border-b border-border">
+            <h3 className="text-sm font-medium">
+              Actors ({source.actors.length})
+            </h3>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
+                <th className="px-4 py-2 font-medium">Name</th>
+                <th className="px-4 py-2 font-medium">Type</th>
+                <th className="px-4 py-2 font-medium text-right">Signals</th>
+              </tr>
+            </thead>
+            <tbody>
+              {source.actors.map((a) => (
+                <tr
+                  key={a.id}
+                  className="border-b border-border last:border-0 hover:bg-muted/30"
+                >
+                  <td className="px-4 py-2">
+                    <Link
+                      to={`/actors/${a.id}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      {a.name}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2">
+                    <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
+                      {a.actorType}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {a.signalCount}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Archive summary */}
       {archiveEntries.length > 0 && (

@@ -4451,6 +4451,7 @@ pub struct SignalBrief {
     pub confidence: f32,
     pub extracted_at: Option<DateTime<Utc>>,
     pub source_url: String,
+    pub review_status: String,
 }
 
 /// A node in the source discovery tree.

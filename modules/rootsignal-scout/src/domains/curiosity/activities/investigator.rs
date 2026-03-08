@@ -197,20 +197,19 @@ impl<'a> Investigator<'a> {
         let mut target_stats = InvestigationTargetStats::default();
 
         match self.investigate_signal(target, &mut target_stats.inner, &mut events).await {
-            Ok(evidence_count) => {
+            Ok(evidence) => {
                 target_stats.inner.targets_investigated += 1;
-                target_stats.evidence_created = evidence_count;
+                target_stats.evidence_created = evidence.len() as u32;
                 info!(
                     signal_id = %target.signal_id,
                     node_type = %target.node_type,
                     title = target.title.as_str(),
-                    evidence_count,
+                    evidence_count = evidence.len(),
                     "Signal investigated"
                 );
 
-                // Revise confidence based on accumulated evidence
-                if evidence_count > 0 {
-                    self.compute_confidence_revision(target, &mut target_stats.inner, &mut events).await;
+                if !evidence.is_empty() {
+                    self.compute_confidence_revision(target, &evidence, &mut target_stats.inner, &mut events).await;
                     target_stats.confidence_adjusted = target_stats.inner.confidence_adjustments > 0;
                 }
             }
@@ -240,7 +239,7 @@ impl<'a> Investigator<'a> {
         target: &InvestigationTarget,
         stats: &mut InvestigationStats,
         events: &mut seesaw_core::Events,
-    ) -> Result<u32> {
+    ) -> Result<Vec<EvidenceSummary>> {
         // 1. Generate search queries via LLM
         let system_prompt = if target.is_sensitive {
             format!(
@@ -265,7 +264,7 @@ impl<'a> Investigator<'a> {
             .take(MAX_QUERIES_PER_SIGNAL)
             .collect();
         if queries.is_empty() {
-            return Ok(0);
+            return Ok(vec![]);
         }
 
         // 2. Execute web searches (budget-limited)
@@ -309,7 +308,7 @@ impl<'a> Investigator<'a> {
         }
 
         if all_results.is_empty() {
-            return Ok(0);
+            return Ok(vec![]);
         }
 
         // 3. LLM evaluates results
@@ -342,7 +341,7 @@ impl<'a> Investigator<'a> {
 
         // 4. Create EvidenceNodes for items with confidence >= 0.5
         let now = Utc::now();
-        let mut evidence_count = 0u32;
+        let mut created_evidence = Vec::new();
 
         for item in evaluation.evidence {
             if item.confidence < 0.5 {
@@ -372,7 +371,10 @@ impl<'a> Investigator<'a> {
                 channel_type: evidence.channel_type,
                 evidence_confidence: evidence.confidence,
             });
-            evidence_count += 1;
+            created_evidence.push(EvidenceSummary {
+                relevance: relevance.clone(),
+                confidence: item.confidence as f32,
+            });
             info!(
                 signal_id = %target.signal_id,
                 evidence_url = item.source_url.as_str(),
@@ -382,49 +384,24 @@ impl<'a> Investigator<'a> {
             );
         }
 
-        Ok(evidence_count)
+        Ok(created_evidence)
     }
 
-    /// Compute confidence revision and emit ConfidenceScored event.
+    /// Compute confidence revision from in-memory evidence and emit ConfidenceScored event.
     async fn compute_confidence_revision(
         &self,
         target: &InvestigationTarget,
+        evidence: &[EvidenceSummary],
         stats: &mut InvestigationStats,
         events: &mut seesaw_core::Events,
     ) {
-        let evidence = match self
-            .graph
-            .get_evidence_summary(target.signal_id, target.node_type)
-            .await
-        {
-            Ok(e) => e,
-            Err(e) => {
-                warn!(signal_id = %target.signal_id, error = %e, "Failed to get evidence summary for confidence revision");
-                return;
-            }
-        };
-
-        if evidence.is_empty() {
-            return;
-        }
-
-        let adjustment = compute_confidence_adjustment(&evidence);
+        let adjustment = compute_confidence_adjustment(evidence);
         if adjustment.abs() < f32::EPSILON {
             return;
         }
 
-        let old_confidence = match self
-            .graph
-            .get_signal_confidence(target.signal_id, target.node_type)
-            .await
-        {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(signal_id = %target.signal_id, error = %e, "Failed to read signal confidence");
-                return;
-            }
-        };
-
+        // Signal was just created in this run — default confidence is 0.5
+        let old_confidence = 0.5f32;
         let new_confidence = (old_confidence + adjustment).clamp(0.1, 1.0);
         if (new_confidence - old_confidence).abs() < f32::EPSILON {
             return;

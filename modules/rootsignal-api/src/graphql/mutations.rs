@@ -717,6 +717,37 @@ impl MutationRoot {
         })
     }
 
+    /// Clear all signals produced by a source. Flows through events.
+    #[graphql(guard = "AdminGuard")]
+    async fn clear_source_signals(&self, ctx: &Context<'_>, source_id: Uuid) -> Result<ScoutResult> {
+        use rootsignal_common::events::SystemEvent;
+
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let sources = writer
+            .get_sources_by_ids(&[source_id])
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load source: {e}")))?;
+        let source = sources
+            .into_iter()
+            .next()
+            .ok_or_else(|| async_graphql::Error::new(format!("Source {source_id} not found")))?;
+
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::SourceSignalsCleared {
+                source_id: source.id,
+                canonical_key: source.canonical_key.clone(),
+            })
+            .settled()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to clear signals: {e}")))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Signals cleared for {}", source.canonical_key)),
+        })
+    }
+
     /// Delete a source and all its edges. Flows through events.
     #[graphql(guard = "AdminGuard")]
     async fn delete_source(&self, ctx: &Context<'_>, id: Uuid) -> Result<ScoutResult> {

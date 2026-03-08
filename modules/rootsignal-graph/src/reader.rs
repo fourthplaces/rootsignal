@@ -1288,13 +1288,71 @@ impl PublicGraphReader {
         }
     }
 
+    /// Fetch recent signals linked to an actor via ACTED_IN.
+    pub async fn signals_for_actor(&self, actor_id: &Uuid) -> Result<Vec<SignalBrief>, neo4rs::Error> {
+        let cypher = "MATCH (a:Actor {id: $id})-[rel:ACTED_IN]->(n)-[:PRODUCED_BY]->(s:Source)
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
+                   n.confidence AS confidence, n.extracted_at AS extracted_at,
+                   s.url AS source_url, n.review_status AS review_status,
+                   rel.role AS role
+            ORDER BY n.extracted_at DESC
+            LIMIT 50";
+
+        let q = query(cypher).param("id", actor_id.to_string());
+        let mut signals = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            signals.push(SignalBrief {
+                id,
+                title: row.get("title").unwrap_or_default(),
+                signal_type: row.get("signal_type").unwrap_or_default(),
+                confidence: row.get::<f64>("confidence").unwrap_or(0.0) as f32,
+                extracted_at: {
+                    let raw: Option<String> = row.get("extracted_at").ok();
+                    raw.and_then(|s| {
+                        chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                            .ok()
+                            .map(|n| n.and_utc())
+                    })
+                },
+                source_url: row.get("source_url").unwrap_or_default(),
+                review_status: row.get("review_status").unwrap_or_else(|_| "staged".to_string()),
+            });
+        }
+        Ok(signals)
+    }
+
+    /// Fetch distinct actors linked to signals from a source, with per-source signal counts.
+    pub async fn actors_for_source(&self, source_id: &Uuid) -> Result<Vec<(rootsignal_common::ActorNode, u32)>, neo4rs::Error> {
+        let cypher = "MATCH (a:Actor)-[:ACTED_IN]->(n)-[:PRODUCED_BY]->(s:Source {id: $id})
+            RETURN a, count(DISTINCT n) AS source_signal_count
+            ORDER BY source_signal_count DESC
+            LIMIT 50";
+
+        let q = query(cypher).param("id", source_id.to_string());
+        let mut results = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(actor) = row_to_actor(&row) {
+                let count: i64 = row.get("source_signal_count").unwrap_or(0);
+                results.push((actor, count as u32));
+            }
+        }
+        Ok(results)
+    }
+
     /// Fetch recent signals produced by a source.
     pub async fn signals_for_source(&self, source_id: &Uuid) -> Result<Vec<SignalBrief>, neo4rs::Error> {
         let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
             WHERE n.review_status IN ['staged', 'accepted', 'live']
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
-                   s.url AS source_url
+                   s.url AS source_url, n.review_status AS review_status
             ORDER BY n.extracted_at DESC
             LIMIT 50";
 
@@ -1314,6 +1372,7 @@ impl PublicGraphReader {
                 confidence: row.get::<f64>("confidence").unwrap_or(0.0) as f32,
                 extracted_at: row_datetime_opt_pub(&row, "extracted_at"),
                 source_url: row.get("source_url").unwrap_or_default(),
+                review_status: row.get("review_status").unwrap_or_default(),
             });
         }
         Ok(signals)

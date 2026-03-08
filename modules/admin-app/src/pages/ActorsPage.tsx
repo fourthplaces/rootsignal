@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { useQuery } from "@apollo/client";
 import { ACTORS_IN_BOUNDS } from "@/graphql/queries";
 
@@ -46,7 +47,11 @@ export function ActorsPage() {
             <tbody>
               {actors.map((a) => (
                 <tr key={a.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-2">{a.name}</td>
+                  <td className="px-4 py-2">
+                    <Link to={`/actors/${a.id}`} className="text-blue-400 hover:underline">
+                      {a.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-2 text-muted-foreground">{a.actorType}</td>
                   <td className="px-4 py-2 text-muted-foreground">{a.locationName ?? "—"}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{a.signalCount}</td>

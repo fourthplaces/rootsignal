@@ -245,6 +245,50 @@ impl QueryRoot {
 
     // ========== Admin queries (AdminGuard) ==========
 
+    /// Full actor detail with recent signals.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_actor_detail(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<AdminActorDetail>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let actor = match reader.actor_detail(id).await? {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let pub_reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let signals = pub_reader.signals_for_actor(&id).await?;
+
+        let admin_signals: Vec<AdminSignalBrief> = signals
+            .into_iter()
+            .map(|s| AdminSignalBrief {
+                id: s.id.to_string(),
+                title: s.title,
+                signal_type: s.signal_type,
+                confidence: s.confidence,
+                extracted_at: s.extracted_at,
+                source_url: s.source_url,
+                review_status: s.review_status,
+            })
+            .collect();
+
+        Ok(Some(AdminActorDetail {
+            id: actor.id,
+            name: actor.name,
+            actor_type: format!("{:?}", actor.actor_type),
+            canonical_key: actor.canonical_key,
+            description: actor.description,
+            domains: actor.domains,
+            social_urls: actor.social_urls,
+            signal_count: actor.signal_count,
+            first_seen: actor.first_seen,
+            last_active: actor.last_active,
+            typical_roles: actor.typical_roles,
+            location_name: actor.location_name,
+            bio: actor.bio,
+            signals: admin_signals,
+        }))
+    }
+
     /// Get a single signal by ID, bypassing display filters (expired, past, etc.).
     #[graphql(guard = "AdminGuard")]
     async fn admin_signal(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlSignal>> {
@@ -576,6 +620,17 @@ impl QueryRoot {
             0.0
         };
 
+        let actor_pairs = reader.actors_for_source(&id).await.unwrap_or_default();
+        let admin_actors: Vec<AdminActorBrief> = actor_pairs
+            .into_iter()
+            .map(|(a, count)| AdminActorBrief {
+                id: a.id.to_string(),
+                name: a.name,
+                actor_type: format!("{:?}", a.actor_type),
+                signal_count: count,
+            })
+            .collect();
+
         let (tree_nodes, tree_edges) = reader.discovery_tree(&id).await.unwrap_or_default();
         let discovery_tree = if tree_nodes.is_empty() {
             AdminDiscoveryTree {
@@ -631,6 +686,7 @@ impl QueryRoot {
             created_at: source.created_at,
             last_produced_signal,
             signals: admin_signals,
+            actors: admin_actors,
             archive_summary: None,
             discovery_tree,
             channel_weights: AdminChannelWeights {
@@ -1598,9 +1654,36 @@ pub struct AdminSourceDetail {
     pub created_at: DateTime<Utc>,
     pub last_produced_signal: Option<DateTime<Utc>>,
     pub signals: Vec<AdminSignalBrief>,
+    pub actors: Vec<AdminActorBrief>,
     pub archive_summary: Option<AdminArchiveSummary>,
     pub discovery_tree: AdminDiscoveryTree,
     pub channel_weights: AdminChannelWeights,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminActorBrief {
+    pub id: String,
+    pub name: String,
+    pub actor_type: String,
+    pub signal_count: u32,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminActorDetail {
+    pub id: Uuid,
+    pub name: String,
+    pub actor_type: String,
+    pub canonical_key: String,
+    pub description: String,
+    pub domains: Vec<String>,
+    pub social_urls: Vec<String>,
+    pub signal_count: u32,
+    pub first_seen: DateTime<Utc>,
+    pub last_active: DateTime<Utc>,
+    pub typical_roles: Vec<String>,
+    pub location_name: Option<String>,
+    pub bio: Option<String>,
+    pub signals: Vec<AdminSignalBrief>,
 }
 
 #[derive(SimpleObject)]

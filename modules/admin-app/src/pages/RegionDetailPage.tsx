@@ -16,9 +16,11 @@ import {
   RUN_SCOUT_SOURCE,
   CANCEL_RUN,
 } from "@/graphql/mutations";
+import { RegionMap } from "@/pages/MapPage";
 
-type Tab = "signals" | "situations" | "actors" | "sources" | "runs";
+type Tab = "map" | "signals" | "situations" | "actors" | "sources" | "runs";
 const TABS: { key: Tab; label: string }[] = [
+  { key: "map", label: "Map" },
   { key: "signals", label: "Signals" },
   { key: "situations", label: "Situations" },
   { key: "actors", label: "Actors" },
@@ -48,7 +50,7 @@ type MutationFn = (options?: any) => Promise<any>;
 
 export function RegionDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [tab, setTab] = useState<Tab>("signals");
+  const [tab, setTab] = useState<Tab>("map");
 
   const { data: regionData, loading: regionLoading } = useQuery(ADMIN_REGION, {
     variables: { id },
@@ -63,7 +65,7 @@ export function RegionDetailPage() {
       lng: region?.centerLng,
       radiusKm: region?.radiusKm,
     },
-    skip: !region || tab !== "signals",
+    skip: !region || (tab !== "signals" && tab !== "map"),
   });
 
   const bounds = region ? {
@@ -161,11 +163,10 @@ export function RegionDetailPage() {
       {error && <p className="text-sm text-red-400">{error}</p>}
 
       {/* Metadata */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: "Center", value: `${region.centerLat.toFixed(4)}, ${region.centerLng.toFixed(4)}` },
           { label: "Radius", value: `${region.radiusKm} km` },
-          { label: "Type", value: region.isLeaf ? "Leaf" : "Parent" },
           { label: "Geo Terms", value: region.geoTerms.join(", ") || "-" },
           { label: "Created", value: formatDate(region.createdAt) },
         ].map((item) => (
@@ -205,6 +206,15 @@ export function RegionDetailPage() {
         ))}
       </div>
 
+      {/* Map tab */}
+      {tab === "map" && (
+        signalsLoading ? (
+          <p className="text-muted-foreground">Loading map...</p>
+        ) : (
+          <RegionMap region={region} signals={signals} />
+        )
+      )}
+
       {/* Signals tab */}
       {tab === "signals" && (
         signalsLoading ? (
@@ -224,11 +234,13 @@ export function RegionDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {signals.map((s: Record<string, string | number>) => (
+                {signals.map((s: Record<string, string | number>) => {
+                  const nodeType = (s.__typename as string ?? "").replace("Gql", "").replace("Signal", "");
+                  return (
                   <tr key={s.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${typeColor[s.signalType as string] ?? "bg-muted text-muted-foreground"}`}>
-                        {s.signalType}
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${typeColor[nodeType] ?? "bg-muted text-muted-foreground"}`}>
+                        {nodeType}
                       </span>
                     </td>
                     <td className="px-4 py-2 max-w-[300px] truncate">
@@ -240,7 +252,8 @@ export function RegionDetailPage() {
                     <td className="px-4 py-2 text-right tabular-nums">{s.confidence ? `${(Number(s.confidence) * 100).toFixed(0)}%` : "-"}</td>
                     <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{s.updatedAt ? formatDate(s.updatedAt as string) : "-"}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -338,7 +351,7 @@ export function RegionDetailPage() {
                 {regionSources.map((s: Record<string, string | number | boolean | null>) => (
                   <tr key={s.id as string} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-2 max-w-[300px] truncate">
-                      <Link to={`/scout/sources/${s.id}`} className="text-blue-400 hover:underline">
+                      <Link to={`/sources/${s.id}`} className="text-blue-400 hover:underline">
                         {(s.canonicalValue as string) || (s.url as string)}
                       </Link>
                     </td>

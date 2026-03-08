@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { Search } from "lucide-react";
+import { Search, Copy, Check } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent, type FlowSelection } from "../EventsPaneContext";
 import { eventTextColor } from "../eventColor";
 import { CopyablePayload } from "./TimelinePane";
@@ -7,6 +7,21 @@ import { CopyablePayload } from "./TimelinePane";
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+function copyToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+}
 
 const LAYER_COLORS: Record<string, string> = {
   world: "bg-blue-500/20 text-blue-400",
@@ -152,6 +167,7 @@ function TreeNode({
   const { selectedSeq, selectSeq, setInvestigation, treeEvents, flowSelection } = useEventsPaneContext();
   const [payloadOpen, setPayloadOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [copied, setCopied] = useState(false);
   const isSelected = event.seq === selectedSeq;
   const layerColor = LAYER_COLORS[event.layer] ?? "bg-zinc-500/20 text-zinc-400";
   const children = event.id ? (childrenMap.get(event.id) ?? []) : [];
@@ -191,12 +207,12 @@ function TreeNode({
     <div className={depth > 0 ? "pl-6" : ""}>
       <div
         ref={isSelected ? nodeRef : undefined}
-        className={`group/tree w-full text-left px-2 py-1.5 rounded transition-colors hover:bg-accent/30 ${
+        onClick={() => selectSeq(event.seq, event.runId ?? undefined)}
+        className={`group/tree w-full text-left px-2 py-1.5 rounded transition-colors cursor-pointer hover:bg-accent/30 ${
           isSelected ? "bg-accent/50 ring-1 ring-blue-500/50" : ""
         }`}
       >
-        <button onClick={() => selectSeq(event.seq, event.runId ?? undefined)} className="w-full text-left">
-          <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0">
             {hasChildren ? (
               <button
                 onClick={(e) => { e.stopPropagation(); setCollapsed((v) => !v); }}
@@ -222,14 +238,27 @@ function TreeNode({
               {formatTs(event.ts)}
             </span>
             <button
-              onClick={(e) => { e.stopPropagation(); handleInvestigate(); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                const json = buildTreeJson([event], childrenMap);
+                const text = JSON.stringify(json[0], null, 2);
+                copyToClipboard(text);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
               className="opacity-0 group-hover/tree:opacity-100 transition-opacity ml-auto p-0.5 rounded hover:bg-accent shrink-0"
+              title="Copy subtree as JSON"
+            >
+              {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleInvestigate(); }}
+              className="opacity-0 group-hover/tree:opacity-100 transition-opacity p-0.5 rounded hover:bg-accent shrink-0"
               title="Investigate with AI"
             >
               <Search className="w-3 h-3 text-muted-foreground" />
             </button>
           </div>
-        </button>
         <button
           onClick={(e) => { e.stopPropagation(); setPayloadOpen((v) => !v); }}
           className="mt-0.5 ml-3 text-[10px] font-mono text-muted-foreground hover:text-foreground truncate text-left max-w-full block"
@@ -280,6 +309,31 @@ function matchesFlowSelection(event: AdminEvent, sel: FlowSelection): boolean {
   if (sel.kind === "event-type")
     return event.handlerId === sel.handlerId && event.name === sel.name;
   return event.handlerId === sel.handlerId;
+}
+
+type TreeJson = {
+  name: string;
+  layer: string;
+  handlerId: string | null;
+  summary: string | null;
+  children?: TreeJson[];
+};
+
+function buildTreeJson(roots: AdminEvent[], childrenMap: Map<string, AdminEvent[]>): TreeJson[] {
+  function toNode(evt: AdminEvent): TreeJson {
+    const children = evt.id ? (childrenMap.get(evt.id) ?? []) : [];
+    const node: TreeJson = {
+      name: evt.name,
+      layer: evt.layer,
+      handlerId: evt.handlerId,
+      summary: evt.summary,
+    };
+    if (children.length > 0) {
+      node.children = children.map(toNode);
+    }
+    return node;
+  }
+  return roots.map(toNode);
 }
 
 export function CausalTreePane() {

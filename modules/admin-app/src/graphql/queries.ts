@@ -286,6 +286,35 @@ export const ACTORS_IN_BOUNDS = gql`
   }
 `;
 
+export const ACTOR_DETAIL = gql`
+  query AdminActorDetail($id: UUID!) {
+    adminActorDetail(id: $id) {
+      id
+      name
+      actorType
+      canonicalKey
+      description
+      domains
+      socialUrls
+      signalCount
+      firstSeen
+      lastActive
+      typicalRoles
+      locationName
+      bio
+      signals {
+        id
+        title
+        signalType
+        confidence
+        extractedAt
+        sourceUrl
+        reviewStatus
+      }
+    }
+  }
+`;
+
 export const ALL_TAGS = gql`
   query Tags($limit: Int) {
     tags(limit: $limit) {
@@ -677,6 +706,13 @@ export const SOURCE_DETAIL = gql`
         confidence
         extractedAt
         sourceUrl
+        reviewStatus
+      }
+      actors {
+        id
+        name
+        actorType
+        signalCount
       }
       archiveSummary {
         posts

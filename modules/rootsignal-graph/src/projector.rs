@@ -2080,6 +2080,18 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
+            SystemEvent::SourceSignalsCleared { canonical_key, .. } => {
+                let q = query(
+                    "MATCH (s:Source {canonical_key: $key})<-[:PRODUCED_BY]-(n)
+                     OPTIONAL MATCH (n)-[:SOURCED_FROM]->(c:Citation)
+                     DETACH DELETE n, c",
+                )
+                .param("key", canonical_key.as_str());
+
+                self.client.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
             SystemEvent::SourceDeleted { canonical_key, .. } => {
                 let q = query(
                     "MATCH (s:Source {canonical_key: $key})

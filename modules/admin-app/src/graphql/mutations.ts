@@ -127,6 +127,15 @@ export const UPDATE_SOURCE = gql`
   }
 `;
 
+export const CLEAR_SOURCE_SIGNALS = gql`
+  mutation ClearSourceSignals($sourceId: UUID!) {
+    clearSourceSignals(sourceId: $sourceId) {
+      success
+      message
+    }
+  }
+`;
+
 export const DELETE_SOURCE = gql`
   mutation DeleteSource($id: UUID!) {
     deleteSource(id: $id) {

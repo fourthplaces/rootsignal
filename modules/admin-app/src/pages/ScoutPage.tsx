@@ -18,6 +18,7 @@ import {
   DISMISS_FINDING,
 } from "@/graphql/mutations";
 import { SourcesPage } from "@/pages/SourcesPage";
+import { PromptDialog } from "@/components/PromptDialog";
 import { DataTable, type Column } from "@/components/DataTable";
 
 type Tab = "runs" | "regions" | "sources" | "findings";
@@ -196,28 +197,12 @@ export function ScoutPage() {
   const [createRegion] = useMutation(CREATE_REGION);
   const [deleteRegion] = useMutation(DELETE_REGION);
 
-  // Create region form state
   const [showCreate, setShowCreate] = useState(false);
-  const [formName, setFormName] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreating(true);
-    setCreateError(null);
-    try {
-      await createRegion({
-        variables: { name: formName.trim() },
-      });
-      setFormName("");
-      setShowCreate(false);
-      refetchRegions();
-    } catch (err: unknown) {
-      setCreateError(err instanceof Error ? err.message : "Failed to create region");
-    } finally {
-      setCreating(false);
-    }
+  const handleCreate = async (name: string) => {
+    await createRegion({ variables: { name: name.trim() } });
+    setShowCreate(false);
+    refetchRegions();
   };
 
   const handleDelete = async (id: string) => {
@@ -277,7 +262,7 @@ export function ScoutPage() {
         return (
           <span className="flex flex-wrap gap-1.5">
             {r.sources.map((s) => (
-              <Link key={s.id} to={`/scout/sources/${s.id}`} className="text-blue-400 hover:underline text-xs">
+              <Link key={s.id} to={`/sources/${s.id}`} className="text-blue-400 hover:underline text-xs">
                 {s.label}
               </Link>
             ))}
@@ -285,7 +270,7 @@ export function ScoutPage() {
         );
       }
       if (r.regionId) {
-        return <Link to={`/scout/regions/${r.regionId}`} className="text-blue-400 hover:underline">{r.region}</Link>;
+        return <Link to={`/regions/${r.regionId}`} className="text-blue-400 hover:underline">{r.region}</Link>;
       }
       return <span className="text-muted-foreground">{r.region || "-"}</span>;
     }},
@@ -308,13 +293,10 @@ export function ScoutPage() {
 
   const regionColumns: Column<Region>[] = [
     { key: "name", label: "Name", render: (r) => (
-      <Link to={`/scout/regions/${r.id}`} className="text-blue-400 hover:underline font-medium">{r.name}</Link>
+      <Link to={`/regions/${r.id}`} className="text-blue-400 hover:underline font-medium">{r.name}</Link>
     )},
     { key: "center", label: "Center", render: (r) => <span className="text-muted-foreground text-xs font-mono">{r.centerLat.toFixed(3)}, {r.centerLng.toFixed(3)}</span> },
     { key: "radius", label: "Radius", align: "right" as const, render: (r) => <span className="tabular-nums">{r.radiusKm}km</span> },
-    { key: "type", label: "Type", render: (r) => (
-      <span className={`text-xs px-2 py-0.5 rounded-full ${r.isLeaf ? "bg-green-500/10 text-green-400" : "bg-blue-500/10 text-blue-400"}`}>{r.isLeaf ? "Leaf" : "Parent"}</span>
-    )},
     { key: "geoTerms", label: "Geo Terms", render: (r) => <span className="text-muted-foreground text-xs">{r.geoTerms.length > 0 ? r.geoTerms.join(", ") : "-"}</span> },
     { key: "createdAt", label: "Created", render: (r) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(r.createdAt)}</span> },
     { key: "actions", label: "Actions", align: "right" as const, render: (r) => (
@@ -361,34 +343,22 @@ export function ScoutPage() {
         <div className="space-y-4">
           <div className="flex gap-2 items-center">
             <button
-              onClick={() => setShowCreate(!showCreate)}
+              onClick={() => setShowCreate(true)}
               className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
             >
-              {showCreate ? "Cancel" : "Create Region"}
+              Create Region
             </button>
           </div>
 
           {showCreate && (
-            <form onSubmit={handleCreate} className="rounded-lg border border-border p-4 space-y-3">
-              <div className="flex gap-3 items-center">
-                <input
-                  type="text"
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  placeholder="Location (e.g. Minneapolis, Minnesota)"
-                  className="px-3 py-1.5 rounded-md border border-input bg-background text-sm flex-1"
-                  required
-                />
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
-                >
-                  {creating ? "Creating..." : "Create"}
-                </button>
-              </div>
-              {createError && <span className="text-sm text-red-400">{createError}</span>}
-            </form>
+            <PromptDialog
+              title="Create Region"
+              description="Enter a location name for the new region."
+              placeholder="e.g. Minneapolis, Minnesota"
+              confirmLabel="Create"
+              onConfirm={handleCreate}
+              onCancel={() => setShowCreate(false)}
+            />
           )}
 
           <DataTable<Region>
