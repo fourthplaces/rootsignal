@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ai_client::{ai_extract, Agent};
+use ai_client::Agent;
 use anyhow::Result;
 use chrono::Utc;
 use schemars::JsonSchema;
@@ -304,8 +304,29 @@ impl Extractor {
             "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
         );
 
-        let response: ExtractionResponse = ai_extract(&*self.ai, &self.system_prompt, &user_prompt)
-            .await?;
+        let schema = serde_json::to_value(schemars::schema_for!(ExtractionResponse))?;
+        let raw_json = self.ai.extract_json(&self.system_prompt, &user_prompt, schema).await?;
+
+        let response: ExtractionResponse = match serde_json::from_value(raw_json.clone()) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    source_url,
+                    raw = %raw_json,
+                    error = %e,
+                    "LLM response failed to deserialize"
+                );
+                return Err(e.into());
+            }
+        };
+
+        if response.signals.is_empty() {
+            warn!(
+                source_url,
+                raw = %raw_json,
+                "LLM returned 0 signals"
+            );
+        }
 
         let result = Self::convert_signals(response, source_url);
         Ok(result)
