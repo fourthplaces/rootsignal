@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod error;
+pub mod gemini;
 pub mod openai;
 pub mod openrouter;
 pub mod tool;
@@ -8,6 +9,7 @@ pub mod util;
 
 pub use claude::Claude;
 pub use error::AiError;
+pub use gemini::Gemini;
 pub use openai::OpenAi;
 pub use openrouter::OpenRouter;
 pub use tool::{DynTool, Tool, ToolDefinition, ToolWrapper};

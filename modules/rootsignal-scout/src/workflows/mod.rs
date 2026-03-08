@@ -11,11 +11,10 @@ use sqlx::PgPool;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use ai_client::Claude;
+use ai_client::Gemini;
 use crate::core::engine::{self, ScoutEngine, ScoutEngineDeps};
 use crate::core::postgres_store::PostgresStore;
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::util::HAIKU_MODEL;
 use crate::traits::{ContentFetcher, SignalReader};
 
 /// Shared dependency container for all scout workflows.
@@ -28,6 +27,7 @@ pub struct ScoutDeps {
     pub graph_client: GraphClient,
     pub pg_pool: PgPool,
     pub anthropic_api_key: String,
+    pub gemini_api_key: String,
     pub voyage_api_key: String,
     pub serper_api_key: String,
     #[builder(default)]
@@ -64,7 +64,7 @@ impl ScoutDeps {
         let embedder: Arc<dyn TextEmbedder> =
             Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
         let ai: Arc<dyn ai_client::Agent> = Arc::new(
-            Claude::new(&self.anthropic_api_key, HAIKU_MODEL),
+            Gemini::new(&self.gemini_api_key, "gemini-2.5-flash"),
         );
         let archive = create_archive(self);
         let budget = Arc::new(
@@ -212,6 +212,7 @@ impl ScoutDeps {
             .graph_client(graph_client)
             .pg_pool(pg_pool)
             .anthropic_api_key(config.anthropic_api_key.clone())
+            .gemini_api_key(config.gemini_api_key.clone())
             .voyage_api_key(config.voyage_api_key.clone())
             .serper_api_key(config.serper_api_key.clone())
             .apify_api_key(config.apify_api_key.clone())
