@@ -30,7 +30,7 @@ type SignalBrief = {
   signalType: string;
   confidence: number;
   extractedAt: string | null;
-  sourceUrl: string;
+  url: string;
   reviewStatus: string;
 };
 

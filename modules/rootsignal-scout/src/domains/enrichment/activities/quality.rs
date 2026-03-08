@@ -30,7 +30,7 @@ pub fn score(node: &Node) -> ExtractionQuality {
 
     let (has_action_url, has_timing) = match node {
         Node::Gathering(e) => {
-            let has_real_url = !e.action_url.is_empty() && e.action_url != meta.source_url;
+            let has_real_url = !e.action_url.is_empty() && e.action_url != meta.url;
             let has_real_timing = e.starts_at.is_some();
             (has_real_url, has_real_timing)
         }
@@ -123,7 +123,7 @@ mod tests {
             }),
             about_location_name: Some("Powderhorn Park".to_string()),
             from_location: None,
-            source_url: "https://example.com/events".to_string(),
+            url: "https://example.com/events".to_string(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn gathering_without_date_or_url_is_not_actionable() {
         let mut meta = test_meta();
-        meta.source_url = "https://example.com".to_string();
+        meta.url = "https://example.com".to_string();
         let event = Node::Gathering(GatheringNode {
             meta,
             starts_at: None,

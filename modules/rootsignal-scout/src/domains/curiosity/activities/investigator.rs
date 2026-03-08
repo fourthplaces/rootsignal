@@ -252,7 +252,7 @@ impl<'a> Investigator<'a> {
 
         let user_prompt = format!(
             "Signal type: {}\nTitle: {}\nSummary: {}\nSource URL: {}\nCity: {}",
-            target.node_type, target.title, target.summary, target.source_url, self.region,
+            target.node_type, target.title, target.summary, target.url, self.region,
         );
 
         let queries: InvestigationQueries =
@@ -268,7 +268,7 @@ impl<'a> Investigator<'a> {
         }
 
         // 2. Execute web searches (budget-limited)
-        let source_domain = extract_domain(&target.source_url);
+        let source_domain = extract_domain(&target.url);
         let mut all_results = Vec::new();
 
         for query in &queries {

@@ -229,7 +229,7 @@ async fn process_results(
                 let source_id = source_keys.get(&ck).copied();
 
                 let actor_ctx = actor_contexts.get(&ck);
-                let nodes = score_and_filter(nodes, &url, actor_ctx);
+                let nodes = score_and_filter(nodes, actor_ctx);
 
                 if !nodes.is_empty() {
                     let nodes = batch_title_dedup(nodes);

@@ -20,7 +20,6 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::domains::signals::events::{DedupOutcome, ResolvedActor, SignalEvent};
-use crate::infra::util::sanitize_url;
 use crate::domains::signals::activities::dedup_utils::{dedup_verdict, is_owned_source, normalize_title, DedupVerdict};
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::{ExtractedBatch, PipelineState};
@@ -88,6 +87,12 @@ pub async fn deduplicate_extracted_batch(
         return Ok(events);
     }
 
+    let ck = state
+        .url_to_canonical_key
+        .get(url)
+        .cloned()
+        .unwrap_or_else(|| canonical_key.to_string());
+
     // --- Layer 2.5: Global exact-title+type match ---
     let title_type_pairs: Vec<(String, NodeType)> = nodes
         .iter()
@@ -103,9 +108,9 @@ pub async fn deduplicate_extracted_batch(
     let mut remaining_nodes = Vec::new();
     for node in nodes {
         let key = (normalize_title(node.title()), node.node_type());
-        let global_hit = global_matches.get(&key).map(|(id, u)| (*id, u.as_str()));
+        let global_hit = global_matches.get(&key).map(|(id, existing_ck)| (*id, existing_ck.as_str()));
 
-        match dedup_verdict(url, node.node_type(), global_hit, None, None) {
+        match dedup_verdict(&ck, node.node_type(), global_hit, None, None) {
             DedupVerdict::Corroborate {
                 existing_id,
                 similarity,
@@ -140,6 +145,79 @@ pub async fn deduplicate_extracted_batch(
             DedupVerdict::Create => {
                 remaining_nodes.push(node);
             }
+        }
+    }
+    let nodes = remaining_nodes;
+
+    if nodes.is_empty() {
+        events.push(SignalEvent::DedupCompleted {
+            url: url.to_string(),
+            canonical_key: canonical_key.to_string(),
+            verdicts,
+        });
+        return Ok(events);
+    }
+
+    // --- Layer 2.75: Fingerprint dedup (url, node_type) ---
+    let fingerprints: Vec<(String, NodeType)> = nodes
+        .iter()
+        .filter(|n| !n.meta().map(|m| m.url.is_empty()).unwrap_or(true))
+        .map(|n| (n.meta().unwrap().url.clone(), n.node_type()))
+        .collect();
+
+    let fingerprint_matches = if !fingerprints.is_empty() {
+        deps.store
+            .find_by_fingerprints(&fingerprints)
+            .await
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    let mut remaining_nodes = Vec::new();
+    for node in nodes {
+        let fp_key = node.meta().map(|m| (m.url.clone(), node.node_type()));
+        let fp_hit = fp_key
+            .as_ref()
+            .and_then(|k| fingerprint_matches.get(k))
+            .map(|(id, ck)| (*id, ck.as_str()));
+
+        if fp_hit.is_some() {
+            match dedup_verdict(&ck, node.node_type(), fp_hit, None, None) {
+                DedupVerdict::Corroborate {
+                    existing_id,
+                    similarity,
+                    ..
+                } => {
+                    info!(
+                        existing_id = %existing_id,
+                        title = node.title(),
+                        new_source = url,
+                        "Fingerprint match from different source"
+                    );
+                    let (_count, verdict) = build_corroboration(
+                        existing_id, node.node_type(), url, similarity,
+                        &content_hash_str, deps, &mut corroboration_counts,
+                    ).await?;
+                    events.extend(verdict.0);
+                    verdicts.push(verdict.1);
+                }
+                DedupVerdict::Refresh {
+                    existing_id,
+                    ..
+                } => {
+                    info!(
+                        existing_id = %existing_id,
+                        title = node.title(),
+                        source = url,
+                        "Fingerprint match same source"
+                    );
+                    verdicts.push(build_freshness(existing_id, node.node_type(), url));
+                }
+                DedupVerdict::Create => unreachable!("fingerprint hit always resolves to Refresh or Corroborate"),
+            }
+        } else {
+            remaining_nodes.push(node);
         }
     }
     let nodes = remaining_nodes;
@@ -191,12 +269,6 @@ pub async fn deduplicate_extracted_batch(
         .map(|r| (r.center_lat, r.center_lng))
         .unwrap_or((0.0, 0.0));
 
-    let ck = state
-        .url_to_canonical_key
-        .get(url)
-        .cloned()
-        .unwrap_or_else(|| canonical_key.to_string());
-
     for (node, embedding) in nodes.into_iter().zip(embeddings.into_iter()) {
         let node_type = node.node_type();
         if node_type == NodeType::Citation {
@@ -221,8 +293,7 @@ pub async fn deduplicate_extracted_batch(
             .await
         {
             Ok(Some(dup)) => {
-                let sanitized = sanitize_url(&dup.source_url);
-                Some((dup.id, dup.node_type, sanitized, dup.similarity))
+                Some((dup.id, dup.node_type, dup.canonical_key, dup.similarity))
             }
             Ok(None) => None,
             Err(e) => {
@@ -238,7 +309,7 @@ pub async fn deduplicate_extracted_batch(
             .as_ref()
             .map(|(id, ty, u, s)| (*id, *ty, u.as_str(), *s));
 
-        match dedup_verdict(url, node_type, None, cache_match, graph_match) {
+        match dedup_verdict(&ck, node_type, None, cache_match, graph_match) {
             DedupVerdict::Refresh {
                 existing_id,
                 similarity,
@@ -258,12 +329,12 @@ pub async fn deduplicate_extracted_batch(
                 );
                 // Update embed cache if verdict came from graph
                 if cache_hit.is_none() {
-                    if let Some((_, _, ref sanitized_url, _)) = graph_hit {
+                    if let Some((_, _, ref hit_ck, _)) = graph_hit {
                         deps.embed_cache.add(
                             embedding,
                             existing_id,
                             node_type,
-                            sanitized_url.clone(),
+                            hit_ck.clone(),
                         );
                     }
                 }
@@ -288,12 +359,12 @@ pub async fn deduplicate_extracted_batch(
                 );
                 // Update embed cache if verdict came from graph
                 if cache_hit.is_none() {
-                    if let Some((_, _, ref sanitized_url, _)) = graph_hit {
+                    if let Some((_, _, ref hit_ck, _)) = graph_hit {
                         deps.embed_cache.add(
                             embedding,
                             existing_id,
                             node_type,
-                            sanitized_url.clone(),
+                            hit_ck.clone(),
                         );
                     }
                 }
@@ -311,7 +382,7 @@ pub async fn deduplicate_extracted_batch(
                 // Add to embed cache
                 deps
                     .embed_cache
-                    .add(embedding.clone(), node_id, node_type, url.to_string());
+                    .add(embedding.clone(), node_id, node_type, ck.clone());
 
                 let author_name = meta_id
                     .and_then(|mid| batch.author_actors.get(&mid))
@@ -356,7 +427,7 @@ pub async fn deduplicate_extracted_batch(
                     node_id,
                     node_type,
                     content_hash: content_hash_str.clone(),
-                    source_url: url.to_string(),
+                    url: url.to_string(),
                     canonical_key: ck.clone(),
                     resource_tags: node_resource_tags,
                     signal_tags: node_signal_tags,
@@ -420,7 +491,7 @@ async fn build_corroboration(
     events.push(SystemEvent::ObservationCorroborated {
         signal_id: existing_id,
         node_type,
-        new_source_url: source_url.to_string(),
+        new_url: source_url.to_string(),
         summary: None,
     });
 
@@ -434,7 +505,7 @@ async fn build_corroboration(
         existing_id,
         node_type,
         similarity,
-        source_url: source_url.to_string(),
+        url: source_url.to_string(),
         new_corroboration_count: new_count,
     };
 
@@ -453,7 +524,7 @@ fn build_freshness(
     DedupOutcome::Refreshed {
         existing_id,
         node_type,
-        source_url: source_url.to_string(),
+        url: source_url.to_string(),
     }
 }
 

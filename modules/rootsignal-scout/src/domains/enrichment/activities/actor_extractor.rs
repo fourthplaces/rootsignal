@@ -7,7 +7,6 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ActorType;
 use rootsignal_graph::{query, GraphReader};
 
@@ -46,6 +45,27 @@ impl fmt::Display for ActorExtractorStats {
     }
 }
 
+pub struct ActorExtractionResult {
+    pub stats: ActorExtractorStats,
+    pub new_actors: Vec<NewActor>,
+    pub actor_links: Vec<ActorLink>,
+}
+
+pub struct NewActor {
+    pub actor_id: Uuid,
+    pub name: String,
+    pub actor_type: ActorType,
+    pub canonical_key: String,
+    pub location_lat: Option<f64>,
+    pub location_lng: Option<f64>,
+}
+
+pub struct ActorLink {
+    pub actor_id: Uuid,
+    pub signal_id: Uuid,
+    pub role: String,
+}
+
 struct SignalInfo {
     id: Uuid,
     title: String,
@@ -75,7 +95,7 @@ pub async fn run_actor_extraction(
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> (ActorExtractorStats, seesaw_core::Events) {
+) -> ActorExtractionResult {
     match try_extract_actors(
         store,
         graph,
@@ -90,7 +110,11 @@ pub async fn run_actor_extraction(
         Ok(result) => result,
         Err(e) => {
             warn!(error = %e, "Actor extractor failed (non-fatal)");
-            (ActorExtractorStats::default(), seesaw_core::Events::new())
+            ActorExtractionResult {
+                stats: ActorExtractorStats::default(),
+                new_actors: Vec::new(),
+                actor_links: Vec::new(),
+            }
         }
     }
 }
@@ -103,9 +127,10 @@ async fn try_extract_actors(
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> Result<(ActorExtractorStats, seesaw_core::Events)> {
+) -> Result<ActorExtractionResult> {
     let mut stats = ActorExtractorStats::default();
-    let mut events = seesaw_core::Events::new();
+    let mut new_actors = Vec::new();
+    let mut actor_links = Vec::new();
 
     // Find signals with no ACTED_IN edges pointing at them, within bounding box
     let q = query(
@@ -141,7 +166,7 @@ async fn try_extract_actors(
 
     if signals.is_empty() {
         info!("Actor extractor: no signals without actors found");
-        return Ok((stats, events));
+        return Ok(ActorExtractionResult { stats, new_actors, actor_links });
     }
 
     info!(
@@ -195,18 +220,13 @@ async fn try_extract_actors(
                 Ok(Some(id)) => id,
                 Ok(None) => {
                     let new_id = Uuid::new_v4();
-                    events.push(SystemEvent::ActorIdentified {
+                    new_actors.push(NewActor {
                         actor_id: new_id,
                         name: extracted.name.clone(),
                         actor_type,
                         canonical_key: extracted.name.to_lowercase().replace(' ', "-"),
-                        domains: vec![],
-                        social_urls: vec![],
-                        description: String::new(),
-                        bio: None,
                         location_lat: Some((min_lat + max_lat) / 2.0),
                         location_lng: Some((min_lng + max_lng) / 2.0),
-                        location_name: None,
                     });
                     stats.actors_created += 1;
                     new_id
@@ -217,7 +237,7 @@ async fn try_extract_actors(
                 }
             };
 
-            events.push(SystemEvent::ActorLinkedToSignal {
+            actor_links.push(ActorLink {
                 actor_id,
                 signal_id: signal.id,
                 role: "mentioned".into(),
@@ -226,5 +246,5 @@ async fn try_extract_actors(
         }
     }
 
-    Ok((stats, events))
+    Ok(ActorExtractionResult { stats, new_actors, actor_links })
 }

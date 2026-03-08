@@ -408,7 +408,7 @@ async fn test_find_recent_signals_by_location() {
             "MATCH (n:{label})
              WHERE n.extracted_at IS NOT NULL
                AND datetime(n.extracted_at) >= datetime() - duration('PT24H')
-             RETURN n.title AS title, n.lat AS lat, n.lng AS lng, n.source_url AS url
+             RETURN n.title AS title, n.lat AS lat, n.lng AS lng, n.url AS url
              ORDER BY n.extracted_at DESC
              LIMIT 30"
         ));

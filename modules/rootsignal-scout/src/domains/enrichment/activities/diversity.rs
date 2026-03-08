@@ -1,16 +1,16 @@
-//! Diversity metric computation activity — reads graph evidence, emits events.
+//! Diversity metric computation activity — reads graph evidence, returns scores.
 
 use tracing::info;
 
-use rootsignal_common::events::{SignalDiversityScore, SystemEvent};
+use rootsignal_common::events::SignalDiversityScore;
 use rootsignal_common::EntityMappingOwned;
 use rootsignal_graph::{compute_diversity_metrics, GraphReader};
 
-/// Read evidence per signal label, compute diversity metrics, return events.
-pub async fn compute_diversity_events(
+/// Read evidence per signal label, compute diversity metrics.
+pub async fn compute_diversity_scores(
     reader: &GraphReader,
     entity_mappings: &[EntityMappingOwned],
-) -> seesaw_core::Events {
+) -> Vec<SignalDiversityScore> {
     let mut all_metrics = Vec::new();
 
     for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
@@ -35,12 +35,5 @@ pub async fn compute_diversity_events(
     }
 
     info!(count = all_metrics.len(), "Diversity metrics computed");
-
-    let mut events = seesaw_core::Events::new();
-    if !all_metrics.is_empty() {
-        events.push(SystemEvent::SignalDiversityComputed {
-            metrics: all_metrics,
-        });
-    }
-    events
+    all_metrics
 }

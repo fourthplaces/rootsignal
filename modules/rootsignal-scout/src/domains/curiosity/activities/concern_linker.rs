@@ -46,7 +46,7 @@ pub struct DiscoveredTension {
     pub category: String,
     pub opposing: String,
     /// URL of the evidence that surfaced this tension
-    pub source_url: String,
+    pub url: String,
     /// How strongly the original signal relates (0.0-1.0)
     pub match_strength: f64,
     /// Why the signal responds to this tension
@@ -424,7 +424,7 @@ impl<'a> ConcernLinker<'a> {
 
         let user = format!(
             "Signal type: {}\nTitle: {}\nSummary: {}\nSource URL: {}",
-            target.label, target.title, target.summary, target.source_url,
+            target.label, target.title, target.summary, target.url,
         );
 
         // Phase 1: Agentic investigation with web_search + read_page tools
@@ -579,7 +579,7 @@ impl<'a> ConcernLinker<'a> {
                 }),
                 from_location: None,
                 about_location_name: Some(self.region.name.clone()),
-                source_url: tension.source_url.clone(),
+                url: tension.url.clone(),
                 extracted_at: now,
                 published_at: None,
                 last_confirmed_active: now,
@@ -689,7 +689,7 @@ mod tests {
             severity: "high".to_string(),
             category: "immigration".to_string(),
             opposing: "Legal aid resources".to_string(),
-            source_url: "https://example.com/article".to_string(),
+            url: "https://example.com/article".to_string(),
             match_strength: 0.9,
             explanation: "Workshop responds to enforcement fear".to_string(),
         };
@@ -720,7 +720,7 @@ mod tests {
                 }),
                 from_location: None,
                 about_location_name: Some(region.name.clone()),
-                source_url: tension.source_url.clone(),
+                url: tension.url.clone(),
                 extracted_at: now,
                 published_at: None,
                 last_confirmed_active: now,

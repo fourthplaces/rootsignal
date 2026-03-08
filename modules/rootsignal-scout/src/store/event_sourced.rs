@@ -91,7 +91,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            source_url: n.meta.source_url.clone(),
+            url: n.meta.url.clone(),
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
@@ -108,7 +108,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            source_url: n.meta.source_url.clone(),
+            url: n.meta.url.clone(),
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
@@ -127,7 +127,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            source_url: n.meta.source_url.clone(),
+            url: n.meta.url.clone(),
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
@@ -141,7 +141,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            source_url: n.meta.source_url.clone(),
+            url: n.meta.url.clone(),
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
@@ -155,7 +155,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            source_url: n.meta.source_url.clone(),
+            url: n.meta.url.clone(),
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
@@ -169,7 +169,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             id: n.meta.id,
             title: n.meta.title.clone(),
             summary: n.meta.summary.clone(),
-            source_url: n.meta.source_url.clone(),
+            url: n.meta.url.clone(),
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
@@ -271,7 +271,7 @@ impl SignalReader for EventSourcedReader {
             ("Concern", NodeType::Concern),
         ] {
             let q = rootsignal_graph::query(&format!(
-                "MATCH (n:{label}) WHERE n.source_url = $url RETURN n.id AS id"
+                "MATCH (n:{label}) WHERE n.url = $url RETURN n.id AS id"
             ))
             .param("url", url);
 
@@ -298,6 +298,13 @@ impl SignalReader for EventSourcedReader {
         pairs: &[(String, NodeType)],
     ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
         Ok(self.graph.find_by_titles_and_types(pairs).await?)
+    }
+
+    async fn find_by_fingerprints(
+        &self,
+        pairs: &[(String, NodeType)],
+    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
+        Ok(self.graph.find_by_fingerprints(pairs).await?)
     }
 
     async fn find_duplicate(
@@ -459,7 +466,7 @@ mod tests {
             }),
             about_location_name: Some("Minneapolis".to_string()),
             from_location: None,
-            source_url: "https://example.com".to_string(),
+            url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -740,7 +747,7 @@ mod tests {
             id: Uuid::new_v4(),
             title: "Warming Center Needed".to_string(),
             summary: "Residents need warming center".to_string(),
-            source_url: "https://example.com".to_string(),
+            url: "https://example.com".to_string(),
             published_at: None,
             extraction_id: None,
             locations: vec![],

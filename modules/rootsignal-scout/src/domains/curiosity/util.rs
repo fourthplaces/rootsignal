@@ -86,7 +86,7 @@ pub fn build_node_meta(
         }),
         from_location: None,
         about_location_name: Some(region.name.clone()),
-        source_url,
+        url: source_url,
         extracted_at: now,
         published_at: None,
         last_confirmed_active: now,

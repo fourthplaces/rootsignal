@@ -34,25 +34,21 @@ pub(crate) fn is_owned_source(strategy: &ScrapingStrategy) -> bool {
     matches!(strategy, ScrapingStrategy::Social(_))
 }
 
-/// Scores quality, populates from/about locations, and removes Evidence nodes.
+/// Scores quality and removes Citation nodes.
 ///
 /// Pure pipeline step: given raw extracted nodes, returns signal nodes with
-/// quality scores, source URLs, and location provenance.
+/// quality scores assigned. Does not modify source URLs.
 pub(crate) fn score_and_filter(
     mut nodes: Vec<Node>,
-    url: &str,
     actor_ctx: Option<&ActorContext>,
 ) -> Vec<Node> {
-    // 1. Score quality and stamp source URL
     for node in &mut nodes {
         let q = quality::score(node);
         if let Some(meta) = node.meta_mut() {
             meta.confidence = q.confidence;
-            meta.source_url = url.to_string();
         }
     }
 
-    // 2. Filter to signal nodes only (skip Evidence)
     nodes
         .into_iter()
         .filter(|n| !matches!(n.node_type(), NodeType::Citation))
@@ -108,17 +104,17 @@ impl DedupVerdict {
 /// 4. No match → Create
 ///
 /// Within each layer, same-source → Refresh, cross-source above threshold → Corroborate.
-/// All URLs should be pre-sanitized before calling.
+/// Source ownership is determined by canonical_key comparison.
 pub(crate) fn dedup_verdict(
-    current_url: &str,
+    current_canonical_key: &str,
     node_type: NodeType,
     global_match: Option<(Uuid, &str)>,
     cache_match: Option<(Uuid, NodeType, &str, f64)>,
     graph_match: Option<(Uuid, NodeType, &str, f64)>,
 ) -> DedupVerdict {
     // Layer 2.5: Global exact title+type match — always acts (no threshold)
-    if let Some((existing_id, existing_url)) = global_match {
-        return if existing_url != current_url {
+    if let Some((existing_id, existing_ck)) = global_match {
+        return if existing_ck != current_canonical_key {
             DedupVerdict::Corroborate {
                 existing_id,
                 existing_type: node_type,
@@ -134,8 +130,8 @@ pub(crate) fn dedup_verdict(
     }
 
     // Layer 3a: In-memory embed cache
-    if let Some((cached_id, cached_type, cached_url, sim)) = cache_match {
-        if cached_url == current_url {
+    if let Some((cached_id, cached_type, cached_ck, sim)) = cache_match {
+        if cached_ck == current_canonical_key {
             return DedupVerdict::Refresh {
                 existing_id: cached_id,
                 existing_type: cached_type,
@@ -151,8 +147,8 @@ pub(crate) fn dedup_verdict(
     }
 
     // Layer 3b: Graph vector index
-    if let Some((dup_id, dup_type, dup_url, sim)) = graph_match {
-        if dup_url == current_url {
+    if let Some((dup_id, dup_type, dup_ck, sim)) = graph_match {
+        if dup_ck == current_canonical_key {
             return DedupVerdict::Refresh {
                 existing_id: dup_id,
                 existing_type: dup_type,
@@ -191,7 +187,7 @@ mod tests {
                 about_location: None,
                 about_location_name: None,
                 from_location: None,
-                source_url: "https://example.com".to_string(),
+                url: "https://example.com".to_string(),
                 extracted_at: Utc::now(),
                 published_at: None,
                 last_confirmed_active: Utc::now(),
@@ -224,7 +220,7 @@ mod tests {
                 about_location: None,
                 about_location_name: None,
                 from_location: None,
-                source_url: "https://example.com".to_string(),
+                url: "https://example.com".to_string(),
                 extracted_at: Utc::now(),
                 published_at: None,
                 last_confirmed_active: Utc::now(),
@@ -320,8 +316,8 @@ mod tests {
 
     // --- dedup_verdict tests ---
 
-    const URL_A: &str = "https://example.com/page-a";
-    const URL_B: &str = "https://other.com/page-b";
+    const CK_A: &str = "example.com";
+    const CK_B: &str = "other.com";
 
     fn id1() -> Uuid { Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap() }
     fn id2() -> Uuid { Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap() }
@@ -329,115 +325,115 @@ mod tests {
 
     #[test]
     fn global_match_cross_source_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, Some((id1(), URL_B)), None, None);
+        let v = dedup_verdict(CK_A, NodeType::Concern, Some((id1(), CK_B)), None, None);
         assert_eq!(v, DedupVerdict::Corroborate { existing_id: id1(), existing_type: NodeType::Concern, similarity: 1.0 });
     }
 
     #[test]
     fn global_match_same_source_refreshes() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, Some((id1(), URL_A)), None, None);
+        let v = dedup_verdict(CK_A, NodeType::Concern, Some((id1(), CK_A)), None, None);
         assert_eq!(v, DedupVerdict::Refresh { existing_id: id1(), existing_type: NodeType::Concern, similarity: 1.0 });
     }
 
     #[test]
     fn global_match_uses_new_node_type() {
-        let v = dedup_verdict(URL_A, NodeType::Resource, Some((id1(), URL_B)), None, None);
+        let v = dedup_verdict(CK_A, NodeType::Resource, Some((id1(), CK_B)), None, None);
         assert_eq!(v, DedupVerdict::Corroborate { existing_id: id1(), existing_type: NodeType::Resource, similarity: 1.0 });
     }
 
     #[test]
     fn global_match_takes_priority_over_cache() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, Some((id1(), URL_B)), Some((id2(), NodeType::Concern, URL_A, 0.99)), None);
+        let v = dedup_verdict(CK_A, NodeType::Concern, Some((id1(), CK_B)), Some((id2(), NodeType::Concern, CK_A, 0.99)), None);
         assert_eq!(v.existing_id(), Some(id1()), "global match should win over cache");
     }
 
     #[test]
     fn global_match_takes_priority_over_graph() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, Some((id1(), URL_A)), None, Some((id3(), NodeType::Concern, URL_B, 0.95)));
+        let v = dedup_verdict(CK_A, NodeType::Concern, Some((id1(), CK_A)), None, Some((id3(), NodeType::Concern, CK_B, 0.95)));
         assert_eq!(v.existing_id(), Some(id1()), "global match should win over graph");
     }
 
     #[test]
     fn cache_same_source_refreshes() {
-        let v = dedup_verdict(URL_A, NodeType::HelpRequest, None, Some((id2(), NodeType::HelpRequest, URL_A, 0.88)), None);
+        let v = dedup_verdict(CK_A, NodeType::HelpRequest, None, Some((id2(), NodeType::HelpRequest, CK_A, 0.88)), None);
         assert_eq!(v, DedupVerdict::Refresh { existing_id: id2(), existing_type: NodeType::HelpRequest, similarity: 0.88 });
     }
 
     #[test]
     fn cache_cross_source_above_threshold_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.95)), None);
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.95)), None);
         assert_eq!(v, DedupVerdict::Corroborate { existing_id: id2(), existing_type: NodeType::Concern, similarity: 0.95 });
     }
 
     #[test]
     fn cache_cross_source_at_threshold_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Resource, None, Some((id2(), NodeType::Resource, URL_B, 0.92)), None);
+        let v = dedup_verdict(CK_A, NodeType::Resource, None, Some((id2(), NodeType::Resource, CK_B, 0.92)), None);
         assert_eq!(v, DedupVerdict::Corroborate { existing_id: id2(), existing_type: NodeType::Resource, similarity: 0.92 });
     }
 
     #[test]
     fn cache_cross_source_below_threshold_falls_through() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.91)), None);
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.91)), None);
         assert_eq!(v, DedupVerdict::Create, "0.91 cross-source should fall through to Create");
     }
 
     #[test]
     fn cache_cross_source_at_entry_threshold_falls_through() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.85)), None);
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.85)), None);
         assert_eq!(v, DedupVerdict::Create, "0.85 cross-source should fall through");
     }
 
     #[test]
     fn cache_takes_priority_over_graph() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_A, 0.90)), Some((id3(), NodeType::Concern, URL_B, 0.95)));
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_A, 0.90)), Some((id3(), NodeType::Concern, CK_B, 0.95)));
         assert_eq!(v.existing_id(), Some(id2()), "cache should win over graph");
     }
 
     #[test]
     fn graph_same_source_refreshes() {
-        let v = dedup_verdict(URL_A, NodeType::Announcement, None, None, Some((id3(), NodeType::Announcement, URL_A, 0.87)));
+        let v = dedup_verdict(CK_A, NodeType::Announcement, None, None, Some((id3(), NodeType::Announcement, CK_A, 0.87)));
         assert_eq!(v, DedupVerdict::Refresh { existing_id: id3(), existing_type: NodeType::Announcement, similarity: 0.87 });
     }
 
     #[test]
     fn graph_cross_source_above_threshold_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, None, Some((id3(), NodeType::Concern, URL_B, 0.95)));
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, None, Some((id3(), NodeType::Concern, CK_B, 0.95)));
         assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.95 });
     }
 
     #[test]
     fn graph_cross_source_at_threshold_corroborates() {
-        let v = dedup_verdict(URL_A, NodeType::Gathering, None, None, Some((id3(), NodeType::Gathering, URL_B, 0.92)));
+        let v = dedup_verdict(CK_A, NodeType::Gathering, None, None, Some((id3(), NodeType::Gathering, CK_B, 0.92)));
         assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Gathering, similarity: 0.92 });
     }
 
     #[test]
     fn graph_cross_source_below_threshold_creates() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, None, Some((id3(), NodeType::Concern, URL_B, 0.91)));
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, None, Some((id3(), NodeType::Concern, CK_B, 0.91)));
         assert_eq!(v, DedupVerdict::Create);
     }
 
     #[test]
     fn no_matches_creates() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, None, None);
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, None, None);
         assert_eq!(v, DedupVerdict::Create);
     }
 
     #[test]
     fn both_below_threshold_creates() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.87)), Some((id3(), NodeType::Concern, URL_B, 0.89)));
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.87)), Some((id3(), NodeType::Concern, CK_B, 0.89)));
         assert_eq!(v, DedupVerdict::Create);
     }
 
     #[test]
     fn cache_below_threshold_falls_to_graph_refresh() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.87)), Some((id3(), NodeType::Concern, URL_A, 0.90)));
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.87)), Some((id3(), NodeType::Concern, CK_A, 0.90)));
         assert_eq!(v, DedupVerdict::Refresh { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.90 });
     }
 
     #[test]
     fn cache_below_threshold_falls_to_graph_corroborate() {
-        let v = dedup_verdict(URL_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, URL_B, 0.88)), Some((id3(), NodeType::Concern, URL_B, 0.93)));
+        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.88)), Some((id3(), NodeType::Concern, CK_B, 0.93)));
         assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.93 });
     }
 
@@ -455,7 +451,7 @@ mod tests {
                 about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
                 about_location_name: None,
                 from_location: None,
-                source_url: String::new(),
+                url: String::new(),
                 extracted_at: Utc::now(),
                 published_at: None,
                 last_confirmed_active: Utc::now(),
@@ -488,7 +484,7 @@ mod tests {
                 about_location: None,
                 about_location_name: Some(location_name.to_string()),
                 from_location: None,
-                source_url: String::new(),
+                url: String::new(),
                 extracted_at: Utc::now(),
                 published_at: None,
                 last_confirmed_active: Utc::now(),
@@ -512,28 +508,21 @@ mod tests {
     #[test]
     fn score_filter_signal_stored_regardless_of_location() {
         let nodes = vec![tension_at("Pothole on Lake St", 44.9485, -93.2983)];
-        let result = score_and_filter(nodes, URL_A, None);
+        let result = score_and_filter(nodes, None);
         assert_eq!(result.len(), 1);
     }
 
     #[test]
     fn score_filter_out_of_region_signal_still_stored() {
         let nodes = vec![tension_at("NYC subway delay", 40.7128, -74.0060)];
-        let result = score_and_filter(nodes, URL_A, None);
+        let result = score_and_filter(nodes, None);
         assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn score_filter_stamps_source_url() {
-        let nodes = vec![tension_at("Test signal", 44.95, -93.27)];
-        let result = score_and_filter(nodes, "https://mpls-news.com/article", None);
-        assert_eq!(result[0].meta().unwrap().source_url, "https://mpls-news.com/article");
     }
 
     #[test]
     fn score_filter_sets_confidence() {
         let nodes = vec![tension_at("Test signal", 44.95, -93.27)];
-        let result = score_and_filter(nodes, URL_A, None);
+        let result = score_and_filter(nodes, None);
         assert!(result[0].meta().unwrap().confidence > 0.0, "confidence should be set by quality::score");
     }
 
@@ -550,7 +539,7 @@ mod tests {
             channel_type: None,
         });
         let nodes = vec![tension_at("Real signal", 44.95, -93.27), evidence];
-        let result = score_and_filter(nodes, URL_A, None);
+        let result = score_and_filter(nodes, None);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title(), "Real signal");
     }
@@ -566,7 +555,7 @@ mod tests {
             location_lng: Some(-93.2650),
             discovery_depth: 0,
         };
-        let result = score_and_filter(nodes, URL_A, Some(&actor));
+        let result = score_and_filter(nodes, Some(&actor));
         assert_eq!(result.len(), 1);
         let meta = result[0].meta().unwrap();
         assert!(meta.about_location.is_none(), "about_location should NOT be backfilled from actor");
@@ -576,7 +565,7 @@ mod tests {
     #[test]
     fn score_filter_no_location_no_actor_still_stored() {
         let nodes = vec![tension("Floating Signal")];
-        let result = score_and_filter(nodes, URL_A, None);
+        let result = score_and_filter(nodes, None);
         assert_eq!(result.len(), 1);
         let meta = result[0].meta().unwrap();
         assert!(meta.about_location.is_none());
@@ -594,7 +583,7 @@ mod tests {
             location_lng: Some(-74.0060),
             discovery_depth: 0,
         };
-        let result = score_and_filter(nodes, URL_A, Some(&actor));
+        let result = score_and_filter(nodes, Some(&actor));
         let meta = result[0].meta().unwrap();
         let about = meta.about_location.as_ref().unwrap();
         assert!((about.lat - 44.95).abs() < 0.001, "existing about_location should be preserved");
@@ -608,7 +597,7 @@ mod tests {
             tension_at("Los Angeles", 34.05, -118.24),
             tension_at("Also Minneapolis", 44.98, -93.25),
         ];
-        let result = score_and_filter(nodes, URL_A, None);
+        let result = score_and_filter(nodes, None);
         assert_eq!(result.len(), 3);
     }
 
@@ -623,7 +612,7 @@ mod tests {
             location_lng: Some(-93.2650),
             discovery_depth: 0,
         };
-        let result = score_and_filter(nodes, URL_A, Some(&actor));
+        let result = score_and_filter(nodes, Some(&actor));
         for node in &result {
             let meta = node.meta().unwrap();
             assert!(meta.from_location.is_none(), "{} should NOT have from_location at write time", meta.title);
@@ -641,7 +630,7 @@ mod tests {
             location_lng: None,
             discovery_depth: 0,
         };
-        let result = score_and_filter(nodes, URL_A, Some(&actor));
+        let result = score_and_filter(nodes, Some(&actor));
         let meta = result[0].meta().unwrap();
         assert!(meta.about_location.is_none());
         assert!(meta.from_location.is_none());
@@ -660,19 +649,9 @@ mod tests {
             channel_type: None,
         });
         let nodes = vec![tension("Real Signal"), evidence];
-        let result = score_and_filter(nodes, URL_A, None);
+        let result = score_and_filter(nodes, None);
         assert_eq!(result.len(), 1, "evidence nodes should be filtered out");
         assert_eq!(result[0].title(), "Real Signal");
-    }
-
-    #[test]
-    fn source_url_stamped_on_all_signals() {
-        let nodes = vec![tension("Signal A"), tension("Signal B")];
-        let result = score_and_filter(nodes, "https://test-source.org", None);
-        for node in &result {
-            let meta = node.meta().unwrap();
-            assert_eq!(meta.source_url, "https://test-source.org");
-        }
     }
 
     // --- is_owned_source tests ---

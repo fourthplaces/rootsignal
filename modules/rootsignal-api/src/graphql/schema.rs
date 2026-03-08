@@ -266,7 +266,7 @@ impl QueryRoot {
                 signal_type: s.signal_type,
                 confidence: s.confidence,
                 extracted_at: s.extracted_at,
-                source_url: s.source_url,
+                url: s.url,
                 review_status: s.review_status,
             })
             .collect();
@@ -603,7 +603,7 @@ impl QueryRoot {
                 signal_type: s.signal_type,
                 confidence: s.confidence,
                 extracted_at: s.extracted_at,
-                source_url: s.source_url,
+                url: s.url,
                 review_status: s.review_status,
             })
             .collect();
@@ -1702,7 +1702,7 @@ pub struct AdminSignalBrief {
     pub signal_type: String,
     pub confidence: f32,
     pub extracted_at: Option<DateTime<Utc>>,
-    pub source_url: String,
+    pub url: String,
     pub review_status: String,
 }
 
@@ -2004,8 +2004,8 @@ struct ScoutRunEvent {
     node_id: Option<String>,
     matched_id: Option<String>,
     existing_id: Option<String>,
-    source_url: Option<String>,
-    new_source_url: Option<String>,
+    signal_url: Option<String>,
+    new_signal_url: Option<String>,
     canonical_key: Option<String>,
     gatherings: Option<u64>,
     needs: Option<u64>,
@@ -2077,8 +2077,8 @@ impl From<EventRow> for ScoutRunEvent {
             node_id: json_str(d, "node_id"),
             matched_id: json_str(d, "matched_id"),
             existing_id: json_str(d, "existing_id"),
-            source_url: json_str(d, "source_url"),
-            new_source_url: json_str(d, "new_source_url"),
+            signal_url: json_str(d, "source_url").or_else(|| json_str(d, "url")),
+            new_signal_url: json_str(d, "new_source_url").or_else(|| json_str(d, "new_url")),
             canonical_key: json_str(d, "canonical_key"),
             gatherings: json_u64(d, "gatherings"),
             needs: json_u64(d, "needs"),
@@ -2125,7 +2125,7 @@ struct OutcomeSignalCreated {
     node_type: String,
     title: Option<String>,
     confidence: Option<f64>,
-    source_url: Option<String>,
+    url: Option<String>,
 }
 
 #[derive(SimpleObject)]
@@ -2286,7 +2286,7 @@ impl ScoutRunOutcomes {
                 node_type: json_str(&r.data, "node_type").unwrap_or_default(),
                 title: json_str(&r.data, "title"),
                 confidence: json_f64(&r.data, "confidence"),
-                source_url: json_str(&r.data, "source_url"),
+                url: json_str(&r.data, "source_url").or_else(|| json_str(&r.data, "url")),
             })
             .collect();
         Ok(OutcomePage { items, total })

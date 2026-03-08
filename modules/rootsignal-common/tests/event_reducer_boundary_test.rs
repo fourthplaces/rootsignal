@@ -289,7 +289,7 @@ fn discovery_has_no_enrichment_fields() {
         id: Uuid::new_v4(),
         title: "Test".into(),
         summary: "Test".into(),
-        source_url: "https://example.com".into(),
+        url: "https://example.com".into(),
         published_at: None,
         extraction_id: None,
         locations: vec![],
@@ -336,7 +336,7 @@ fn corroboration_world_fact_has_no_scoring_fields() {
     let event = Event::System(SystemEvent::ObservationCorroborated {
         signal_id: Uuid::new_v4(),
         node_type: NodeType::Gathering,
-        new_source_url: "https://source2.com".into(),
+        new_url: "https://source2.com".into(),
         summary: None,
     });
 
@@ -382,7 +382,7 @@ fn scout_pipeline_event_chain_is_expressible() {
         id: Uuid::new_v4(),
         title: "Lake Street Block Party".into(),
         summary: "Annual community gathering on Lake Street".into(),
-        source_url: "https://lakestreetstories.com/events".into(),
+        url: "https://lakestreetstories.com/events".into(),
         published_at: Some(Utc::now()),
         extraction_id: None,
         locations: vec![Location {
@@ -616,7 +616,7 @@ fn build_all_events() -> Vec<Event> {
             id,
             title: "x".into(),
             summary: "y".into(),
-            source_url: "z".into(),
+            url: "z".into(),
             published_at: None,
             extraction_id: None,
             locations: vec![],
@@ -629,7 +629,7 @@ fn build_all_events() -> Vec<Event> {
             id,
             title: "x".into(),
             summary: "y".into(),
-            source_url: "z".into(),
+            url: "z".into(),
             published_at: None,
             extraction_id: None,
             locations: vec![],
@@ -644,7 +644,7 @@ fn build_all_events() -> Vec<Event> {
             id,
             title: "x".into(),
             summary: "y".into(),
-            source_url: "z".into(),
+            url: "z".into(),
             published_at: None,
             extraction_id: None,
             locations: vec![],
@@ -658,7 +658,7 @@ fn build_all_events() -> Vec<Event> {
             id,
             title: "x".into(),
             summary: "y".into(),
-            source_url: "z".into(),
+            url: "z".into(),
             published_at: None,
             extraction_id: None,
             locations: vec![],
@@ -672,7 +672,7 @@ fn build_all_events() -> Vec<Event> {
             id,
             title: "x".into(),
             summary: "y".into(),
-            source_url: "z".into(),
+            url: "z".into(),
             published_at: None,
             extraction_id: None,
             locations: vec![],
@@ -686,7 +686,7 @@ fn build_all_events() -> Vec<Event> {
             id,
             title: "x".into(),
             summary: "y".into(),
-            source_url: "z".into(),
+            url: "z".into(),
             published_at: None,
             extraction_id: None,
             locations: vec![],
@@ -702,7 +702,7 @@ fn build_all_events() -> Vec<Event> {
         Event::System(SystemEvent::ObservationCorroborated {
             signal_id: id,
             node_type: NodeType::Resource,
-            new_source_url: "x".into(),
+            new_url: "x".into(),
             summary: None,
         }),
         // Citations
@@ -769,27 +769,27 @@ fn build_all_events() -> Vec<Event> {
         Event::World(WorldEvent::GatheringCancelled {
             signal_id: id,
             reason: "cancelled".into(),
-            source_url: "x".into(),
+            url: "x".into(),
         }),
         Event::World(WorldEvent::ResourceDepleted {
             signal_id: id,
             reason: "exhausted".into(),
-            source_url: "x".into(),
+            url: "x".into(),
         }),
         Event::World(WorldEvent::AnnouncementRetracted {
             signal_id: id,
             reason: "retracted".into(),
-            source_url: "x".into(),
+            url: "x".into(),
         }),
         Event::World(WorldEvent::CitationRetracted {
             citation_id: id,
             reason: "retracted".into(),
-            source_url: "x".into(),
+            url: "x".into(),
         }),
         Event::World(WorldEvent::DetailsChanged {
             signal_id: id,
             summary: "updated details".into(),
-            source_url: "x".into(),
+            url: "x".into(),
         }),
         // Resource identification
         Event::World(WorldEvent::ResourceIdentified {

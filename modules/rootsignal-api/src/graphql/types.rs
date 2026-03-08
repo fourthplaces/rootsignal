@@ -366,8 +366,8 @@ impl GqlGatheringSignal {
     async fn location_name(&self) -> Option<&str> {
         self.meta().about_location_name.as_deref()
     }
-    async fn source_url(&self) -> &str {
-        &self.meta().source_url
+    async fn url(&self) -> &str {
+        &self.meta().url
     }
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
@@ -482,8 +482,8 @@ impl GqlResourceSignal {
     async fn location_name(&self) -> Option<&str> {
         self.meta().about_location_name.as_deref()
     }
-    async fn source_url(&self) -> &str {
-        &self.meta().source_url
+    async fn url(&self) -> &str {
+        &self.meta().url
     }
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
@@ -592,8 +592,8 @@ impl GqlHelpRequestSignal {
     async fn location_name(&self) -> Option<&str> {
         self.meta().about_location_name.as_deref()
     }
-    async fn source_url(&self) -> &str {
-        &self.meta().source_url
+    async fn url(&self) -> &str {
+        &self.meta().url
     }
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
@@ -701,8 +701,8 @@ impl GqlAnnouncementSignal {
     async fn location_name(&self) -> Option<&str> {
         self.meta().about_location_name.as_deref()
     }
-    async fn source_url(&self) -> &str {
-        &self.meta().source_url
+    async fn url(&self) -> &str {
+        &self.meta().url
     }
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
@@ -810,8 +810,8 @@ impl GqlConcernSignal {
     async fn location_name(&self) -> Option<&str> {
         self.meta().about_location_name.as_deref()
     }
-    async fn source_url(&self) -> &str {
-        &self.meta().source_url
+    async fn url(&self) -> &str {
+        &self.meta().url
     }
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at
@@ -924,8 +924,8 @@ impl GqlConditionSignal {
     async fn location_name(&self) -> Option<&str> {
         self.meta().about_location_name.as_deref()
     }
-    async fn source_url(&self) -> &str {
-        &self.meta().source_url
+    async fn url(&self) -> &str {
+        &self.meta().url
     }
     async fn extracted_at(&self) -> DateTime<Utc> {
         self.meta().extracted_at

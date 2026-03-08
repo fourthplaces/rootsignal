@@ -70,7 +70,7 @@ pub(crate) fn resolve_source_ids(
         if let Some(meta) = node.meta_mut() {
             if let Some(sid) = id_lookup.get(&meta.id) {
                 if let Some(url) = permalink_map.get(*sid) {
-                    meta.source_url = url.clone();
+                    meta.url = url.clone();
                 }
             }
         }

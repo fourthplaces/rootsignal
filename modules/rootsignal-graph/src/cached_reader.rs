@@ -433,7 +433,7 @@ impl CachedReader {
                         lng,
                         confidence: Some(meta.confidence as f64),
                         metadata: serde_json::json!({
-                            "sourceUrl": meta.source_url,
+                            "url": meta.url,
                             "extractedAt": meta.extracted_at.to_rfc3339(),
                             "contentDate": meta.published_at.map(|d| d.to_rfc3339()),
                             "reviewStatus": meta.review_status,

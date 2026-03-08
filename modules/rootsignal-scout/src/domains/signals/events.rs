@@ -24,7 +24,8 @@ pub enum DedupOutcome {
         node_id: Uuid,
         node_type: NodeType,
         content_hash: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         canonical_key: String,
         resource_tags: Vec<ResourceTag>,
         signal_tags: Vec<String>,
@@ -35,13 +36,15 @@ pub enum DedupOutcome {
         existing_id: Uuid,
         node_type: NodeType,
         similarity: f64,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         new_corroboration_count: u32,
     },
     Refreshed {
         existing_id: Uuid,
         node_type: NodeType,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
     },
 }
 

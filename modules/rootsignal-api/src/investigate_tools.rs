@@ -262,7 +262,7 @@ pub(crate) struct SignalOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    source_url: Option<String>,
+    url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     location_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -284,7 +284,7 @@ fn node_to_signal_output(node: &Node) -> SignalOutput {
             summary: Some(meta.summary.clone()),
             confidence: Some(meta.confidence),
             category: meta.category.clone(),
-            source_url: Some(meta.source_url.clone()),
+            url: Some(meta.url.clone()),
             location_name: meta.about_location_name.clone(),
             review_status: Some(format!("{:?}", meta.review_status)),
             extracted_at: Some(meta.extracted_at.to_rfc3339()),
@@ -909,7 +909,7 @@ pub(crate) struct SignalBriefOutput {
     signal_type: String,
     confidence: f32,
     extracted_at: Option<String>,
-    source_url: String,
+    url: String,
 }
 
 impl From<&SignalBrief> for SignalBriefOutput {
@@ -920,7 +920,7 @@ impl From<&SignalBrief> for SignalBriefOutput {
             signal_type: s.signal_type.clone(),
             confidence: s.confidence,
             extracted_at: s.extracted_at.map(|t| t.to_rfc3339()),
-            source_url: s.source_url.clone(),
+            url: s.url.clone(),
         }
     }
 }

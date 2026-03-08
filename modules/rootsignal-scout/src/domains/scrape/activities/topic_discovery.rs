@@ -159,7 +159,7 @@ pub(crate) async fn discover_from_topics(
                     result.author_actors.into_iter().collect();
 
                 let actor_ctx = actor_contexts.get(&source_url);
-                let nodes = score_and_filter(result.nodes, &source_url, actor_ctx);
+                let nodes = score_and_filter(result.nodes, actor_ctx);
                 let produced = if !nodes.is_empty() {
                     let nodes = batch_title_dedup(nodes);
                     let count = nodes.len() as u32;
@@ -296,7 +296,7 @@ pub(crate) async fn discover_from_topics(
                         extracted.author_actors.into_iter().collect();
 
                     let actor_ctx = actor_contexts.get(&result.url);
-                    let nodes = score_and_filter(extracted.nodes, &result.url, actor_ctx);
+                    let nodes = score_and_filter(extracted.nodes, actor_ctx);
                     if !nodes.is_empty() {
                         let nodes = batch_title_dedup(nodes);
 

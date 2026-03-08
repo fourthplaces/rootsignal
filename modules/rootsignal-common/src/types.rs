@@ -195,7 +195,8 @@ pub struct NodeMeta {
     /// Actor's location — provenance for where the signal was posted FROM.
     #[serde(default)]
     pub from_location: Option<GeoPoint>,
-    pub source_url: String,
+    #[serde(alias = "source_url")]
+    pub url: String,
     pub extracted_at: DateTime<Utc>,
     /// When the content was actually published/updated (from LLM extraction, RSS pub_date, or social published_at).
     /// Falls back to `extracted_at` when unavailable.
@@ -1507,7 +1508,7 @@ mod tests {
             about_location: None,
             about_location_name: None,
             from_location: None,
-            source_url: "https://example.com".to_string(),
+            url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),

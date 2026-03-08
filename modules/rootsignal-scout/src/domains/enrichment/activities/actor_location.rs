@@ -14,7 +14,6 @@
 //! - Signals older than `max_age_days` are excluded.
 
 use chrono::{DateTime, Utc};
-use rootsignal_common::events::SystemEvent;
 
 /// A single signal location observation for triangulation.
 #[derive(Debug, Clone)]
@@ -102,19 +101,25 @@ pub fn triangulate_actor_location(
 /// Max age in days for signal observations used in triangulation.
 const ENRICHMENT_MAX_AGE_DAYS: u64 = 90;
 
-/// Collect actor location events by triangulating from their authored signals.
+/// An actor whose location was updated by triangulation.
+pub struct ActorLocationUpdate {
+    pub actor_id: uuid::Uuid,
+    pub lat: f64,
+    pub lng: f64,
+    pub name: Option<String>,
+}
+
+/// Triangulate all actors' locations from their authored signals.
 ///
-/// Returns the world events to emit — does NOT dispatch them.
-/// Used by the actor_location_handler to emit events through seesaw.
-pub async fn triangulate_actor_location_events(
+/// Returns only actors whose location actually changed.
+pub async fn triangulate_all_actors(
     store: &dyn crate::traits::SignalReader,
     actors: &[(
         rootsignal_common::ActorNode,
         Vec<rootsignal_common::SourceNode>,
     )],
-) -> seesaw_core::Events {
-
-    let mut events = seesaw_core::Events::new();
+) -> Vec<ActorLocationUpdate> {
+    let mut updates = Vec::new();
     for (actor, _sources) in actors {
         let signals = match store.get_signals_for_actor(actor.id).await {
             Ok(s) => s,
@@ -169,45 +174,18 @@ pub async fn triangulate_actor_location_events(
         if let Some(new_loc) = result {
             let changed = current.as_ref().map_or(true, |c| c.name != new_loc.name);
             if changed {
-                events.push(SystemEvent::ActorLocationIdentified {
+                updates.push(ActorLocationUpdate {
                     actor_id: actor.id,
-                    location_lat: new_loc.lat,
-                    location_lng: new_loc.lng,
-                    location_name: if new_loc.name.is_empty() {
+                    lat: new_loc.lat,
+                    lng: new_loc.lng,
+                    name: if new_loc.name.is_empty() {
                         None
                     } else {
-                        Some(new_loc.name.clone())
+                        Some(new_loc.name)
                     },
                 });
             }
         }
     }
-    events
+    updates
 }
-
-/// Enrich actor locations by triangulating from their authored signals.
-///
-/// Dispatches ActorLocationIdentified events through the engine.
-/// Returns the count of actors whose location was updated.
-pub async fn enrich_actor_locations(
-    store: &dyn crate::traits::SignalReader,
-    engine: &crate::core::engine::ScoutEngine,
-    actors: &[(
-        rootsignal_common::ActorNode,
-        Vec<rootsignal_common::SourceNode>,
-    )],
-) -> u32 {
-    let events = triangulate_actor_location_events(store, actors).await;
-    let mut updated = 0u32;
-    for output in events.into_outputs() {
-        if output.type_id == std::any::TypeId::of::<SystemEvent>() {
-            if let Ok(e) = serde_json::from_value::<SystemEvent>(output.payload) {
-                if engine.emit(e).settled().await.is_ok() {
-                    updated += 1;
-                }
-            }
-        }
-    }
-    updated
-}
-

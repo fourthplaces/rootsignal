@@ -21,6 +21,15 @@ fn test_deps(store: Arc<MockSignalReader>) -> ScoutEngineDeps {
     test_scout_deps(store as Arc<dyn crate::traits::SignalReader>)
 }
 
+/// Create a Concern node with a specific URL on its meta (for fingerprint tests).
+fn tension_with_url(title: &str, lat: f64, lng: f64, url: &str) -> rootsignal_common::Node {
+    let mut node = tension_at(title, lat, lng);
+    if let Some(meta) = node.meta_mut() {
+        meta.url = url.to_string();
+    }
+    node
+}
+
 /// Extract typed events from a heterogeneous Events collection.
 fn extract_events(events: Events) -> (Vec<WorldEvent>, Vec<SystemEvent>, Vec<SignalEvent>) {
     let mut world = Vec::new();
@@ -51,7 +60,8 @@ async fn run_dedup(
     state: &PipelineState,
     deps: &ScoutEngineDeps,
 ) -> (Vec<WorldEvent>, Vec<SystemEvent>, Vec<SignalEvent>) {
-    let events = super::dedup::deduplicate_extracted_batch(url, "test-key", &batch, state, deps)
+    let ck = rootsignal_common::canonical_value(url);
+    let events = super::dedup::deduplicate_extracted_batch(url, &ck, &batch, state, deps)
         .await
         .unwrap();
     extract_events(events)
@@ -461,4 +471,323 @@ async fn same_author_in_batch_creates_one_actor() {
         .collect();
     assert_eq!(created.len(), 2);
     assert_eq!(created[0], created[1], "both signals should have the same actor_id");
+}
+
+// ---------------------------------------------------------------------------
+// Layer 2.75: Fingerprint dedup (url, node_type)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fingerprint_same_source_refreshes() {
+    let store = Arc::new(MockSignalReader::new());
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let source_url = "https://www.instagram.com/local_org";
+    let source_ck = rootsignal_common::canonical_value(source_url);
+    store.insert_signal_from_source("Community Dinner", NodeType::Concern, post_url, &source_ck);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let (world, system, signal) = run_dedup(
+        source_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_with_url("Different Title", 44.95, -93.27, post_url)],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert!(world.is_empty(), "same-source fingerprint should emit no world events");
+    assert!(system.is_empty(), "same-source fingerprint should emit no system events");
+
+    let refreshed: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Refreshed { .. }))
+        .collect();
+    assert_eq!(refreshed.len(), 1, "expected 1 Refreshed verdict from fingerprint");
+}
+
+#[tokio::test]
+async fn fingerprint_different_source_corroborates() {
+    let store = Arc::new(MockSignalReader::new());
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let original_source_ck = rootsignal_common::canonical_value("https://www.instagram.com/original_org");
+    let existing_id = store.insert_signal_from_source("Community Dinner", NodeType::Concern, post_url, &original_source_ck);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    // Scrape from a different source that found the same post URL
+    let (world, system, signal) = run_dedup(
+        "https://www.facebook.com/other_org",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_with_url("Different Title", 44.95, -93.27, post_url)],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert!(
+        world.iter().any(|e| matches!(e, WorldEvent::CitationPublished { signal_id, .. } if *signal_id == existing_id)),
+        "expected CitationPublished for existing signal"
+    );
+    assert!(
+        system.iter().any(|e| matches!(e, SystemEvent::ObservationCorroborated { signal_id, .. } if *signal_id == existing_id)),
+        "expected ObservationCorroborated"
+    );
+
+    let corroborated: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Corroborated { .. }))
+        .collect();
+    assert_eq!(corroborated.len(), 1, "expected 1 Corroborated verdict from fingerprint");
+}
+
+#[tokio::test]
+async fn no_fingerprint_match_falls_through_to_create() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let (world, _system, signal) = run_dedup(
+        "https://www.instagram.com/local_org",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_with_url("New Event", 44.95, -93.27, "https://www.instagram.com/p/NEWPOST")],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    let created: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Created { .. }))
+        .collect();
+    assert_eq!(created.len(), 1, "expected 1 Created verdict");
+    assert!(
+        world.iter().any(|e| matches!(e, WorldEvent::ConcernRaised { .. })),
+        "expected ConcernRaised for new signal"
+    );
+}
+
+#[tokio::test]
+async fn empty_url_signals_skip_fingerprint_layer() {
+    let store = Arc::new(MockSignalReader::new());
+    // Insert a signal — but the batch node has empty URL so fingerprint won't match
+    store.insert_signal("Community Dinner", NodeType::Concern, "https://www.instagram.com/p/ABC123");
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let (_world, _system, signal) = run_dedup(
+        "https://www.instagram.com/local_org",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_at("Brand New Signal", 44.95, -93.27)],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    // Empty URL means fingerprint layer is skipped; signal proceeds to create
+    let created: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Created { .. }))
+        .collect();
+    assert_eq!(created.len(), 1, "empty URL should skip fingerprint and create");
+}
+
+#[tokio::test]
+async fn mixed_batch_fingerprint_hit_and_miss() {
+    let store = Arc::new(MockSignalReader::new());
+    let known_url = "https://www.instagram.com/p/KNOWN";
+    let source_url = "https://www.instagram.com/local_org";
+    let source_ck = rootsignal_common::canonical_value(source_url);
+    store.insert_signal_from_source("Old Event", NodeType::Concern, known_url, &source_ck);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let (_world, system, signal) = run_dedup(
+        "https://www.instagram.com/local_org",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![
+                tension_with_url("Re-encountered Event", 44.93, -93.26, known_url),
+                tension_with_url("Brand New Event", 44.95, -93.27, "https://www.instagram.com/p/NEW"),
+            ],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    let vs = verdicts(&signal);
+    let refreshed = vs.iter().filter(|v| matches!(v, DedupOutcome::Refreshed { .. })).count();
+    let created = vs.iter().filter(|v| matches!(v, DedupOutcome::Created { .. })).count();
+    assert_eq!(refreshed, 1, "expected 1 Refreshed from fingerprint hit");
+    assert_eq!(created, 1, "expected 1 Created for new URL");
+    assert!(system.is_empty() || !system.iter().any(|e| matches!(e, SystemEvent::ObservationCorroborated { .. })),
+        "same-source fingerprint should not corroborate");
+}
+
+#[tokio::test]
+async fn fingerprint_same_url_different_type_does_not_match() {
+    let store = Arc::new(MockSignalReader::new());
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let source_ck = rootsignal_common::canonical_value("https://www.instagram.com/local_org");
+    store.insert_signal_from_source("Community Dinner", NodeType::Resource, post_url, &source_ck);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    // Same URL but different node type — fingerprint should not match
+    let (_world, _system, signal) = run_dedup(
+        "https://www.instagram.com/local_org",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_with_url("Community Dinner", 44.95, -93.27, post_url)],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    let created: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Created { .. }))
+        .collect();
+    assert_eq!(created.len(), 1, "same URL but different type should create, not match");
+}
+
+#[tokio::test]
+async fn fingerprint_takes_priority_over_vector_dedup() {
+    let store = Arc::new(MockSignalReader::new());
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let source_ck = rootsignal_common::canonical_value("https://www.instagram.com/local_org");
+    let existing_id = store.insert_signal_from_source("Community Dinner", NodeType::Concern, post_url, &source_ck);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    // Same URL, same source — fingerprint catches it before embeddings are computed
+    let (world, system, signal) = run_dedup(
+        "https://www.instagram.com/local_org",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_with_url("Community Dinner", 44.95, -93.27, post_url)],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    // Should be Refreshed (not Created — vector dedup never runs)
+    assert!(world.is_empty(), "fingerprint refresh should emit no world events");
+    assert!(system.is_empty(), "fingerprint refresh should emit no system events");
+
+    let refreshed: Vec<_> = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Refreshed { existing_id: id, .. } if *id == existing_id))
+        .collect();
+    assert_eq!(refreshed.len(), 1, "fingerprint should catch before vector dedup");
+}
+
+#[tokio::test]
+async fn fingerprint_with_title_dedup_interaction() {
+    let store = Arc::new(MockSignalReader::new());
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let source_url = "https://www.instagram.com/local_org";
+    let source_ck = rootsignal_common::canonical_value(source_url);
+
+    // Signal exists in both URL-title index AND fingerprint store
+    store.add_url_titles(source_url, vec!["Community Dinner".to_string()]);
+    store.insert_signal_from_source("Community Dinner", NodeType::Concern, post_url, &source_ck);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let (_world, _system, signal) = run_dedup(
+        source_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_with_url("Community Dinner", 44.95, -93.27, post_url)],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    // Title dedup (Layer 2) catches it first — no verdicts at all
+    assert_eq!(signal.len(), 1);
+    assert!(matches!(&signal[0], SignalEvent::DedupCompleted { verdicts, .. } if verdicts.is_empty()),
+        "title dedup should catch before fingerprint layer");
+}
+
+#[tokio::test]
+async fn fingerprint_batch_with_duplicate_urls_deduplicates() {
+    let store = Arc::new(MockSignalReader::new());
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let source_url = "https://www.instagram.com/local_org";
+    let source_ck = rootsignal_common::canonical_value(source_url);
+    store.insert_signal_from_source("Existing Event", NodeType::Concern, post_url, &source_ck);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    // Two different signals in batch that share the same post URL
+    let (_world, _system, signal) = run_dedup(
+        source_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![
+                tension_with_url("Signal A", 44.93, -93.26, post_url),
+                tension_with_url("Signal B", 44.95, -93.27, post_url),
+            ],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    // Both should be caught by fingerprint as same-source refreshes
+    let refreshed = verdicts(&signal)
+        .into_iter()
+        .filter(|v| matches!(v, DedupOutcome::Refreshed { .. }))
+        .count();
+    assert_eq!(refreshed, 2, "both signals with same URL should refresh");
 }

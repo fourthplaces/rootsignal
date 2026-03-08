@@ -145,7 +145,8 @@ pub enum SystemEvent {
     ObservationCorroborated {
         signal_id: Uuid,
         node_type: NodeType,
-        new_source_url: String,
+        #[serde(alias = "new_source_url")]
+        new_url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
     },

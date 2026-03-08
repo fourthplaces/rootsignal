@@ -1293,7 +1293,7 @@ impl PublicGraphReader {
         let cypher = "MATCH (a:Actor {id: $id})-[rel:ACTED_IN]->(n)-[:PRODUCED_BY]->(s:Source)
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
-                   s.url AS source_url, n.review_status AS review_status,
+                   s.url AS source_url_from_source, n.review_status AS review_status,
                    rel.role AS role
             ORDER BY n.extracted_at DESC
             LIMIT 50";
@@ -1320,7 +1320,7 @@ impl PublicGraphReader {
                             .map(|n| n.and_utc())
                     })
                 },
-                source_url: row.get("source_url").unwrap_or_default(),
+                url: row.get("source_url_from_source").unwrap_or_default(),
                 review_status: row.get("review_status").unwrap_or_else(|_| "staged".to_string()),
             });
         }
@@ -1352,7 +1352,7 @@ impl PublicGraphReader {
             WHERE n.review_status IN ['staged', 'accepted', 'live']
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
-                   s.url AS source_url, n.review_status AS review_status
+                   s.url AS source_url_from_source, n.review_status AS review_status
             ORDER BY n.extracted_at DESC
             LIMIT 50";
 
@@ -1371,7 +1371,7 @@ impl PublicGraphReader {
                 signal_type: row.get("signal_type").unwrap_or_default(),
                 confidence: row.get::<f64>("confidence").unwrap_or(0.0) as f32,
                 extracted_at: row_datetime_opt_pub(&row, "extracted_at"),
-                source_url: row.get("source_url").unwrap_or_default(),
+                url: row.get("source_url_from_source").unwrap_or_default(),
                 review_status: row.get("review_status").unwrap_or_default(),
             });
         }
@@ -1724,7 +1724,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     };
     let confidence: f64 = n.get("confidence").unwrap_or(0.5);
     let corroboration_count: i64 = n.get("corroboration_count").unwrap_or(0);
-    let source_url: String = n.get("source_url").unwrap_or_default();
+    let url: String = n.get("url").unwrap_or_default();
     // Parse location from point
     let location = parse_location(&n);
 
@@ -1756,7 +1756,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             }
         },
         from_location: None,
-        source_url,
+        url,
         extracted_at,
         published_at,
         last_confirmed_active,

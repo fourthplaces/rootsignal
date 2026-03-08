@@ -197,7 +197,7 @@ export function ScoutRunDetailPage() {
                   <Link to={`/signals/${row.nodeId}`} className="text-blue-400 hover:underline">{v ?? "untitled"}</Link>
                 )},
                 { key: "confidence", label: "Confidence", render: (v: number | null) => v != null ? `${(v * 100).toFixed(0)}%` : "" },
-                { key: "sourceUrl", label: "Source", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+                { key: "url", label: "Source", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
               ]}
               rows={outcomes.signalsCreated.items}
             />

@@ -241,7 +241,7 @@ impl GraphProjector {
                 id,
                 title,
                 summary,
-                source_url,
+                url,
                 published_at,
                 extraction_id: _,
                 locations,
@@ -259,7 +259,7 @@ impl GraphProjector {
                        n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
                        n.action_url = $action_url,
                        n.is_recurring = CASE WHEN $rrule <> '' THEN true ELSE false END",
-                    id, &title, &summary, 0.5, &source_url,
+                    id, &title, &summary, 0.5, &url,
                     &event.ts, published_at, &location, event,
                 )
                 .param("starts_at", starts_at)
@@ -278,7 +278,7 @@ impl GraphProjector {
                 id,
                 title,
                 summary,
-                source_url,
+                url,
                 published_at,
                 extraction_id: _,
                 locations,
@@ -301,7 +301,7 @@ impl GraphProjector {
                     &title,
                     &summary,
                     0.5,
-                    &source_url,
+                    &url,
                     &event.ts,
                     published_at,
                     &location,
@@ -325,7 +325,7 @@ impl GraphProjector {
                 id,
                 title,
                 summary,
-                source_url,
+                url,
                 published_at,
                 extraction_id: _,
                 locations,
@@ -347,7 +347,7 @@ impl GraphProjector {
                     &title,
                     &summary,
                     0.5,
-                    &source_url,
+                    &url,
                     &event.ts,
                     published_at,
                     &location,
@@ -370,7 +370,7 @@ impl GraphProjector {
                 id,
                 title,
                 summary,
-                source_url,
+                url,
                 published_at,
                 extraction_id: _,
                 locations,
@@ -389,7 +389,7 @@ impl GraphProjector {
                        n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
                        n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
-                    id, &title, &summary, 0.5, &source_url,
+                    id, &title, &summary, 0.5, &url,
                     &event.ts, published_at, &location, event,
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
@@ -409,7 +409,7 @@ impl GraphProjector {
                 id,
                 title,
                 summary,
-                source_url,
+                url,
                 published_at,
                 extraction_id: _,
                 locations,
@@ -431,7 +431,7 @@ impl GraphProjector {
                     &title,
                     &summary,
                     0.5,
-                    &source_url,
+                    &url,
                     &event.ts,
                     published_at,
                     &location,
@@ -454,7 +454,7 @@ impl GraphProjector {
                 id,
                 title,
                 summary,
-                source_url,
+                url,
                 published_at,
                 extraction_id: _,
                 locations,
@@ -475,7 +475,7 @@ impl GraphProjector {
                        n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
                        n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
-                    id, &title, &summary, 0.5, &source_url,
+                    id, &title, &summary, 0.5, &url,
                     &event.ts, published_at, &location, event,
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
@@ -2532,7 +2532,7 @@ impl GraphProjector {
             } => {
                 let q = query(
                     "MATCH (sig)-[:PART_OF]->(s:Situation {headline: $headline})
-                     WITH collect(DISTINCT sig.source_url) AS urls
+                     WITH collect(DISTINCT sig.url) AS urls
                      UNWIND urls AS url
                      MATCH (src:Source {active: true})
                      WHERE src.url = url AND src.weight IS NOT NULL
@@ -2924,7 +2924,7 @@ fn build_discovery_query(
     title: &str,
     summary: &str,
     confidence: f32,
-    source_url: &str,
+    url: &str,
     extracted_at: &DateTime<Utc>,
     published_at: Option<DateTime<Utc>>,
     location: &Option<Location>,
@@ -2942,7 +2942,7 @@ fn build_discovery_query(
              n.title = $title,
              n.summary = $summary,
              n.confidence = $confidence,
-             n.source_url = $source_url,
+             n.url = $url,
              n.extracted_at = datetime($extracted_at),
              n.last_confirmed_active = datetime($extracted_at),
              n.published_at = CASE WHEN $published_at = '' THEN null ELSE datetime($published_at) END,
@@ -2963,7 +2963,7 @@ fn build_discovery_query(
         .param("title", title)
         .param("summary", summary)
         .param("confidence", confidence as f64)
-        .param("source_url", source_url)
+        .param("url", url)
         .param("extracted_at", format_dt(extracted_at))
         .param(
             "published_at",

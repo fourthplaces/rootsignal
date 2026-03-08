@@ -26,7 +26,8 @@ pub enum WorldEvent {
         id: Uuid,
         title: String,
         summary: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         published_at: Option<DateTime<Utc>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,7 +50,8 @@ pub enum WorldEvent {
         id: Uuid,
         title: String,
         summary: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         published_at: Option<DateTime<Utc>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,7 +80,8 @@ pub enum WorldEvent {
         id: Uuid,
         title: String,
         summary: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         published_at: Option<DateTime<Utc>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,7 +111,8 @@ pub enum WorldEvent {
         id: Uuid,
         title: String,
         summary: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         published_at: Option<DateTime<Utc>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,7 +146,8 @@ pub enum WorldEvent {
         id: Uuid,
         title: String,
         summary: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         published_at: Option<DateTime<Utc>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -176,7 +181,8 @@ pub enum WorldEvent {
         id: Uuid,
         title: String,
         summary: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         published_at: Option<DateTime<Utc>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -241,31 +247,36 @@ pub enum WorldEvent {
     GatheringCancelled {
         signal_id: Uuid,
         reason: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
     },
 
     ResourceDepleted {
         signal_id: Uuid,
         reason: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
     },
 
     AnnouncementRetracted {
         signal_id: Uuid,
         reason: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
     },
 
     CitationRetracted {
         citation_id: Uuid,
         reason: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
     },
 
     DetailsChanged {
         signal_id: Uuid,
         summary: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
     },
 
     // -----------------------------------------------------------------------
@@ -367,14 +378,14 @@ impl WorldEvent {
         }
     }
 
-    pub fn source_url(&self) -> Option<&str> {
+    pub fn url(&self) -> Option<&str> {
         match self {
-            Self::GatheringAnnounced { source_url, .. }
-            | Self::ResourceOffered { source_url, .. }
-            | Self::HelpRequested { source_url, .. }
-            | Self::AnnouncementShared { source_url, .. }
-            | Self::ConcernRaised { source_url, .. }
-            | Self::ConditionObserved { source_url, .. } => Some(source_url),
+            Self::GatheringAnnounced { url, .. }
+            | Self::ResourceOffered { url, .. }
+            | Self::HelpRequested { url, .. }
+            | Self::AnnouncementShared { url, .. }
+            | Self::ConcernRaised { url, .. }
+            | Self::ConditionObserved { url, .. } => Some(url),
             _ => None,
         }
     }

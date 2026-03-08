@@ -14,7 +14,7 @@ struct CacheEntry {
     embedding: Vec<f32>,
     node_id: Uuid,
     node_type: NodeType,
-    source_url: String,
+    canonical_key: String,
 }
 
 impl EmbeddingCache {
@@ -24,7 +24,7 @@ impl EmbeddingCache {
         }
     }
 
-    /// Find the best match above threshold. Returns (node_id, node_type, source_url, similarity).
+    /// Find the best match above threshold. Returns (node_id, node_type, canonical_key, similarity).
     pub(crate) fn find_match(
         &self,
         embedding: &[f32],
@@ -38,7 +38,7 @@ impl EmbeddingCache {
                 best = Some((
                     entry.node_id,
                     entry.node_type,
-                    entry.source_url.clone(),
+                    entry.canonical_key.clone(),
                     sim,
                 ));
             }
@@ -51,7 +51,7 @@ impl EmbeddingCache {
         embedding: Vec<f32>,
         node_id: Uuid,
         node_type: NodeType,
-        source_url: String,
+        canonical_key: String,
     ) {
         self.entries
             .write()
@@ -60,7 +60,7 @@ impl EmbeddingCache {
                 embedding,
                 node_id,
                 node_type,
-                source_url,
+                canonical_key,
             });
     }
 }

@@ -120,7 +120,7 @@ pub mod handlers {
             node_type: event.node_type().unwrap_or(NodeType::Announcement),
             title: event.title().unwrap_or_default().to_string(),
             summary: event.summary().unwrap_or_default().to_string(),
-            source_url: event.source_url().unwrap_or_default().to_string(),
+            url: event.url().unwrap_or_default().to_string(),
             is_sensitive: false,
         };
 
@@ -182,7 +182,7 @@ pub mod handlers {
             title: event.title().unwrap_or_default().to_string(),
             summary: event.summary().unwrap_or_default().to_string(),
             label,
-            source_url: event.source_url().unwrap_or_default().to_string(),
+            url: event.url().unwrap_or_default().to_string(),
         };
 
         info!(
@@ -283,7 +283,7 @@ pub mod handlers {
                                     severity: tension.severity,
                                     category: tension.category,
                                     opposing: tension.opposing,
-                                    source_url: tension.source_url,
+                                    url: tension.url,
                                     parent_signal_id: signal_id,
                                     match_strength: tension.match_strength,
                                     explanation: tension.explanation,
@@ -490,7 +490,7 @@ pub mod handlers {
                         summary: tension.summary.clone(),
                         severity: tension.severity.clone(),
                         opposing: tension.opposing.clone(),
-                        source_url: tension.source_url.clone(),
+                        url: tension.source_url.clone(),
                         parent_concern_id: concern_id,
                     });
                 }

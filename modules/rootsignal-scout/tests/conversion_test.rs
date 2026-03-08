@@ -421,7 +421,7 @@ fn signal_source_url_overrides_page_url() {
     let result = Extractor::convert_signals(response, "https://page-level.com");
 
     assert_eq!(
-        result.nodes[0].meta().unwrap().source_url,
+        result.nodes[0].meta().unwrap().url,
         "https://specific-post.com/123"
     );
 }
@@ -442,7 +442,7 @@ fn missing_signal_source_url_falls_back_to_page() {
     let result = Extractor::convert_signals(response, "https://page-level.com");
 
     assert_eq!(
-        result.nodes[0].meta().unwrap().source_url,
+        result.nodes[0].meta().unwrap().url,
         "https://page-level.com"
     );
 }
@@ -464,7 +464,7 @@ fn empty_signal_source_url_falls_back_to_page() {
     let result = Extractor::convert_signals(response, "https://page-level.com");
 
     assert_eq!(
-        result.nodes[0].meta().unwrap().source_url,
+        result.nodes[0].meta().unwrap().url,
         "https://page-level.com"
     );
 }

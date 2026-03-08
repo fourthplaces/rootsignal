@@ -4,31 +4,31 @@ import { gql } from "@apollo/client";
 const SIGNAL_FIELDS = `
   ... on GqlGatheringSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
     startsAt endsAt actionUrl organizer isRecurring
   }
   ... on GqlResourceSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
     actionUrl availability isOngoing
   }
   ... on GqlHelpRequestSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
     urgency whatNeeded actionUrl statedGoal
   }
   ... on GqlAnnouncementSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
     severity subject effectiveDate sourceAuthority
   }
   ... on GqlConcernSignal {
     id title summary sensitivity confidence location { lat lng precision }
-    locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
     reviewStatus wasCorrected corrections rejectionReason
     severity subject opposing
   }
@@ -172,31 +172,31 @@ export const SIGNALS_NEAR = gql`
     signalsNear(lat: $lat, lng: $lng, radiusKm: $radiusKm, types: $types) {
       ... on GqlGatheringSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+        locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
         startsAt endsAt actionUrl organizer isRecurring
         actors { id name actorType }
       }
       ... on GqlResourceSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+        locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
         actionUrl availability isOngoing
         actors { id name actorType }
       }
       ... on GqlHelpRequestSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+        locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
         urgency whatNeeded actionUrl statedGoal
         actors { id name actorType }
       }
       ... on GqlAnnouncementSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+        locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
         severity subject effectiveDate sourceAuthority
         actors { id name actorType }
       }
       ... on GqlConcernSignal {
         id title summary sensitivity confidence location { lat lng precision }
-        locationName sourceUrl extractedAt contentDate sourceDiversity causeHeat channelDiversity
+        locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
         severity subject opposing
         actors { id name actorType }
       }
@@ -308,7 +308,7 @@ export const ACTOR_DETAIL = gql`
         signalType
         confidence
         extractedAt
-        sourceUrl
+        url
         reviewStatus
       }
     }
@@ -401,7 +401,7 @@ export const ADMIN_SCOUT_RUN_EVENTS = gql`
       seq
       ts
       type
-      sourceUrl
+      signalUrl
       query
       url
       provider
@@ -423,7 +423,7 @@ export const ADMIN_SCOUT_RUN_EVENTS = gql`
       nodeId
       matchedId
       existingId
-      newSourceUrl
+      newSignalUrl
       canonicalKey
       gatherings
       needs
@@ -452,7 +452,7 @@ export const ADMIN_SCOUT_RUN_OUTCOMES = gql`
         total
       }
       signalsCreated(limit: 100) {
-        items { nodeId nodeType title confidence sourceUrl }
+        items { nodeId nodeType title confidence url }
         total
       }
       dedupMatches(limit: 50) {
@@ -705,7 +705,7 @@ export const SOURCE_DETAIL = gql`
         signalType
         confidence
         extractedAt
-        sourceUrl
+        url
         reviewStatus
       }
       actors {
@@ -826,7 +826,7 @@ export const ADMIN_NODE_EVENTS = gql`
       seq
       ts
       type
-      sourceUrl
+      signalUrl
       query
       url
       provider
@@ -847,7 +847,7 @@ export const ADMIN_NODE_EVENTS = gql`
       newValue
       summary
       similarity
-      newSourceUrl
+      newSignalUrl
     }
   }
 `;

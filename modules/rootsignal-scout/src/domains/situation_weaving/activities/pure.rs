@@ -201,7 +201,7 @@ pub fn signal_to_json(s: &WeaveSignal) -> serde_json::Value {
         "summary": truncate(&s.summary, 300),
         "type": s.node_type,
         "cause_heat": format!("{:.2}", s.cause_heat),
-        "source_url": s.source_url,
+        "source_url": s.url,
         "location": format_location(s.lat, s.lng),
     });
     if let Some(date) = &s.published_at {

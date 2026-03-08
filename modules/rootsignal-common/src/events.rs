@@ -471,7 +471,7 @@ mod tests {
             id: Uuid::new_v4(),
             title: "Community Cleanup".into(),
             summary: "Monthly neighborhood cleanup".into(),
-            source_url: "https://example.com/cleanup".into(),
+            url: "https://example.com/cleanup".into(),
             published_at: Some(Utc::now()),
             extraction_id: None,
             locations: vec![Location {
@@ -661,7 +661,7 @@ mod tests {
         let w: Event = SystemEvent::ObservationCorroborated {
             signal_id: Uuid::new_v4(),
             node_type: crate::types::NodeType::Gathering,
-            new_source_url: "test".into(),
+            new_url: "test".into(),
             summary: None,
         }
         .into();

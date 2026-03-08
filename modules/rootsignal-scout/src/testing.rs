@@ -190,6 +190,7 @@ pub struct StoredSignal {
     pub title: String,
     pub node_type: NodeType,
     pub source_url: String,
+    pub canonical_key: String,
     pub corroboration_count: u32,
     pub embedding: Vec<f32>,
     pub about_location: Option<rootsignal_common::GeoPoint>,
@@ -434,7 +435,7 @@ impl MockSignalReader {
         let node_type = node.node_type();
         let source_url = node
             .meta()
-            .map(|m| m.source_url.clone())
+            .map(|m| m.url.clone())
             .unwrap_or_default();
         let normalized = title.trim().to_lowercase();
 
@@ -443,6 +444,7 @@ impl MockSignalReader {
             id,
             title: title.clone(),
             node_type,
+            canonical_key: canonical_value(&source_url),
             source_url: source_url.clone(),
             corroboration_count: 0,
             embedding: embedding.to_vec(),
@@ -484,6 +486,41 @@ impl MockSignalReader {
                 title: title.to_string(),
                 node_type,
                 source_url: source_url.to_string(),
+                canonical_key: canonical_value(source_url),
+                corroboration_count: 0,
+                embedding: vec![],
+                about_location: None,
+                from_location: None,
+                published_at: None,
+                about_location_name: None,
+                confidence: 0.5,
+                extracted_at: Utc::now(),
+            },
+        );
+        inner.title_index.insert((normalized, node_type), id);
+        id
+    }
+
+    /// Insert a signal with an explicit canonical_key (for fingerprint dedup tests).
+    /// `post_url` is the signal's content URL, `source_canonical_key` identifies the source account.
+    pub fn insert_signal_from_source(
+        &self,
+        title: &str,
+        node_type: NodeType,
+        post_url: &str,
+        source_canonical_key: &str,
+    ) -> Uuid {
+        let mut inner = self.inner.lock().unwrap();
+        let id = Uuid::new_v4();
+        let normalized = title.trim().to_lowercase();
+        inner.signals.insert(
+            id,
+            StoredSignal {
+                id,
+                title: title.to_string(),
+                node_type,
+                source_url: post_url.to_string(),
+                canonical_key: source_canonical_key.to_string(),
                 corroboration_count: 0,
                 embedding: vec![],
                 about_location: None,
@@ -713,7 +750,24 @@ impl SignalReader for MockSignalReader {
             let normalized = title.trim().to_lowercase();
             if let Some(id) = inner.title_index.get(&(normalized.clone(), *nt)) {
                 if let Some(signal) = inner.signals.get(id) {
-                    results.insert((normalized, *nt), (*id, signal.source_url.clone()));
+                    results.insert((normalized, *nt), (*id, signal.canonical_key.clone()));
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    async fn find_by_fingerprints(
+        &self,
+        pairs: &[(String, NodeType)],
+    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
+        let inner = self.inner.lock().unwrap();
+        let mut results = HashMap::new();
+        for (url, nt) in pairs {
+            for signal in inner.signals.values() {
+                if signal.source_url == *url && signal.node_type == *nt {
+                    results.insert((url.clone(), *nt), (signal.id, signal.canonical_key.clone()));
+                    break;
                 }
             }
         }
@@ -1010,7 +1064,7 @@ pub fn tension(title: &str) -> Node {
             about_location: None,
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1052,7 +1106,7 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
             }),
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1089,7 +1143,7 @@ pub fn need(title: &str) -> Node {
             about_location: None,
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1132,7 +1186,7 @@ pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
             }),
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1170,7 +1224,7 @@ pub fn gathering(title: &str) -> Node {
             about_location: None,
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1214,7 +1268,7 @@ pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
             }),
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1253,7 +1307,7 @@ pub fn aid(title: &str) -> Node {
             about_location: None,
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1296,7 +1350,7 @@ pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
             }),
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1334,7 +1388,7 @@ pub fn notice(title: &str) -> Node {
             about_location: None,
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1377,7 +1431,7 @@ pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
             }),
             about_location_name: None,
             from_location: None,
-            source_url: String::new(),
+            url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
             last_confirmed_active: Utc::now(),
@@ -1584,7 +1638,7 @@ pub fn test_meta(source_url: &str) -> NodeMeta {
         about_location: None,
         about_location_name: None,
         from_location: None,
-        source_url: source_url.to_string(),
+        url: source_url.to_string(),
         extracted_at: Utc::now(),
         published_at: None,
         last_confirmed_active: Utc::now(),
@@ -1913,7 +1967,7 @@ pub fn test_world_event() -> rootsignal_common::events::WorldEvent {
         id: Uuid::new_v4(),
         title: "Test announcement".into(),
         summary: "Test summary".into(),
-        source_url: "https://example.com/test".into(),
+        url: "https://example.com/test".into(),
         published_at: None,
         extraction_id: None,
         locations: vec![],
@@ -1936,7 +1990,7 @@ mod tests {
     fn tension_with_url(title: &str, source_url: &str) -> Node {
         let mut node = tension(title);
         if let Some(meta) = node.meta_mut() {
-            meta.source_url = source_url.to_string();
+            meta.url = source_url.to_string();
         }
         node
     }

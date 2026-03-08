@@ -30,7 +30,7 @@ fn test_meta() -> NodeMeta {
         about_location: None,
         about_location_name: None,
         from_location: None,
-        source_url: "https://example.com".into(),
+        url: "https://example.com".into(),
         extracted_at: Utc::now(),
         published_at: None,
         last_confirmed_active: Utc::now(),
@@ -66,7 +66,7 @@ fn community_garden_gathering_scores_high_confidence() {
             }),
             about_location_name: Some("Powderhorn Community Garden, 3524 15th Ave S".into()),
             from_location: None,
-            source_url: "https://powderhornpark.org/events".into(),
+            url: "https://powderhornpark.org/events".into(),
             ..test_meta()
         },
         starts_at: Some(
@@ -123,7 +123,7 @@ fn food_shelf_aid_scores_high_confidence() {
             }),
             about_location_name: Some("420 15th Ave S, Minneapolis, MN 55454".into()),
             from_location: None,
-            source_url: "https://brivahealth.org/food-shelf".into(),
+            url: "https://brivahealth.org/food-shelf".into(),
             ..test_meta()
         },
         action_url: "https://brivahealth.org/volunteer".into(),
@@ -332,7 +332,7 @@ fn gathering_action_url_same_as_source_url_not_actionable() {
         meta: NodeMeta {
             title: "Event from news article".into(),
             summary: "Some event".into(),
-            source_url: source.into(),
+            url: source.into(),
             about_location: Some(GeoPoint {
                 lat: 44.97,
                 lng: -93.26,

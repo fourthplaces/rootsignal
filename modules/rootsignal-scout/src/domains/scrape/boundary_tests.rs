@@ -17,7 +17,7 @@ use crate::domains::signals::events::SignalEvent;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 use rootsignal_common::canonical_value;
 use chrono::TimeZone;
-use crate::domains::enrichment::activities::actor_location::enrich_actor_locations;
+use crate::domains::enrichment::activities::actor_location::{triangulate_all_actors, ActorLocationUpdate};
 use crate::traits::SignalReader;
 use chrono::Utc;
 use rootsignal_common::ActorType;
@@ -2593,25 +2593,21 @@ async fn social_signal_has_produced_by_edge() {
 // ---------------------------------------------------------------------------
 // Actor location enrichment — boundary tests
 //
-// MOCK → enrich_actor_locations (the organ) → OUTPUT
-// The organ wires: query signals → triangulate → update actor location.
+// MOCK → triangulate_all_actors → OUTPUT
 // ---------------------------------------------------------------------------
 
-
-type CapturedEvents = Arc<Mutex<Vec<AnyEvent>>>;
-
-/// Wrapper that creates test engine+deps and calls enrich_actor_locations.
-/// Returns the updated count and a vec of captured events for inspection.
+/// Wrapper that calls triangulate_all_actors directly.
+/// Returns the updates vec (len = updated count) for inspection.
 async fn enrich_with_sink(
     store: &dyn SignalReader,
     actors: &[(
         rootsignal_common::ActorNode,
         Vec<rootsignal_common::SourceNode>,
     )],
-) -> (u32, CapturedEvents) {
-    let (engine, captured) = crate::testing::test_engine_with_capture();
-    let updated = enrich_actor_locations(store, &engine, actors).await;
-    (updated, captured)
+) -> (u32, Vec<ActorLocationUpdate>) {
+    let updates = triangulate_all_actors(store, actors).await;
+    let count = updates.len() as u32;
+    (count, updates)
 }
 
 /// Wrapper for tests that only need the updated count.
@@ -2626,46 +2622,31 @@ async fn enrich_with_engine(
     updated
 }
 
-/// Extract the location name dispatched for an actor.
+/// Extract the location name for an actor from updates.
 fn dispatched_location_name(
-    captured: &CapturedEvents,
+    updates: &[ActorLocationUpdate],
     actor_id: uuid::Uuid,
 ) -> Option<String> {
-    let events = captured.lock().unwrap();
-    events.iter().find_map(|e| {
-        if let Some(SystemEvent::ActorLocationIdentified {
-            actor_id: id,
-            location_name,
-            ..
-        }) = e.downcast_ref::<SystemEvent>()
-        {
-            if *id == actor_id {
-                return location_name.clone().or(Some(String::new()));
-            }
+    updates.iter().find_map(|u| {
+        if u.actor_id == actor_id {
+            Some(u.name.clone().unwrap_or_default())
+        } else {
+            None
         }
-        None
     })
 }
 
-/// Extract the location coordinates dispatched for an actor.
+/// Extract the location coordinates for an actor from updates.
 fn dispatched_location_coords(
-    captured: &CapturedEvents,
+    updates: &[ActorLocationUpdate],
     actor_id: uuid::Uuid,
 ) -> Option<(f64, f64)> {
-    let events = captured.lock().unwrap();
-    events.iter().find_map(|e| {
-        if let Some(SystemEvent::ActorLocationIdentified {
-            actor_id: id,
-            location_lat,
-            location_lng,
-            ..
-        }) = e.downcast_ref::<SystemEvent>()
-        {
-            if *id == actor_id {
-                return Some((*location_lat, *location_lng));
-            }
+    updates.iter().find_map(|u| {
+        if u.actor_id == actor_id {
+            Some((u.lat, u.lng))
+        } else {
+            None
         }
-        None
     })
 }
 
@@ -3723,10 +3704,9 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
 // ---------------------------------------------------------------------------
 // Bio location enrichment — TDD RED test
 //
-// MOCK → enrich_actor_locations (the organ) → OUTPUT
+// MOCK → triangulate_all_actors → OUTPUT
 // Actor has bio text matching a signal's location name.
-// Bio corroborated by 1 signal should win — but currently enrich_actor_locations
-// passes None for bio_location, so this requires a code fix.
+// Bio corroborated by 1 signal should win.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]

@@ -429,7 +429,7 @@ pub(crate) async fn scrape_social_sources(
                 .cloned()
                 .unwrap_or_else(|| source_url.clone());
             let actor_ctx = actor_contexts.get(&ck_for_fallback);
-            let nodes = score_and_filter(nodes, &source_url, actor_ctx);
+            let nodes = score_and_filter(nodes, actor_ctx);
 
             if !nodes.is_empty() {
                 let before_dedup = nodes.len();

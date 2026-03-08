@@ -302,7 +302,7 @@ fn format_signal_markdown(id: Uuid, node: &rootsignal_common::Node) -> String {
         if let Some(ref cat) = meta.category {
             md.push_str(&format!("- **Category**: {cat}\n"));
         }
-        md.push_str(&format!("- **Source URL**: {}\n", meta.source_url));
+        md.push_str(&format!("- **Source URL**: {}\n", meta.url));
         if let Some(ref loc) = meta.about_location_name {
             md.push_str(&format!("- **Location**: {loc}\n"));
         }

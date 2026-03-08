@@ -20,7 +20,8 @@ pub enum CuriosityEvent {
         severity: String,
         category: String,
         opposing: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         parent_signal_id: Uuid,
         match_strength: f64,
         explanation: String,
@@ -70,7 +71,8 @@ pub enum CuriosityEvent {
         summary: String,
         severity: String,
         opposing: String,
-        source_url: String,
+        #[serde(alias = "source_url")]
+        url: String,
         parent_concern_id: Uuid,
     },
 }

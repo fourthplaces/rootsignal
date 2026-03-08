@@ -112,7 +112,8 @@ impl GraphReader {
              YIELD node, score AS similarity
              WHERE node.lat >= $min_lat AND node.lat <= $max_lat
                AND node.lng >= $min_lng AND node.lng <= $max_lng
-             RETURN node.id AS id, node.source_url AS source_url, similarity
+             OPTIONAL MATCH (node)-[:PRODUCED_BY]->(s:Source)
+             RETURN node.id AS id, node.url AS url, s.canonical_key AS canonical_key, similarity
              ORDER BY similarity DESC
              LIMIT 1",
             index_name
@@ -127,13 +128,15 @@ impl GraphReader {
         if let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let similarity: f64 = row.get("similarity").unwrap_or(0.0);
-            let source_url: String = row.get("source_url").unwrap_or_default();
+            let url: String = row.get("url").unwrap_or_default();
+            let canonical_key: String = row.get("canonical_key").unwrap_or_default();
             if similarity >= threshold {
                 if let Ok(id) = Uuid::parse_str(&id_str) {
                     return Ok(Some(DuplicateMatch {
                         id,
                         node_type,
-                        source_url,
+                        url,
+                        canonical_key,
                         similarity,
                     }));
                 }
@@ -170,7 +173,7 @@ impl GraphReader {
         let q = query(
             "MATCH (n)
              WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-               AND n.source_url = $url
+               AND n.url = $url
              RETURN n.title AS title",
         )
         .param("url", source_url);
@@ -186,7 +189,7 @@ impl GraphReader {
     }
 
     /// Batch-find existing signals by exact title+type (case-insensitive).
-    /// Returns a map of lowercase title → (node_id, node_type, source_url).
+    /// Returns a map of lowercase title → (node_id, node_type, canonical_key).
     /// Single Cypher query regardless of input size.
     pub async fn find_by_titles_and_types(
         &self,
@@ -203,13 +206,17 @@ impl GraphReader {
             NodeType::Resource,
             NodeType::HelpRequest,
             NodeType::Announcement,
+            NodeType::Concern,
+            NodeType::Condition,
         ] {
             let label = match nt {
                 NodeType::Gathering => "Gathering",
                 NodeType::Resource => "Resource",
                 NodeType::HelpRequest => "HelpRequest",
                 NodeType::Announcement => "Announcement",
-                _ => continue,
+                NodeType::Concern => "Concern",
+                NodeType::Condition => "Condition",
+                NodeType::Citation => continue,
             };
 
             let titles_for_type: Vec<String> = titles_and_types
@@ -225,7 +232,8 @@ impl GraphReader {
             let q = query(&format!(
                 "MATCH (n:{label})
                  WHERE toLower(n.title) IN $titles
-                 RETURN toLower(n.title) AS title, n.id AS id, n.source_url AS source_url"
+                 OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
+                 RETURN toLower(n.title) AS title, n.id AS id, s.canonical_key AS canonical_key"
             ))
             .param("titles", titles_for_type);
 
@@ -233,9 +241,70 @@ impl GraphReader {
             while let Some(row) = stream.next().await? {
                 let title: String = row.get("title").unwrap_or_default();
                 let id_str: String = row.get("id").unwrap_or_default();
-                let source_url: String = row.get("source_url").unwrap_or_default();
+                let canonical_key: String = row.get("canonical_key").unwrap_or_default();
                 if let Ok(id) = Uuid::parse_str(&id_str) {
-                    results.insert((title, *nt), (id, source_url));
+                    results.insert((title, *nt), (id, canonical_key));
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Batch-find existing signals by exact (url, node_type) fingerprint.
+    /// Catches re-encounters of the same post without needing embeddings.
+    pub async fn find_by_fingerprints(
+        &self,
+        pairs: &[(String, NodeType)],
+    ) -> Result<std::collections::HashMap<(String, NodeType), (Uuid, String)>, neo4rs::Error> {
+        let mut results = std::collections::HashMap::new();
+        if pairs.is_empty() {
+            return Ok(results);
+        }
+
+        for nt in &[
+            NodeType::Gathering,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
+            NodeType::Condition,
+        ] {
+            let label = match nt {
+                NodeType::Gathering => "Gathering",
+                NodeType::Resource => "Resource",
+                NodeType::HelpRequest => "HelpRequest",
+                NodeType::Announcement => "Announcement",
+                NodeType::Concern => "Concern",
+                NodeType::Condition => "Condition",
+                NodeType::Citation => continue,
+            };
+
+            let urls_for_type: Vec<String> = pairs
+                .iter()
+                .filter(|(_, t)| t == nt)
+                .map(|(url, _)| url.clone())
+                .collect();
+
+            if urls_for_type.is_empty() {
+                continue;
+            }
+
+            let q = query(&format!(
+                "MATCH (n:{label})
+                 WHERE n.url IN $urls
+                 OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
+                 RETURN n.url AS url, n.id AS id, s.canonical_key AS canonical_key"
+            ))
+            .param("urls", urls_for_type);
+
+            let mut stream = self.client().execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let url: String = row.get("url").unwrap_or_default();
+                let id_str: String = row.get("id").unwrap_or_default();
+                let canonical_key: String = row.get("canonical_key").unwrap_or_default();
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    results.insert((url, *nt), (id, canonical_key));
                 }
             }
         }
@@ -305,7 +374,7 @@ impl GraphReader {
         let q = query(&format!(
             "MATCH (n:{label} {{id: $id}})
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-             RETURN n.source_url AS self_url,
+             RETURN n.url AS self_url,
                     collect({{url: ev.source_url, channel: coalesce(ev.channel_type, 'press')}}) AS evidence"
         ))
         .param("id", node_id.to_string());
@@ -773,7 +842,7 @@ impl GraphReader {
             "MATCH (s:Source {active: true})
              WHERE (s.signals_produced = 0 AND s.last_scraped IS NULL)
                 OR EXISTS {
-                    MATCH (n) WHERE n.source_url = s.canonical_value
+                    MATCH (n) WHERE n.url = s.canonical_value
                       AND n.lat >= $min_lat AND n.lat <= $max_lat
                       AND n.lng >= $min_lng AND n.lng <= $max_lng
                 }
@@ -810,12 +879,13 @@ impl GraphReader {
 
     /// Count tension signals produced by a specific source.
     pub async fn count_source_tensions(&self, canonical_key: &str) -> Result<u32, neo4rs::Error> {
-        // Look up URL from canonical_key, then count Tension nodes with matching source_url
+        // Look up URL from canonical_key, then count Concern nodes with matching url
         let q = query(
             "MATCH (s:Source {canonical_key: $key})
              WITH s.url AS url, s.canonical_value AS cv
              OPTIONAL MATCH (t:Concern)
-             WHERE t.source_url = url OR t.source_url CONTAINS cv
+             WHERE t.url = url OR t.url CONTAINS cv
+
              RETURN count(t) AS cnt",
         )
         .param("key", canonical_key);
@@ -1735,7 +1805,7 @@ impl GraphReader {
              WITH t, count(ev) AS ev_count
              WHERE ev_count < 2
              RETURN t.id AS id, 'Tension' AS label, t.title AS title, t.summary AS summary,
-                    t.source_url AS source_url, t.sensitivity AS sensitivity
+                    t.url AS url, t.sensitivity AS sensitivity
              LIMIT 10"
         )
         .param("min_lat", min_lat)
@@ -1756,7 +1826,7 @@ impl GraphReader {
              WITH a, count(ev) AS ev_count
              WHERE ev_count < 2
              RETURN a.id AS id, 'Need' AS label, a.title AS title, a.summary AS summary,
-                    a.source_url AS source_url, a.sensitivity AS sensitivity
+                    a.url AS url, a.sensitivity AS sensitivity
              LIMIT 10"
         )
         .param("min_lat", min_lat)
@@ -1783,7 +1853,7 @@ impl GraphReader {
                   END AS label
              WHERE ev_count < 2
              RETURN n.id AS id, label, n.title AS title, n.summary AS summary,
-                    n.source_url AS source_url, n.sensitivity AS sensitivity
+                    n.url AS url, n.sensitivity AS sensitivity
              LIMIT 10"
         )
         .param("min_lat", min_lat)
@@ -1821,8 +1891,8 @@ impl GraphReader {
                 _ => continue,
             };
 
-            let source_url: String = row.get("source_url").unwrap_or_default();
-            let domain = url::Url::parse(&source_url)
+            let url: String = row.get("url").unwrap_or_default();
+            let domain = url::Url::parse(&url)
                 .ok()
                 .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
                 .unwrap_or_default();
@@ -1840,7 +1910,7 @@ impl GraphReader {
                 node_type,
                 title: row.get("title").unwrap_or_default(),
                 summary: row.get("summary").unwrap_or_default(),
-                source_url,
+                url,
                 is_sensitive,
             });
         }
@@ -1898,7 +1968,7 @@ impl GraphReader {
                AND sig.lng >= $min_lng AND sig.lng <= $max_lng
              WITH t, collect({
                  sig_id: sig.id,
-                 source_url: sig.source_url,
+                 url: sig.url,
                  strength: r.match_strength,
                  explanation: r.explanation,
                  edge_type: type(r),
@@ -1944,7 +2014,7 @@ impl GraphReader {
                 };
                 respondents.push(ConcernRespondent {
                     signal_id: sig_id,
-                    source_url: map.get::<String>("source_url").unwrap_or_default(),
+                    url: map.get::<String>("url").unwrap_or_default(),
                     match_strength: map.get::<f64>("strength").unwrap_or(0.0),
                     explanation: map.get::<String>("explanation").unwrap_or_default(),
                     edge_type: map.get::<String>("edge_type").unwrap_or_default(),
@@ -2148,14 +2218,14 @@ impl GraphReader {
 
         let mut results = Vec::new();
         for (source_label, (extracted, corroborated, urls)) in &type_map {
-            // Count survived signals (still in graph) per source type via source_url
+            // Count survived signals (still in graph) per source type via url
             let mut survived = 0u32;
             if !urls.is_empty() {
                 for url in urls {
                     let q = query(
                         "MATCH (n)
                          WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-                           AND n.source_url = $url
+                           AND n.url = $url
                          RETURN count(n) AS cnt",
                     )
                     .param("url", url.as_str());
@@ -2174,7 +2244,7 @@ impl GraphReader {
                     let q = query(
                         "MATCH (n)-[:SOURCED_FROM]->(ev:Citation {relevance: 'CONTRADICTING'})
                          WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-                           AND n.source_url = $url
+                           AND n.url = $url
                          RETURN count(DISTINCT n) AS cnt",
                     )
                     .param("url", url.as_str());
@@ -2790,7 +2860,7 @@ impl GraphReader {
                AND n.lat >= $min_lat AND n.lat <= $max_lat
                AND n.lng >= $min_lng AND n.lng <= $max_lng
              RETURN n.id AS id, n.title AS title, n.summary AS summary,
-                    n.source_url AS source_url,
+                    n.url AS url,
                     CASE WHEN n:Gathering THEN 'Gathering'
                          WHEN n:Resource THEN 'Aid'
                          WHEN n:HelpRequest THEN 'Need'
@@ -2818,7 +2888,7 @@ impl GraphReader {
                 title: row.get("title").unwrap_or_default(),
                 summary: row.get("summary").unwrap_or_default(),
                 label: row.get("label").unwrap_or_default(),
-                source_url: row.get("source_url").unwrap_or_default(),
+                url: row.get("url").unwrap_or_default(),
             });
         }
         Ok(targets)
@@ -2913,7 +2983,7 @@ impl GraphReader {
                    AND NOT n:Citation
                  RETURN n.id AS id, n.title AS title, n.summary AS summary,
                         '{label}' AS node_type, n.embedding AS embedding,
-                        n.source_url AS source_url,
+                        n.url AS url,
                         coalesce(n.cause_heat, 0.0) AS cause_heat,
                         n.lat AS lat, n.lng AS lng,
                         n.published_at AS published_at"
@@ -2937,7 +3007,7 @@ impl GraphReader {
                     title: row.get("title").unwrap_or_default(),
                     summary: row.get("summary").unwrap_or_default(),
                     node_type: row.get("node_type").unwrap_or_default(),
-                    source_url: row.get("source_url").unwrap_or_default(),
+                    url: row.get("url").unwrap_or_default(),
                     cause_heat: row.get("cause_heat").unwrap_or(0.0),
                     lat: row.get("lat").ok(),
                     lng: row.get("lng").ok(),
@@ -3078,7 +3148,7 @@ impl GraphReader {
         let q = query(&format!(
             "MATCH (n:{label})
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-             RETURN n.id AS id, n.source_url AS self_url,
+             RETURN n.id AS id, n.url AS self_url,
                     collect({{url: ev.source_url, channel: coalesce(ev.channel_type, 'press')}}) AS evidence"
         ));
 
@@ -3144,7 +3214,7 @@ pub struct WeaveSignal {
     pub title: String,
     pub summary: String,
     pub node_type: String,
-    pub source_url: String,
+    pub url: String,
     pub cause_heat: f64,
     pub lat: Option<f64>,
     pub lng: Option<f64>,
@@ -3267,11 +3337,11 @@ impl GraphStore {
     }
 
     /// Delete all nodes sourced from a given URL (opt-out support).
-    pub async fn delete_by_source_url(&self, url: &str) -> Result<u64, neo4rs::Error> {
+    pub async fn delete_by_url(&self, url: &str) -> Result<u64, neo4rs::Error> {
         // Delete evidence nodes linked to signals from this URL, then the signals themselves
         let q = query(
             "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
-             WHERE n.source_url = $url
+             WHERE n.url = $url
              DETACH DELETE n, ev
              RETURN count(*) AS deleted",
         )
@@ -3571,7 +3641,7 @@ impl GraphStore {
     ) -> Result<(), neo4rs::Error> {
         let q = query(
             "MATCH (sig)-[:PART_OF]->(s:Situation {headline: $headline})
-             WITH collect(DISTINCT sig.source_url) AS urls
+             WITH collect(DISTINCT sig.url) AS urls
              UNWIND urls AS url
              MATCH (src:Source {active: true})
              WHERE src.url = url AND src.weight IS NOT NULL
@@ -4201,7 +4271,8 @@ pub struct SourceStats {
 pub struct DuplicateMatch {
     pub id: Uuid,
     pub node_type: NodeType,
-    pub source_url: String,
+    pub url: String,
+    pub canonical_key: String,
     pub similarity: f64,
 }
 
@@ -4300,7 +4371,7 @@ pub struct InvestigationTarget {
     pub node_type: NodeType,
     pub title: String,
     pub summary: String,
-    pub source_url: String,
+    pub url: String,
     pub is_sensitive: bool,
 }
 
@@ -4311,7 +4382,7 @@ pub struct ConcernLinkerTarget {
     pub title: String,
     pub summary: String,
     pub label: String,
-    pub source_url: String,
+    pub url: String,
 }
 
 /// Outcome of a tension linker investigation for a signal.
@@ -4354,7 +4425,7 @@ pub struct ConcernHub {
 #[derive(Debug)]
 pub struct ConcernRespondent {
     pub signal_id: Uuid,
-    pub source_url: String,
+    pub url: String,
     pub match_strength: f64,
     pub explanation: String,
     /// "RESPONDS_TO" or "DRAWN_TO" — raw Neo4j type(r) value
@@ -4430,7 +4501,7 @@ pub struct StagedSignal {
     pub title: String,
     pub summary: String,
     pub confidence: f64,
-    pub source_url: String,
+    pub url: String,
     pub lat: Option<f64>,
     pub lng: Option<f64>,
     pub location_name: Option<String>,
@@ -4450,7 +4521,7 @@ pub struct SignalBrief {
     pub signal_type: String,
     pub confidence: f32,
     pub extracted_at: Option<DateTime<Utc>>,
-    pub source_url: String,
+    pub url: String,
     pub review_status: String,
 }
 
@@ -5045,7 +5116,7 @@ mod tests {
             respondents: vec![
                 ConcernRespondent {
                     signal_id: Uuid::new_v4(),
-                    source_url: "https://example.com/a".to_string(),
+                    url: "https://example.com/a".to_string(),
                     match_strength: 0.9,
                     explanation: "Direct evidence of rent increases".to_string(),
                     edge_type: "RESPONDS_TO".to_string(),
@@ -5053,7 +5124,7 @@ mod tests {
                 },
                 ConcernRespondent {
                     signal_id: Uuid::new_v4(),
-                    source_url: "https://different.org/b".to_string(),
+                    url: "https://different.org/b".to_string(),
                     match_strength: 0.7,
                     explanation: "Community response to housing costs".to_string(),
                     edge_type: "DRAWN_TO".to_string(),

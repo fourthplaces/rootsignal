@@ -126,8 +126,15 @@ pub trait SignalReader: Send + Sync {
     async fn existing_titles_for_url(&self, url: &str) -> Result<Vec<String>>;
 
     /// Batch-find existing signals by exact title+type. Returns map of
-    /// (lowercase_title, type) → (node_id, source_url).
+    /// (lowercase_title, type) → (node_id, canonical_key).
     async fn find_by_titles_and_types(
+        &self,
+        pairs: &[(String, NodeType)],
+    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>>;
+
+    /// Batch-find existing signals by exact (url, node_type) fingerprint.
+    /// Returns map of (url, node_type) → (node_id, canonical_key).
+    async fn find_by_fingerprints(
         &self,
         pairs: &[(String, NodeType)],
     ) -> Result<HashMap<(String, NodeType), (Uuid, String)>>;
@@ -187,6 +194,7 @@ impl SignalReader for NoOpSignalReader {
     async fn read_corroboration_count(&self, _: Uuid, _: NodeType) -> Result<u32> { Ok(0) }
     async fn existing_titles_for_url(&self, _: &str) -> Result<Vec<String>> { Ok(vec![]) }
     async fn find_by_titles_and_types(&self, _: &[(String, NodeType)]) -> Result<HashMap<(String, NodeType), (Uuid, String)>> { Ok(HashMap::new()) }
+    async fn find_by_fingerprints(&self, _: &[(String, NodeType)]) -> Result<HashMap<(String, NodeType), (Uuid, String)>> { Ok(HashMap::new()) }
     async fn find_duplicate(&self, _: &[f32], _: NodeType, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Option<DuplicateMatch>> { Ok(None) }
     async fn find_actor_by_name(&self, _: &str) -> Result<Option<Uuid>> { Ok(None) }
     async fn find_actor_by_canonical_key(&self, _: &str) -> Result<Option<Uuid>> { Ok(None) }

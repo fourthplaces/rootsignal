@@ -36,13 +36,13 @@ pub async fn materialize(
             severity,
             category: _,
             opposing,
-            source_url,
+            url,
             parent_signal_id,
             match_strength,
             explanation,
         } => {
             let severity = parse_severity(&severity);
-            let meta = build_meta(tension_id, &title, &summary, &source_url, region, 0.7);
+            let meta = build_meta(tension_id, &title, &summary, &url, region, 0.7);
 
             let node = Node::Concern(ConcernNode {
                 meta,
@@ -152,11 +152,11 @@ pub async fn materialize(
             summary,
             severity,
             opposing,
-            source_url,
+            url,
             parent_concern_id: _,
         } => {
             let severity = parse_severity(&severity);
-            let meta = build_meta(tension_id, &title, &summary, &source_url, region, 0.4);
+            let meta = build_meta(tension_id, &title, &summary, &url, region, 0.4);
 
             let node = Node::Concern(ConcernNode {
                 meta,
@@ -309,7 +309,7 @@ fn build_meta(
         }),
         from_location: None,
         about_location_name: region.map(|r| r.name.clone()),
-        source_url: source_url.to_string(),
+        url: source_url.to_string(),
         extracted_at: now,
         published_at: None,
         last_confirmed_active: now,

@@ -10,7 +10,7 @@ pub fn signal_for_review(event: &WorldEvent, run_id: &str) -> Option<SignalForRe
     let id = event.signal_id()?.to_string();
     let title = event.title()?.to_string();
     let summary = event.summary()?.to_string();
-    let source_url = event.source_url()?.to_string();
+    let source_url = event.url()?.to_string();
     let signal_type = event.node_type_label()?.to_string();
 
     Some(SignalForReview {
