@@ -2,13 +2,11 @@
 //!
 //! Every `SourcesDiscovered` event passes through this handler.
 //! Sources are either auto-accepted (social, direct-action, query, admin)
-//! or LLM-filtered via `filter_domains_batch`. Accepted sources emit
-//! `SystemEvent::SourcesRegistered`; rejected ones are logged.
+//! or LLM-filtered via `filter_domains_batch`.
 
 use ai_client::Agent;
-use seesaw_core::{Events, Logger};
+use seesaw_core::Logger;
 
-use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::types::{channel_type, ChannelType, SourceNode};
 
 use crate::domains::enrichment::activities::domain_filter;
@@ -16,7 +14,6 @@ use crate::traits::SignalReader;
 
 /// Filter a batch of proposed sources. Trusted origins and structurally-known
 /// channel types bypass the LLM; web URLs go through `filter_domains_batch`.
-/// Region is optional context that enriches the filter prompt — not a gate.
 ///
 /// Fail-open: if AI is unavailable, all sources are accepted.
 pub async fn filter_discovered_sources(
@@ -26,14 +23,11 @@ pub async fn filter_discovered_sources(
     ai: Option<&dyn Agent>,
     store: &dyn SignalReader,
     logger: &Logger,
-) -> Events {
-    let mut events = Events::new();
-
+) -> Vec<SourceNode> {
     if sources.is_empty() {
-        return events;
+        return Vec::new();
     }
 
-    // Partition: auto-accept vs needs-LLM
     let mut accepted: Vec<SourceNode> = Vec::new();
     let mut needs_filter: Vec<SourceNode> = Vec::new();
 
@@ -52,7 +46,6 @@ pub async fn filter_discovered_sources(
         needs_filter.len(),
     ));
 
-    // LLM filter for web URL sources
     if !needs_filter.is_empty() {
         match ai {
             Some(ai) => {
@@ -102,26 +95,19 @@ pub async fn filter_discovered_sources(
         }
     }
 
-    if !accepted.is_empty() {
-        events.push(SystemEvent::SourcesRegistered { sources: accepted });
-    }
-
-    events
+    accepted
 }
 
 /// Determine whether a source should bypass LLM filtering.
 fn should_auto_accept(source: &SourceNode, discovered_by: &str) -> bool {
-    // Trusted origins: admin and human submissions skip filter entirely
     if matches!(discovered_by, "admin" | "human_submission") {
         return true;
     }
 
-    // Query sources (no URL) skip filter — they're search queries, not domains
     if source.url.is_none() {
         return true;
     }
 
-    // Social and direct-action URLs are structurally known-good
     if let Some(ref url) = source.url {
         let ct = channel_type(url);
         if matches!(ct, ChannelType::Social | ChannelType::DirectAction) {
@@ -135,7 +121,6 @@ fn should_auto_accept(source: &SourceNode, discovered_by: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::any::TypeId;
     use rootsignal_common::{DiscoveryMethod, SourceRole};
     use crate::testing::MockSignalReader;
 
@@ -175,24 +160,12 @@ mod tests {
         )
     }
 
-    /// Count sources in SourcesRegistered batch events.
-    fn count_registered(events: &seesaw_core::Events) -> usize {
-        let system_type = TypeId::of::<SystemEvent>();
-        events
-            .iter()
-            .filter(|e| e.type_id == system_type)
-            .filter(|e| e.payload.get("type").and_then(|v| v.as_str()) == Some("sources_registered"))
-            .filter_map(|e| e.payload.get("sources").and_then(|v| v.as_array()))
-            .map(|arr| arr.len())
-            .sum()
-    }
-
     #[tokio::test]
     async fn admin_origin_bypasses_filter() {
         let store = MockSignalReader::new();
         let sources = vec![web_source("https://suspicious-site.example.com")];
 
-        let events = filter_discovered_sources(
+        let accepted = filter_discovered_sources(
             sources,
             "admin",
             None,
@@ -202,7 +175,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(count_registered(&events), 1, "admin sources should be auto-accepted");
+        assert_eq!(accepted.len(), 1, "admin sources should be auto-accepted");
     }
 
     #[tokio::test]
@@ -213,7 +186,7 @@ mod tests {
             social_source("https://x.com/community_org"),
         ];
 
-        let events = filter_discovered_sources(
+        let accepted = filter_discovered_sources(
             sources,
             "link_promoter",
             None,
@@ -223,7 +196,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(count_registered(&events), 2, "social sources should be auto-accepted");
+        assert_eq!(accepted.len(), 2, "social sources should be auto-accepted");
     }
 
     #[tokio::test]
@@ -231,7 +204,7 @@ mod tests {
         let store = MockSignalReader::new();
         let sources = vec![query_source("Minneapolis housing crisis")];
 
-        let events = filter_discovered_sources(
+        let accepted = filter_discovered_sources(
             sources,
             "engine_started",
             None,
@@ -241,7 +214,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(count_registered(&events), 1, "query sources should be auto-accepted");
+        assert_eq!(accepted.len(), 1, "query sources should be auto-accepted");
     }
 
     #[tokio::test]
@@ -252,16 +225,16 @@ mod tests {
             web_source("https://suspicious.example.com/spam"),
         ];
 
-        let events = filter_discovered_sources(
+        let accepted = filter_discovered_sources(
             sources,
             "source_finder",
             Some("Minneapolis"),
-            None, // no AI
+            None,
             &store,
             &Logger::new(),
         )
         .await;
 
-        assert_eq!(count_registered(&events), 2, "without AI, all sources should pass (fail-open)");
+        assert_eq!(accepted.len(), 2, "without AI, all sources should pass (fail-open)");
     }
 }

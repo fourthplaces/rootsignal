@@ -9,24 +9,24 @@ pub mod source_finder;
 use tracing::info;
 
 use ai_client::Agent;
-use seesaw_core::Events;
+use rootsignal_common::SourceNode;
 use crate::domains::scheduling::activities::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
-use crate::domains::scrape::activities::register_sources_events;
 use rootsignal_graph::GraphQueries;
 
-/// Output from source expansion.
+use source_finder::QueryEmbedding;
+
+/// Output from source expansion — domain types only, no seesaw Events.
 pub struct SourceExpansionOutput {
-    pub events: Events,
+    pub sources: Vec<SourceNode>,
     pub social_topics: Vec<String>,
+    pub query_embeddings: Vec<QueryEmbedding>,
 }
 
 /// Run source expansion: discover new sources based on scrape findings.
 ///
-/// Region is optional context — actor discovery runs always (pure graph),
-/// while the LLM curiosity engine requires a geographic anchor.
-///
-/// Pure: no state mutation. Social topics returned for caller to stash.
+/// Pure: no state mutation. Returns discovered sources, social topics,
+/// and query embeddings for the caller to map into events.
 pub async fn discover_expansion_sources(
     graph: &dyn GraphQueries,
     region_name: Option<&str>,
@@ -42,23 +42,14 @@ pub async fn discover_expansion_sources(
     )
     .with_embedder(embedder);
 
-    let (stats, social_topics, sources, finder_events) = discoverer.run().await;
+    let (stats, social_topics, sources, query_embeddings) = discoverer.run().await;
     if stats.actor_sources + stats.gap_sources > 0 {
         info!("{stats}");
     }
 
-    let mut scout_events = Events::new();
-    scout_events.extend(finder_events);
-    if !sources.is_empty() {
-        scout_events.extend(register_sources_events(
-            sources,
-            "source_finder",
-        ));
-    }
-
     SourceExpansionOutput {
-        events: scout_events,
+        sources,
         social_topics,
+        query_embeddings,
     }
 }
-

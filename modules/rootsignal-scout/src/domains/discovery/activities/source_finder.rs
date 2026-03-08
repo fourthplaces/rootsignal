@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use ai_client::{ai_extract, Agent};
-use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
     ExtractionYield, GapTypeStats, GraphQueries, SignalTypeCounts, SituationBrief, SourceBrief,
@@ -13,6 +12,11 @@ use tracing::{info, warn};
 use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
 use crate::infra::embedder::TextEmbedder;
 const MAX_CURIOSITY_QUERIES: usize = 12;
+
+pub struct QueryEmbedding {
+    pub canonical_key: String,
+    pub embedding: Vec<f32>,
+}
 const MAX_DISCOVERY_DEPTH: u32 = 2;
 
 /// Stats from a discovery run.
@@ -469,11 +473,11 @@ impl<'a> SourceFinder<'a> {
     }
 
     /// Run all discovery triggers. Returns stats, social topics, discovered sources, and events.
-    pub async fn run(&self) -> (SourceFinderStats, Vec<String>, Vec<SourceNode>, seesaw_core::Events) {
+    pub async fn run(&self) -> (SourceFinderStats, Vec<String>, Vec<SourceNode>, Vec<QueryEmbedding>) {
         let mut stats = SourceFinderStats::default();
         let mut social_topics = Vec::new();
         let mut sources = Vec::new();
-        let mut events = seesaw_core::Events::new();
+        let mut query_embeddings = Vec::new();
 
         // 1. Actor-mentioned sources — actors with domains/URLs that aren't tracked
         self.discover_from_actors(&mut stats, &mut sources).await;
@@ -481,7 +485,7 @@ impl<'a> SourceFinder<'a> {
         // 2. LLM-driven curiosity engine (with mechanical fallback)
         // Requires region — geographic anchor keeps queries focused
         if self.region_name.is_some() {
-            self.discover_from_curiosity(&mut stats, &mut social_topics, &mut sources, &mut events)
+            self.discover_from_curiosity(&mut stats, &mut social_topics, &mut sources, &mut query_embeddings)
                 .await;
         }
 
@@ -496,7 +500,7 @@ impl<'a> SourceFinder<'a> {
             );
         }
 
-        (stats, social_topics, sources, events)
+        (stats, social_topics, sources, query_embeddings)
     }
 
     /// Find actors with domains/URLs that aren't already tracked as sources.
@@ -611,7 +615,7 @@ impl<'a> SourceFinder<'a> {
         stats: &mut SourceFinderStats,
         social_topics: &mut Vec<String>,
         sources: &mut Vec<SourceNode>,
-        sources_events: &mut seesaw_core::Events,
+        query_embeddings: &mut Vec<QueryEmbedding>,
     ) {
         // Guard: no Claude client → mechanical fallback
         let ai = match &self.ai {
@@ -776,10 +780,9 @@ impl<'a> SourceFinder<'a> {
                 "LLM discovery: created query source"
             );
             sources.push(source);
-            // Emit embedding event — projector stores on Source node for future dedup
             if let Some(embedder) = self.embedder {
                 if let Ok(embedding) = embedder.embed(&dq.query).await {
-                    sources_events.push(SystemEvent::QueryEmbeddingStored {
+                    query_embeddings.push(QueryEmbedding {
                         canonical_key: ck.clone(),
                         embedding,
                     });

@@ -9,14 +9,12 @@ use std::collections::{HashMap, HashSet};
 
 use ai_client::Agent;
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
-use seesaw_core::{Events, Logger};
+use seesaw_core::Logger;
 use tracing::info;
 
-use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::link_promoter::{
     self, CollectedLink, PromotionConfig,
 };
-use rootsignal_common::system_events::SystemEvent;
 
 use super::page_triage::{self, PageTriageInput};
 
@@ -27,28 +25,6 @@ use super::page_triage::{self, PageTriageInput};
 pub struct PromotionResult {
     pub sources: Vec<SourceNode>,
     pub credit: HashMap<String, u32>,
-}
-
-impl PromotionResult {
-    pub fn into_events(self) -> Events {
-        let mut events = Events::new();
-
-        if !self.sources.is_empty() {
-            info!(count = self.sources.len(), "Promoting links as sources");
-        }
-
-        events.push(DiscoveryEvent::SourcesDiscovered {
-            sources: self.sources,
-            discovered_by: "link_promoter".into(),
-        });
-        for (canonical_key, sources_discovered) in self.credit {
-            events.push(SystemEvent::SourceDiscoveryCredit {
-                canonical_key,
-                sources_discovered,
-            });
-        }
-        events
-    }
 }
 
 /// Promote scraped links into source candidates.

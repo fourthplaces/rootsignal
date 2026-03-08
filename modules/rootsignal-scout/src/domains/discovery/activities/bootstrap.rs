@@ -14,26 +14,25 @@ use rootsignal_common::{canonical_value, DiscoveryMethod, ScoutScope, SourceNode
 use ai_client::{ai_extract, Agent};
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::PipelineState;
-use crate::domains::discovery::events::DiscoveryEvent;
 
-/// Handle the ScoutRunRequested event: seed sources if region is empty.
+/// Seed sources when the region has none. Returns newly generated sources.
 pub async fn seed_sources_if_empty(
     state: &PipelineState,
     deps: &ScoutEngineDeps,
-) -> Result<seesaw_core::Events> {
+) -> Result<Vec<SourceNode>> {
     let sources = deps.store.get_active_sources().await?;
     if !sources.is_empty() {
-        return Ok(seesaw_core::Events::new());
+        return Ok(Vec::new());
     }
 
     let ai = match deps.ai.as_ref() {
         Some(a) => a.as_ref(),
-        None => return Ok(seesaw_core::Events::new()),
+        None => return Ok(Vec::new()),
     };
 
     let region = match state.run_scope.region() {
         Some(r) => r,
-        None => return Ok(seesaw_core::Events::new()),
+        None => return Ok(Vec::new()),
     };
 
     info!(
@@ -45,15 +44,7 @@ pub async fn seed_sources_if_empty(
     let platform_sources =
         generate_platform_sources(ai, region, deps.fetcher.as_deref()).await;
 
-    let all_sources: Vec<_> = seed_sources.into_iter().chain(platform_sources).collect();
-    let mut events = seesaw_core::Events::new();
-    if !all_sources.is_empty() {
-        events.push(DiscoveryEvent::SourcesDiscovered {
-            sources: all_sources,
-            discovered_by: "engine_started".into(),
-        });
-    }
-    Ok(events)
+    Ok(seed_sources.into_iter().chain(platform_sources).collect())
 }
 
 /// Structured output for seed query generation.

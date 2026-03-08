@@ -8,6 +8,7 @@ use rootsignal_common::SourceNode;
 use rootsignal_graph::GraphQueries;
 
 use seesaw_core::Events;
+use rootsignal_common::events::SystemEvent;
 use crate::core::aggregate::PipelineState;
 use ai_client::Agent;
 use crate::domains::discovery::activities::source_finder::SourceFinder;
@@ -62,8 +63,13 @@ pub async fn expand_and_discover(
         budget,
     )
     .with_embedder(embedder);
-    let (end_stats, end_social_topics, end_sources, finder_events) = end_discoverer.run().await;
-    collected_events.extend(finder_events);
+    let (end_stats, end_social_topics, end_sources, query_embeddings) = end_discoverer.run().await;
+    for qe in query_embeddings {
+        collected_events.push(SystemEvent::QueryEmbeddingStored {
+            canonical_key: qe.canonical_key,
+            embedding: qe.embedding,
+        });
+    }
     if !end_sources.is_empty() {
         collected_events.extend(register_sources_events(
             end_sources,

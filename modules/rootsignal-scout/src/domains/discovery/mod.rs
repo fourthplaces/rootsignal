@@ -8,6 +8,7 @@ use seesaw_core::{events, handle, handlers, Context, Events};
 use tracing::info;
 
 use rootsignal_common::Block;
+use rootsignal_common::events::SystemEvent;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -22,8 +23,6 @@ fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -
     matches!(e, LifecycleEvent::ScoutRunRequested { .. })
 }
 
-/// Link promotion filter: fires at tension/response phase boundaries
-/// when there are links to promote.
 fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
     if !event.is_completion() {
         return false;
@@ -39,7 +38,6 @@ fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> 
     }
 }
 
-/// Source expansion filter: fires when tension scrapes done + expansion not yet run.
 fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
     if !event.is_completion() {
         return false;
@@ -126,18 +124,13 @@ fn describe_expansion_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
 pub mod handlers {
     use super::*;
 
-    /// SourcesDiscovered → filter and gate source registration.
-    ///
-    /// Auto-accepts social/direct-action/query/admin sources.
-    /// LLM-filters web URL sources via `filter_domains_batch`.
-    /// Emits `SourcesRegistered` for accepted sources; rejections are logged.
+    /// SourcesDiscovered → filter and register accepted sources.
     #[handle(on = [DiscoveryEvent::SourcesDiscovered], id = "discovery:filter_domains", extract(sources, discovered_by))]
     async fn filter_domains(
         sources: Vec<rootsignal_common::SourceNode>,
         discovered_by: String,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-
         if sources.is_empty() {
             return Ok(Events::new());
         }
@@ -145,19 +138,21 @@ pub mod handlers {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
         let region_name = state.run_scope.region().map(|r| r.name.clone());
-        let ai = deps.ai.as_deref();
 
-        let events = activities::domain_filter_gate::filter_discovered_sources(
+        let accepted = activities::domain_filter_gate::filter_discovered_sources(
             sources,
             &discovered_by,
             region_name.as_deref(),
-            ai,
+            deps.ai.as_deref(),
             &*deps.store,
             &ctx.logger,
         )
         .await;
 
-        Ok(events)
+        if accepted.is_empty() {
+            return Ok(Events::new());
+        }
+        Ok(events![SystemEvent::SourcesRegistered { sources: accepted }])
     }
 
     /// ScoutRunRequested → seed sources when the region has none.
@@ -168,17 +163,18 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
-        let events = bootstrap::seed_sources_if_empty(&state, deps).await?;
-        Ok(events)
+
+        let sources = bootstrap::seed_sources_if_empty(&state, deps).await?;
+        if sources.is_empty() {
+            return Ok(Events::new());
+        }
+        Ok(events![DiscoveryEvent::SourcesDiscovered {
+            sources,
+            discovered_by: "engine_started".into(),
+        }])
     }
 
     /// Scrape completed → promote links from collected pages.
-    ///
-    /// Filter gates on: tension_roles or response_roles done + links not empty.
-    /// Two-path gate:
-    /// - Social handles: promoted from ALL pages (unchanged behavior)
-    /// - Content links: promoted only from "productive" pages (signal_count > 0)
-    ///   or pages that pass lightweight LLM triage
     #[handle(on = ScrapeEvent, id = "discovery:promote_links", filter = should_promote_links, describe = describe_promote_links_gate)]
     async fn promote_links(
         _event: ScrapeEvent,
@@ -197,24 +193,35 @@ pub mod handlers {
             &ctx.logger,
         ).await;
 
-        Ok(result.into_events())
+        let mut all_events = Events::new();
+        if !result.sources.is_empty() {
+            info!(count = result.sources.len(), "Promoting links as sources");
+            all_events.push(DiscoveryEvent::SourcesDiscovered {
+                sources: result.sources,
+                discovered_by: "link_promoter".into(),
+            });
+        }
+        for (canonical_key, sources_discovered) in result.credit {
+            all_events.push(SystemEvent::SourceDiscoveryCredit {
+                canonical_key,
+                sources_discovered,
+            });
+        }
+        Ok(all_events)
     }
 
     /// Scrape completed → expand source pool when tension roles done.
-    /// Emits SourceExpansionCompleted or SourceExpansionSkipped.
     #[handle(on = ScrapeEvent, id = "discovery:expand_sources", filter = tension_done_expansion_pending, describe = describe_expansion_gate)]
     async fn expand_sources(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        info!("=== Source Expansion ===");
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
 
         let (graph, budget) = match (deps.graph.as_deref(), deps.budget.as_ref()) {
             (Some(g), Some(b)) => (g, b),
             _ => {
-                ctx.logger.debug("Skipped source expansion: missing graph or budget");
                 return Ok(events![DiscoveryEvent::SourceExpansionSkipped {
                     reason: "missing graph or budget".into(),
                 }]);
@@ -231,7 +238,24 @@ pub mod handlers {
         )
         .await;
 
-        let mut all_events = output.events;
+        let mut all_events = Events::new();
+
+        // Register discovered sources
+        if !output.sources.is_empty() {
+            all_events.push(DiscoveryEvent::SourcesDiscovered {
+                sources: output.sources,
+                discovered_by: "source_finder".into(),
+            });
+        }
+
+        // Store query embeddings for future dedup
+        for qe in output.query_embeddings {
+            all_events.push(SystemEvent::QueryEmbeddingStored {
+                canonical_key: qe.canonical_key,
+                embedding: qe.embedding,
+            });
+        }
+
         if !output.social_topics.is_empty() {
             all_events.push(DiscoveryEvent::SocialTopicsDiscovered {
                 topics: output.social_topics,
