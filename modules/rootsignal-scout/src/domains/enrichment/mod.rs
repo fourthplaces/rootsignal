@@ -26,21 +26,7 @@ fn enrichment_gate_ready(ctx: &Context<ScoutEngineDeps>) -> bool {
     state.review_complete() && state.response_scrape_done() && !state.enrichment_ready
 }
 
-// ── Enrichment filters: fire on EnrichmentReady, guarded by per-fact flags ──
-
-fn actor_extraction_pending(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, EnrichmentEvent::EnrichmentReady)
-}
-
-fn diversity_pending(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, EnrichmentEvent::EnrichmentReady)
-}
-
-fn actor_stats_pending(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-    matches!(e, EnrichmentEvent::EnrichmentReady)
-}
-
-fn actor_location_pending(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+fn is_enrichment_ready(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
     matches!(e, EnrichmentEvent::EnrichmentReady)
 }
 
@@ -65,128 +51,94 @@ pub mod handlers {
     }
 
     // ---------------------------------------------------------------
-    // Enrichment handlers: fire exactly once on EnrichmentReady
+    // Enrichment: single handler runs all enrichment steps sequentially
     // ---------------------------------------------------------------
 
-    #[handle(on = EnrichmentEvent, id = "enrichment:extract_actors", filter = actor_extraction_pending)]
-    async fn extract_actors(
+    #[handle(on = EnrichmentEvent, id = "enrichment:run_enrichment", filter = is_enrichment_ready)]
+    async fn run_enrichment(
         _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
-
-        let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
-            (Some(r), Some(g)) => (r, g),
-            _ => {
-                ctx.logger.debug("Skipped actor extraction: missing region or graph");
-                return Ok(events![EnrichmentEvent::ActorsExtracted]);
-            }
-        };
-
-        let consumed_pin_ids = {
-            let (_, state) = ctx.singleton::<PipelineState>();
-            state
-                .source_plan
-                .as_ref()
-                .map(|s| s.consumed_pin_ids.clone())
-                .unwrap_or_default()
-        };
-
-        // Pin cleanup
         let mut all_events = Events::new();
-        if !consumed_pin_ids.is_empty() {
-            info!(count = consumed_pin_ids.len(), "Emitting PinsConsumed for consumed pins");
-            all_events.push(rootsignal_common::events::SystemEvent::PinsConsumed {
-                pin_ids: consumed_pin_ids,
-            });
+
+        // ── Actor extraction ──
+        {
+            let (_, state) = ctx.singleton::<PipelineState>();
+            match (state.run_scope.region(), deps.graph.as_ref()) {
+                (Some(region), Some(graph)) => {
+                    let consumed_pin_ids = state
+                        .source_plan
+                        .as_ref()
+                        .map(|s| s.consumed_pin_ids.clone())
+                        .unwrap_or_default();
+
+                    if !consumed_pin_ids.is_empty() {
+                        info!(count = consumed_pin_ids.len(), "Emitting PinsConsumed for consumed pins");
+                        all_events.push(rootsignal_common::events::SystemEvent::PinsConsumed {
+                            pin_ids: consumed_pin_ids,
+                        });
+                    }
+
+                    info!("=== Actor Extraction ===");
+                    let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
+                    let ai = deps.ai.as_ref().expect("guarded by enrichment trigger");
+                    let (actor_stats, actor_events) =
+                        activities::actor_extractor::run_actor_extraction(
+                            &*deps.store,
+                            graph,
+                            ai.as_ref(),
+                            min_lat,
+                            max_lat,
+                            min_lng,
+                            max_lng,
+                        )
+                        .await;
+                    info!("{actor_stats}");
+                    all_events.extend(actor_events);
+                }
+                _ => {
+                    ctx.logger.debug("Skipped actor extraction: missing region or graph");
+                }
+            }
         }
-
-        // Actor extraction
-        info!("=== Actor Extraction ===");
-        let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-        let ai = deps.ai.as_ref().expect("guarded by enrichment trigger");
-        let (actor_stats, actor_events) =
-            activities::actor_extractor::run_actor_extraction(
-                &*deps.store,
-                graph,
-                ai.as_ref(),
-                min_lat,
-                max_lat,
-                min_lng,
-                max_lng,
-            )
-            .await;
-        info!("{actor_stats}");
-
-        all_events.extend(actor_events);
         all_events.push(EnrichmentEvent::ActorsExtracted);
-        Ok(all_events)
-    }
 
-    #[handle(on = EnrichmentEvent, id = "enrichment:score_diversity", filter = diversity_pending)]
-    async fn score_diversity(
-        _event: EnrichmentEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-
-        let graph = match deps.graph.as_ref() {
-            Some(g) => g,
-            None => {
-                ctx.logger.debug("Skipped diversity metrics: missing graph");
-                return Ok(events![EnrichmentEvent::DiversityScored]);
-            }
-        };
-
-        info!("=== Diversity Metrics ===");
-        let mut all_events = activities::diversity::compute_diversity_events(graph, &[]).await;
+        // ── Diversity scoring ──
+        if let Some(graph) = deps.graph.as_ref() {
+            info!("=== Diversity Metrics ===");
+            all_events.extend(activities::diversity::compute_diversity_events(graph, &[]).await);
+        } else {
+            ctx.logger.debug("Skipped diversity metrics: missing graph");
+        }
         all_events.push(EnrichmentEvent::DiversityScored);
-        Ok(all_events)
-    }
 
-    #[handle(on = EnrichmentEvent, id = "enrichment:compute_actor_stats", filter = actor_stats_pending)]
-    async fn compute_actor_stats(
-        _event: EnrichmentEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-
-        let graph = match deps.graph.as_ref() {
-            Some(g) => g,
-            None => {
-                ctx.logger.debug("Skipped actor stats: missing graph");
-                return Ok(events![EnrichmentEvent::ActorStatsComputed]);
-            }
-        };
-
-        info!("=== Actor Stats ===");
-        let mut all_events = activities::actor_stats::compute_actor_stats_events(graph).await;
+        // ── Actor stats ──
+        if let Some(graph) = deps.graph.as_ref() {
+            info!("=== Actor Stats ===");
+            all_events.extend(activities::actor_stats::compute_actor_stats_events(graph).await);
+        } else {
+            ctx.logger.debug("Skipped actor stats: missing graph");
+        }
         all_events.push(EnrichmentEvent::ActorStatsComputed);
-        Ok(all_events)
-    }
 
-    #[handle(on = EnrichmentEvent, id = "enrichment:resolve_actor_locations", filter = actor_location_pending)]
-    async fn resolve_actor_locations(
-        _event: EnrichmentEvent,
-        ctx: Context<ScoutEngineDeps>,
-    ) -> Result<Events> {
-        let deps = ctx.deps();
-
-        let actors = match deps.store.list_all_actors().await {
-            Ok(a) => a,
+        // ── Actor location ──
+        match deps.store.list_all_actors().await {
+            Ok(actors) if !actors.is_empty() => {
+                all_events.extend(
+                    activities::actor_location::triangulate_actor_location_events(&*deps.store, &actors).await
+                );
+            }
+            Ok(_) => {}
             Err(e) => {
                 ctx.logger.debug(&format!("Skipped actor location: failed to list actors — {e}"));
-                return Ok(events![EnrichmentEvent::ActorsLocated]);
             }
-        };
-
-        let mut all_events = if actors.is_empty() {
-            Events::new()
-        } else {
-            activities::actor_location::triangulate_actor_location_events(&*deps.store, &actors).await
-        };
+        }
         all_events.push(EnrichmentEvent::ActorsLocated);
+
+        // Single handler → single ExpansionReady, no sibling fan-out problem
+        all_events.push(crate::domains::expansion::events::ExpansionEvent::ExpansionReady);
+
         Ok(all_events)
     }
 

@@ -19,7 +19,7 @@ use super::types::*;
 use crate::scout_runner::ScoutRunner;
 use crate::db::scout_run::{
     EventRow, EventRowFull, ScoutRunRow, StatsJson,
-    event_layer, event_summary, json_str, json_u32, json_u64, json_f64,
+    event_domain_prefix, event_layer, event_summary, json_str, json_u32, json_u64, json_f64,
     list_events_by_variant, count_events_by_variant,
 };
 use crate::jwt::JwtService;
@@ -560,6 +560,7 @@ impl QueryRoot {
                 confidence: s.confidence,
                 extracted_at: s.extracted_at,
                 source_url: s.source_url,
+                review_status: s.review_status,
             })
             .collect();
 
@@ -1619,6 +1620,7 @@ pub struct AdminSignalBrief {
     pub confidence: f32,
     pub extracted_at: Option<DateTime<Utc>>,
     pub source_url: String,
+    pub review_status: String,
 }
 
 #[derive(SimpleObject)]
@@ -2445,8 +2447,10 @@ struct AdminCausalFlow {
 
 impl From<EventRowFull> for AdminEvent {
     fn from(r: EventRowFull) -> Self {
-        let name = json_str(&r.data, "type").unwrap_or_else(|| r.event_type.clone());
-        let summary = event_summary(&name, &r.data);
+        let variant = json_str(&r.data, "type").unwrap_or_else(|| r.event_type.clone());
+        let summary = event_summary(&variant, &r.data);
+        let prefix = event_domain_prefix(&r.event_type);
+        let name = format!("{prefix}:{variant}");
         let layer = event_layer(&r.event_type).to_string();
         let payload = serde_json::to_string(&r.data).unwrap_or_default();
         Self {

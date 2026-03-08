@@ -153,11 +153,9 @@ pub struct PipelineState {
     #[serde(default)]
     pub source_expansion_completed: bool,
 
-    /// Trampoline flags: prevent re-firing of gate handlers after sibling reduction.
+    /// Trampoline flag: prevent re-firing of enrichment gate after sibling reduction.
     #[serde(default)]
     pub enrichment_ready: bool,
-    #[serde(default)]
-    pub expansion_ready: bool,
 
 }
 
@@ -205,7 +203,6 @@ impl PipelineState {
             signals_review_completed: 0,
             source_expansion_completed: false,
             enrichment_ready: false,
-            expansion_ready: false,
         }
     }
 
@@ -411,7 +408,7 @@ impl PipelineState {
     /// Apply an expansion domain event.
     pub fn apply_expansion(&mut self, event: &ExpansionEvent) {
         match event {
-            ExpansionEvent::ExpansionReady => self.expansion_ready = true,
+            ExpansionEvent::ExpansionReady => {}
             ExpansionEvent::ExpansionCompleted {
                 social_expansion_topics,
                 expansion_deferred_expanded,

@@ -1,17 +1,18 @@
 //! Completion handler tests — enrichment phase completion tracking.
 //!
 //! MOCK → ENGINE.EMIT → OUTPUT
-//! Proves all 4 enrichment facts + review counters gate expansion correctly.
+//! Proves review counters + response scrape gate enrichment correctly.
 //!
-//! Two trampolines collapse fan-in:
+//! One trampoline collapses fan-in:
 //!   review gate ([SystemEvent, SignalEvent]) → EnrichmentReady (1 event)
-//!   expansion gate (EnrichmentEvent)         → ExpansionReady  (1 event)
+//!
+//! `run_enrichment` fires once on EnrichmentReady, runs all 4 enrichment steps,
+//! emits all 4 fact events + ExpansionReady in a single handler output.
 
 use std::sync::Arc;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
-use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::testing::*;
@@ -25,67 +26,11 @@ fn has_expansion_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> b
 }
 
 /// Emit response scrape completion events to satisfy `response_scrape_done()`.
-/// Each scrape completion triggers dedup → NoNewSignals, which wakes enrichment handlers.
+/// Each scrape completion triggers dedup → NoNewSignals, which wakes the review gate.
 async fn emit_response_scrape_done(engine: &seesaw_core::Engine<ScoutEngineDeps>) {
     engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().is_tension(false).build())).settled().await.unwrap();
     engine.emit(empty_social_scrape(false)).settled().await.unwrap();
     engine.emit(empty_topic_discovery()).settled().await.unwrap();
-}
-
-#[tokio::test]
-async fn three_of_four_enrichment_facts_does_not_trigger_expansion() {
-    let store = Arc::new(MockSignalReader::new());
-    let (engine, captured, _scope) = test_engine_with_capture_for_store(
-        store as Arc<dyn crate::traits::SignalReader>,
-        Some(mpls_region()),
-    );
-
-    let three_events = [
-        EnrichmentEvent::DiversityScored,
-        EnrichmentEvent::ActorStatsComputed,
-        EnrichmentEvent::ActorsLocated,
-    ];
-
-    for event in three_events {
-        engine.emit(event).settled().await.unwrap();
-    }
-
-    let state = engine.singleton::<PipelineState>();
-    assert!(!state.actors_extracted);
-    assert!(state.diversity_scored);
-    assert!(state.actor_stats_computed);
-    assert!(state.actors_located);
-    assert!(
-        !has_expansion_completed(&captured),
-        "Expansion should not fire with only 3 of 4 enrichment facts"
-    );
-}
-
-#[tokio::test]
-async fn fourth_enrichment_fact_triggers_expansion() {
-    let store = Arc::new(MockSignalReader::new());
-    let (engine, captured, _scope) = test_engine_with_capture_for_store(
-        store as Arc<dyn crate::traits::SignalReader>,
-        Some(mpls_region()),
-    );
-
-    let all_events = [
-        EnrichmentEvent::ActorsExtracted,
-        EnrichmentEvent::DiversityScored,
-        EnrichmentEvent::ActorStatsComputed,
-        EnrichmentEvent::ActorsLocated,
-    ];
-
-    for event in all_events {
-        engine.emit(event).settled().await.unwrap();
-    }
-
-    let state = engine.singleton::<PipelineState>();
-    assert!(state.all_enrichment_complete());
-    assert!(
-        has_expansion_completed(&captured),
-        "ExpansionCompleted should fire once all 4 enrichment facts are recorded"
-    );
 }
 
 #[tokio::test]

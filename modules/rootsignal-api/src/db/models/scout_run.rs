@@ -504,6 +504,28 @@ pub(crate) fn event_layer(event_type: &str) -> &'static str {
     }
 }
 
+/// Domain prefix for event names, derived from the codec name.
+/// Prevents collisions when different event enums have identically-named variants
+/// (e.g. SystemEvent::ActorStatsComputed vs EnrichmentEvent::ActorStatsComputed).
+pub(crate) fn event_domain_prefix(event_type: &str) -> &'static str {
+    match event_type {
+        "WorldEvent" => "world",
+        "SystemEvent" => "system",
+        "TelemetryEvent" => "telemetry",
+        "EnrichmentEvent" => "enrichment",
+        "ExpansionEvent" => "expansion",
+        "SynthesisEvent" => "synthesis",
+        "SignalEvent" => "signal",
+        "DiscoveryEvent" => "discovery",
+        "LifecycleEvent" => "lifecycle",
+        "ScrapeEvent" => "scrape",
+        "PipelineEvent" => "pipeline",
+        "SupervisorEvent" => "supervisor",
+        "SituationWeavingEvent" => "situation_weaving",
+        _ => "unknown",
+    }
+}
+
 pub(crate) fn event_summary(variant_name: &str, data: &serde_json::Value) -> Option<String> {
     match variant_name {
         // ── Telemetry ──────────────────────────────────────────────
