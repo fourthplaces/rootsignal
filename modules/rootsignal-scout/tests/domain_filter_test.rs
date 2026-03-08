@@ -53,7 +53,7 @@ async fn filter_with_snapshot(name: &str, urls: &[&str], region: &str) -> Vec<St
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .expect("ANTHROPIC_API_KEY required to record domain filter snapshots");
 
-    let claude = ai_client::claude::Claude::new(&api_key, "claude-haiku-4-5-20251001");
+    let claude = ai_client::claude::Claude::new(&api_key, ai_client::models::HAIKU_4_5);
     let store = MockSignalReader::new();
 
     let url_strings: Vec<String> = urls.iter().map(|s| s.to_string()).collect();

@@ -98,6 +98,7 @@ services:
       RESTATE_INGRESS_URL: http://restate:8080
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       SERPER_API_KEY: ${SERPER_API_KEY:-}
       APIFY_API_KEY: ${APIFY_API_KEY:-}
@@ -160,6 +161,7 @@ services:
       DATABASE_URL: postgres://rootsignal:rootsignal@postgres:5432/rootsignal
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY}
       SERPER_API_KEY: ${SERPER_API_KEY}
       APIFY_API_KEY: ${APIFY_API_KEY:-}

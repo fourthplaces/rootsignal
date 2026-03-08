@@ -4,8 +4,7 @@ pub use rootsignal_common::content_hash;
 // These were consolidated from duplicate implementations across scout.rs,
 // investigator.rs, response_finder.rs, and gathering_finder.rs.
 
-/// Central model constant — change here when Anthropic retires this model.
-pub const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+pub use ai_client::models::HAIKU_4_5 as HAIKU_MODEL;
 
 /// Central model constant — change here when Voyage retires this model.
 pub const EMBEDDING_MODEL: &str = "voyage-3-large";

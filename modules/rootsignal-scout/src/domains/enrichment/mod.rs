@@ -184,12 +184,13 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let (ai, region) = {
+        let ai = match deps.ai.as_ref() {
+            Some(a) => a.clone(),
+            None => return Ok(Events::new()),
+        };
+        let region = {
             let (_, state) = ctx.singleton::<PipelineState>();
-            match (deps.ai.as_ref(), state.run_scope.region().cloned()) {
-                (Some(a), Some(r)) => (a.clone(), r),
-                _ => return Ok(Events::new()),
-            }
+            state.run_scope.region().cloned()
         };
 
         let signal_id = match event.signal_id() {
@@ -213,7 +214,7 @@ pub mod handlers {
                         .filter_map(|s| Uuid::parse_str(&s.id).ok())
                         .collect();
 
-                    let output = batch_review::review_batch(&*ai, &region, items, &[]).await?;
+                    let output = batch_review::review_batch(&*ai, region.as_ref(), items, &[]).await?;
 
                     let mut verdicts: HashMap<Uuid, SystemEvent> = HashMap::new();
                     for v in &output.verdicts {

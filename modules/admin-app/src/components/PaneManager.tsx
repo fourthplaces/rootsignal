@@ -36,6 +36,7 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
       return Model.fromJson(defaultLayout as any);
     });
     const [pickerTabsetId, setPickerTabsetId] = useState<string | null>(null);
+    const [pickerPos, setPickerPos] = useState<{ top: number; left: number } | null>(null);
 
     // Find a tab by component name
     const findTab = useCallback(
@@ -123,7 +124,14 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
             key="add-tab"
             className="flexlayout__tab_toolbar_button"
             title="Add pane"
-            onClick={() => setPickerTabsetId((prev) => (prev === node.getId() ? null : node.getId()))}
+            onClick={(e) => {
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setPickerTabsetId((prev) => {
+                if (prev === node.getId()) return null;
+                setPickerPos({ top: rect.bottom + 4, left: rect.right });
+                return node.getId();
+              });
+            }}
           >
             <Plus size={12} />
           </button>,
@@ -177,7 +185,7 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
             <div
               data-pane-picker
               className="fixed z-[1100] bg-popover border border-border rounded-md shadow-lg py-1 min-w-[140px]"
-              style={{ top: 60, right: 16 }}
+              style={pickerPos ? { top: pickerPos.top, left: pickerPos.left, transform: "translateX(-100%)" } : { top: 60, right: 16 }}
             >
               {paneRegistry.map((pane) => (
                 <button

@@ -72,7 +72,7 @@ async fn load_or_record(
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .expect("ANTHROPIC_API_KEY required to record extraction snapshots");
 
-    let claude = ai_client::claude::Claude::new(&api_key, "claude-haiku-4-5-20251001");
+    let claude = ai_client::claude::Claude::new(&api_key, ai_client::models::HAIKU_4_5);
     let system_prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
 
     // Truncate content to match what extract_impl does

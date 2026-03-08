@@ -203,11 +203,24 @@ pub fn annotate_triage_flags(signals: &mut [SignalForReview], suspects: &[Suspec
 // Build prompts
 // =============================================================================
 
-fn build_system_prompt(region: &ScoutScope) -> String {
+fn build_system_prompt(region: Option<&ScoutScope>) -> String {
+    let region_context = match region {
+        Some(r) => format!(
+            "You are reviewing staged signals from a scout run in {name} (center: {lat}, {lng}, radius: {radius}km).\n\n\
+             Pass signals that describe real, observable community activity in or near {name}, are correctly classified, have credible sources, and contain specific information.\n\n\
+             Reject signals that reference a different region, read like speculation or fabrication, have hallucinated sources (<UNKNOWN> URLs), are misclassified, are too vague, or are near-duplicates.",
+            name = r.name, lat = r.center_lat, lng = r.center_lng, radius = r.radius_km,
+        ),
+        None => "You are reviewing staged signals from a source-targeted scan (no specific region).\n\n\
+             Pass signals that describe real, observable community activity, are correctly classified, have credible sources, and contain specific information.\n\n\
+             Reject signals that read like speculation or fabrication, have hallucinated sources (<UNKNOWN> URLs), are misclassified, are too vague, or are near-duplicates.\n\n\
+             Do NOT reject signals for geographic reasons — this scan has no region constraint.".to_string(),
+    };
+
     format!(
         r#"You are a data quality gate for a community signal mapping system.
 
-You are reviewing staged signals from a scout run in {region_name} (center: {lat}, {lng}, radius: {radius}km).
+{region_context}
 
 Signal types:
 - Gathering: time-bound community events
@@ -227,10 +240,6 @@ YOUR TWO TASKS:
 
 1. For EACH signal, decide: pass or reject.
 
-Pass signals that describe real, observable community activity in or near {region_name}, are correctly classified, have credible sources, and contain specific information.
-
-Reject signals that reference a different region, read like speculation or fabrication, have hallucinated sources (<UNKNOWN> URLs), are misclassified, are too vague, or are near-duplicates.
-
 When rejecting, provide rejection_reason (short category) and explanation.
 
 2. If ANY signals are rejected, provide a run_analysis:
@@ -240,10 +249,6 @@ When rejecting, provide rejection_reason (short category) and explanation.
 - suggested_fix: What should a developer change in the module's code to prevent this? Be specific (e.g., "add source URL validation in the investigator's evidence gathering step").
 
 Most signals from well-configured sources should pass. Be a fair but firm gate."#,
-        region_name = region.name,
-        lat = region.center_lat,
-        lng = region.center_lng,
-        radius = region.radius_km,
     )
 }
 
@@ -285,7 +290,7 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
 
 pub async fn review_batch(
     ai: &dyn Agent,
-    region: &ScoutScope,
+    region: Option<&ScoutScope>,
     signals: Vec<SignalForReview>,
     suspects: &[Suspect],
 ) -> Result<BatchReviewOutput> {
@@ -371,7 +376,7 @@ pub async fn review_batch(
                     .unwrap_or("unknown");
 
                 issues.push(ValidationIssue::new(
-                    &region.name,
+                    region.map(|r| r.name.as_str()).unwrap_or("unscoped"),
                     IssueType::from_llm_str(reason),
                     Severity::Warning,
                     signal_id,

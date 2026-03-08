@@ -11,11 +11,10 @@ use sqlx::PgPool;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use ai_client::{Claude, FallbackAgent, Gemini};
+use ai_client::{Claude, FallbackAgent, OpenAi};
 use crate::core::engine::{self, ScoutEngine, ScoutEngineDeps};
 use crate::core::postgres_store::PostgresStore;
 use crate::infra::embedder::TextEmbedder;
-use crate::infra::util::HAIKU_MODEL;
 use crate::traits::{ContentFetcher, SignalReader};
 
 /// Shared dependency container for all scout workflows.
@@ -29,6 +28,7 @@ pub struct ScoutDeps {
     pub pg_pool: PgPool,
     pub anthropic_api_key: String,
     pub gemini_api_key: String,
+    pub openai_api_key: String,
     pub voyage_api_key: String,
     pub serper_api_key: String,
     #[builder(default)]
@@ -64,10 +64,10 @@ impl ScoutDeps {
         let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
         let embedder: Arc<dyn TextEmbedder> =
             Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
-        let ai: Arc<dyn ai_client::Agent> = Arc::new(FallbackAgent::new(
-            Gemini::new(&self.gemini_api_key, "gemini-2.5-flash"),
-            Claude::new(&self.anthropic_api_key, HAIKU_MODEL),
-        ));
+        let ai: Arc<dyn ai_client::Agent> = Arc::new(FallbackAgent::new(vec![
+            Arc::new(OpenAi::new(&self.openai_api_key, ai_client::models::GPT_5_MINI)),
+            Arc::new(Claude::new(&self.anthropic_api_key, ai_client::models::SONNET_4_6)),
+        ]));
         let archive = create_archive(self);
         let budget = Arc::new(
             crate::domains::scheduling::activities::budget::BudgetTracker::new_with_spent(
@@ -215,6 +215,7 @@ impl ScoutDeps {
             .pg_pool(pg_pool)
             .anthropic_api_key(config.anthropic_api_key.clone())
             .gemini_api_key(config.gemini_api_key.clone())
+            .openai_api_key(config.openai_api_key.clone())
             .voyage_api_key(config.voyage_api_key.clone())
             .serper_api_key(config.serper_api_key.clone())
             .apify_api_key(config.apify_api_key.clone())
@@ -251,7 +252,7 @@ pub fn create_archive(deps: &ScoutDeps) -> Arc<Archive> {
             Some(Arc::new(SpawnDispatcher::new(
                 deps.pg_pool.clone(),
                 deps.anthropic_api_key.clone(),
-                std::env::var("OPENAI_API_KEY").unwrap_or_default(),
+                deps.openai_api_key.clone(),
             )))
         } else {
             None

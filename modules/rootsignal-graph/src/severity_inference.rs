@@ -1,9 +1,15 @@
 use tracing::info;
+use uuid::Uuid;
 
-use rootsignal_common::events::SystemEvent;
 use rootsignal_common::types::{Severity, SourceNode};
 
 use crate::writer::GraphReader;
+
+/// A severity revision produced by inference — the handler maps this to events.
+pub struct SeverityRevision {
+    pub signal_id: Uuid,
+    pub severity: Severity,
+}
 
 /// A source is trusted when it has sustained history, corroborated output,
 /// and hasn't been penalized for quality issues.
@@ -59,21 +65,19 @@ fn parse_severity(s: &str) -> Severity {
 
 /// Re-evaluate severity for all Notices in a bounding box.
 /// Fetches inference data in one batch query, applies pure inference logic,
-/// and returns `SeverityClassified` events for any changes.
-/// Returns (count_updated, events).
+/// and returns revisions for any signals whose inferred severity differs.
 pub async fn compute_severity_inference(
     writer: &GraphReader,
     min_lat: f64,
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> anyhow::Result<(u32, Vec<SystemEvent>)> {
+) -> anyhow::Result<Vec<SeverityRevision>> {
     let rows = writer
         .notice_inference_batch(min_lat, max_lat, min_lng, max_lng)
         .await?;
 
-    let mut events = Vec::new();
-    let mut updated = 0u32;
+    let mut revisions = Vec::new();
     for row in &rows {
         let extracted = parse_severity(&row.severity);
         let trusted = row
@@ -89,17 +93,16 @@ pub async fn compute_severity_inference(
             row.source_diversity,
         );
         if inferred != extracted {
-            events.push(SystemEvent::SeverityClassified {
+            revisions.push(SeverityRevision {
                 signal_id: row.notice_id,
                 severity: inferred,
             });
-            updated += 1;
         }
     }
 
-    if updated > 0 {
-        info!(updated, total = rows.len(), "Severity inference complete");
+    if !revisions.is_empty() {
+        info!(updated = revisions.len(), total = rows.len(), "Severity inference complete");
     }
 
-    Ok((updated, events))
+    Ok(revisions)
 }

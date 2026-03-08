@@ -1514,7 +1514,7 @@ impl QueryRoot {
                 attempts: r.attempts,
                 started_at: r.started_at,
                 completed_at: r.completed_at,
-                pending_event_ids: r.pending_event_ids,
+                triggering_event_ids: r.triggering_event_ids,
             })
             .collect())
     }
@@ -1879,7 +1879,7 @@ struct HandlerOutcome {
     attempts: i64,
     started_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
-    pending_event_ids: Vec<String>,
+    triggering_event_ids: Vec<String>,
 }
 
 // ========== Scout Run Types ==========

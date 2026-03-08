@@ -188,11 +188,12 @@ pub(crate) async fn discover_from_topics(
                     if let Some(ref sp) = platform_enum {
                         for post in posts {
                             for handle in post.mentions.iter().take(5) {
-                                let mention_url = link_promoter::platform_url(sp, handle);
-                                output.collected_links.push(CollectedLink {
-                                    url: mention_url,
-                                    discovered_on: source_url.clone(),
-                                });
+                                if let Some(mention_url) = link_promoter::platform_url(sp, handle) {
+                                    output.collected_links.push(CollectedLink {
+                                        url: mention_url,
+                                        discovered_on: source_url.clone(),
+                                    });
+                                }
                             }
                         }
                     }

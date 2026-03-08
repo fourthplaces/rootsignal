@@ -323,11 +323,12 @@ pub(crate) async fn scrape_social_sources(
             }
 
             for handle in mentions.into_iter().take(promotion_config.max_per_source) {
-                let mention_url = link_promoter::platform_url(&result_platform, &handle);
-                output.collected_links.push(CollectedLink {
-                    url: mention_url,
-                    discovered_on: source_url.clone(),
-                });
+                if let Some(mention_url) = link_promoter::platform_url(&result_platform, &handle) {
+                    output.collected_links.push(CollectedLink {
+                        url: mention_url,
+                        discovered_on: source_url.clone(),
+                    });
+                }
             }
 
             output.expansion_queries.extend(super::shared::collect_implied_queries(&nodes));

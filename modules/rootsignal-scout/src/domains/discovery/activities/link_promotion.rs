@@ -166,7 +166,9 @@ fn build_social_sources(
     let mut candidates = Vec::new();
 
     for (platform, handle) in &handles {
-        let url = link_promoter::platform_url(platform, handle);
+        let Some(url) = link_promoter::platform_url(platform, handle) else {
+            continue;
+        };
         let cv = canonical_value(&url);
         if !seen.insert(cv.clone()) {
             continue;

@@ -154,3 +154,44 @@ async fn zero_signals_skips_review_gate() {
         "Expansion should fire — zero signals means review gate passes immediately"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Signal review must fire even without a region
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn regionless_run_still_reviews_signals() {
+    let url = "https://example.com/events";
+
+    // Mock AI returns "pass" for any signal it reviews
+    let ai_response = serde_json::json!({
+        "verdicts": [],
+        "run_analysis": null
+    });
+    let ai = Arc::new(MockAgent::with_response(ai_response));
+
+    let harness = ScoutRunTest::new()
+        // No .region() — this is a source-targeted run without geographic context
+        .source(url, archived_page(url, "Community dinner at Powderhorn Park"))
+        .extraction(url, crate::core::extractor::ExtractionResult {
+            nodes: vec![tension_at("Community Dinner", 44.95, -93.27)],
+            ..Default::default()
+        })
+        .ai(ai)
+        .build();
+
+    harness.run().await;
+
+    let state = harness.state();
+    assert!(
+        state.signals_awaiting_review > 0,
+        "dedup should have created at least one signal (awaiting={})",
+        state.signals_awaiting_review,
+    );
+    assert!(
+        state.review_complete(),
+        "review should complete even without a region ({} awaiting, {} completed)",
+        state.signals_awaiting_review,
+        state.signals_review_completed,
+    );
+}

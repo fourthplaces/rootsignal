@@ -497,7 +497,7 @@ async fn handle_event_mode(
     let context = build_event_context(event_ref, &tree_rows);
 
     // Build Claude agent with event investigation tools
-    let mut claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+    let mut claude = Claude::new(api_key, ai_client::models::SONNET_4)
         .tool(LoadCausalTreeTool { pool: pool.clone() })
         .tool(SearchEventsTool { pool: pool.clone() })
         .tool(GetEventTool { pool: pool.clone() })
@@ -558,7 +558,7 @@ async fn handle_sources_mode(
     let context = build_sources_context(&sources);
 
     // Build Claude agent with source audit tools
-    let claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+    let claude = Claude::new(api_key, ai_client::models::SONNET_4)
         .tool(GetSourceInfoTool {
             writer: state.writer.clone(),
         })
@@ -610,7 +610,7 @@ async fn handle_source_dive_mode(
 
     let context = build_source_dive_context(source);
 
-    let mut claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+    let mut claude = Claude::new(api_key, ai_client::models::SONNET_4)
         .tool(GetSignalsProducedTool {
             reader: state.reader.clone(),
         })
@@ -894,7 +894,7 @@ async fn handle_run_mode(
     let context = build_run_context(&run, &variant_counts, &sample_events);
 
     // Build Claude agent with the full investigation toolkit
-    let mut claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+    let mut claude = Claude::new(api_key, ai_client::models::SONNET_4)
         .tool(LoadCausalTreeTool { pool: pool.clone() })
         .tool(SearchEventsTool { pool: pool.clone() })
         .tool(GetEventTool { pool: pool.clone() })
@@ -1061,7 +1061,7 @@ async fn handle_logs_mode(
 
     let context = build_logs_context(&filtered, Some(&run_id), handler_id.as_deref());
 
-    let mut claude = Claude::new(api_key, "claude-sonnet-4-20250514")
+    let mut claude = Claude::new(api_key, ai_client::models::SONNET_4)
         .tool(SearchEventsTool { pool: pool.clone() })
         .tool(GetEventTool { pool: pool.clone() })
         .tool(LoadCausalTreeTool { pool: pool.clone() })

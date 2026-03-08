@@ -203,28 +203,29 @@ pub mod handlers {
 
         let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
-        let mut all_events = match graph.compute_severity_inference(
+        let mut out = Events::new();
+        match graph.compute_severity_inference(
             min_lat, max_lat, min_lng, max_lng,
         )
         .await
         {
-            Ok((updated, severity_events)) => {
-                if updated > 0 {
-                    info!(updated, "Severity inference updated notices");
+            Ok(revisions) => {
+                if !revisions.is_empty() {
+                    info!(updated = revisions.len(), "Severity inference updated notices");
                 }
-                let mut evts = Events::new();
-                for ev in severity_events {
-                    evts.push(ev);
+                for rev in revisions {
+                    out.push(SystemEvent::SeverityClassified {
+                        signal_id: rev.signal_id,
+                        severity: rev.severity,
+                    });
                 }
-                evts
             }
             Err(e) => {
                 warn!(error = %e, "Severity inference failed (non-fatal)");
                 ctx.logger.debug(&format!("Severity inference failed: {e}"));
-                Events::new()
             }
-        };
-        all_events.push(SynthesisEvent::SeverityInferred);
-        Ok(all_events)
+        }
+        out.push(SynthesisEvent::SeverityInferred);
+        Ok(out)
     }
 }

@@ -635,6 +635,11 @@ impl MockSignalReader {
         self.inner.lock().unwrap().actors.len()
     }
 
+    pub fn add_actor_by_canonical_key(&self, canonical_key: &str, actor_id: Uuid) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.actor_by_canonical_key.insert(canonical_key.to_string(), actor_id);
+    }
+
     pub fn has_actor_with_canonical_key(&self, canonical_key: &str) -> bool {
         let inner = self.inner.lock().unwrap();
         inner.actor_by_canonical_key.contains_key(canonical_key)
@@ -2183,8 +2188,8 @@ impl GraphQueries for MockGraphQueries {
             centroid_lng: None,
         }, vec![]))
     }
-    async fn compute_severity_inference(&self, _: f64, _: f64, _: f64, _: f64) -> Result<(u32, Vec<SystemEvent>)> {
-        Ok((0, vec![]))
+    async fn compute_severity_inference(&self, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<rootsignal_graph::severity_inference::SeverityRevision>> {
+        Ok(vec![])
     }
     async fn compute_cause_heat(&self, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<CauseHeatScore>> {
         Ok(vec![])

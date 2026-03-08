@@ -30,7 +30,7 @@ type HandlerOutcome = {
   attempts: number;
   startedAt: string | null;
   completedAt: string | null;
-  pendingEventIds: string[];
+  triggeringEventIds: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
     }
   }
 
-  // Pending/running handlers that haven't emitted events yet — add nodes + edges
+  // Handlers known from outcomes but missing from the event stream (emitted nothing)
   if (outcomes) {
     for (const [handlerId, outcome] of outcomes) {
       if (handlerIds.has(handlerId)) continue;
@@ -344,7 +344,8 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
         targetPosition: Position.Top,
       });
 
-      for (const eventId of outcome.pendingEventIds ?? []) {
+      const isPending = outcome.status === "pending" || outcome.status === "running";
+      for (const eventId of outcome.triggeringEventIds ?? []) {
         const groupKey = eventIdToGroup.get(eventId);
         if (!groupKey) continue;
         const edgeKey = `evt:${groupKey}->hdl:${handlerId}`;
@@ -356,7 +357,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
             target: `hdl:${handlerId}`,
             style: { stroke: "#52525b", strokeWidth: 1 },
             markerEnd: arrowMarker,
-            animated: true,
+            animated: isPending,
           });
         }
       }

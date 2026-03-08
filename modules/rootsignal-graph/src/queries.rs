@@ -240,14 +240,14 @@ pub trait GraphQueries: Send + Sync {
         situation_id: &Uuid,
     ) -> Result<(TemperatureComponents, Vec<SystemEvent>)>;
 
-    /// Re-evaluate severity for all Notices in a bounding box. Wraps `severity_inference::compute_severity_inference`.
+    /// Re-evaluate severity for all Notices in a bounding box. Returns revisions for changed signals.
     async fn compute_severity_inference(
         &self,
         min_lat: f64,
         max_lat: f64,
         min_lng: f64,
         max_lng: f64,
-    ) -> Result<(u32, Vec<SystemEvent>)>;
+    ) -> Result<Vec<crate::severity_inference::SeverityRevision>>;
 
     /// Compute cause heat for signals in a bounding box. Wraps `cause_heat::compute_cause_heat`.
     async fn compute_cause_heat(
@@ -590,7 +590,7 @@ impl GraphQueries for crate::writer::GraphReader {
         max_lat: f64,
         min_lng: f64,
         max_lng: f64,
-    ) -> Result<(u32, Vec<SystemEvent>)> {
+    ) -> Result<Vec<crate::severity_inference::SeverityRevision>> {
         crate::severity_inference::compute_severity_inference(self, min_lat, max_lat, min_lng, max_lng).await
     }
 

@@ -11,6 +11,7 @@ pub struct Config {
     // AI providers
     pub anthropic_api_key: String,
     pub gemini_api_key: String,
+    pub openai_api_key: String,
     pub voyage_api_key: String,
 
     // Scraping
@@ -75,6 +76,7 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             gemini_api_key: env::var("GEMINI_API_KEY").unwrap_or_default(),
+            openai_api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
             serper_api_key: required_env("SERPER_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
@@ -118,6 +120,7 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             gemini_api_key: required_env("GEMINI_API_KEY"),
+            openai_api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
             serper_api_key: required_env("SERPER_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
@@ -174,6 +177,7 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
             gemini_api_key: String::new(),
+            openai_api_key: String::new(),
             voyage_api_key: String::new(),
             serper_api_key: String::new(),
             apify_api_key: String::new(),
@@ -222,6 +226,7 @@ impl Config {
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
             gemini_api_key: env::var("GEMINI_API_KEY").unwrap_or_default(),
+            openai_api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
             voyage_api_key: env::var("VOYAGE_API_KEY").unwrap_or_default(),
             serper_api_key: env::var("SERPER_API_KEY").unwrap_or_default(),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
@@ -266,6 +271,7 @@ impl Config {
             ("NEO4J_PASSWORD", &self.neo4j_password),
             ("ANTHROPIC_API_KEY", &self.anthropic_api_key),
             ("GEMINI_API_KEY", &self.gemini_api_key),
+            ("OPENAI_API_KEY", &self.openai_api_key),
             ("VOYAGE_API_KEY", &self.voyage_api_key),
             ("SERPER_API_KEY", &self.serper_api_key),
             ("APIFY_API_KEY", &self.apify_api_key),
@@ -274,7 +280,8 @@ impl Config {
             if value.is_empty() {
                 tracing::info!("{name} = (empty)");
             } else {
-                tracing::info!("{name} = ({} chars)", value.len());
+                let prefix: String = value.chars().take(15).collect();
+                tracing::info!("{name} = {prefix}... ({} chars)", value.len());
             }
         }
 

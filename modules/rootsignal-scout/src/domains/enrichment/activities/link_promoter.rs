@@ -204,15 +204,33 @@ pub fn promote_links(links: &[CollectedLink], config: &PromotionConfig) -> Vec<S
 // ---------------------------------------------------------------------------
 
 /// Build a canonical URL for a social platform handle.
-pub fn platform_url(platform: &SocialPlatform, handle: &str) -> String {
-    let handle = handle.trim().trim_end_matches('.');
-    match platform {
-        SocialPlatform::Instagram => format!("https://instagram.com/{handle}"),
-        SocialPlatform::Facebook => format!("https://facebook.com/{handle}"),
-        SocialPlatform::Twitter => format!("https://x.com/{handle}"),
-        SocialPlatform::TikTok => format!("https://tiktok.com/@{handle}"),
-        SocialPlatform::Reddit => format!("https://reddit.com/r/{handle}"),
-        SocialPlatform::Bluesky => format!("https://bsky.app/profile/{handle}"),
+/// Returns None if the handle doesn't look like a valid social handle.
+pub fn platform_url(platform: &SocialPlatform, handle: &str) -> Option<String> {
+    let clean = clean_handle(handle)?;
+    Some(match platform {
+        SocialPlatform::Instagram => format!("https://instagram.com/{clean}"),
+        SocialPlatform::Facebook => format!("https://facebook.com/{clean}"),
+        SocialPlatform::Twitter => format!("https://x.com/{clean}"),
+        SocialPlatform::TikTok => format!("https://tiktok.com/@{clean}"),
+        SocialPlatform::Reddit => format!("https://reddit.com/r/{clean}"),
+        SocialPlatform::Bluesky => format!("https://bsky.app/profile/{clean}"),
+    })
+}
+
+/// Extract a valid handle from raw text. Handles are alphanumeric with
+/// dots, underscores, and hyphens (e.g. @bob.smith, jane_doe, my-org).
+/// Returns None if nothing valid remains after cleaning.
+fn clean_handle(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_start_matches('@');
+    let clean: String = trimmed
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+        .collect();
+    let clean = clean.trim_end_matches(['.', ',', '-']);
+    if clean.is_empty() {
+        None
+    } else {
+        Some(clean.to_string())
     }
 }
 
@@ -352,63 +370,70 @@ mod tests {
     }
 
     #[test]
-    fn test_platform_url_helper() {
+    fn valid_handles_produce_urls() {
         assert_eq!(
             platform_url(&SocialPlatform::Instagram, "jane_doe"),
-            "https://instagram.com/jane_doe"
+            Some("https://instagram.com/jane_doe".into())
         );
         assert_eq!(
             platform_url(&SocialPlatform::Twitter, "johndoe"),
-            "https://x.com/johndoe"
+            Some("https://x.com/johndoe".into())
         );
         assert_eq!(
             platform_url(&SocialPlatform::TikTok, "dancer"),
-            "https://tiktok.com/@dancer"
+            Some("https://tiktok.com/@dancer".into())
         );
         assert_eq!(
             platform_url(&SocialPlatform::Facebook, "local_org"),
-            "https://facebook.com/local_org"
+            Some("https://facebook.com/local_org".into())
         );
         assert_eq!(
             platform_url(&SocialPlatform::Reddit, "mutualaid"),
-            "https://reddit.com/r/mutualaid"
+            Some("https://reddit.com/r/mutualaid".into())
         );
         assert_eq!(
             platform_url(&SocialPlatform::Bluesky, "user.bsky.social"),
-            "https://bsky.app/profile/user.bsky.social"
+            Some("https://bsky.app/profile/user.bsky.social".into())
         );
     }
 
     #[test]
-    fn platform_url_strips_trailing_period() {
+    fn trailing_punctuation_stripped_from_handle() {
         assert_eq!(
             platform_url(&SocialPlatform::Instagram, "maskblocmsp."),
-            "https://instagram.com/maskblocmsp"
+            Some("https://instagram.com/maskblocmsp".into())
         );
-    }
-
-    #[test]
-    fn platform_url_strips_trailing_whitespace() {
         assert_eq!(
-            platform_url(&SocialPlatform::Instagram, "handle "),
-            "https://instagram.com/handle"
+            platform_url(&SocialPlatform::Instagram, "sanctuarysupplydepot,"),
+            Some("https://instagram.com/sanctuarysupplydepot".into())
         );
-    }
-
-    #[test]
-    fn platform_url_strips_multiple_trailing_periods() {
         assert_eq!(
             platform_url(&SocialPlatform::Twitter, "user.."),
-            "https://x.com/user"
+            Some("https://x.com/user".into())
         );
     }
 
     #[test]
-    fn platform_url_preserves_mid_handle_period() {
+    fn whitespace_and_at_sign_cleaned() {
+        assert_eq!(
+            platform_url(&SocialPlatform::Instagram, " @handle "),
+            Some("https://instagram.com/handle".into())
+        );
+    }
+
+    #[test]
+    fn mid_handle_period_preserved() {
         assert_eq!(
             platform_url(&SocialPlatform::Instagram, "bob.smith"),
-            "https://instagram.com/bob.smith"
+            Some("https://instagram.com/bob.smith".into())
         );
+    }
+
+    #[test]
+    fn empty_handle_returns_none() {
+        assert_eq!(platform_url(&SocialPlatform::Instagram, ""), None);
+        assert_eq!(platform_url(&SocialPlatform::Instagram, "..."), None);
+        assert_eq!(platform_url(&SocialPlatform::Instagram, ",,,"), None);
     }
 
     // -----------------------------------------------------------------------

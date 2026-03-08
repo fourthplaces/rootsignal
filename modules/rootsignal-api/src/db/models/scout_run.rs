@@ -1134,7 +1134,7 @@ pub struct HandlerOutcomeRow {
     pub attempts: i64,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
-    pub pending_event_ids: Vec<String>,
+    pub triggering_event_ids: Vec<String>,
 }
 
 pub async fn handler_outcomes(
@@ -1155,7 +1155,7 @@ pub async fn handler_outcomes(
                 COALESCE(SUM(attempts), 0) AS attempts, \
                 MIN(created_at) AS started_at, \
                 MAX(updated_at) FILTER (WHERE status = 'completed') AS completed_at, \
-                array_agg(DISTINCT event_id::text) FILTER (WHERE status IN ('pending', 'running')) AS pending_event_ids \
+                array_agg(DISTINCT event_id::text) AS triggering_event_ids \
          FROM seesaw_effect_executions \
          WHERE correlation_id = $1 \
          GROUP BY handler_id",
@@ -1166,14 +1166,14 @@ pub async fn handler_outcomes(
 
     Ok(rows
         .into_iter()
-        .map(|(handler_id, status, error, attempts, started_at, completed_at, pending_event_ids)| HandlerOutcomeRow {
+        .map(|(handler_id, status, error, attempts, started_at, completed_at, triggering_event_ids)| HandlerOutcomeRow {
             handler_id,
             status,
             error,
             attempts,
             started_at,
             completed_at,
-            pending_event_ids: pending_event_ids.unwrap_or_default(),
+            triggering_event_ids: triggering_event_ids.unwrap_or_default(),
         })
         .collect())
 }

@@ -174,6 +174,7 @@ impl OpenAi {
         user: &str,
         schema: Value,
     ) -> Result<Value> {
+        let strict_schema = schema::prepare_strict_schema(schema);
         let request = types::StructuredRequest {
             model: self.model.clone(),
             messages: vec![
@@ -190,7 +191,7 @@ impl OpenAi {
                 json_schema: types::JsonSchemaFormat {
                     name: "structured_response".to_string(),
                     strict: true,
-                    schema,
+                    schema: strict_schema,
                 },
             },
         };

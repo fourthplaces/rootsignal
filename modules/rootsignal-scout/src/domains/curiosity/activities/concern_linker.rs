@@ -2,28 +2,21 @@ use std::sync::Arc;
 
 use ai_client::{ai_extract, Agent, DynTool, ToolWrapper};
 use anyhow::Result;
-use chrono::Utc;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{
-    GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel,
-    Severity, ConcernNode,
+    NodeType, ScoutScope,
 };
-use rootsignal_graph::{GraphQueries, SituationBrief, ConcernLinkerOutcome, ConcernLinkerTarget};
+use rootsignal_graph::{GraphQueries, ConcernLinkerTarget};
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
 use crate::infra::util::SIGNAL_CATEGORIES;
-use crate::store::event_sourced::{node_system_events, node_to_world_event};
-use rootsignal_common::events::WorldEvent;
 
-const MAX_TENSION_LINKER_TARGETS_PER_RUN: u32 = 10;
 const MAX_TOOL_TURNS: usize = 8;
-const MAX_TENSIONS_PER_SIGNAL: usize = 3;
 
 // =============================================================================
 // Structured output types
@@ -154,42 +147,6 @@ Return at most 3 tensions. Only include tensions you have evidence for.",
     )
 }
 
-fn format_situation_landscape(situations: &[SituationBrief]) -> String {
-    if situations.is_empty() {
-        return String::new();
-    }
-    situations
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            format!(
-                "{}. {} [{}] (temp={:.2}, clarity={}, {} signals)",
-                i + 1,
-                s.headline,
-                s.arc,
-                s.temperature,
-                s.clarity,
-                s.signal_count,
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-// =============================================================================
-// Per-target stats (returned by process_single_target)
-// =============================================================================
-
-#[derive(Debug, Default)]
-pub struct ConcernLinkerTargetStats {
-    pub targets_investigated: u32,
-    pub targets_skipped: u32,
-    pub tensions_discovered: u32,
-    pub tensions_deduplicated: u32,
-    pub edges_created: u32,
-    pub outcome: String,
-}
-
 // =============================================================================
 // ConcernLinker
 // =============================================================================
@@ -204,7 +161,7 @@ pub struct ConcernLinker<'a> {
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-    run_id: String,
+    _run_id: String,
 }
 
 impl<'a> ConcernLinker<'a> {
@@ -244,174 +201,8 @@ impl<'a> ConcernLinker<'a> {
             min_lng: region.center_lng - lng_delta,
             max_lng: region.center_lng + lng_delta,
             region,
-            run_id,
+            _run_id: run_id,
         }
-    }
-
-    pub async fn run(&self, events: &mut seesaw_core::Events) -> TensionLinkerStats {
-        let mut stats = TensionLinkerStats::default();
-
-        // Pre-pass: promote exhausted retries to abandoned (via event)
-        events.push(SystemEvent::ExhaustedRetriesPromoted {
-            promoted_at: Utc::now(),
-        });
-
-        let targets = match self
-            .graph
-            .find_tension_linker_targets(
-                MAX_TENSION_LINKER_TARGETS_PER_RUN,
-                self.min_lat,
-                self.max_lat,
-                self.min_lng,
-                self.max_lng,
-            )
-            .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                warn!(error = %e, "Failed to find curiosity targets");
-                return stats;
-            }
-        };
-
-        stats.targets_found = targets.len() as u32;
-        if targets.is_empty() {
-            info!("No curiosity targets found");
-            return stats;
-        }
-
-        info!(count = targets.len(), "Curiosity targets selected");
-
-        // Load tension landscape for context
-        let tension_landscape = match self
-            .graph
-            .get_tension_landscape(self.min_lat, self.max_lat, self.min_lng, self.max_lng)
-            .await
-        {
-            Ok(tensions) => {
-                if tensions.is_empty() {
-                    "No tensions known yet.".to_string()
-                } else {
-                    tensions
-                        .iter()
-                        .enumerate()
-                        .map(|(i, (title, summary))| format!("{}. {} — {}", i + 1, title, summary))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to load tension landscape");
-                "Unable to load existing tensions.".to_string()
-            }
-        };
-
-        // Load situation landscape — emerging/fuzzy situations guide investigation priority
-        let situation_landscape = match self.graph.get_situation_landscape(15).await {
-            Ok(situations) => format_situation_landscape(&situations),
-            Err(e) => {
-                warn!(error = %e, "Failed to load situation landscape for tension linker");
-                String::new()
-            }
-        };
-
-        for target in &targets {
-            let (target_events, target_stats) = self
-                .process_single_target(target, &tension_landscape, &situation_landscape)
-                .await;
-
-            stats.targets_investigated += target_stats.targets_investigated;
-            stats.targets_skipped += target_stats.targets_skipped;
-            stats.tensions_discovered += target_stats.tensions_discovered;
-            stats.tensions_deduplicated += target_stats.tensions_deduplicated;
-            stats.edges_created += target_stats.edges_created;
-            events.extend(target_events);
-        }
-
-        stats
-    }
-
-    /// Process a single target — returns events and per-target stats.
-    /// Used by both the monolithic `run()` and the per-target handler.
-    pub async fn process_single_target(
-        &self,
-        target: &ConcernLinkerTarget,
-        tension_landscape: &str,
-        situation_landscape: &str,
-    ) -> (seesaw_core::Events, ConcernLinkerTargetStats) {
-        let mut events = seesaw_core::Events::new();
-        let mut stats = ConcernLinkerTargetStats::default();
-
-        let outcome = match self
-            .investigate_signal(target, tension_landscape, situation_landscape)
-            .await
-        {
-            Ok(finding) => {
-                if !finding.curious {
-                    stats.targets_skipped += 1;
-                    stats.outcome = "skipped".to_string();
-                    info!(
-                        signal_id = %target.signal_id,
-                        title = target.title.as_str(),
-                        reason = finding.skip_reason.as_deref().unwrap_or("self-explanatory"),
-                        "Signal not curious, skipping"
-                    );
-                    ConcernLinkerOutcome::Skipped
-                } else {
-                    stats.targets_investigated += 1;
-                    let tensions_count = finding.tensions.len().min(MAX_TENSIONS_PER_SIGNAL);
-                    let mut any_tension_failed = false;
-                    let mut per_target_stats = TensionLinkerStats::default();
-                    for tension in finding.tensions.into_iter().take(MAX_TENSIONS_PER_SIGNAL) {
-                        if let Err(e) = self.process_tension(target, &tension, &mut per_target_stats, &mut events).await
-                        {
-                            any_tension_failed = true;
-                            warn!(
-                                signal_id = %target.signal_id,
-                                tension_title = tension.title.as_str(),
-                                error = %e,
-                                "Failed to process discovered tension"
-                            );
-                        }
-                    }
-                    stats.tensions_discovered += per_target_stats.tensions_discovered;
-                    stats.tensions_deduplicated += per_target_stats.tensions_deduplicated;
-                    stats.edges_created += per_target_stats.edges_created;
-                    info!(
-                        signal_id = %target.signal_id,
-                        title = target.title.as_str(),
-                        tensions = tensions_count,
-                        "Signal investigated"
-                    );
-                    if any_tension_failed {
-                        stats.outcome = "failed".to_string();
-                        ConcernLinkerOutcome::Failed
-                    } else {
-                        stats.outcome = "done".to_string();
-                        ConcernLinkerOutcome::Done
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(
-                    signal_id = %target.signal_id,
-                    title = target.title.as_str(),
-                    error = %e,
-                    "Curiosity investigation failed"
-                );
-                stats.outcome = "failed".to_string();
-                ConcernLinkerOutcome::Failed
-            }
-        };
-
-        events.push(SystemEvent::ConcernLinkerOutcomeRecorded {
-            signal_id: target.signal_id,
-            label: target.label.clone(),
-            outcome: outcome.as_str().to_string(),
-            increment_retry: outcome == ConcernLinkerOutcome::Failed,
-        });
-
-        (events, stats)
     }
 
     pub async fn investigate_signal(
@@ -495,137 +286,14 @@ impl<'a> ConcernLinker<'a> {
         }
     }
 
-    async fn process_tension(
-        &self,
-        target: &ConcernLinkerTarget,
-        tension: &DiscoveredTension,
-        stats: &mut TensionLinkerStats,
-        events: &mut seesaw_core::Events,
-    ) -> Result<()> {
-        let embed_text = format!("{} {}", tension.title, tension.summary);
-        let embedding = self.embedder.embed(&embed_text).await?;
-
-        // Check for duplicate tension (region-scoped)
-        let existing = self
-            .graph
-            .find_duplicate(
-                &embedding,
-                NodeType::Concern,
-                0.85,
-                self.min_lat,
-                self.max_lat,
-                self.min_lng,
-                self.max_lng,
-            )
-            .await;
-
-        let concern_id = match existing {
-            Ok(Some(dup)) => {
-                info!(
-                    existing_id = %dup.id,
-                    similarity = dup.similarity,
-                    tension_title = tension.title.as_str(),
-                    "Matched existing tension"
-                );
-                stats.tensions_deduplicated += 1;
-                dup.id
-            }
-            _ => {
-                if let Err(ref e) = existing {
-                    warn!(error = %e, "Tension dedup check failed, creating new");
-                }
-                self.create_tension_node(tension, events).await?
-            }
-        };
-
-        events.push(SystemEvent::ResponseLinked {
-            signal_id: target.signal_id,
-            concern_id,
-            strength: tension.match_strength.clamp(0.0, 1.0),
-            explanation: tension.explanation.clone(),
-            source_url: None,
-        });
-        stats.edges_created += 1;
-
-        Ok(())
-    }
-
-    async fn create_tension_node(
-        &self,
-        tension: &DiscoveredTension,
-        events: &mut seesaw_core::Events,
-    ) -> Result<Uuid, anyhow::Error> {
-        let severity = match tension.severity.to_lowercase().as_str() {
-            "low" => Severity::Low,
-            "medium" => Severity::Medium,
-            "high" => Severity::High,
-            "critical" => Severity::Critical,
-            _ => Severity::Medium,
-        };
-
-        let now = Utc::now();
-        let tension_node = ConcernNode {
-            meta: NodeMeta {
-                id: Uuid::new_v4(),
-                title: tension.title.clone(),
-                summary: tension.summary.clone(),
-                sensitivity: SensitivityLevel::General,
-                confidence: 0.7,
-
-                corroboration_count: 0,
-                about_location: Some(GeoPoint {
-                    lat: self.region.center_lat,
-                    lng: self.region.center_lng,
-                    precision: GeoPrecision::Approximate,
-                }),
-                from_location: None,
-                about_location_name: Some(self.region.name.clone()),
-                url: tension.url.clone(),
-                extracted_at: now,
-                published_at: None,
-                last_confirmed_active: now,
-                source_diversity: 1,
-
-                cause_heat: 0.0,
-                channel_diversity: 1,
-                implied_queries: vec![],
-                review_status: ReviewStatus::Staged,
-                was_corrected: false,
-                corrections: None,
-                rejection_reason: None,
-                mentioned_actors: Vec::new(),
-                category: None,
-            },
-            severity,
-            subject: None,
-            opposing: Some(tension.opposing.clone()),
-        };
-
-        let concern_id = tension_node.meta.id;
-        let node = Node::Concern(tension_node);
-
-        // Collect world event + system events for causal chain dispatch
-        let world_event = node_to_world_event(&node);
-        let system_events = node_system_events(&node);
-
-        events.push(world_event);
-        for se in system_events {
-            events.push(se);
-        }
-
-        info!(
-            concern_id = %concern_id,
-            title = tension.title.as_str(),
-            severity = tension.severity.as_str(),
-            "New tension discovered"
-        );
-
-        Ok(concern_id)
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+    use rootsignal_common::{
+        ConcernNode, GeoPoint, GeoPrecision, NodeMeta, ReviewStatus, SensitivityLevel, Severity,
+    };
     use crate::infra::agent_tools::{WebSearchOutput, WebSearchResultItem};
     use super::*;
 

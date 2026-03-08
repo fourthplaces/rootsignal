@@ -19,7 +19,7 @@ use crate::snapshot::{LogEntry, RunLog};
 use crate::types::{SimPage, SimPost, SimSearchResult};
 use crate::world::World;
 
-const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+use ai_client::models::HAIKU_4_5 as HAIKU_MODEL;
 
 /// A simulated web environment backed by LLM generation.
 /// All responses are cached for consistency within a run.

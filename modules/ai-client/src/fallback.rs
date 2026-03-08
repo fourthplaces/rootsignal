@@ -7,52 +7,58 @@ use tracing::warn;
 use crate::tool::DynTool;
 use crate::traits::{Agent, PromptBuilder};
 
-/// Agent that tries a primary model, falling back to a secondary on failure.
+/// Agent that tries models in order, falling back to the next on failure.
 #[derive(Clone)]
 pub struct FallbackAgent {
-    primary: Arc<dyn Agent>,
-    fallback: Arc<dyn Agent>,
+    agents: Vec<Arc<dyn Agent>>,
 }
 
 impl FallbackAgent {
-    pub fn new(primary: impl Agent + 'static, fallback: impl Agent + 'static) -> Self {
-        Self {
-            primary: Arc::new(primary),
-            fallback: Arc::new(fallback),
-        }
+    pub fn new(agents: Vec<Arc<dyn Agent>>) -> Self {
+        assert!(!agents.is_empty(), "FallbackAgent requires at least one agent");
+        Self { agents }
     }
 }
 
 #[async_trait]
 impl Agent for FallbackAgent {
     async fn extract_json(&self, system: &str, user: &str, schema: Value) -> anyhow::Result<Value> {
-        match self.primary.extract_json(system, user, schema.clone()).await {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                warn!("Primary model failed, trying fallback: {e}");
-                self.fallback.extract_json(system, user, schema).await
+        let last = self.agents.len() - 1;
+        for (i, agent) in self.agents.iter().enumerate() {
+            match agent.extract_json(system, user, schema.clone()).await {
+                Ok(v) => return Ok(v),
+                Err(e) if i < last => {
+                    warn!("Model {}/{} failed, trying next: {e}", i + 1, self.agents.len());
+                }
+                Err(e) => return Err(e),
             }
         }
+        unreachable!()
     }
 
     async fn chat(&self, system: &str, user: &str) -> anyhow::Result<String> {
-        match self.primary.chat(system, user).await {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                warn!("Primary model failed, trying fallback: {e}");
-                self.fallback.chat(system, user).await
+        let last = self.agents.len() - 1;
+        for (i, agent) in self.agents.iter().enumerate() {
+            match agent.chat(system, user).await {
+                Ok(v) => return Ok(v),
+                Err(e) if i < last => {
+                    warn!("Model {}/{} failed, trying next: {e}", i + 1, self.agents.len());
+                }
+                Err(e) => return Err(e),
             }
         }
+        unreachable!()
     }
 
     fn with_tools(&self, tools: Vec<Arc<dyn DynTool>>) -> Box<dyn Agent> {
         Box::new(Self {
-            primary: Arc::from(self.primary.with_tools(tools.clone())),
-            fallback: Arc::from(self.fallback.with_tools(tools)),
+            agents: self.agents.iter()
+                .map(|a| Arc::from(a.with_tools(tools.clone())))
+                .collect(),
         })
     }
 
     fn prompt(&self, input: &str) -> Box<dyn PromptBuilder> {
-        self.primary.prompt(input)
+        self.agents[0].prompt(input)
     }
 }

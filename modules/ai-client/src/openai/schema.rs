@@ -33,6 +33,23 @@ pub trait StructuredOutput: JsonSchema + DeserializeOwned {
 
 impl<T: JsonSchema + DeserializeOwned> StructuredOutput for T {}
 
+/// Prepare a raw schemars JSON schema for OpenAI strict mode.
+///
+/// Adds `additionalProperties: false`, makes all properties required,
+/// inlines `$ref` definitions, and strips `$schema`/`definitions`.
+pub fn prepare_strict_schema(schema: serde_json::Value) -> serde_json::Value {
+    let mut value = schema;
+    fix_object_schemas(&mut value);
+    inline_refs(&mut value);
+
+    if let serde_json::Value::Object(map) = &mut value {
+        map.remove("definitions");
+        map.remove("$schema");
+    }
+
+    value
+}
+
 fn fix_object_schemas(value: &mut serde_json::Value) {
     if let serde_json::Value::Object(map) = value {
         if map.get("type") == Some(&serde_json::Value::String("object".to_string())) {

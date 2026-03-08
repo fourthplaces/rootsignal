@@ -73,7 +73,7 @@ async fn extract_with_firsthand_filter(
         "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
     );
 
-    let claude = ai_client::claude::Claude::new(&api_key, "claude-haiku-4-5-20251001");
+    let claude = ai_client::claude::Claude::new(&api_key, ai_client::models::HAIKU_4_5);
     let response: ExtractionResponse = claude
         .extract(&system_prompt, &user_prompt)
         .await

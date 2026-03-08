@@ -983,7 +983,7 @@ export const ADMIN_HANDLER_OUTCOMES = gql`
       attempts
       startedAt
       completedAt
-      pendingEventIds
+      triggeringEventIds
     }
   }
 `;

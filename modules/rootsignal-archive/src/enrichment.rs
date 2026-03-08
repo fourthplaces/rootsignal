@@ -82,18 +82,35 @@ impl WorkflowDispatcher for SpawnDispatcher {
         tracing::info!(file_count, "Dispatching enrichment via tokio::spawn");
 
         tokio::spawn(async move {
-            for job in jobs {
-                let file_id = job.file_id;
-                match enrich_single_file(&pg_pool, &anthropic_key, &openai_key, job).await {
-                    Ok(()) => {
-                        tracing::info!(%file_id, "enrichment: file complete");
-                    }
-                    Err(e) => {
-                        tracing::warn!(%file_id, error = %e, "enrichment: file failed, marking as attempted");
-                        let store = crate::store::Store::new(pg_pool.clone());
-                        let _ = store.update_file_text(file_id, "", None).await;
-                    }
-                }
+            const BATCH_SIZE: usize = 5;
+
+            for batch in jobs.chunks(BATCH_SIZE) {
+                let futures: Vec<_> = batch
+                    .iter()
+                    .map(|job| {
+                        let pg_pool = pg_pool.clone();
+                        let anthropic_key = anthropic_key.clone();
+                        let openai_key = openai_key.clone();
+                        let job = job.clone();
+                        async move {
+                            let file_id = job.file_id;
+                            match enrich_single_file(&pg_pool, &anthropic_key, &openai_key, job)
+                                .await
+                            {
+                                Ok(()) => {
+                                    tracing::info!(%file_id, "enrichment: file complete");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(%file_id, error = %e, "enrichment: file failed, marking as attempted");
+                                    let store = crate::store::Store::new(pg_pool.clone());
+                                    let _ = store.update_file_text(file_id, "", None).await;
+                                }
+                            }
+                        }
+                    })
+                    .collect();
+
+                futures::future::join_all(futures).await;
             }
         });
 
@@ -109,7 +126,7 @@ async fn enrich_single_file(
     job: EnrichmentJob,
 ) -> Result<()> {
     let text = if job.mime_type.starts_with("image/") {
-        let claude = ai_client::Claude::new(anthropic_key, "claude-sonnet-4-20250514");
+        let claude = ai_client::Claude::new(anthropic_key, ai_client::models::SONNET_4);
         claude
             .describe_image(&job.media_bytes, &job.mime_type, OCR_PROMPT)
             .await?

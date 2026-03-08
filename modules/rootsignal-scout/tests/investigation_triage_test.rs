@@ -112,7 +112,7 @@ async fn generate_queries(
         "Signal type: {signal_type}\nTitle: {description}\nSummary: {description}\nSource URL: https://example.com\nCity: Minneapolis",
     );
 
-    let claude = ai_client::claude::Claude::new(&api_key, "claude-haiku-4-5-20251001");
+    let claude = ai_client::claude::Claude::new(&api_key, ai_client::models::HAIKU_4_5);
     let response: InvestigationQueries = claude
         .extract(QUERY_GENERATION_SYSTEM, &user_prompt)
         .await

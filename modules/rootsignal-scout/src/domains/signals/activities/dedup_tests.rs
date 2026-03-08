@@ -716,6 +716,229 @@ async fn fingerprint_batch_with_duplicate_urls_deduplicates() {
 }
 
 // ---------------------------------------------------------------------------
+// Actor-source linking: owned sources create actors linked to sources
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn owned_source_actor_links_to_source() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Volunteer Call", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "Sanctuary Supply Depot".to_string());
+
+    let source_id = Uuid::new_v4();
+
+    let result = run_dedup(
+        "https://www.instagram.com/sanctuarysupplydepot",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            source_id: Some(source_id),
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    let linked_to_source: Vec<_> = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::LinkedToSource { .. }))
+        .collect();
+    assert_eq!(linked_to_source.len(), 1, "actor should be linked to its source");
+
+    match &linked_to_source[0] {
+        ActorAction::LinkedToSource { source_id: sid, .. } => {
+            assert_eq!(*sid, source_id, "should link to the batch source_id");
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn web_page_source_creates_no_actor() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Community Meeting", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "City of Minneapolis".to_string());
+
+    let result = run_dedup(
+        "https://www.minneapolismn.gov/events",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert!(
+        result.actor_actions.is_empty(),
+        "web page sources should not create actors (got {} actions)",
+        result.actor_actions.len(),
+    );
+}
+
+#[tokio::test]
+async fn owned_source_without_source_id_creates_actor_but_no_source_link() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Event A", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "Some Org".to_string());
+
+    let result = run_dedup(
+        "https://www.instagram.com/some_org",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            source_id: None, // no source_id
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    let identified = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::Identified { .. }))
+        .count();
+    let linked_to_signal = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::LinkedToSignal { .. }))
+        .count();
+    let linked_to_source = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::LinkedToSource { .. }))
+        .count();
+
+    assert_eq!(identified, 1, "actor should still be created");
+    assert_eq!(linked_to_signal, 1, "actor should still link to signal");
+    assert_eq!(linked_to_source, 0, "no source_id means no LinkedToSource");
+}
+
+#[tokio::test]
+async fn actor_canonical_key_derives_from_source_url_not_name() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Weekly Meetup", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "Friends of the Falls".to_string());
+
+    let source_url = "https://www.instagram.com/friendsofthefalls";
+
+    let result = run_dedup(
+        source_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    let identified: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::Identified { canonical_key, .. } => Some(canonical_key.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(identified.len(), 1);
+    let expected_ck = rootsignal_common::canonical_value(source_url);
+    assert_eq!(
+        identified[0], expected_ck,
+        "canonical_key should derive from source URL, not from author name"
+    );
+    // Name-derived key would be "friends-of-the-falls" (lowercased, spaces→dashes).
+    // Source-derived key is "instagram.com/friendsofthefalls".
+    assert_ne!(
+        identified[0], "friends-of-the-falls",
+        "canonical_key must not be name-derived"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Actor idempotency: second scrape reuses existing actor
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn second_scrape_reuses_existing_actor_by_canonical_key() {
+    let source_url = "https://www.instagram.com/sanctuarysupplydepot";
+    let existing_actor_id = Uuid::new_v4();
+    let expected_ck = rootsignal_common::canonical_value(source_url);
+
+    let store = Arc::new(MockSignalReader::new());
+    store.add_actor_by_canonical_key(&expected_ck, existing_actor_id);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Volunteer Call", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "Sanctuary Supply Depot".to_string());
+
+    let result = run_dedup(
+        source_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            source_id: Some(Uuid::new_v4()),
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    let identified_count = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::Identified { .. }))
+        .count();
+    assert_eq!(identified_count, 0, "should not create a new actor when one already exists");
+
+    let linked: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::LinkedToSignal { actor_id, .. } => Some(*actor_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(linked.len(), 1, "should link signal to existing actor");
+    assert_eq!(linked[0], existing_actor_id, "should reuse the existing actor_id");
+}
+
+// ---------------------------------------------------------------------------
 // Per-signal URL: citations and verdicts use node URL, not batch URL
 // ---------------------------------------------------------------------------
 
