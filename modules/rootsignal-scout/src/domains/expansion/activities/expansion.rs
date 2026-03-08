@@ -6,28 +6,23 @@
 
 use std::collections::HashSet;
 
-use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode};
 use rootsignal_graph::GraphQueries;
 use tracing::{info, warn};
+use uuid::Uuid;
 
-use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
+use crate::domains::discovery::activities::source_finder::{initial_weight_for_method, QueryEmbedding};
 use crate::infra::embedder::TextEmbedder;
 
 // ---------------------------------------------------------------------------
 // ExpansionOutput — accumulated output from the expansion stage
 // ---------------------------------------------------------------------------
 
-/// Accumulated output from the expansion stage.
-/// Replaces direct mutations to PipelineState during expansion.
 pub struct ExpansionOutput {
-    /// New WebQuery sources created from expansion queries.
     pub sources: Vec<SourceNode>,
-    /// Social topics to queue for the social flywheel.
     pub social_expansion_topics: Vec<String>,
-    /// Events emitted during expansion (e.g. QueryEmbeddingStored).
-    pub events: seesaw_core::Events,
-    /// Stats from the expansion stage.
+    pub consumed_signal_ids: Vec<Uuid>,
+    pub query_embeddings: Vec<QueryEmbedding>,
     pub expansion_deferred_expanded: u32,
     pub expansion_queries_collected: u32,
     pub expansion_sources_created: u32,
@@ -62,18 +57,14 @@ impl<'a> Expansion<'a> {
     /// 1. Collect deferred expansion queries (from recently linked signals)
     /// 2. Deduplicate against existing WebQuery sources (Jaccard + embedding)
     /// 3. Return `ExpansionOutput` with new sources and stats
-    ///
-    /// Pure: takes expansion queries as input, returns output. No state mutation.
     pub async fn generate_expansion_sources(
         &self,
         expansion_queries: Vec<String>,
     ) -> ExpansionOutput {
         let mut all_queries = expansion_queries;
 
-        // Deferred expansion: collect implied queries from Give/Event signals
-        // that are now linked to tensions via response mapping.
         let mut deferred_expanded = 0u32;
-        let mut deferred_events = seesaw_core::Events::new();
+        let mut consumed_signal_ids = Vec::new();
         match self.graph.get_recently_linked_signals_with_queries().await {
             Ok((deferred, signal_ids)) => {
                 let deferred_count = deferred.len();
@@ -85,9 +76,7 @@ impl<'a> Expansion<'a> {
                     );
                 }
                 deferred_expanded = deferred_count as u32;
-                if !signal_ids.is_empty() {
-                    deferred_events.push(SystemEvent::ImpliedQueriesConsumed { signal_ids });
-                }
+                consumed_signal_ids = signal_ids;
             }
             Err(e) => warn!(error = %e, "Failed to get deferred expansion queries"),
         }
@@ -98,14 +87,16 @@ impl<'a> Expansion<'a> {
             return ExpansionOutput {
                 sources: Vec::new(),
                 social_expansion_topics: Vec::new(),
-                events: seesaw_core::Events::new(),
+                consumed_signal_ids,
+                query_embeddings: Vec::new(),
                 expansion_deferred_expanded: deferred_expanded,
                 expansion_queries_collected: 0,
                 expansion_sources_created: 0,
                 expansion_social_topics_queued: 0,
             };
         }
-        let mut expansion_events = deferred_events;
+
+        let mut query_embeddings = Vec::new();
 
         let existing = self
             .graph
@@ -126,7 +117,6 @@ impl<'a> Expansion<'a> {
         let mut sources = Vec::new();
         let mut expansion_dupes_skipped = 0u32;
         for query_text in &deduped {
-            // Embedding-based dedup for expansion queries
             if let Ok(embedding) = self.embedder.embed(query_text).await {
                 match self.graph.find_similar_query(&embedding, 0.90).await {
                     Ok(Some((existing_ck, sim))) => {
@@ -158,9 +148,8 @@ impl<'a> Expansion<'a> {
                 Some("Signal expansion: implied query from extracted signal".to_string()),
             );
             sources.push(source);
-            // Emit embedding event — projector stores on Source node for future dedup
             if let Ok(embedding) = self.embedder.embed(query_text).await {
-                expansion_events.push(SystemEvent::QueryEmbeddingStored {
+                query_embeddings.push(QueryEmbedding {
                     canonical_key: ck.clone(),
                     embedding,
                 });
@@ -168,9 +157,6 @@ impl<'a> Expansion<'a> {
         }
         let expansion_sources_created = sources.len() as u32;
 
-        // Social expansion: route deduped queries as social topics too.
-        // This creates the social flywheel — expansion from social-sourced
-        // tensions stays in the social channel instead of always going web.
         let social_count = deduped.len().min(MAX_EXPANSION_SOCIAL_TOPICS);
         let social_expansion_topics = deduped[..social_count].to_vec();
 
@@ -186,7 +172,8 @@ impl<'a> Expansion<'a> {
         ExpansionOutput {
             sources,
             social_expansion_topics,
-            events: expansion_events,
+            consumed_signal_ids,
+            query_embeddings,
             expansion_deferred_expanded: deferred_expanded,
             expansion_queries_collected: queries_collected,
             expansion_sources_created,
@@ -197,8 +184,6 @@ impl<'a> Expansion<'a> {
 
 // --- Helpers ---
 
-/// Token-based Jaccard similarity for query dedup.
-/// Uses word overlap rather than substring matching to preserve specific long-tail queries.
 fn jaccard_similarity(a: &str, b: &str) -> f64 {
     let a_lower = a.to_lowercase();
     let b_lower = b.to_lowercase();

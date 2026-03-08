@@ -6,8 +6,11 @@ pub mod events;
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, Context, Events};
 
+use rootsignal_common::events::SystemEvent;
+
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
+use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scrape::events::ScrapeEvent;
@@ -32,7 +35,6 @@ pub mod handlers {
         let (graph, budget) = match (deps.graph.as_deref(), deps.budget.as_ref()) {
             (Some(g), Some(b)) => (g, b),
             _ => {
-                ctx.logger.debug("Skipped signal expansion: missing graph or budget");
                 return Ok(events![ExpansionEvent::ExpansionCompleted {
                     social_expansion_topics: Vec::new(),
                     expansion_deferred_expanded: 0,
@@ -43,7 +45,7 @@ pub mod handlers {
             }
         };
 
-        // Source metrics — preamble to expansion
+        // Source metrics (Phase 1f deferred — still returns Events)
         let mut all_events = if let Some(region) = state.run_scope.region() {
             let all_sources = state
                 .source_plan
@@ -69,7 +71,7 @@ pub mod handlers {
             budget.log_status();
         }
 
-        // Signal expansion
+        // Signal expansion + end-of-run discovery
         let region_name = state.run_scope.region().map(|r| r.name.as_str());
         let expansion = Expansion::new(graph, &*deps.embedder);
 
@@ -86,7 +88,45 @@ pub mod handlers {
         )
         .await;
 
-        all_events.extend(output.events);
+        // Consumed signal IDs from deferred expansion
+        if !output.expansion.consumed_signal_ids.is_empty() {
+            all_events.push(SystemEvent::ImpliedQueriesConsumed {
+                signal_ids: output.expansion.consumed_signal_ids,
+            });
+        }
+
+        // Query embeddings from expansion
+        for qe in output.expansion.query_embeddings {
+            all_events.push(SystemEvent::QueryEmbeddingStored {
+                canonical_key: qe.canonical_key,
+                embedding: qe.embedding,
+            });
+        }
+
+        // Sources from signal expansion
+        if !output.expansion.sources.is_empty() {
+            all_events.push(DiscoveryEvent::SourcesDiscovered {
+                sources: output.expansion.sources,
+                discovered_by: "signal_expansion".into(),
+            });
+        }
+
+        // Sources from end-of-run discovery
+        if !output.discovery_sources.is_empty() {
+            all_events.push(DiscoveryEvent::SourcesDiscovered {
+                sources: output.discovery_sources,
+                discovered_by: "source_finder".into(),
+            });
+        }
+
+        // Query embeddings from end-of-run discovery
+        for qe in output.discovery_query_embeddings {
+            all_events.push(SystemEvent::QueryEmbeddingStored {
+                canonical_key: qe.canonical_key,
+                embedding: qe.embedding,
+            });
+        }
+
         all_events.push(ExpansionEvent::ExpansionCompleted {
             social_expansion_topics: output.expansion.social_expansion_topics,
             expansion_deferred_expanded: output.expansion.expansion_deferred_expanded,
@@ -94,6 +134,8 @@ pub mod handlers {
             expansion_sources_created: output.expansion.expansion_sources_created,
             expansion_social_topics_queued: output.expansion.expansion_social_topics_queued,
         });
+
+        // End-of-run topic scrape
         if let Some(mut topic_scrape) = output.topic_scrape {
             let scrape_events = topic_scrape.take_events();
             let run_id = deps.run_id;

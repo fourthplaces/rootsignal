@@ -7,24 +7,20 @@ use tracing::info;
 use rootsignal_common::SourceNode;
 use rootsignal_graph::GraphQueries;
 
-use seesaw_core::Events;
-use rootsignal_common::events::SystemEvent;
 use crate::core::aggregate::PipelineState;
 use ai_client::Agent;
-use crate::domains::discovery::activities::source_finder::SourceFinder;
+use crate::domains::discovery::activities::source_finder::{QueryEmbedding, SourceFinder};
 use crate::infra::embedder::TextEmbedder;
 use crate::core::engine::ScoutEngineDeps;
 use self::expansion::{Expansion, ExpansionOutput};
-use crate::domains::scrape::activities::{register_sources_events, ScrapeOutput};
+use crate::domains::scrape::activities::ScrapeOutput;
 use crate::domains::scheduling::activities::budget::BudgetTracker;
 
 /// Output from the full expansion + end-of-run discovery activity.
 pub struct ExpansionActivityOutput {
-    /// Expansion output for state application.
     pub expansion: ExpansionOutput,
-    /// Events from source registration.
-    pub events: Events,
-    /// Scrape output from end-of-run topic discovery (if any).
+    pub discovery_sources: Vec<SourceNode>,
+    pub discovery_query_embeddings: Vec<QueryEmbedding>,
     pub topic_scrape: Option<ScrapeOutput>,
 }
 
@@ -43,17 +39,7 @@ pub async fn expand_and_discover(
 ) -> ExpansionActivityOutput {
     // Signal expansion — create sources from implied queries
     let expansion_queries = state.expansion_queries.clone();
-    let mut expansion_output = expansion.generate_expansion_sources(expansion_queries).await;
-    let expansion_events = std::mem::replace(&mut expansion_output.events, Events::new());
-
-    let mut collected_events = Events::new();
-    collected_events.extend(expansion_events);
-    if !expansion_output.sources.is_empty() {
-        collected_events.extend(register_sources_events(
-            expansion_output.sources.clone(),
-            "signal_expansion",
-        ));
-    }
+    let expansion_output = expansion.generate_expansion_sources(expansion_queries).await;
 
     // End-of-run discovery
     let end_discoverer = SourceFinder::new(
@@ -63,19 +49,7 @@ pub async fn expand_and_discover(
         budget,
     )
     .with_embedder(embedder);
-    let (end_stats, end_social_topics, end_sources, query_embeddings) = end_discoverer.run().await;
-    for qe in query_embeddings {
-        collected_events.push(SystemEvent::QueryEmbeddingStored {
-            canonical_key: qe.canonical_key,
-            embedding: qe.embedding,
-        });
-    }
-    if !end_sources.is_empty() {
-        collected_events.extend(register_sources_events(
-            end_sources,
-            "source_finder",
-        ));
-    }
+    let (end_stats, end_social_topics, end_sources, discovery_query_embeddings) = end_discoverer.run().await;
     if end_stats.actor_sources + end_stats.gap_sources > 0 {
         info!("{end_stats}");
     }
@@ -104,7 +78,8 @@ pub async fn expand_and_discover(
 
     ExpansionActivityOutput {
         expansion: expansion_output,
-        events: collected_events,
+        discovery_sources: end_sources,
+        discovery_query_embeddings,
         topic_scrape,
     }
 }
