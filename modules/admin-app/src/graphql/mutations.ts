@@ -144,6 +144,14 @@ export const DELETE_SOURCE = gql`
   }
 `;
 
+export const DELETE_ACTOR = gql`
+  mutation DeleteActor($id: UUID!) {
+    deleteActor(id: $id) {
+      success
+    }
+  }
+`;
+
 export const SUBMIT_SOURCE = gql`
   mutation SubmitSource($url: String!) {
     submitSource(url: $url) {

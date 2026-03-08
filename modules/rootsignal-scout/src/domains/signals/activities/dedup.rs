@@ -24,6 +24,14 @@ use crate::domains::signals::activities::dedup_utils::{dedup_verdict, is_owned_s
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::{ExtractedBatch, PipelineState};
 
+/// Per-signal URL when available, falling back to the batch-level URL.
+fn signal_url<'a>(node: &'a rootsignal_common::Node, batch_url: &'a str) -> &'a str {
+    node.meta()
+        .map(|m| m.url.as_str())
+        .filter(|u| !u.is_empty())
+        .unwrap_or(batch_url)
+}
+
 /// Run 4-layer dedup on an extracted batch, returning domain types.
 pub async fn deduplicate_extracted_batch(
     url: &str,
@@ -104,6 +112,7 @@ pub async fn deduplicate_extracted_batch(
         let key = (normalize_title(node.title()), node.node_type());
         let global_hit = global_matches.get(&key).map(|(id, existing_ck)| (*id, existing_ck.as_str()));
 
+        let sig_url = signal_url(&node, url);
         match dedup_verdict(&ck, node.node_type(), global_hit, None, None) {
             DedupVerdict::Corroborate {
                 existing_id,
@@ -113,11 +122,11 @@ pub async fn deduplicate_extracted_batch(
                 info!(
                     existing_id = %existing_id,
                     title = node.title(),
-                    new_source = url,
+                    new_source = sig_url,
                     "Global title+type match from different source"
                 );
                 let (corr, verdict) = build_corroboration(
-                    existing_id, node.node_type(), url, similarity,
+                    existing_id, node.node_type(), sig_url, similarity,
                     &content_hash_str, deps, &mut corroboration_counts,
                 ).await?;
                 corroborations.push(corr);
@@ -131,10 +140,10 @@ pub async fn deduplicate_extracted_batch(
                 info!(
                     existing_id = %existing_id,
                     title = node.title(),
-                    source = url,
+                    source = sig_url,
                     "Same-source title match"
                 );
-                verdicts.push(build_freshness(existing_id, node.node_type(), url));
+                verdicts.push(build_freshness(existing_id, node.node_type(), sig_url));
             }
             DedupVerdict::Create => {
                 remaining_nodes.push(node);
@@ -172,6 +181,7 @@ pub async fn deduplicate_extracted_batch(
             .map(|(id, ck)| (*id, ck.as_str()));
 
         if fp_hit.is_some() {
+            let sig_url = signal_url(&node, url);
             match dedup_verdict(&ck, node.node_type(), fp_hit, None, None) {
                 DedupVerdict::Corroborate {
                     existing_id,
@@ -181,11 +191,11 @@ pub async fn deduplicate_extracted_batch(
                     info!(
                         existing_id = %existing_id,
                         title = node.title(),
-                        new_source = url,
+                        new_source = sig_url,
                         "Fingerprint match from different source"
                     );
                     let (corr, verdict) = build_corroboration(
-                        existing_id, node.node_type(), url, similarity,
+                        existing_id, node.node_type(), sig_url, similarity,
                         &content_hash_str, deps, &mut corroboration_counts,
                     ).await?;
                     corroborations.push(corr);
@@ -198,10 +208,10 @@ pub async fn deduplicate_extracted_batch(
                     info!(
                         existing_id = %existing_id,
                         title = node.title(),
-                        source = url,
+                        source = sig_url,
                         "Fingerprint match same source"
                     );
-                    verdicts.push(build_freshness(existing_id, node.node_type(), url));
+                    verdicts.push(build_freshness(existing_id, node.node_type(), sig_url));
                 }
                 DedupVerdict::Create => unreachable!("fingerprint hit always resolves to Refresh or Corroborate"),
             }
@@ -293,6 +303,7 @@ pub async fn deduplicate_extracted_batch(
             .as_ref()
             .map(|(id, ty, u, s)| (*id, *ty, u.as_str(), *s));
 
+        let sig_url = signal_url(&node, url);
         match dedup_verdict(&ck, node_type, None, cache_match, graph_match) {
             DedupVerdict::Refresh {
                 existing_id,
@@ -321,7 +332,7 @@ pub async fn deduplicate_extracted_batch(
                         );
                     }
                 }
-                verdicts.push(build_freshness(existing_id, node_type, url));
+                verdicts.push(build_freshness(existing_id, node_type, sig_url));
             }
             DedupVerdict::Corroborate {
                 existing_id,
@@ -351,7 +362,7 @@ pub async fn deduplicate_extracted_batch(
                     }
                 }
                 let (corr, verdict) = build_corroboration(
-                    existing_id, node_type, url, similarity,
+                    existing_id, node_type, sig_url, similarity,
                     &content_hash_str, deps, &mut corroboration_counts,
                 ).await?;
                 corroborations.push(corr);
@@ -380,10 +391,10 @@ pub async fn deduplicate_extracted_batch(
                 let citation = NewCitation {
                     citation_id: Uuid::new_v4(),
                     signal_id: node_id,
-                    url: url.to_string(),
+                    url: sig_url.to_string(),
                     content_hash: content_hash_str.clone(),
                     snippet: node.meta().map(|m| m.summary.clone()),
-                    channel_type: Some(rootsignal_common::channel_type(url)),
+                    channel_type: Some(rootsignal_common::channel_type(sig_url)),
                 };
 
                 let resolved_actor = resolve_actor_inline(
@@ -395,7 +406,7 @@ pub async fn deduplicate_extracted_batch(
                     node_id,
                     node_type,
                     content_hash: content_hash_str.clone(),
-                    url: url.to_string(),
+                    url: sig_url.to_string(),
                     canonical_key: ck.clone(),
                     resource_tags: node_resource_tags,
                     signal_tags: node_signal_tags,

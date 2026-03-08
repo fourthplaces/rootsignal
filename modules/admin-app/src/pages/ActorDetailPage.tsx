@@ -1,6 +1,9 @@
-import { useParams, Link } from "react-router";
-import { useQuery } from "@apollo/client";
+import { useState } from "react";
+import { useParams, Link, useNavigate } from "react-router";
+import { useQuery, useMutation } from "@apollo/client";
 import { ACTOR_DETAIL } from "@/graphql/queries";
+import { DELETE_ACTOR } from "@/graphql/mutations";
+import { PromptDialog } from "@/components/PromptDialog";
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
   Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -48,7 +51,15 @@ type ActorDetail = {
 
 export function ActorDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { data, loading } = useQuery(ACTOR_DETAIL, { variables: { id } });
+  const [deleteActor] = useMutation(DELETE_ACTOR);
+  const [showDelete, setShowDelete] = useState(false);
+
+  const handleDelete = async () => {
+    await deleteActor({ variables: { id } });
+    navigate("/actors");
+  };
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
@@ -68,7 +79,15 @@ export function ActorDetailPage() {
           </Link>
           <span className="text-muted-foreground">/</span>
         </div>
-        <h1 className="text-xl font-semibold">{actor.name}</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">{actor.name}</h1>
+          <button
+            onClick={() => setShowDelete(true)}
+            className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+          >
+            Delete
+          </button>
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
             {actor.actorType}
@@ -249,6 +268,15 @@ export function ActorDetailPage() {
           </table>
         )}
       </div>
+      {showDelete && (
+        <PromptDialog
+          title="Delete Actor?"
+          description={`This will permanently remove "${actor.name}" and all its relationships. This cannot be undone.`}
+          inputType="confirm"
+          onCancel={() => setShowDelete(false)}
+          onConfirm={handleDelete}
+        />
+      )}
     </div>
   );
 }

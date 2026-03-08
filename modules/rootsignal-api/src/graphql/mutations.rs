@@ -11,7 +11,7 @@ use uuid::Uuid;
 use rootsignal_common::{
     Config, DiscoveryMethod, Region, ScoutScope, SourceNode, SourceRole,
 };
-use rootsignal_graph::GraphStore;
+use rootsignal_graph::{CachedReader, GraphStore};
 use rootsignal_scout::store::{EngineFactory, SignalReaderFactory};
 use crate::jwt::{self, JwtService};
 use crate::scout_runner::ScoutRunner;
@@ -776,6 +776,33 @@ impl MutationRoot {
         Ok(ScoutResult {
             success: true,
             message: Some(format!("Source {} deleted", source.canonical_key)),
+        })
+    }
+
+    /// Delete an actor and all its edges.
+    #[graphql(guard = "AdminGuard")]
+    async fn delete_actor(&self, ctx: &Context<'_>, id: Uuid) -> Result<ScoutResult> {
+        use rootsignal_common::events::SystemEvent;
+
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let actor = reader
+            .actor_detail(id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load actor: {e}")))?
+            .ok_or_else(|| async_graphql::Error::new(format!("Actor {id} not found")))?;
+
+        let engine = require_engine(ctx)?;
+        engine
+            .emit(SystemEvent::OrphanedActorsCleaned {
+                actor_ids: vec![id],
+            })
+            .settled()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to delete actor: {e}")))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Actor '{}' deleted", actor.name)),
         })
     }
 

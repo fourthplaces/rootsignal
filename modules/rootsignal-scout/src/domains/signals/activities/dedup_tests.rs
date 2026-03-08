@@ -388,6 +388,68 @@ async fn same_author_in_batch_creates_one_actor() {
     assert_eq!(created_actors[0], created_actors[1], "both signals should have the same actor_id");
 }
 
+/// Two signals from different post URLs under the same Instagram profile
+/// should resolve to one actor, not one per post.
+#[tokio::test]
+async fn same_author_across_post_urls_creates_one_actor() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let profile_url = "https://www.instagram.com/local_org";
+
+    let node1 = tension_with_url("Event A", 44.93, -93.26, "https://www.instagram.com/p/POST111");
+    let node2 = tension_with_url("Event B", 44.95, -93.27, "https://www.instagram.com/p/POST222");
+    let meta_id1 = node1.meta().unwrap().id;
+    let meta_id2 = node2.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id1, "Local Org".to_string());
+    author_actors.insert(meta_id2, "Local Org".to_string());
+
+    let result = run_dedup(
+        profile_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node1, node2],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    let identified_count = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::Identified { .. }))
+        .count();
+    assert_eq!(identified_count, 1, "expected 1 ActorIdentified, got {identified_count}");
+
+    let linked_count = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::LinkedToSignal { .. }))
+        .count();
+    assert_eq!(linked_count, 2, "expected 2 LinkedToSignal, got {linked_count}");
+
+    // Both signals should reference the same actor
+    let actor_ids: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::Identified { actor_id, .. } => Some(*actor_id),
+            _ => None,
+        })
+        .collect();
+    let linked_ids: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::LinkedToSignal { actor_id, .. } => Some(*actor_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(linked_ids.len(), 2);
+    assert_eq!(linked_ids[0], actor_ids[0], "first signal should link to the identified actor");
+    assert_eq!(linked_ids[1], actor_ids[0], "second signal should link to the identified actor");
+}
+
 // ---------------------------------------------------------------------------
 // Layer 2.75: Fingerprint dedup (url, node_type)
 // ---------------------------------------------------------------------------
@@ -651,4 +713,90 @@ async fn fingerprint_batch_with_duplicate_urls_deduplicates() {
     .await;
 
     assert_eq!(count_refreshed(&result), 2, "both signals with same URL should refresh");
+}
+
+// ---------------------------------------------------------------------------
+// Per-signal URL: citations and verdicts use node URL, not batch URL
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn created_citation_uses_per_signal_url_not_batch_url() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let account_url = "https://instagram.com/sanctuarysupplydepot";
+    let post_url = "https://instagram.com/p/POST123";
+    let node = tension_with_url("Volunteer Call", 44.95, -93.27, post_url);
+    let node_id = node.id();
+
+    let result = run_dedup(
+        account_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert_eq!(result.created.len(), 1);
+    assert_eq!(
+        result.created[0].citation.url, post_url,
+        "citation should use the per-signal post URL, not the batch account URL"
+    );
+
+    let created_verdict = result.verdicts.iter().find(|v| matches!(v, DedupOutcome::Created { node_id: id, .. } if *id == node_id));
+    match created_verdict {
+        Some(DedupOutcome::Created { url, .. }) => {
+            assert_eq!(url, post_url, "verdict should use the per-signal post URL, not the batch account URL");
+        }
+        _ => panic!("expected a Created verdict"),
+    }
+}
+
+#[tokio::test]
+async fn corroborated_citation_uses_per_signal_url_not_batch_url() {
+    let store = Arc::new(MockSignalReader::new());
+    let existing_id = store.insert_signal(
+        "Volunteer Call",
+        NodeType::Concern,
+        "https://other-source.org/page",
+    );
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let account_url = "https://instagram.com/sanctuarysupplydepot";
+    let post_url = "https://instagram.com/p/POST456";
+
+    let result = run_dedup(
+        account_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_with_url("Volunteer Call", 44.95, -93.27, post_url)],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert_eq!(result.corroborations.len(), 1);
+    assert_eq!(result.corroborations[0].signal_id, existing_id);
+    assert_eq!(
+        result.corroborations[0].url, post_url,
+        "corroboration should use the per-signal post URL, not the batch account URL"
+    );
+    assert_eq!(
+        result.corroborations[0].citation.url, post_url,
+        "corroboration citation should use the per-signal post URL, not the batch account URL"
+    );
 }
