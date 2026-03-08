@@ -17,10 +17,12 @@ use rootsignal_common::{
 
 use crate::core::aggregate::ExtractedBatch;
 use crate::core::engine::ScoutEngineDeps;
-use crate::core::extractor::ResourceTag;
+use crate::core::extractor::{ResourceTag, SignalExtractor};
 use crate::domains::enrichment::activities::link_promoter::{self, CollectedLink};
 
 use super::types::{batch_title_dedup, score_and_filter, ScrapeOutput, UrlExtraction};
+
+const EXTRACTION_BATCH_SIZE: usize = 5;
 
 /// Scrape social media accounts, feed posts through LLM extraction.
 /// Returns accumulated `ScrapeOutput` with events and state updates.
@@ -168,7 +170,6 @@ pub(crate) async fn scrape_social_sources(
             let canonical_key = canonical_key.clone();
             let source_url = source_url.clone();
             let platform = account.platform;
-            let is_reddit = matches!(platform, SocialPlatform::Reddit);
             let actor_prefix = actor_prefixes.get(&canonical_key).cloned();
             let fetcher = fetcher.clone();
             let extractor = extractor.clone();
@@ -200,8 +201,7 @@ pub(crate) async fn scrape_social_sources(
                 }
 
                 // --- Media channel: stories + short videos ---
-                let mut media_texts: Vec<String> = Vec::new();
-                let mut media_permalink_map: HashMap<String, String> = HashMap::new();
+                let mut media_items: Vec<ContentItem> = Vec::new();
                 if fetch_media {
                     let stories = fetcher.stories(&identifier).await.unwrap_or_default();
                     let videos = fetcher.short_videos(&identifier, 10).await.unwrap_or_default();
@@ -212,16 +212,18 @@ pub(crate) async fn scrape_social_sources(
                         ));
                     }
                     for (i, story) in stories.iter().enumerate() {
-                        if let Some(ref url) = story.permalink {
-                            media_permalink_map.insert(format!("story_{}", i + 1), url.clone());
-                        }
-                        media_texts.push(super::shared::format_story(i, story));
+                        media_items.push(ContentItem {
+                            text: super::shared::format_story(i, story),
+                            key: format!("story_{}", i + 1),
+                            permalink: story.permalink.clone(),
+                        });
                     }
                     for (i, video) in videos.iter().enumerate() {
-                        if let Some(ref url) = video.permalink {
-                            media_permalink_map.insert(format!("video_{}", i + 1), url.clone());
-                        }
-                        media_texts.push(super::shared::format_short_video(i, video));
+                        media_items.push(ContentItem {
+                            text: super::shared::format_short_video(i, video),
+                            key: format!("video_{}", i + 1),
+                            permalink: video.permalink.clone(),
+                        });
                     }
                 }
 
@@ -232,169 +234,64 @@ pub(crate) async fn scrape_social_sources(
                     .flat_map(|p| p.mentions.iter().cloned())
                     .collect();
 
-                if is_reddit {
-                    // Reddit: batch posts 10 at a time for extraction
-                    let batches: Vec<_> = posts.chunks(10).collect();
-                    let mut all_nodes = Vec::new();
-                    let mut all_resource_tags = Vec::new();
-                    let mut all_signal_tags = Vec::new();
-                    let mut all_author_actors: HashMap<Uuid, String> = HashMap::new();
-                    let mut combined_all = String::new();
-                    for batch in batches {
-                        let permalink_map: HashMap<String, String> = batch
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, p)| {
-                                p.permalink.as_ref().map(|url| (format!("post_{}", i + 1), url.clone()))
-                            })
-                            .collect();
+                // Build content items: posts first, then media
+                let mut items: Vec<ContentItem> = posts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| ContentItem {
+                        text: super::shared::format_post(i, p),
+                        key: format!("post_{}", i + 1),
+                        permalink: p.permalink.clone(),
+                    })
+                    .collect();
+                items.extend(media_items);
 
-                        let mut combined_text: String = batch
-                            .iter()
-                            .enumerate()
-                            .map(|(i, p)| super::shared::format_post(i, p))
-                            .collect::<Vec<_>>()
-                            .join("\n\n");
-                        if combined_text.is_empty() {
-                            continue;
-                        }
-                        if let Some(ref prefix) = actor_prefix {
-                            combined_text = format!("{prefix}{combined_text}");
-                        }
-                        combined_all.push_str(&combined_text);
-                        match extractor.extract(&combined_text, &source_url).await {
-                            Ok(result) => {
-                                if !result.rejected.is_empty() {
-                                    logger.info(format!(
-                                        "{source_url}: reddit batch — {} signals, {} rejected",
-                                        result.nodes.len(), result.rejected.len(),
-                                    ));
-                                }
-                                let mut nodes = result.nodes;
-                                super::shared::resolve_source_ids(&mut nodes, &result.source_ids, &permalink_map);
-                                all_nodes.extend(nodes);
-                                all_resource_tags.extend(result.resource_tags);
-                                all_signal_tags.extend(result.signal_tags);
-                                all_author_actors.extend(result.author_actors);
-                            }
-                            Err(e) => {
-                                logger.warn(format!("{source_url}: reddit batch extraction failed — {e}"));
-                            }
-                        }
-                    }
-                    if all_nodes.is_empty() && post_count > 0 {
-                        let posts_with_text = posts.iter().filter(|p| p.text.as_ref().is_some_and(|t| !t.is_empty())).count();
-                        let preview: String = combined_all.chars().take(500).collect();
+                if items.is_empty() {
+                    return None;
+                }
+
+                let content_count = items.len();
+                let posts_with_text = posts.iter().filter(|p| p.text.as_ref().is_some_and(|t| !t.is_empty())).count();
+                logger.info(format!(
+                    "{source_url}: {content_count} items ({posts_with_text}/{post_count} posts have text)",
+                ));
+
+                let result = extract_content_batches(
+                    items,
+                    actor_prefix.as_deref(),
+                    extractor.as_ref(),
+                    &source_url,
+                    &logger,
+                ).await;
+
+                if result.nodes.is_empty() {
+                    if post_count > 0 {
+                        let preview: String = result.combined_text.chars().take(500).collect();
                         logger.warn(format!(
-                            "{source_url}: LLM returned 0 signals from {post_count} posts ({posts_with_text} have text, {} bytes). Content preview:\n{preview}",
-                            combined_all.len(),
+                            "{source_url}: 0 signals from {content_count} items. Preview:\n{preview}",
                         ));
                     }
-                    if all_nodes.is_empty() && media_texts.is_empty() {
-                        return None;
-                    }
-                    logger.info(format!("{source_url}: {post_count} posts → {} signals", all_nodes.len()));
-                    Some(SocialFetchResult {
-                        canonical_key,
-                        source_url,
-                        platform,
-                        combined_text: combined_all,
-                        nodes: all_nodes,
-                        resource_tags: all_resource_tags,
-                        signal_tags: all_signal_tags,
-                        author_actors: all_author_actors,
-                        post_count,
-                        mentions: source_mentions,
-                        newest_published_at,
-                    })
-                } else {
-                    // Instagram/Facebook/Twitter/TikTok: combine all content then extract
-                    let mut permalink_map: HashMap<String, String> = posts
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, p)| {
-                            p.permalink.as_ref().map(|url| (format!("post_{}", i + 1), url.clone()))
-                        })
-                        .collect();
-                    permalink_map.extend(media_permalink_map);
-
-                    let mut content_parts: Vec<String> = posts
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| super::shared::format_post(i, p))
-                        .collect();
-                    content_parts.extend(media_texts);
-
-                    let mut combined_text = content_parts.join("\n\n");
-                    if combined_text.is_empty() {
-                        return None;
-                    }
-                    if let Some(ref prefix) = actor_prefix {
-                        combined_text = format!("{prefix}{combined_text}");
-                    }
-                    let content_count = content_parts.len();
-                    let posts_with_text = posts.iter().filter(|p| p.text.as_ref().is_some_and(|t| !t.is_empty())).count();
-                    logger.info(format!(
-                        "{source_url}: sending {content_count} items to LLM ({posts_with_text}/{post_count} posts have text, {} bytes)",
-                        combined_text.len(),
-                    ));
-                    let mut result = match extractor.extract(&combined_text, &source_url).await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            logger.warn(format!("{source_url}: extraction failed — {e}"));
-                            return None;
-                        }
-                    };
-                    // Retry once when LLM returns nothing from substantial content
-                    if result.nodes.is_empty() && result.raw_signal_count == 0 && content_count >= 5 {
-                        logger.info(format!("{source_url}: 0 signals from {content_count} items, retrying"));
-                        result = match extractor.extract(&combined_text, &source_url).await {
-                            Ok(r) => r,
-                            Err(e) => {
-                                logger.warn(format!("{source_url}: retry extraction failed — {e}"));
-                                return None;
-                            }
-                        };
-                    }
-                    super::shared::resolve_source_ids(&mut result.nodes, &result.source_ids, &permalink_map);
-                    if result.nodes.is_empty() {
-                        if result.raw_signal_count == 0 {
-                            let preview: String = combined_text.chars().take(500).collect();
-                            logger.warn(format!(
-                                "{source_url}: LLM returned 0 signals from {content_count} items. Content preview:\n{preview}",
-                            ));
-                        } else {
-                            logger.info(format!(
-                                "{source_url}: LLM returned {} signals but all rejected ({} not firsthand) from {content_count} items",
-                                result.raw_signal_count,
-                                result.rejected.len(),
-                            ));
-                        }
-                    } else {
-                        let rejected = result.rejected.len();
-                        if rejected > 0 {
-                            logger.info(format!(
-                                "{source_url}: {content_count} items → {} signals ({rejected} rejected)",
-                                result.nodes.len(),
-                            ));
-                        } else {
-                            logger.info(format!("{source_url}: {content_count} items → {} signals", result.nodes.len()));
-                        }
-                    }
-                    Some(SocialFetchResult {
-                        canonical_key,
-                        source_url,
-                        platform,
-                        combined_text,
-                        nodes: result.nodes,
-                        resource_tags: result.resource_tags,
-                        signal_tags: result.signal_tags,
-                        author_actors: result.author_actors.into_iter().collect(),
-                        post_count,
-                        mentions: source_mentions,
-                        newest_published_at,
-                    })
+                    return None;
                 }
+
+                logger.info(format!(
+                    "{source_url}: {content_count} items → {} signals",
+                    result.nodes.len(),
+                ));
+
+                Some(SocialFetchResult {
+                    canonical_key,
+                    source_url,
+                    platform,
+                    combined_text: result.combined_text,
+                    nodes: result.nodes,
+                    resource_tags: result.resource_tags,
+                    signal_tags: result.signal_tags,
+                    author_actors: result.author_actors,
+                    post_count,
+                    mentions: source_mentions,
+                    newest_published_at,
+                })
             }));
         }
 
@@ -483,4 +380,99 @@ pub(crate) async fn scrape_social_sources(
         ));
         output
     }
+
+/// A single content item (post, story, or video) ready for LLM extraction.
+struct ContentItem {
+    /// Formatted text (e.g. "--- Post 3 ---\n...")
+    text: String,
+    /// Permalink key (e.g. "post_3", "story_1") for source ID resolution.
+    key: String,
+    /// Actual URL for this content item.
+    permalink: Option<String>,
+}
+
+/// Merged extraction results across all batches for one source.
+struct BatchedExtractionResult {
+    nodes: Vec<Node>,
+    resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
+    signal_tags: Vec<(Uuid, Vec<String>)>,
+    author_actors: HashMap<Uuid, String>,
+    combined_text: String,
+}
+
+/// Chunk content items into batches, extract each via LLM, merge results.
+///
+/// Each batch gets its own permalink map for source ID resolution.
+/// Failed batches are logged and skipped — one bad batch doesn't kill the source.
+async fn extract_content_batches(
+    items: Vec<ContentItem>,
+    actor_prefix: Option<&str>,
+    extractor: &dyn SignalExtractor,
+    source_url: &str,
+    logger: &Logger,
+) -> BatchedExtractionResult {
+    let mut all_nodes = Vec::new();
+    let mut all_resource_tags = Vec::new();
+    let mut all_signal_tags = Vec::new();
+    let mut all_author_actors: HashMap<Uuid, String> = HashMap::new();
+    let mut combined_text = String::new();
+
+    for chunk in items.chunks(EXTRACTION_BATCH_SIZE) {
+        // Per-batch permalink map: batch-relative indices avoid cross-batch collision
+        let permalink_map: HashMap<String, String> = chunk
+            .iter()
+            .filter_map(|item| {
+                item.permalink.as_ref().map(|url| (item.key.clone(), url.clone()))
+            })
+            .collect();
+
+        let mut batch_text: String = chunk
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        if batch_text.is_empty() {
+            continue;
+        }
+        if let Some(prefix) = actor_prefix {
+            batch_text = format!("{prefix}{batch_text}");
+        }
+        combined_text.push_str(&batch_text);
+
+        let batch_size = chunk.len();
+        logger.info(format!(
+            "{source_url}: extracting batch of {batch_size} items ({} bytes)",
+            batch_text.len(),
+        ));
+
+        match extractor.extract(&batch_text, source_url).await {
+            Ok(result) => {
+                if !result.rejected.is_empty() {
+                    logger.info(format!(
+                        "{source_url}: batch — {} signals, {} rejected",
+                        result.nodes.len(), result.rejected.len(),
+                    ));
+                }
+                let mut nodes = result.nodes;
+                super::shared::resolve_source_ids(&mut nodes, &result.source_ids, &permalink_map);
+                all_nodes.extend(nodes);
+                all_resource_tags.extend(result.resource_tags);
+                all_signal_tags.extend(result.signal_tags);
+                all_author_actors.extend(result.author_actors);
+            }
+            Err(e) => {
+                logger.warn(format!("{source_url}: batch extraction failed — {e}"));
+            }
+        }
+    }
+
+    BatchedExtractionResult {
+        nodes: all_nodes,
+        resource_tags: all_resource_tags,
+        signal_tags: all_signal_tags,
+        author_actors: all_author_actors,
+        combined_text,
+    }
+}
 
