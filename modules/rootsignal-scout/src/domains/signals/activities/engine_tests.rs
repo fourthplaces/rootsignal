@@ -884,11 +884,6 @@ async fn actor_location_emits_events_on_response_complete() {
         "expected ActorLocationIdentified, got: {names:?}"
     );
 
-    // ActorsLocated enrichment fact emitted
-    assert!(
-        names.iter().any(|n| n.contains("actors_located")),
-        "expected ActorsLocated, got: {names:?}"
-    );
 }
 
 // ---------------------------------------------------------------------------

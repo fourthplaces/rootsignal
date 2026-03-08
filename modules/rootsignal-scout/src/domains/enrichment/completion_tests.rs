@@ -6,8 +6,8 @@
 //! One trampoline collapses fan-in:
 //!   review gate ([SystemEvent, SignalEvent]) → EnrichmentReady (1 event)
 //!
-//! `run_enrichment` fires once on EnrichmentReady, runs all 4 enrichment steps,
-//! emits all 4 fact events + ExpansionReady in a single handler output.
+//! `run_enrichment` fires once on EnrichmentReady, runs all enrichment steps,
+//! then emits ExpansionReady in a single handler output.
 
 use std::sync::Arc;
 
@@ -45,19 +45,13 @@ async fn missing_deps_completes_enrichment_via_dedup_no_new_signals() {
     engine.emit(sources_prepared_event(false)).settled().await.unwrap();
 
     // Each scrape completion triggers dedup → NoNewSignals → enrichment handlers.
-    // No deps (region/graph/AI) → handlers skip work but emit their facts.
+    // No deps (region/graph/AI) → handlers skip work but still emit ExpansionReady.
     // review_complete() is 0==0=true, response_scrape_done() becomes true.
     emit_response_scrape_done(&engine).await;
 
     assert!(
         has_expansion_completed(&captured),
-        "All handlers should emit their fact when deps are missing, triggering expansion"
-    );
-
-    let state = engine.singleton::<PipelineState>();
-    assert!(
-        state.all_enrichment_complete(),
-        "All 4 enrichment facts should be recorded (with skip) when deps are missing"
+        "Enrichment should complete and trigger expansion even when deps are missing"
     );
 }
 
@@ -82,11 +76,6 @@ async fn response_scrape_skipped_completes_enrichment_via_dedup() {
         .await
         .unwrap();
 
-    let state = engine.singleton::<PipelineState>();
-    assert!(
-        state.all_enrichment_complete(),
-        "All enrichment facts should be recorded (with skip) when response scrape is skipped"
-    );
     assert!(
         has_expansion_completed(&captured),
         "ExpansionCompleted should fire — skipped response scrape still unlocks expansion"
@@ -160,10 +149,6 @@ async fn zero_signals_skips_review_gate() {
     assert_eq!(state.signals_awaiting_review, 0);
     assert_eq!(state.signals_review_completed, 0);
     assert!(state.review_complete(), "review_complete() should be true when 0==0");
-    assert!(
-        state.all_enrichment_complete(),
-        "All enrichment facts should be set (handlers skipped due to missing deps)"
-    );
     assert!(
         has_expansion_completed(&captured),
         "Expansion should fire — zero signals means review gate passes immediately"

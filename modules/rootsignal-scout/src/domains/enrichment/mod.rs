@@ -75,7 +75,7 @@ pub mod handlers {
 
                     if !consumed_pin_ids.is_empty() {
                         info!(count = consumed_pin_ids.len(), "Emitting PinsConsumed for consumed pins");
-                        all_events.push(rootsignal_common::events::SystemEvent::PinsConsumed {
+                        all_events.push(SystemEvent::PinsConsumed {
                             pin_ids: consumed_pin_ids,
                         });
                     }
@@ -83,58 +83,85 @@ pub mod handlers {
                     info!("=== Actor Extraction ===");
                     let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
                     let ai = deps.ai.as_ref().expect("guarded by enrichment trigger");
-                    let (actor_stats, actor_events) =
-                        activities::actor_extractor::run_actor_extraction(
-                            &*deps.store,
-                            graph,
-                            ai.as_ref(),
-                            min_lat,
-                            max_lat,
-                            min_lng,
-                            max_lng,
-                        )
-                        .await;
-                    info!("{actor_stats}");
-                    all_events.extend(actor_events);
+                    let result = activities::actor_extractor::run_actor_extraction(
+                        &*deps.store,
+                        graph,
+                        ai.as_ref(),
+                        min_lat,
+                        max_lat,
+                        min_lng,
+                        max_lng,
+                    )
+                    .await;
+                    info!("{}", result.stats);
+                    for actor in result.new_actors {
+                        all_events.push(SystemEvent::ActorIdentified {
+                            actor_id: actor.actor_id,
+                            name: actor.name,
+                            actor_type: actor.actor_type,
+                            canonical_key: actor.canonical_key,
+                            domains: vec![],
+                            social_urls: vec![],
+                            description: String::new(),
+                            bio: None,
+                            location_lat: actor.location_lat,
+                            location_lng: actor.location_lng,
+                            location_name: None,
+                        });
+                    }
+                    for link in result.actor_links {
+                        all_events.push(SystemEvent::ActorLinkedToSignal {
+                            actor_id: link.actor_id,
+                            signal_id: link.signal_id,
+                            role: link.role,
+                        });
+                    }
                 }
                 _ => {
                     ctx.logger.debug("Skipped actor extraction: missing region or graph");
                 }
             }
         }
-        all_events.push(EnrichmentEvent::ActorsExtracted);
 
         // ── Diversity scoring ──
         if let Some(graph) = deps.graph.as_ref() {
             info!("=== Diversity Metrics ===");
-            all_events.extend(activities::diversity::compute_diversity_events(graph, &[]).await);
+            let metrics = activities::diversity::compute_diversity_scores(graph, &[]).await;
+            if !metrics.is_empty() {
+                all_events.push(SystemEvent::SignalDiversityComputed { metrics });
+            }
         } else {
             ctx.logger.debug("Skipped diversity metrics: missing graph");
         }
-        all_events.push(EnrichmentEvent::DiversityScored);
 
         // ── Actor stats ──
         if let Some(graph) = deps.graph.as_ref() {
             info!("=== Actor Stats ===");
-            all_events.extend(activities::actor_stats::compute_actor_stats_events(graph).await);
+            let stats = activities::actor_stats::compute_actor_stats(graph).await;
+            if !stats.is_empty() {
+                all_events.push(SystemEvent::ActorStatsComputed { stats });
+            }
         } else {
             ctx.logger.debug("Skipped actor stats: missing graph");
         }
-        all_events.push(EnrichmentEvent::ActorStatsComputed);
 
         // ── Actor location ──
         match deps.store.list_all_actors().await {
             Ok(actors) if !actors.is_empty() => {
-                all_events.extend(
-                    activities::actor_location::triangulate_actor_location_events(&*deps.store, &actors).await
-                );
+                for update in activities::actor_location::triangulate_all_actors(&*deps.store, &actors).await {
+                    all_events.push(SystemEvent::ActorLocationIdentified {
+                        actor_id: update.actor_id,
+                        location_lat: update.lat,
+                        location_lng: update.lng,
+                        location_name: update.name,
+                    });
+                }
             }
             Ok(_) => {}
             Err(e) => {
                 ctx.logger.debug(&format!("Skipped actor location: failed to list actors — {e}"));
             }
         }
-        all_events.push(EnrichmentEvent::ActorsLocated);
 
         // Single handler → single ExpansionReady, no sibling fan-out problem
         all_events.push(crate::domains::expansion::events::ExpansionEvent::ExpansionReady);

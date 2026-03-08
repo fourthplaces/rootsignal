@@ -137,14 +137,6 @@ pub struct PipelineState {
     pub severity_inferred: bool,
 
     #[serde(default)]
-    pub actors_extracted: bool,
-    #[serde(default)]
-    pub diversity_scored: bool,
-    #[serde(default)]
-    pub actor_stats_computed: bool,
-    #[serde(default)]
-    pub actors_located: bool,
-    #[serde(default)]
     pub signals_awaiting_review: u32,
     #[serde(default)]
     pub signals_review_completed: u32,
@@ -195,10 +187,6 @@ impl PipelineState {
             similarity_computed: false,
             responses_mapped: false,
             severity_inferred: false,
-            actors_extracted: false,
-            diversity_scored: false,
-            actor_stats_computed: false,
-            actors_located: false,
             signals_awaiting_review: 0,
             signals_review_completed: 0,
             source_expansion_completed: false,
@@ -430,10 +418,6 @@ impl PipelineState {
     pub fn apply_enrichment(&mut self, event: &EnrichmentEvent) {
         match event {
             EnrichmentEvent::EnrichmentReady => self.enrichment_ready = true,
-            EnrichmentEvent::ActorsExtracted => self.actors_extracted = true,
-            EnrichmentEvent::DiversityScored => self.diversity_scored = true,
-            EnrichmentEvent::ActorStatsComputed => self.actor_stats_computed = true,
-            EnrichmentEvent::ActorsLocated => self.actors_located = true,
         }
     }
 
@@ -453,14 +437,6 @@ impl PipelineState {
 
     pub fn review_complete(&self) -> bool {
         self.signals_awaiting_review == self.signals_review_completed
-    }
-
-    pub fn all_enrichment_complete(&self) -> bool {
-        self.review_complete()
-            && self.actors_extracted
-            && self.diversity_scored
-            && self.actor_stats_computed
-            && self.actors_located
     }
 
     /// Apply a lifecycle domain event.
