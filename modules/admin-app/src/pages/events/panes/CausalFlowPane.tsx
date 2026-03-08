@@ -143,7 +143,7 @@ const HandlerNode = memo(({ data }: NodeProps) => {
     }}>
       <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span>{d.label}</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>{d.label}</span>
         {duration && <span style={{ fontSize: 9, color: "#71717a", fontStyle: "normal" }}>{duration}</span>}
       </div>
       {hasBlocks && blocks.map((block, i) => <BlockRenderer key={i} block={block} />)}
@@ -234,6 +234,11 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
         padding: "6px 10px",
         width: NODE_WIDTH,
         color: "#e4e4e7",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        direction: "rtl",
+        textAlign: "left",
       },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
