@@ -1378,6 +1378,48 @@ impl PublicGraphReader {
         Ok(signals)
     }
 
+    /// Fetch signals created by a specific scout run.
+    pub async fn signals_for_run(&self, run_id: &str, limit: i64) -> Result<(Vec<SignalBrief>, i64), neo4rs::Error> {
+        let count_cypher = "MATCH (n) WHERE n.scout_run_id = $run_id
+            AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+            RETURN count(n) AS cnt";
+        let cq = query(count_cypher).param("run_id", run_id);
+        let mut cs = self.client.execute(cq).await?;
+        let total = if let Some(row) = cs.next().await? {
+            row.get::<i64>("cnt").unwrap_or(0)
+        } else {
+            0
+        };
+
+        let cypher = "MATCH (n) WHERE n.scout_run_id = $run_id
+            AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
+                   n.confidence AS confidence, n.extracted_at AS extracted_at,
+                   n.url AS url, n.review_status AS review_status
+            ORDER BY n.confidence DESC
+            LIMIT $limit";
+        let q = query(cypher).param("run_id", run_id).param("limit", limit);
+        let mut signals = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            signals.push(SignalBrief {
+                id,
+                title: row.get("title").unwrap_or_default(),
+                signal_type: row.get("signal_type").unwrap_or_default(),
+                confidence: row.get::<f64>("confidence").unwrap_or(0.0) as f32,
+                extracted_at: row_datetime_opt_pub(&row, "extracted_at"),
+                url: row.get("url").unwrap_or_default(),
+                review_status: row.get("review_status").unwrap_or_default(),
+            });
+        }
+        Ok((signals, total))
+    }
+
     pub async fn signal_count_for_source(&self, source_id: &Uuid) -> Result<i64, neo4rs::Error> {
         let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
             WHERE n.review_status IN ['staged', 'accepted', 'live']

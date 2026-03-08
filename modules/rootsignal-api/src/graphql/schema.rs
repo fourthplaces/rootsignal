@@ -2289,22 +2289,23 @@ impl ScoutRunOutcomes {
         ctx: &Context<'_>,
         limit: Option<i32>,
     ) -> Result<OutcomePage<OutcomeSignalCreated>> {
-        let pool = get_pool(ctx)?;
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
         let limit = limit.unwrap_or(100).min(200) as i64;
-        let total = count_events_by_variant(pool, &self.run_id, "new_signal_accepted")
+
+        let (signals, total) = reader
+            .signals_for_run(&self.run_id, limit)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let rows = list_events_by_variant(pool, &self.run_id, "new_signal_accepted", limit)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let items = rows
+
+        let items = signals
             .into_iter()
-            .map(|r| OutcomeSignalCreated {
-                node_id: json_str(&r.data, "node_id").unwrap_or_default(),
-                node_type: json_str(&r.data, "node_type").unwrap_or_default(),
-                title: json_str(&r.data, "title"),
-                confidence: json_f64(&r.data, "confidence"),
-                url: json_str(&r.data, "source_url").or_else(|| json_str(&r.data, "url")),
+            .map(|s| OutcomeSignalCreated {
+                node_id: s.id.to_string(),
+                node_type: s.signal_type,
+                title: Some(s.title).filter(|t| !t.is_empty()),
+                confidence: Some(s.confidence as f64),
+                url: Some(s.url).filter(|u| !u.is_empty()),
             })
             .collect();
         Ok(OutcomePage { items, total })
