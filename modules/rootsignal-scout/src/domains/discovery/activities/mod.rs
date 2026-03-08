@@ -13,7 +13,7 @@ use seesaw_core::Events;
 use crate::domains::scheduling::activities::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
 use crate::domains::scrape::activities::register_sources_events;
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 
 /// Output from source expansion.
 pub struct SourceExpansionOutput {
@@ -28,7 +28,7 @@ pub struct SourceExpansionOutput {
 ///
 /// Pure: no state mutation. Social topics returned for caller to stash.
 pub async fn discover_expansion_sources(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     region_name: Option<&str>,
     embedder: &dyn TextEmbedder,
     ai: Option<&dyn Agent>,

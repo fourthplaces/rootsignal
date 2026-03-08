@@ -16,7 +16,7 @@ pub async fn weave_situations(deps: &ScoutEngineDeps, region: Option<&rootsignal
     let mut events = seesaw_core::Events::new();
 
     let (graph, ai, region, budget) = match (
-        deps.graph.as_ref(),
+        deps.graph.as_deref(),
         deps.ai.as_deref(),
         region,
         deps.budget.as_ref(),
@@ -104,12 +104,7 @@ pub async fn weave_situations(deps: &ScoutEngineDeps, region: Option<&rootsignal
     match discover::find_affected_situations(graph, &run_id).await {
         Ok(affected) => {
             for sit_id in &affected {
-                match rootsignal_graph::situation_temperature::compute_temperature_events(
-                    graph.client(),
-                    sit_id,
-                )
-                .await
-                {
+                match graph.compute_situation_temperature(sit_id).await {
                     Ok((components, temp_events)) => {
                         info!(
                             situation_id = %sit_id,

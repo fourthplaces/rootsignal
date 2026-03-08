@@ -13,13 +13,13 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 
 use rootsignal_common::SourceNode;
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 
 use crate::domains::scheduling::activities::metrics::Metrics;
 
 /// Compute source weight and cadence metrics, returning events.
 pub async fn compute_source_metrics(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     region_name: &str,
     all_sources: &[SourceNode],
     source_signal_counts: &HashMap<String, u32>,

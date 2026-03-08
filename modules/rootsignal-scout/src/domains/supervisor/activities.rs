@@ -27,8 +27,16 @@ pub async fn supervise(deps: &ScoutEngineDeps, region: Option<&rootsignal_common
     let notifier: Box<dyn rootsignal_scout_supervisor::notify::backend::NotifyBackend> =
         Box::new(rootsignal_scout_supervisor::notify::noop::NoopBackend);
 
+    let graph_client = match deps.graph_client.as_ref() {
+        Some(c) => c.clone(),
+        None => {
+            tracing::debug!("Skipped supervisor: missing graph_client");
+            return;
+        }
+    };
+
     let supervisor = rootsignal_scout_supervisor::supervisor::Supervisor::new(
-        gr.client().clone(),
+        graph_client,
         pg_pool.clone(),
         region.clone(),
         api_key.to_string(),
@@ -66,16 +74,7 @@ pub async fn supervise(deps: &ScoutEngineDeps, region: Option<&rootsignal_common
     }
 
     // 3. Compute cause heat — push CauseHeatComputed for non-empty scores
-    match rootsignal_graph::cause_heat::compute_cause_heat(
-        gr.client(),
-        0.7,
-        min_lat,
-        max_lat,
-        min_lng,
-        max_lng,
-    )
-    .await
-    {
+    match gr.compute_cause_heat(0.7, min_lat, max_lat, min_lng, max_lng).await {
         Ok(scores) => {
             let hot: Vec<_> = scores.into_iter().filter(|s| s.cause_heat > 0.0).collect();
             if !hot.is_empty() {

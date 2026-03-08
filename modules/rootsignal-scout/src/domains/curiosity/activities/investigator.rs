@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::{CitationNode, ScoutScope};
-use rootsignal_graph::{EvidenceSummary, GraphReader, InvestigationTarget};
+use rootsignal_graph::{EvidenceSummary, GraphQueries, InvestigationTarget};
 
 
 use rootsignal_archive::Archive;
@@ -21,7 +21,7 @@ const MAX_SIGNALS_INVESTIGATED: usize = 8;
 const MAX_QUERIES_PER_SIGNAL: usize = 3;
 
 pub struct Investigator<'a> {
-    graph: &'a GraphReader,
+    graph: &'a dyn GraphQueries,
     archive: Arc<Archive>,
     ai: &'a dyn Agent,
     region: String,
@@ -120,7 +120,7 @@ Only include genuinely relevant results. Set confidence 0.0-1.0.";
 
 impl<'a> Investigator<'a> {
     pub fn new(
-        graph: &'a GraphReader,
+        graph: &'a dyn GraphQueries,
         archive: Arc<Archive>,
         ai: &'a dyn Agent,
         region: &ScoutScope,

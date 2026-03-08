@@ -71,7 +71,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
 
-        let graph = match deps.graph.as_ref() {
+        let graph = match deps.graph.as_deref() {
             Some(g) => g,
             None => {
                 return Ok(events![SynthesisEvent::SimilarityComputed]);
@@ -79,7 +79,7 @@ pub mod handlers {
         };
 
         info!("Building similarity edges...");
-        match rootsignal_graph::similarity::compute_edges(graph.client()).await {
+        match graph.compute_similarity_edges().await {
             Ok(edges) => {
                 info!(edges = edges.len(), "Similarity edges computed");
                 let mut out = Events::new();
@@ -108,7 +108,7 @@ pub mod handlers {
 
         let (region, graph, budget) = match (
             state.run_scope.region(),
-            deps.graph.as_ref(),
+            deps.graph.as_deref(),
             deps.budget.as_ref(),
         ) {
             (Some(r), Some(g), Some(b)) => (r, g, b),
@@ -185,7 +185,7 @@ pub mod handlers {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
 
-        let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
+        let (region, graph) = match (state.run_scope.region(), deps.graph.as_deref()) {
             (Some(r), Some(g)) => (r, g),
             _ => {
                 ctx.logger.debug("Skipped severity inference: missing region or graph");
@@ -195,8 +195,8 @@ pub mod handlers {
 
         let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
 
-        let mut all_events = match rootsignal_graph::severity_inference::compute_severity_inference(
-            graph, min_lat, max_lat, min_lng, max_lng,
+        let mut all_events = match graph.compute_severity_inference(
+            min_lat, max_lat, min_lng, max_lng,
         )
         .await
         {

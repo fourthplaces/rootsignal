@@ -12,6 +12,7 @@ pub mod severity_inference;
 pub mod similarity;
 pub mod situation_temperature;
 pub mod situation_weaver;
+pub mod queries;
 #[cfg(feature = "test-utils")]
 pub mod testutil;
 pub mod writer;
@@ -35,5 +36,6 @@ SignalBrief, SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StagedS
 ConcernHub, ConcernLinkerOutcome, ConcernLinkerTarget, ConcernRespondent, ConcernResponseShape,
 UnmetTension, WeaveCandidate, WeaveSignal,
 };
+pub use queries::{GraphQueries, UnlinkedSignal};
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).
 pub use neo4rs::query;

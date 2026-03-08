@@ -96,7 +96,7 @@ pub mod handlers {
 
         let (region, graph, budget, archive) = match (
             state.run_scope.region(),
-            deps.graph.as_ref(),
+            deps.graph.as_deref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
@@ -153,7 +153,7 @@ pub mod handlers {
 
         let (region, graph, budget, archive) = match (
             state.run_scope.region(),
-            deps.graph.as_ref(),
+            deps.graph.as_deref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
@@ -353,7 +353,7 @@ pub mod handlers {
 
         let (region, graph, budget, archive) = match (
             state.run_scope.region(),
-            deps.graph.as_ref(),
+            deps.graph.as_deref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
@@ -546,7 +546,7 @@ pub mod handlers {
 
         let (region, graph, budget, archive) = match (
             state.run_scope.region(),
-            deps.graph.as_ref(),
+            deps.graph.as_deref(),
             deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {

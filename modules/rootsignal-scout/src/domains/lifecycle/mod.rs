@@ -58,7 +58,7 @@ pub mod handlers {
             // Source-targeted runs: scrape these specific URLs
             Some(sources) => activities::build_source_plan_from_list(sources),
             // Region runs: load sources from graph, select by cadence
-            None => match (state.run_scope.region(), deps.graph.as_ref()) {
+            None => match (state.run_scope.region(), deps.graph.as_deref()) {
                 (Some(region), Some(graph)) => {
                     activities::build_source_plan_from_region(graph, region).await
                 }

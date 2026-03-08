@@ -127,7 +127,7 @@ pub mod handlers {
         }
 
         // Extract actors from unlinked signals
-        if let (Some(region), Some(graph)) = (state.run_scope.region(), deps.graph.as_ref()) {
+        if let (Some(region), Some(graph)) = (state.run_scope.region(), deps.graph.as_deref()) {
             let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
             let ai = deps.ai.as_ref().expect("guarded by enrichment trigger");
             let result = activities::actor_extractor::run_actor_extraction(
@@ -145,7 +145,7 @@ pub mod handlers {
         }
 
         // Score signal diversity
-        if let Some(graph) = deps.graph.as_ref() {
+        if let Some(graph) = deps.graph.as_deref() {
             let metrics = activities::diversity::compute_diversity_scores(graph, &[]).await;
             if !metrics.is_empty() {
                 all_events.push(SystemEvent::SignalDiversityComputed { metrics });
@@ -153,7 +153,7 @@ pub mod handlers {
         }
 
         // Compute per-actor signal counts
-        if let Some(graph) = deps.graph.as_ref() {
+        if let Some(graph) = deps.graph.as_deref() {
             let stats = activities::actor_stats::compute_actor_stats(graph).await;
             if !stats.is_empty() {
                 all_events.push(SystemEvent::ActorStatsComputed { stats });

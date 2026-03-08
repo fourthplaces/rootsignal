@@ -13,7 +13,7 @@ use rootsignal_common::{
     ResourceOfferNode, GatheringNode, HelpRequestNode,
     Node, NodeType, ScoutScope, SourceNode, Urgency,
 };
-use rootsignal_graph::{GatheringFinderTarget, GraphReader, ResponseHeuristic};
+use rootsignal_graph::{GatheringFinderTarget, GraphQueries, ResponseHeuristic};
 use rootsignal_archive::Archive;
 use crate::domains::curiosity::util::{
     self, build_future_query_source, build_node_meta, region_bounds, HAIKU_MODEL, MAX_TOOL_TURNS,
@@ -290,7 +290,7 @@ pub struct GatheringFinderTargetStats {
 // =============================================================================
 
 pub struct GatheringFinderDeps<'a> {
-    pub graph: &'a GraphReader,
+    pub graph: &'a dyn GraphQueries,
     pub ai: &'a dyn Agent,
     pub tool_agent: Box<dyn Agent>,
     pub embedder: &'a dyn TextEmbedder,
@@ -304,7 +304,7 @@ pub struct GatheringFinderDeps<'a> {
 
 impl<'a> GatheringFinderDeps<'a> {
     pub fn new(
-        graph: &'a GraphReader,
+        graph: &'a dyn GraphQueries,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         ai: &'a dyn Agent,

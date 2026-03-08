@@ -8,7 +8,7 @@ use uuid::Uuid;
 use ai_client::{ai_extract, Agent};
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{DispatchType, ScoutScope, SensitivityLevel, SituationArc};
-use rootsignal_graph::{GraphReader, WeaveCandidate, WeaveSignal};
+use rootsignal_graph::{GraphQueries, WeaveCandidate, WeaveSignal};
 
 use crate::infra::embedder::TextEmbedder;
 
@@ -236,7 +236,7 @@ pub fn mark_pending(signal_ids: Vec<Uuid>, scout_run_id: &str) -> Vec<SystemEven
 
 /// Post-hoc verification of dispatches. Returns DispatchFlaggedForReview events.
 pub async fn verify_dispatches(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
 ) -> Result<Vec<SystemEvent>, Box<dyn std::error::Error + Send + Sync>> {
     let mut events = Vec::new();
 

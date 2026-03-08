@@ -15,7 +15,7 @@ use rootsignal_common::{
     Node, NodeType, ScoutScope, Severity, SourceNode,
     ConcernNode, Urgency,
 };
-use rootsignal_graph::{GraphReader, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
+use rootsignal_graph::{GraphQueries, ResponseFinderTarget, ResponseHeuristic, SituationBrief};
 use rootsignal_archive::Archive;
 use crate::domains::curiosity::util::{
     self, build_future_query_source, build_node_meta, region_bounds, HAIKU_MODEL, MAX_TOOL_TURNS,
@@ -290,7 +290,7 @@ pub struct ResponseFinderTargetStats {
 // =============================================================================
 
 pub struct ResponseFinder<'a> {
-    graph: &'a GraphReader,
+    graph: &'a dyn GraphQueries,
     ai: &'a dyn Agent,
     archive: Arc<Archive>,
     embedder: &'a dyn TextEmbedder,
@@ -305,7 +305,7 @@ pub struct ResponseFinder<'a> {
 
 impl<'a> ResponseFinder<'a> {
     pub fn new(
-        graph: &'a GraphReader,
+        graph: &'a dyn GraphQueries,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         ai: &'a dyn Agent,

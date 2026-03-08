@@ -29,7 +29,7 @@ pub mod handlers {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
 
-        let (graph, budget) = match (deps.graph.as_ref(), deps.budget.as_ref()) {
+        let (graph, budget) = match (deps.graph.as_deref(), deps.budget.as_ref()) {
             (Some(g), Some(b)) => (g, b),
             _ => {
                 ctx.logger.debug("Skipped signal expansion: missing graph or budget");
@@ -78,7 +78,7 @@ pub mod handlers {
             &expansion,
             Some(deps),
             &state,
-            &graph,
+            graph,
             region_name,
             deps.ai.as_deref(),
             budget,

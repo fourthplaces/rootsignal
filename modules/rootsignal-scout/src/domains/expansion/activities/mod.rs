@@ -5,7 +5,7 @@ pub(crate) mod expansion;
 use tracing::info;
 
 use rootsignal_common::SourceNode;
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 
 use seesaw_core::Events;
 use crate::core::aggregate::PipelineState;
@@ -34,7 +34,7 @@ pub async fn expand_and_discover(
     expansion: &Expansion<'_>,
     deps: Option<&ScoutEngineDeps>,
     state: &PipelineState,
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     region_name: Option<&str>,
     ai: Option<&dyn Agent>,
     budget: &BudgetTracker,

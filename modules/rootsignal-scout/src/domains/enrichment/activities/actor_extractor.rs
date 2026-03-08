@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::ActorType;
-use rootsignal_graph::{query, GraphReader};
+use rootsignal_graph::{GraphQueries, UnlinkedSignal};
 
 use crate::traits::SignalReader;
 
@@ -89,7 +89,7 @@ If a signal mentions no extractable actors, simply omit it. Return an empty acto
 /// Find signals with no ACTED_IN edges and extract actors from their text via LLM.
 pub async fn run_actor_extraction(
     store: &dyn SignalReader,
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     ai: &dyn Agent,
     min_lat: f64,
     max_lat: f64,
@@ -121,7 +121,7 @@ pub async fn run_actor_extraction(
 
 async fn try_extract_actors(
     store: &dyn SignalReader,
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     ai: &dyn Agent,
     min_lat: f64,
     max_lat: f64,
@@ -132,37 +132,8 @@ async fn try_extract_actors(
     let mut new_actors = Vec::new();
     let mut actor_links = Vec::new();
 
-    // Find signals with no ACTED_IN edges pointing at them, within bounding box
-    let q = query(
-        "MATCH (n)
-         WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-           AND NOT ()-[:ACTED_IN]->(n)
-           AND n.lat >= $min_lat AND n.lat <= $max_lat
-           AND n.lng >= $min_lng AND n.lng <= $max_lng
-         RETURN n.id AS id, n.title AS title, n.summary AS summary
-         ORDER BY n.extracted_at DESC
-         LIMIT 200",
-    )
-    .param("min_lat", min_lat)
-    .param("max_lat", max_lat)
-    .param("min_lng", min_lng)
-    .param("max_lng", max_lng);
-
-    let mut stream = graph.client().execute(q).await?;
-    let mut signals: Vec<SignalInfo> = Vec::new();
-    while let Some(row) = stream.next().await? {
-        let id_str: String = row.get("id").unwrap_or_default();
-        let id = match Uuid::parse_str(&id_str) {
-            Ok(id) => id,
-            Err(_) => continue,
-        };
-        let title: String = row.get("title").unwrap_or_default();
-        let summary: String = row.get("summary").unwrap_or_default();
-        if title.is_empty() && summary.is_empty() {
-            continue;
-        }
-        signals.push(SignalInfo { id, title, summary });
-    }
+    let signals_raw = graph.find_signals_without_actors(min_lat, max_lat, min_lng, max_lng).await?;
+    let signals: Vec<SignalInfo> = signals_raw.into_iter().map(|s| SignalInfo { id: s.id, title: s.title, summary: s.summary }).collect();
 
     if signals.is_empty() {
         info!("Actor extractor: no signals without actors found");

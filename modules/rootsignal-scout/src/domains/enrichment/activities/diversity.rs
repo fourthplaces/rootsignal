@@ -4,11 +4,11 @@ use tracing::info;
 
 use rootsignal_common::events::SignalDiversityScore;
 use rootsignal_common::EntityMappingOwned;
-use rootsignal_graph::{compute_diversity_metrics, GraphReader};
+use rootsignal_graph::{compute_diversity_metrics, GraphQueries};
 
 /// Read evidence per signal label, compute diversity metrics.
 pub async fn compute_diversity_scores(
-    reader: &GraphReader,
+    reader: &dyn GraphQueries,
     entity_mappings: &[EntityMappingOwned],
 ) -> Vec<SignalDiversityScore> {
     let mut all_metrics = Vec::new();

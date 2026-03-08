@@ -4,7 +4,7 @@ use ai_client::{ai_extract, Agent};
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{canonical_value, is_web_query, DiscoveryMethod, SourceNode, SourceRole};
 use rootsignal_graph::{
-    ExtractionYield, GapTypeStats, GraphReader, SignalTypeCounts, SituationBrief, SourceBrief,
+    ExtractionYield, GapTypeStats, GraphQueries, SignalTypeCounts, SituationBrief, SourceBrief,
     ConcernResponseShape, UnmetTension,
 };
 use schemars::JsonSchema;
@@ -429,7 +429,7 @@ fn discovery_user_prompt(city_name: &str, briefing: &str) -> String {
 
 /// Discovers new sources from existing graph data.
 pub struct SourceFinder<'a> {
-    graph: &'a GraphReader,
+    graph: &'a dyn GraphQueries,
     region_slug: Option<String>,
     region_name: Option<String>,
     ai: Option<&'a dyn Agent>,
@@ -444,7 +444,7 @@ const QUERY_DEDUP_SIMILARITY_THRESHOLD: f64 = 0.90;
 
 impl<'a> SourceFinder<'a> {
     pub fn new(
-        graph: &'a GraphReader,
+        graph: &'a dyn GraphQueries,
         region_name: Option<&str>,
         ai: Option<&'a dyn Agent>,
         budget: &'a BudgetTracker,

@@ -3,10 +3,10 @@
 use tracing::info;
 
 use rootsignal_common::events::ActorStatScore;
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 
 /// Read ACTED_IN counts per actor.
-pub async fn compute_actor_stats(reader: &GraphReader) -> Vec<ActorStatScore> {
+pub async fn compute_actor_stats(reader: &dyn GraphQueries) -> Vec<ActorStatScore> {
     let counts = match reader.actor_signal_counts().await {
         Ok(c) => c,
         Err(e) => {

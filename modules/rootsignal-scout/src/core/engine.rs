@@ -18,7 +18,7 @@ use uuid::Uuid;
 use ai_client::Agent;
 use seesaw_utils::Batcher;
 use rootsignal_common::EmbeddingLookup;
-use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector, GraphReader};
+use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector, GraphQueries};
 
 use sqlx::PgPool;
 
@@ -46,7 +46,9 @@ pub struct ScoutEngineDeps {
     /// Raw API key — only used by out-of-scope callers (supervisor, news_scanner)
     /// that haven't been migrated to `dyn Agent` yet.
     pub anthropic_api_key: Option<String>,
-    pub graph: Option<GraphReader>,
+    pub graph: Option<Arc<dyn GraphQueries>>,
+    /// Raw graph client for Neo4j projector — None in tests, Some in production.
+    pub graph_client: Option<GraphClient>,
     pub extractor: Option<Arc<dyn SignalExtractor>>,
     /// In-memory embedding cache for cross-batch dedup (layer 1 of 4).
     pub embed_cache: EmbeddingCache,
@@ -80,6 +82,7 @@ impl ScoutEngineDeps {
             ai: None,
             anthropic_api_key: None,
             graph: None,
+            graph_client: None,
             extractor: None,
             embed_cache: EmbeddingCache::new(),
             run_id,
@@ -116,8 +119,8 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
                 EMBEDDING_MODEL.to_string(),
             )) as Arc<dyn EmbeddingLookup>
         });
-    let graph_projector = deps.graph.as_ref().map(|gr| {
-        let mut projector = GraphProjector::new(gr.client().clone());
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
         if let Some(store) = embedding_store.clone() {
             projector = projector.with_embedding_store(store);
         }
@@ -186,8 +189,8 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
                 EMBEDDING_MODEL.to_string(),
             )) as Arc<dyn EmbeddingLookup>
         });
-    let graph_projector = deps.graph.as_ref().map(|gr| {
-        let mut projector = GraphProjector::new(gr.client().clone());
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
         if let Some(store) = embedding_store.clone() {
             projector = projector.with_embedding_store(store);
         }
@@ -264,8 +267,8 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn se
                 EMBEDDING_MODEL.to_string(),
             )) as Arc<dyn EmbeddingLookup>
         });
-    let graph_projector = deps.graph.as_ref().map(|gr| {
-        let mut projector = GraphProjector::new(gr.client().clone());
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
         if let Some(store) = embedding_store.clone() {
             projector = projector.with_embedding_store(store);
         }
@@ -358,8 +361,8 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
                 EMBEDDING_MODEL.to_string(),
             )) as Arc<dyn EmbeddingLookup>
         });
-    let graph_projector = deps.graph.as_ref().map(|gr| {
-        let mut projector = GraphProjector::new(gr.client().clone());
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
         if let Some(store) = embedding_store.clone() {
             projector = projector.with_embedding_store(store);
         }

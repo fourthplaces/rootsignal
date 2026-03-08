@@ -211,7 +211,7 @@ pub mod handlers {
         let deps = ctx.deps();
         let (_, state) = ctx.singleton::<PipelineState>();
 
-        let (graph, budget) = match (deps.graph.as_ref(), deps.budget.as_ref()) {
+        let (graph, budget) = match (deps.graph.as_deref(), deps.budget.as_ref()) {
             (Some(g), Some(b)) => (g, b),
             _ => {
                 ctx.logger.debug("Skipped source expansion: missing graph or budget");

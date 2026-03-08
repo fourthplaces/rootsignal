@@ -9,7 +9,7 @@ use rootsignal_common::{
     canonical_value, DiscoveryMethod, GeoPoint, GeoPrecision, NodeMeta, ReviewStatus, ScoutScope,
     SensitivityLevel, SourceNode, SourceRole,
 };
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 
 use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
 use crate::infra::embedder::TextEmbedder;
@@ -119,7 +119,7 @@ pub fn region_bounds(region: &ScoutScope) -> (f64, f64, f64, f64) {
 /// Returns (concern_id, similarity) if above the threshold.
 pub async fn find_best_tension_match(
     embedder: &dyn TextEmbedder,
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     region: &ScoutScope,
     tension_title: &str,
     threshold: f64,

@@ -13,7 +13,7 @@ use rootsignal_common::{
     GeoPoint, GeoPrecision, Node, NodeMeta, NodeType, ReviewStatus, ScoutScope, SensitivityLevel,
     Severity, ConcernNode,
 };
-use rootsignal_graph::{GraphReader, SituationBrief, ConcernLinkerOutcome, ConcernLinkerTarget};
+use rootsignal_graph::{GraphQueries, SituationBrief, ConcernLinkerOutcome, ConcernLinkerTarget};
 use rootsignal_archive::Archive;
 use crate::infra::agent_tools::{ReadPageTool, WebSearchTool};
 use crate::infra::embedder::TextEmbedder;
@@ -194,7 +194,7 @@ pub struct ConcernLinkerTargetStats {
 // =============================================================================
 
 pub struct ConcernLinker<'a> {
-    graph: &'a GraphReader,
+    graph: &'a dyn GraphQueries,
     ai: &'a dyn Agent,
     tool_agent: Box<dyn Agent>,
     embedder: &'a dyn TextEmbedder,
@@ -208,7 +208,7 @@ pub struct ConcernLinker<'a> {
 
 impl<'a> ConcernLinker<'a> {
     pub fn new(
-        graph: &'a GraphReader,
+        graph: &'a dyn GraphQueries,
         archive: Arc<Archive>,
         embedder: &'a dyn TextEmbedder,
         ai: &'a dyn Agent,

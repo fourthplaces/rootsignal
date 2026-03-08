@@ -23,7 +23,14 @@ pub async fn scan_news(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
         }
     };
 
-    let graph = GraphStore::new(gr.client().clone());
+    let graph_client = match deps.graph_client.as_ref() {
+        Some(c) => c,
+        None => {
+            tracing::debug!("News scan skipped: missing graph_client");
+            return;
+        }
+    };
+    let graph = GraphStore::new(graph_client.clone());
     let scanner = crate::news_scanner::NewsScanner::new(
         Arc::clone(archive),
         Arc::clone(ai),

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode};
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 use tracing::{info, warn};
 
 use crate::domains::discovery::activities::source_finder::initial_weight_for_method;
@@ -43,13 +43,13 @@ const MAX_EXPANSION_SOCIAL_TOPICS: usize = 5;
 // --- Expansion stage ---
 
 pub(crate) struct Expansion<'a> {
-    graph: &'a GraphReader,
+    graph: &'a dyn GraphQueries,
     embedder: &'a dyn TextEmbedder,
 }
 
 impl<'a> Expansion<'a> {
     pub fn new(
-        graph: &'a GraphReader,
+        graph: &'a dyn GraphQueries,
         embedder: &'a dyn TextEmbedder,
     ) -> Self {
         Self {

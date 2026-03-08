@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use rootsignal_archive::{Archive, ArchiveConfig, PageBackend, SpawnDispatcher};
-use rootsignal_graph::{GraphClient, GraphReader};
+use rootsignal_graph::{GraphClient, GraphReader, GraphQueries};
 use sqlx::PgPool;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
@@ -78,7 +78,8 @@ impl ScoutDeps {
         deps.fetcher = Some(archive.clone() as Arc<dyn ContentFetcher>);
         deps.ai = Some(ai.clone());
         deps.anthropic_api_key = Some(self.anthropic_api_key.clone());
-        deps.graph = Some(GraphReader::new(self.graph_client.clone()));
+        deps.graph = Some(Arc::new(GraphReader::new(self.graph_client.clone())) as Arc<dyn GraphQueries>);
+        deps.graph_client = Some(self.graph_client.clone());
         deps.archive = Some(archive);
         deps.budget = Some(budget);
         deps.pg_pool = Some(self.pg_pool.clone());

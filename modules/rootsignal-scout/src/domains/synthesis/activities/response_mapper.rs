@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use rootsignal_common::system_events::SystemEvent;
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 
 use seesaw_core::Events;
 
@@ -27,7 +27,7 @@ struct ResponseVerdict {
 /// For each active Tension/Need, find Aid/Gathering signals that might respond to it.
 /// Uses embedding similarity as a cheap filter, then LLM as a verifier.
 pub async fn map_responses(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     ai: &dyn Agent,
     center_lat: f64,
     center_lng: f64,
@@ -129,7 +129,7 @@ pub async fn map_responses(
 /// Map responses for a single tension — returns events and edge count.
 /// Used by the per-target handler.
 pub async fn map_single_tension(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     ai: &dyn Agent,
     concern_id: uuid::Uuid,
     tension_embedding: &[f64],

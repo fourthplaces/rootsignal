@@ -11,18 +11,18 @@ use tracing::{info, warn};
 
 use rootsignal_common::events::{SourceChange, SystemEvent};
 use rootsignal_common::{is_web_query, SourceNode};
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 
 use seesaw_core::Events;
 
 pub(crate) struct Metrics<'a> {
-    graph: &'a GraphReader,
+    graph: &'a dyn GraphQueries,
     _region_slug: &'a str,
 }
 
 impl<'a> Metrics<'a> {
     pub fn new(
-        graph: &'a GraphReader,
+        graph: &'a dyn GraphQueries,
         region_slug: &'a str,
     ) -> Self {
         Self {

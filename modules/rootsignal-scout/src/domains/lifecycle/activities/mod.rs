@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use rootsignal_common::system_events::StaleSignal;
 use rootsignal_common::{is_web_query, ActorNode, DiscoveryMethod, SourceNode};
-use rootsignal_graph::GraphReader;
+use rootsignal_graph::GraphQueries;
 
 use crate::core::aggregate::{SourcePlan, SourcePlanOutput};
 use crate::domains::scheduling::activities::selector::{self as selector, select_web_queries};
@@ -87,7 +87,7 @@ pub fn build_source_plan_from_list(sources: &[SourceNode]) -> SourcePlanOutput {
 /// Build a source plan from the graph: load region sources, boost actor accounts,
 /// consume pins, then select by cadence.
 pub async fn build_source_plan_from_region(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     region: &rootsignal_common::ScoutScope,
 ) -> SourcePlanOutput {
     let bounds = region.bounding_box();
@@ -116,7 +116,7 @@ pub async fn build_source_plan_from_region(
 
 /// Load all sources scoped to a geographic region.
 async fn load_region_sources(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     region: &rootsignal_common::ScoutScope,
 ) -> Vec<SourceNode> {
     match graph
@@ -149,7 +149,7 @@ async fn load_region_sources(
 /// New actor sources are appended. Returns actor-source pairs for building
 /// actor contexts later.
 async fn load_actor_sources(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     (min_lat, max_lat, min_lng, max_lng): (f64, f64, f64, f64),
     all_sources: &mut Vec<SourceNode>,
 ) -> Vec<(ActorNode, Vec<SourceNode>)> {
@@ -191,7 +191,7 @@ async fn load_actor_sources(
 
 /// Consume user pins in a region: add their sources to the pool, return consumed pin IDs.
 async fn consume_region_pins(
-    graph: &GraphReader,
+    graph: &dyn GraphQueries,
     (min_lat, max_lat, min_lng, max_lng): (f64, f64, f64, f64),
     all_sources: &mut Vec<SourceNode>,
 ) -> Vec<Uuid> {
