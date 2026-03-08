@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod error;
+pub mod fallback;
 pub mod gemini;
 pub mod openai;
 pub mod openrouter;
@@ -9,6 +10,7 @@ pub mod util;
 
 pub use claude::Claude;
 pub use error::AiError;
+pub use fallback::FallbackAgent;
 pub use gemini::Gemini;
 pub use openai::OpenAi;
 pub use openrouter::OpenRouter;

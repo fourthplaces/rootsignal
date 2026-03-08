@@ -144,6 +144,7 @@ impl Gemini {
 impl Agent for Gemini {
     async fn extract_json(&self, system: &str, user: &str, schema: Value) -> Result<Value> {
         let gemini_schema = Self::to_gemini_schema(&schema);
+        let is_v3 = self.model.starts_with("gemini-3");
 
         let request = GenerateContentRequest {
             contents: vec![Content::user(user)],
@@ -152,7 +153,8 @@ impl Agent for Gemini {
                 temperature: Some(0.0),
                 max_output_tokens: Some(65536),
                 response_mime_type: Some("application/json".to_string()),
-                response_json_schema: Some(gemini_schema),
+                response_json_schema: if is_v3 { Some(gemini_schema.clone()) } else { None },
+                response_schema: if is_v3 { None } else { Some(gemini_schema) },
             }),
         };
 
@@ -172,6 +174,7 @@ impl Agent for Gemini {
                 max_output_tokens: Some(4096),
                 response_mime_type: None,
                 response_json_schema: None,
+                response_schema: None,
             }),
         };
 

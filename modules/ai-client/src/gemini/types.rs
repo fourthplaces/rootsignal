@@ -63,8 +63,12 @@ pub(crate) struct GenerationConfig {
     pub max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_mime_type: Option<String>,
+    /// Gemini 3.x: standard JSON Schema
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_json_schema: Option<serde_json::Value>,
+    /// Gemini 2.x: Google's OpenAPI schema subset
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<serde_json::Value>,
 }
 
 // =============================================================================

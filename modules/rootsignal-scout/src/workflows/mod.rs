@@ -11,10 +11,11 @@ use sqlx::PgPool;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use ai_client::Gemini;
+use ai_client::{Claude, FallbackAgent, Gemini};
 use crate::core::engine::{self, ScoutEngine, ScoutEngineDeps};
 use crate::core::postgres_store::PostgresStore;
 use crate::infra::embedder::TextEmbedder;
+use crate::infra::util::HAIKU_MODEL;
 use crate::traits::{ContentFetcher, SignalReader};
 
 /// Shared dependency container for all scout workflows.
@@ -63,9 +64,10 @@ impl ScoutDeps {
         let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
         let embedder: Arc<dyn TextEmbedder> =
             Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
-        let ai: Arc<dyn ai_client::Agent> = Arc::new(
-            Gemini::new(&self.gemini_api_key, "gemini-3-flash-preview"),
-        );
+        let ai: Arc<dyn ai_client::Agent> = Arc::new(FallbackAgent::new(
+            Gemini::new(&self.gemini_api_key, "gemini-2.5-flash"),
+            Claude::new(&self.anthropic_api_key, HAIKU_MODEL),
+        ));
         let archive = create_archive(self);
         let budget = Arc::new(
             crate::domains::scheduling::activities::budget::BudgetTracker::new_with_spent(
