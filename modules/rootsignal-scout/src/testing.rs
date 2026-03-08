@@ -905,6 +905,7 @@ impl SignalExtractor for MockExtractor {
                 schedules: result.schedules.clone(),
                 author_actors: result.author_actors.clone(),
                 categories: result.categories.clone(),
+                source_ids: result.source_ids.clone(),
                 logs: vec![],
             });
         }
@@ -919,6 +920,7 @@ impl SignalExtractor for MockExtractor {
                 schedules: default.schedules.clone(),
                 author_actors: default.author_actors.clone(),
                 categories: default.categories.clone(),
+                source_ids: default.source_ids.clone(),
                 logs: vec![],
             });
         }
@@ -1537,6 +1539,35 @@ pub fn test_post(text: &str) -> Post {
         hashtags: Vec::new(),
         media_type: None,
         platform_id: None,
+        attachments: Vec::new(),
+    }
+}
+
+pub fn test_story(text: &str) -> Story {
+    Story {
+        id: Uuid::new_v4(),
+        source_id: Uuid::new_v4(),
+        fetched_at: Utc::now(),
+        content_hash: String::new(),
+        text: Some(text.to_string()),
+        location: None,
+        expires_at: None,
+        permalink: None,
+        attachments: Vec::new(),
+    }
+}
+
+pub fn test_short_video(text: &str) -> ShortVideo {
+    ShortVideo {
+        id: Uuid::new_v4(),
+        source_id: Uuid::new_v4(),
+        fetched_at: Utc::now(),
+        content_hash: String::new(),
+        text: Some(text.to_string()),
+        location: None,
+        engagement: None,
+        published_at: None,
+        permalink: None,
         attachments: Vec::new(),
     }
 }

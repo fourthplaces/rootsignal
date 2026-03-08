@@ -120,6 +120,7 @@ async fn linktree_page_discovers_outbound_links() {
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         )
@@ -135,6 +136,7 @@ async fn linktree_page_discovers_outbound_links() {
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         );
@@ -223,6 +225,7 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -271,6 +274,7 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -323,6 +327,7 @@ async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         );
@@ -394,6 +399,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
             schedules: Vec::new(),
             author_actors: vec![(node_id, "Northside Mutual Aid".to_string())],
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -467,6 +473,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -528,6 +535,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -609,6 +617,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -684,6 +693,7 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -763,6 +773,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
                     schedules: Vec::new(),
                     author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
                 },
             )
@@ -779,6 +790,7 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
                     schedules: Vec::new(),
                     author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
                 },
             ),
@@ -886,6 +898,7 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
             schedules: vec![(node_id, schedule)],
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -928,6 +941,7 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -983,6 +997,7 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
             schedules: vec![(node_id, schedule)],
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1040,6 +1055,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );

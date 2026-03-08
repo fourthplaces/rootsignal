@@ -74,6 +74,9 @@ pub struct ExtractedSignal {
     /// The specific source URL this signal was extracted from (e.g. a specific post URL).
     /// When extracting from multiple posts, return the URL of the post this signal came from.
     pub source_url: Option<String>,
+    /// Content item identifier matching the header (e.g. "post_3" for "--- Post 3 ---").
+    /// Used to resolve the permalink in code rather than relying on the LLM to copy URLs.
+    pub source_id: Option<String>,
     /// What is being opposed (for Concern signals)
     pub opposing: Option<String>,
     /// Who or what reported/observed this (for Condition signals)
@@ -232,6 +235,9 @@ pub struct ExtractionResult {
     /// Category classifications paired with the signal node UUID.
     /// Emitted as CategoryClassified system events by the caller.
     pub categories: Vec<(Uuid, String)>,
+    /// Content item identifiers paired with signal node UUID (e.g. "post_3").
+    /// Callers use this to resolve permalinks from the original content array.
+    pub source_ids: Vec<(Uuid, String)>,
     /// SystemLog breadcrumbs from the extraction process.
     pub logs: Vec<TelemetryEvent>,
 }
@@ -332,6 +338,7 @@ impl Extractor {
         let mut schedules: Vec<(Uuid, ScheduleNode)> = Vec::new();
         let mut author_actors: Vec<(Uuid, String)> = Vec::new();
         let mut categories: Vec<(Uuid, String)> = Vec::new();
+        let mut source_ids: Vec<(Uuid, String)> = Vec::new();
 
         for signal in response.signals {
             // Skip junk signals from extraction failures
@@ -645,6 +652,13 @@ impl Extractor {
                 }
             }
 
+            if let Some(ref sid) = signal.source_id {
+                let sid = sid.trim();
+                if !sid.is_empty() {
+                    source_ids.push((node_id, sid.to_string()));
+                }
+            }
+
             nodes.push(node);
         }
 
@@ -664,6 +678,7 @@ impl Extractor {
             schedules,
             author_actors,
             categories,
+            source_ids,
             logs: vec![],
         }
     }
@@ -832,9 +847,10 @@ When content could be multiple types, classify by priority:
 ## Bundled Content
 If a page contains multiple distinct signals (e.g., a food shelf listing AND a volunteer call), emit a separate signal for each. Do not bundle unrelated content into one signal. All signals from the same page share the same extraction_id — this is how the system knows they came from the same source.
 
-## Source URL
-- When extracting from multiple posts (e.g. "--- Post 1 (https://...) ---"), set source_url to the specific post URL the signal came from
-- This lets readers navigate directly to the original post, not just the profile
+## Source Identification
+- When extracting from numbered content items (e.g. "--- Post 3 ---", "--- Story 2 ---", "--- Video 1 ---"), set source_id to the item identifier: "post_3", "story_2", "video_1" (type + underscore + number from the header)
+- Do NOT copy URLs into source_url for social posts — the system resolves permalinks from source_id
+- For web page scraping (single-URL contexts without numbered headers), use source_url as before
 
 ## Action URLs
 - Include the most relevant action URL (registration, donation, event page)
@@ -1003,6 +1019,7 @@ mod tests {
             measurement: None,
             affected_scope: None,
             source_url: None,
+            source_id: None,
             implied_queries: vec!["affordable housing programs Minneapolis".to_string()],
             resources: vec![],
             tags: vec![],
@@ -1216,6 +1233,7 @@ mod tests {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         };
         assert_eq!(result.implied_queries.len(), 2);

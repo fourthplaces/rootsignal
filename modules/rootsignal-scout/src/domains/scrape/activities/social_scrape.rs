@@ -11,7 +11,7 @@ use uuid::Uuid;
 use seesaw_core::Logger;
 
 use rootsignal_common::{
-    scraping_strategy, ActorContext, Node, ScrapingStrategy, SocialPlatform,
+    scraping_strategy, ActorContext, ChannelWeights, Node, ScrapingStrategy, SocialPlatform,
     SourceNode,
 };
 
@@ -51,6 +51,7 @@ pub(crate) async fn scrape_social_sources(
         struct SocialEntry {
             platform: SocialPlatform,
             identifier: String,
+            channel_weights: ChannelWeights,
         }
         let mut accounts: Vec<(String, String, SocialEntry)> = Vec::new();
 
@@ -120,6 +121,7 @@ pub(crate) async fn scrape_social_sources(
                 SocialEntry {
                     platform,
                     identifier,
+                    channel_weights: source.channel_weights.clone(),
                 },
             ));
         }
@@ -172,20 +174,59 @@ pub(crate) async fn scrape_social_sources(
             let extractor = extractor.clone();
             let identifier = account.identifier.clone();
             let logger = logger.clone();
+            let cw = account.channel_weights.clone();
 
             futures.push(Box::pin(async move {
-                let posts = match fetcher.posts(&identifier, 20).await {
-                    Ok(posts) => posts,
-                    Err(e) => {
-                        logger.warn(format!("{source_url}: fetch failed — {e}"));
-                        return None;
+                let fetch_feed = cw.feed > 0.0;
+                let fetch_media = cw.media > 0.0;
+
+                if !fetch_feed && !fetch_media {
+                    logger.info(format!("{source_url}: all channels off, skipping"));
+                    return None;
+                }
+
+                // --- Feed channel: posts ---
+                let mut posts = Vec::new();
+                if fetch_feed {
+                    match fetcher.posts(&identifier, 20).await {
+                        Ok(p) => {
+                            logger.info(format!("{source_url}: fetched {} posts", p.len()));
+                            posts = p;
+                        }
+                        Err(e) => {
+                            logger.warn(format!("{source_url}: post fetch failed — {e}"));
+                        }
                     }
-                };
+                }
+
+                // --- Media channel: stories + short videos ---
+                let mut media_texts: Vec<String> = Vec::new();
+                let mut media_permalink_map: HashMap<String, String> = HashMap::new();
+                if fetch_media {
+                    let stories = fetcher.stories(&identifier).await.unwrap_or_default();
+                    let videos = fetcher.short_videos(&identifier, 10).await.unwrap_or_default();
+                    if !stories.is_empty() || !videos.is_empty() {
+                        logger.info(format!(
+                            "{source_url}: fetched {} stories, {} videos",
+                            stories.len(), videos.len(),
+                        ));
+                    }
+                    for (i, story) in stories.iter().enumerate() {
+                        if let Some(ref url) = story.permalink {
+                            media_permalink_map.insert(format!("story_{}", i + 1), url.clone());
+                        }
+                        media_texts.push(super::shared::format_story(i, story));
+                    }
+                    for (i, video) in videos.iter().enumerate() {
+                        if let Some(ref url) = video.permalink {
+                            media_permalink_map.insert(format!("video_{}", i + 1), url.clone());
+                        }
+                        media_texts.push(super::shared::format_short_video(i, video));
+                    }
+                }
+
                 let post_count = posts.len();
-                logger.info(format!("{source_url}: fetched {post_count} posts"));
-
                 let newest_published_at = posts.iter().filter_map(|p| p.published_at).max();
-
                 let source_mentions: Vec<String> = posts
                     .iter()
                     .flat_map(|p| p.mentions.iter().cloned())
@@ -200,6 +241,14 @@ pub(crate) async fn scrape_social_sources(
                     let mut all_author_actors: HashMap<Uuid, String> = HashMap::new();
                     let mut combined_all = String::new();
                     for batch in batches {
+                        let permalink_map: HashMap<String, String> = batch
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, p)| {
+                                p.permalink.as_ref().map(|url| (format!("post_{}", i + 1), url.clone()))
+                            })
+                            .collect();
+
                         let mut combined_text: String = batch
                             .iter()
                             .enumerate()
@@ -221,7 +270,9 @@ pub(crate) async fn scrape_social_sources(
                                         result.nodes.len(), result.rejected.len(),
                                     ));
                                 }
-                                all_nodes.extend(result.nodes);
+                                let mut nodes = result.nodes;
+                                super::shared::resolve_source_ids(&mut nodes, &result.source_ids, &permalink_map);
+                                all_nodes.extend(nodes);
                                 all_resource_tags.extend(result.resource_tags);
                                 all_signal_tags.extend(result.signal_tags);
                                 all_author_actors.extend(result.author_actors);
@@ -231,8 +282,10 @@ pub(crate) async fn scrape_social_sources(
                             }
                         }
                     }
-                    if all_nodes.is_empty() {
+                    if all_nodes.is_empty() && post_count > 0 {
                         logger.warn(format!("{source_url}: LLM returned 0 signals from {post_count} posts"));
+                    }
+                    if all_nodes.is_empty() && media_texts.is_empty() {
                         return None;
                     }
                     logger.info(format!("{source_url}: {post_count} posts → {} signals", all_nodes.len()));
@@ -250,19 +303,31 @@ pub(crate) async fn scrape_social_sources(
                         newest_published_at,
                     })
                 } else {
-                    // Instagram/Facebook/Twitter/TikTok: combine all posts then extract
-                    let mut combined_text: String = posts
+                    // Instagram/Facebook/Twitter/TikTok: combine all content then extract
+                    let mut permalink_map: HashMap<String, String> = posts
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, p)| {
+                            p.permalink.as_ref().map(|url| (format!("post_{}", i + 1), url.clone()))
+                        })
+                        .collect();
+                    permalink_map.extend(media_permalink_map);
+
+                    let mut content_parts: Vec<String> = posts
                         .iter()
                         .enumerate()
                         .map(|(i, p)| super::shared::format_post(i, p))
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
+                        .collect();
+                    content_parts.extend(media_texts);
+
+                    let mut combined_text = content_parts.join("\n\n");
                     if combined_text.is_empty() {
                         return None;
                     }
                     if let Some(ref prefix) = actor_prefix {
                         combined_text = format!("{prefix}{combined_text}");
                     }
+                    let content_count = content_parts.len();
                     let mut result = match extractor.extract(&combined_text, &source_url).await {
                         Ok(r) => r,
                         Err(e) => {
@@ -271,8 +336,8 @@ pub(crate) async fn scrape_social_sources(
                         }
                     };
                     // Retry once when LLM returns nothing from substantial content
-                    if result.nodes.is_empty() && result.raw_signal_count == 0 && post_count >= 5 {
-                        logger.info(format!("{source_url}: 0 signals from {post_count} posts, retrying"));
+                    if result.nodes.is_empty() && result.raw_signal_count == 0 && content_count >= 5 {
+                        logger.info(format!("{source_url}: 0 signals from {content_count} items, retrying"));
                         result = match extractor.extract(&combined_text, &source_url).await {
                             Ok(r) => r,
                             Err(e) => {
@@ -281,12 +346,13 @@ pub(crate) async fn scrape_social_sources(
                             }
                         };
                     }
+                    super::shared::resolve_source_ids(&mut result.nodes, &result.source_ids, &permalink_map);
                     if result.nodes.is_empty() {
                         if result.raw_signal_count == 0 {
-                            logger.warn(format!("{source_url}: LLM returned 0 signals from {post_count} posts"));
+                            logger.warn(format!("{source_url}: LLM returned 0 signals from {content_count} items"));
                         } else {
                             logger.info(format!(
-                                "{source_url}: LLM returned {} signals but all rejected ({} not firsthand) from {post_count} posts",
+                                "{source_url}: LLM returned {} signals but all rejected ({} not firsthand) from {content_count} items",
                                 result.raw_signal_count,
                                 result.rejected.len(),
                             ));
@@ -295,11 +361,11 @@ pub(crate) async fn scrape_social_sources(
                         let rejected = result.rejected.len();
                         if rejected > 0 {
                             logger.info(format!(
-                                "{source_url}: {post_count} posts → {} signals ({rejected} rejected)",
+                                "{source_url}: {content_count} items → {} signals ({rejected} rejected)",
                                 result.nodes.len(),
                             ));
                         } else {
-                            logger.info(format!("{source_url}: {post_count} posts → {} signals", result.nodes.len()));
+                            logger.info(format!("{source_url}: {content_count} items → {} signals", result.nodes.len()));
                         }
                     }
                     Some(SocialFetchResult {

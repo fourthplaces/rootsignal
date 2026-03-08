@@ -151,6 +151,7 @@ async fn page_with_content_produces_signal() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -187,6 +188,7 @@ async fn empty_page_produces_nothing() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -260,6 +262,7 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -305,6 +308,7 @@ async fn same_title_extracted_twice_produces_one_signal() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -360,6 +364,7 @@ async fn all_signals_stored_regardless_of_region() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -401,6 +406,7 @@ async fn blocked_url_produces_nothing() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -488,6 +494,7 @@ async fn outbound_links_on_page_are_collected() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -608,6 +615,7 @@ async fn scrape_then_promote_creates_new_sources() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -688,6 +696,7 @@ async fn page_with_no_extractable_content_produces_nothing() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -732,6 +741,7 @@ async fn database_write_failure_does_not_crash() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -777,6 +787,7 @@ async fn blocked_url_produces_no_signals() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -824,6 +835,7 @@ async fn all_signal_types_are_stored() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -871,6 +883,7 @@ async fn unicode_and_emoji_titles_are_preserved() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -910,6 +923,7 @@ async fn signal_at_zero_zero_is_still_stored() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -984,6 +998,7 @@ async fn blank_author_name_does_not_create_actor() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1040,6 +1055,7 @@ async fn signal_with_resource_needs_gets_resource_edge() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1242,6 +1258,7 @@ async fn mixed_outcome_pages_each_handled_independently() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1320,6 +1337,7 @@ async fn batch_title_dedup_is_case_insensitive() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1367,6 +1385,7 @@ async fn web_source_without_actor_stores_content_location_only() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1405,6 +1424,7 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1454,6 +1474,7 @@ async fn explicit_content_location_not_overwritten_by_actor() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1513,6 +1534,7 @@ async fn new_actor_inherits_parent_depth_plus_one() {
             schedules: Vec::new(),
             author_actors: vec![(node_id, "Depth Child Org".to_string())],
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1569,6 +1591,7 @@ async fn bootstrap_actor_gets_depth_zero() {
             schedules: Vec::new(),
             author_actors: vec![(node_id, "Bootstrap Org".to_string())],
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1637,6 +1660,7 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1697,6 +1721,7 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1740,6 +1765,7 @@ async fn social_published_at_becomes_published_at_fallback() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1790,6 +1816,7 @@ async fn ocean_coordinates_store_ecological_signal() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1839,6 +1866,7 @@ async fn antarctic_coordinates_store_signal() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1890,6 +1918,7 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -1950,6 +1979,7 @@ async fn environmental_disaster_produces_all_signal_types() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2008,6 +2038,7 @@ async fn hallucinated_future_date_does_not_crash() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2055,6 +2086,7 @@ async fn epoch_zero_date_does_not_crash() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2105,6 +2137,7 @@ async fn extremely_long_title_survives_pipeline() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2160,6 +2193,7 @@ async fn same_signal_from_two_sources_corroborates() {
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
                 categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         )
@@ -2175,6 +2209,7 @@ async fn same_signal_from_two_sources_corroborates() {
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
                 categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         );
@@ -2260,6 +2295,7 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2309,6 +2345,7 @@ async fn minimum_viable_signal_with_no_optional_fields() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2360,6 +2397,7 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
             schedules: Vec::new(),
             author_actors: vec![(node_id, "Friends of the Falls".to_string())],
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2403,6 +2441,7 @@ async fn aggregator_source_author_does_not_create_actor_node() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2446,6 +2485,7 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2491,6 +2531,7 @@ async fn signal_has_produced_by_edge_to_its_source() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -2529,6 +2570,7 @@ async fn social_signal_has_produced_by_edge() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -3255,6 +3297,7 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -3321,6 +3364,7 @@ async fn resource_roles_wire_to_correct_edge_types() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -3384,6 +3428,7 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -3440,6 +3485,7 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
                 categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         )
@@ -3455,6 +3501,7 @@ async fn cross_source_high_similarity_signals_corroborate_via_cache() {
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
                 categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         );
@@ -3527,6 +3574,7 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
                 categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         )
@@ -3542,6 +3590,7 @@ async fn cross_source_below_threshold_similarity_creates_separate_signals() {
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
                 categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         );
@@ -3623,6 +3672,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
                 categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         )
@@ -3638,6 +3688,7 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
                 schedules: Vec::new(),
                 author_actors: Vec::new(),
                 categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
             },
         );
@@ -3810,6 +3861,7 @@ async fn fetch_and_extract_produces_signals_and_stats() {
             schedules: Vec::new(),
             author_actors: Vec::new(),
             categories: Vec::new(),
+            source_ids: Vec::new(),
             logs: vec![],
         },
     );
@@ -3892,5 +3944,191 @@ async fn fetch_and_extract_counts_failed_urls() {
 
     assert_eq!(result.stats.urls_failed, 1, "one URL should fail");
     assert_eq!(result.stats.urls_scraped, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Channel weight gating — social handler skips/includes channels by weight
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn feed_channel_off_skips_post_fetch() {
+    let ig_url = "https://www.instagram.com/gated_account";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Should not be fetched")]);
+
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
+            nodes: vec![tension_at("Gated Signal", 44.95, -93.27)],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+            raw_signal_count: 0,
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+            categories: Vec::new(),
+            source_ids: Vec::new(),
+            logs: vec![],
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
+
+    let mut source = social_source(ig_url);
+    source.channel_weights.feed = 0.0;
+    source.channel_weights.media = 0.0;
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
+
+    let output = super::activities::social_scrape::scrape_social_sources(
+        &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
+        &seesaw_core::Logger::new(),
+    ).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
+
+    assert_eq!(ctx.stats.signals_stored, 0, "all channels off → no signals");
+}
+
+#[tokio::test]
+async fn media_channel_on_fetches_stories_and_videos() {
+    let ig_url = "https://www.instagram.com/media_account";
+
+    let story = test_story("Free yoga in the park tomorrow morning");
+    let video = test_short_video("Neighborhood mural project reveal");
+
+    let fetcher = MockFetcher::new()
+        .on_stories(ig_url, vec![story])
+        .on_short_videos(ig_url, vec![video]);
+
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
+            nodes: vec![
+                gathering_at("Free Yoga in Park", 44.95, -93.27),
+                tension_at("Mural Project Reveal", 44.96, -93.26),
+            ],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+            raw_signal_count: 0,
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+            categories: Vec::new(),
+            source_ids: Vec::new(),
+            logs: vec![],
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
+
+    let mut source = social_source(ig_url);
+    source.channel_weights.feed = 0.0;
+    source.channel_weights.media = 1.0;
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
+
+    let output = super::activities::social_scrape::scrape_social_sources(
+        &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
+        &seesaw_core::Logger::new(),
+    ).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
+
+    assert_eq!(ctx.stats.signals_stored, 2, "media channel on → signals from stories/videos");
+}
+
+#[tokio::test]
+async fn feed_and_media_combined_in_single_extraction() {
+    let ig_url = "https://www.instagram.com/both_channels";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("New community garden plot signups")])
+        .on_stories(ig_url, vec![test_story("Storm damage on Elm Street")])
+        .on_short_videos(ig_url, vec![test_short_video("Block party this weekend")]);
+
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
+            nodes: vec![
+                gathering_at("Community Garden Signups", 44.95, -93.27),
+                tension_at("Storm Damage Elm Street", 44.96, -93.26),
+                gathering_at("Block Party Weekend", 44.94, -93.28),
+            ],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+            raw_signal_count: 0,
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+            categories: Vec::new(),
+            source_ids: Vec::new(),
+            logs: vec![],
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
+
+    let mut source = social_source(ig_url);
+    source.channel_weights.feed = 1.0;
+    source.channel_weights.media = 1.0;
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
+
+    let output = super::activities::social_scrape::scrape_social_sources(
+        &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
+        &seesaw_core::Logger::new(),
+    ).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
+
+    assert_eq!(ctx.stats.signals_stored, 3, "posts + stories + videos → combined extraction");
+}
+
+#[tokio::test]
+async fn media_fetch_failure_does_not_block_feed() {
+    let ig_url = "https://www.instagram.com/partial_fail";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Farmers market returns next week")]);
+    // stories/short_videos not registered → will return error, soft-fail to empty
+
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
+            nodes: vec![gathering_at("Farmers Market Returns", 44.95, -93.27)],
+            implied_queries: vec![],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+            raw_signal_count: 0,
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+            categories: Vec::new(),
+            source_ids: Vec::new(),
+            logs: vec![],
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
+
+    let mut source = social_source(ig_url);
+    source.channel_weights.feed = 1.0;
+    source.channel_weights.media = 1.0;
+    let sources: Vec<&_> = vec![&source];
+    let mut ctx = PipelineState::from_sources(&[source.clone()]);
+
+    let output = super::activities::social_scrape::scrape_social_sources(
+        &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
+        &seesaw_core::Logger::new(),
+    ).await;
+    scrape_and_dispatch(output, &mut ctx, &store).await;
+
+    assert_eq!(ctx.stats.signals_stored, 1, "media failure → feed signals still extracted");
 }
 
