@@ -283,7 +283,12 @@ pub(crate) async fn scrape_social_sources(
                         }
                     }
                     if all_nodes.is_empty() && post_count > 0 {
-                        logger.warn(format!("{source_url}: LLM returned 0 signals from {post_count} posts"));
+                        let posts_with_text = posts.iter().filter(|p| p.text.as_ref().is_some_and(|t| !t.is_empty())).count();
+                        let preview: String = combined_all.chars().take(500).collect();
+                        logger.warn(format!(
+                            "{source_url}: LLM returned 0 signals from {post_count} posts ({posts_with_text} have text, {} bytes). Content preview:\n{preview}",
+                            combined_all.len(),
+                        ));
                     }
                     if all_nodes.is_empty() && media_texts.is_empty() {
                         return None;
@@ -328,6 +333,11 @@ pub(crate) async fn scrape_social_sources(
                         combined_text = format!("{prefix}{combined_text}");
                     }
                     let content_count = content_parts.len();
+                    let posts_with_text = posts.iter().filter(|p| p.text.as_ref().is_some_and(|t| !t.is_empty())).count();
+                    logger.info(format!(
+                        "{source_url}: sending {content_count} items to LLM ({posts_with_text}/{post_count} posts have text, {} bytes)",
+                        combined_text.len(),
+                    ));
                     let mut result = match extractor.extract(&combined_text, &source_url).await {
                         Ok(r) => r,
                         Err(e) => {
@@ -349,7 +359,10 @@ pub(crate) async fn scrape_social_sources(
                     super::shared::resolve_source_ids(&mut result.nodes, &result.source_ids, &permalink_map);
                     if result.nodes.is_empty() {
                         if result.raw_signal_count == 0 {
-                            logger.warn(format!("{source_url}: LLM returned 0 signals from {content_count} items"));
+                            let preview: String = combined_text.chars().take(500).collect();
+                            logger.warn(format!(
+                                "{source_url}: LLM returned 0 signals from {content_count} items. Content preview:\n{preview}",
+                            ));
                         } else {
                             logger.info(format!(
                                 "{source_url}: LLM returned {} signals but all rejected ({} not firsthand) from {content_count} items",
