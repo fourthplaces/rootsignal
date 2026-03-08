@@ -30,6 +30,7 @@ type HandlerOutcome = {
   attempts: number;
   startedAt: string | null;
   completedAt: string | null;
+  pendingEventIds: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -108,7 +109,11 @@ function BlockRenderer({ block }: { block: Block }) {
 function formatDuration(startedAt: string, completedAt: string): string {
   const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
   if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  const secs = ms / 1000;
+  if (secs < 60) return `${secs.toFixed(1)}s`;
+  const mins = Math.floor(secs / 60);
+  const remainSecs = Math.round(secs % 60);
+  return remainSecs > 0 ? `${mins}m ${remainSecs}s` : `${mins}m`;
 }
 
 const STATUS_BORDER: Record<string, string> = {
@@ -142,9 +147,9 @@ const HandlerNode = memo(({ data }: NodeProps) => {
       animation: isRunning ? "pulse 2s ease-in-out infinite" : undefined,
     }}>
       <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>{d.label}</span>
-        {duration && <span style={{ fontSize: 9, color: "#71717a", fontStyle: "normal" }}>{duration}</span>}
+        {duration && <span style={{ fontSize: 9, color: "#71717a", fontStyle: "normal", whiteSpace: "nowrap", flexShrink: 0 }}>{duration}</span>}
       </div>
       {hasBlocks && blocks.map((block, i) => <BlockRenderer key={i} block={block} />)}
       {outcome?.status === "error" && outcome.error && (
@@ -318,6 +323,40 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
             target: `hdl:${handlerId}`,
             style: { stroke: "#52525b", strokeWidth: 1 },
             markerEnd: arrowMarker,
+          });
+        }
+      }
+    }
+  }
+
+  // Pending/running handlers that haven't emitted events yet — add nodes + edges
+  if (outcomes) {
+    for (const [handlerId, outcome] of outcomes) {
+      if (handlerIds.has(handlerId)) continue;
+
+      const blocks = descriptions?.get(handlerId);
+      nodes.push({
+        id: `hdl:${handlerId}`,
+        type: "handler",
+        position: { x: 0, y: 0 },
+        data: { label: handlerId, nodeKind: "handler" as const, handlerId, blocks, outcome },
+        sourcePosition: Position.Bottom,
+        targetPosition: Position.Top,
+      });
+
+      for (const eventId of outcome.pendingEventIds ?? []) {
+        const groupKey = eventIdToGroup.get(eventId);
+        if (!groupKey) continue;
+        const edgeKey = `evt:${groupKey}->hdl:${handlerId}`;
+        if (!edgeSet.has(edgeKey)) {
+          edgeSet.add(edgeKey);
+          edges.push({
+            id: edgeKey,
+            source: `evt:${groupKey}`,
+            target: `hdl:${handlerId}`,
+            style: { stroke: "#52525b", strokeWidth: 1 },
+            markerEnd: arrowMarker,
+            animated: true,
           });
         }
       }

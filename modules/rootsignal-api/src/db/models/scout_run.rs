@@ -1134,6 +1134,7 @@ pub struct HandlerOutcomeRow {
     pub attempts: i64,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub pending_event_ids: Vec<String>,
 }
 
 pub async fn handler_outcomes(
@@ -1143,16 +1144,18 @@ pub async fn handler_outcomes(
     let correlation_id = Uuid::parse_str(run_id)
         .map_err(|e| anyhow::anyhow!("Invalid run_id as UUID: {e}"))?;
 
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+    let rows = sqlx::query_as::<_, (String, String, Option<String>, i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<Vec<String>>)>(
         "SELECT handler_id, \
                 CASE WHEN bool_or(status = 'error') THEN 'error' \
                      WHEN bool_or(status = 'running') THEN 'running' \
+                     WHEN bool_or(status = 'pending') AND bool_or(status = 'completed') THEN 'running' \
                      WHEN bool_or(status = 'pending') THEN 'pending' \
                      ELSE 'completed' END AS status, \
                 string_agg(DISTINCT error, '; ') FILTER (WHERE error IS NOT NULL) AS error, \
                 COALESCE(SUM(attempts), 0) AS attempts, \
                 MIN(created_at) AS started_at, \
-                MAX(updated_at) FILTER (WHERE status = 'completed') AS completed_at \
+                MAX(updated_at) FILTER (WHERE status = 'completed') AS completed_at, \
+                array_agg(DISTINCT event_id::text) FILTER (WHERE status IN ('pending', 'running')) AS pending_event_ids \
          FROM seesaw_effect_executions \
          WHERE correlation_id = $1 \
          GROUP BY handler_id",
@@ -1163,13 +1166,14 @@ pub async fn handler_outcomes(
 
     Ok(rows
         .into_iter()
-        .map(|(handler_id, status, error, attempts, started_at, completed_at)| HandlerOutcomeRow {
+        .map(|(handler_id, status, error, attempts, started_at, completed_at, pending_event_ids)| HandlerOutcomeRow {
             handler_id,
             status,
             error,
             attempts,
             started_at,
             completed_at,
+            pending_event_ids: pending_event_ids.unwrap_or_default(),
         })
         .collect())
 }
