@@ -4,7 +4,6 @@ pub mod events;
 #[cfg(test)]
 mod completion_tests;
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -20,26 +19,29 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::signals::events::SignalEvent;
 
-// ── Enrichment filters: state-only gates (event-agnostic for multi-type handlers) ──
+// ── Gate filter: emits EnrichmentReady exactly once when review + response scrape complete ──
 
-fn enrichment_actor_extraction_pending(ctx: &Context<ScoutEngineDeps>) -> bool {
+fn enrichment_gate_ready(ctx: &Context<ScoutEngineDeps>) -> bool {
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.review_complete() && state.response_scrape_done() && !state.actors_extracted
+    state.review_complete() && state.response_scrape_done() && !state.enrichment_ready
 }
 
-fn enrichment_diversity_pending(ctx: &Context<ScoutEngineDeps>) -> bool {
-    let (_, state) = ctx.singleton::<PipelineState>();
-    state.review_complete() && state.response_scrape_done() && !state.diversity_scored
+// ── Enrichment filters: fire on EnrichmentReady, guarded by per-fact flags ──
+
+fn actor_extraction_pending(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, EnrichmentEvent::EnrichmentReady)
 }
 
-fn enrichment_actor_stats_pending(ctx: &Context<ScoutEngineDeps>) -> bool {
-    let (_, state) = ctx.singleton::<PipelineState>();
-    state.review_complete() && state.response_scrape_done() && !state.actor_stats_computed
+fn diversity_pending(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, EnrichmentEvent::EnrichmentReady)
 }
 
-fn enrichment_actor_location_pending(ctx: &Context<ScoutEngineDeps>) -> bool {
-    let (_, state) = ctx.singleton::<PipelineState>();
-    state.review_complete() && state.response_scrape_done() && !state.actors_located
+fn actor_stats_pending(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, EnrichmentEvent::EnrichmentReady)
+}
+
+fn actor_location_pending(e: &EnrichmentEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, EnrichmentEvent::EnrichmentReady)
 }
 
 fn is_signal_world_event(e: &WorldEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -51,12 +53,24 @@ pub mod handlers {
     use super::*;
 
     // ---------------------------------------------------------------
-    // Enrichment handlers: fire when review + response scrape complete
+    // Gate: collapses [SystemEvent, SignalEvent] fan-in into one EnrichmentReady
     // ---------------------------------------------------------------
 
-    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:extract_actors", filter = enrichment_actor_extraction_pending)]
-    async fn extract_actors(
+    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:review_gate", filter = enrichment_gate_ready)]
+    async fn review_gate(
         _event: AnyEvent,
+        _ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        Ok(events![EnrichmentEvent::EnrichmentReady])
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment handlers: fire exactly once on EnrichmentReady
+    // ---------------------------------------------------------------
+
+    #[handle(on = EnrichmentEvent, id = "enrichment:extract_actors", filter = actor_extraction_pending)]
+    async fn extract_actors(
+        _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -110,9 +124,9 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:score_diversity", filter = enrichment_diversity_pending)]
+    #[handle(on = EnrichmentEvent, id = "enrichment:score_diversity", filter = diversity_pending)]
     async fn score_diversity(
-        _event: AnyEvent,
+        _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -131,9 +145,9 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:compute_actor_stats", filter = enrichment_actor_stats_pending)]
+    #[handle(on = EnrichmentEvent, id = "enrichment:compute_actor_stats", filter = actor_stats_pending)]
     async fn compute_actor_stats(
-        _event: AnyEvent,
+        _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
@@ -152,9 +166,9 @@ pub mod handlers {
         Ok(all_events)
     }
 
-    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:resolve_actor_locations", filter = enrichment_actor_location_pending)]
+    #[handle(on = EnrichmentEvent, id = "enrichment:resolve_actor_locations", filter = actor_location_pending)]
     async fn resolve_actor_locations(
-        _event: AnyEvent,
+        _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();

@@ -153,6 +153,12 @@ pub struct PipelineState {
     #[serde(default)]
     pub source_expansion_completed: bool,
 
+    /// Trampoline flags: prevent re-firing of gate handlers after sibling reduction.
+    #[serde(default)]
+    pub enrichment_ready: bool,
+    #[serde(default)]
+    pub expansion_ready: bool,
+
 }
 
 /// A batch of extracted nodes for a single URL, carried on scrape completion events
@@ -198,6 +204,8 @@ impl PipelineState {
             signals_awaiting_review: 0,
             signals_review_completed: 0,
             source_expansion_completed: false,
+            enrichment_ready: false,
+            expansion_ready: false,
         }
     }
 
@@ -403,6 +411,7 @@ impl PipelineState {
     /// Apply an expansion domain event.
     pub fn apply_expansion(&mut self, event: &ExpansionEvent) {
         match event {
+            ExpansionEvent::ExpansionReady => self.expansion_ready = true,
             ExpansionEvent::ExpansionCompleted {
                 social_expansion_topics,
                 expansion_deferred_expanded,
@@ -423,6 +432,7 @@ impl PipelineState {
     /// Apply an enrichment domain event.
     pub fn apply_enrichment(&mut self, event: &EnrichmentEvent) {
         match event {
+            EnrichmentEvent::EnrichmentReady => self.enrichment_ready = true,
             EnrichmentEvent::ActorsExtracted => self.actors_extracted = true,
             EnrichmentEvent::DiversityScored => self.diversity_scored = true,
             EnrichmentEvent::ActorStatsComputed => self.actor_stats_computed = true,

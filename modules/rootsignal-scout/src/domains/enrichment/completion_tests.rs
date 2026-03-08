@@ -3,9 +3,9 @@
 //! MOCK → ENGINE.EMIT → OUTPUT
 //! Proves all 4 enrichment facts + review counters gate expansion correctly.
 //!
-//! Key: emit_response_scrape_done() triggers dedup on each scrape event,
-//! which emits NoNewSignals. Enrichment handlers listen on [SystemEvent, SignalEvent],
-//! so NoNewSignals is the natural trigger — no manual emission needed.
+//! Two trampolines collapse fan-in:
+//!   review gate ([SystemEvent, SignalEvent]) → EnrichmentReady (1 event)
+//!   expansion gate (EnrichmentEvent)         → ExpansionReady  (1 event)
 
 use std::sync::Arc;
 

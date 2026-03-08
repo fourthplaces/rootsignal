@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExpansionEvent {
+    /// Trampoline: all enrichment facts set, expansion should fire.
+    ExpansionReady,
     /// Signal expansion phase completed with accumulated stats.
     ExpansionCompleted {
         social_expansion_topics: Vec<String>,
@@ -18,6 +20,7 @@ pub enum ExpansionEvent {
 impl ExpansionEvent {
     pub fn event_type_str(&self) -> String {
         let variant = match self {
+            Self::ExpansionReady => "expansion_ready",
             Self::ExpansionCompleted { .. } => "expansion_completed",
         };
         format!("expansion:{variant}")

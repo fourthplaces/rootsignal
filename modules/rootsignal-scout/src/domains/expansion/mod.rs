@@ -15,20 +15,33 @@ use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 
-fn all_enrichment_done(e: &EnrichmentEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+fn expansion_gate_ready(e: &EnrichmentEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
     let _ = e;
     let (_, state) = ctx.singleton::<PipelineState>();
-    state.all_enrichment_complete()
+    state.all_enrichment_complete() && !state.expansion_ready
+}
+
+fn is_expansion_ready(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, ExpansionEvent::ExpansionReady)
 }
 
 #[handlers]
 pub mod handlers {
     use super::*;
 
-    /// All enrichment done → compute source metrics, expand signals, emit ExpansionCompleted.
-    #[handle(on = EnrichmentEvent, id = "expansion:expand_signals", filter = all_enrichment_done)]
-    async fn expand_signals(
+    /// Gate: collapses 4 enrichment facts into one ExpansionReady.
+    #[handle(on = EnrichmentEvent, id = "expansion:enrichment_gate", filter = expansion_gate_ready)]
+    async fn enrichment_gate(
         _event: EnrichmentEvent,
+        _ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        Ok(events![ExpansionEvent::ExpansionReady])
+    }
+
+    /// ExpansionReady → compute source metrics, expand signals, emit ExpansionCompleted.
+    #[handle(on = ExpansionEvent, id = "expansion:expand_signals", filter = is_expansion_ready)]
+    async fn expand_signals(
+        _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
