@@ -207,6 +207,7 @@ async fn load_all_signals(client: &GraphClient) -> Result<Vec<Node>, neo4rs::Err
         NodeType::HelpRequest,
         NodeType::Announcement,
         NodeType::Concern,
+        NodeType::Condition,
     ];
 
     let branches: Vec<String> = all_types

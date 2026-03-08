@@ -32,6 +32,12 @@ const SIGNAL_FIELDS = `
     reviewStatus wasCorrected corrections rejectionReason
     severity subject opposing
   }
+  ... on GqlConditionSignal {
+    id title summary sensitivity confidence location { lat lng precision }
+    locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
+    reviewStatus wasCorrected corrections rejectionReason
+    severity subject observedBy measurement affectedScope
+  }
 `;
 
 export const ME = gql`
@@ -200,6 +206,12 @@ export const SIGNALS_NEAR = gql`
         severity subject opposing
         actors { id name actorType }
       }
+      ... on GqlConditionSignal {
+        id title summary sensitivity confidence location { lat lng precision }
+        locationName url extractedAt contentDate sourceDiversity causeHeat channelDiversity
+        severity subject observedBy measurement affectedScope
+        actors { id name actorType }
+      }
     }
   }
 `;
@@ -258,6 +270,10 @@ export const SIGNAL_DETAIL = gql`
         actors { id name actorType }
       }
       ... on GqlConcernSignal {
+        citations { id sourceUrl snippet relevance }
+        actors { id name actorType }
+      }
+      ... on GqlConditionSignal {
         citations { id sourceUrl snippet relevance }
         actors { id name actorType }
       }

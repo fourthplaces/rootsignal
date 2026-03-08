@@ -38,9 +38,9 @@ export function SignalDetailPage() {
         </div>
         <h1 className="text-xl font-semibold">{signal.title}</h1>
         <p className="mt-2 text-muted-foreground">{signal.summary}</p>
-        {signal.sourceUrl && (
+        {signal.url && (
           <div className="mt-3">
-            <LinkPreview url={signal.sourceUrl} fallbackLabel="Source" />
+            <LinkPreview url={signal.url} fallbackLabel="Source" />
           </div>
         )}
         {(signal.locationName || signal.location) && (
