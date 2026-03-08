@@ -46,6 +46,7 @@ pub struct DiscoveredTension {
     pub category: String,
     pub opposing: String,
     /// URL of the evidence that surfaced this tension
+    #[serde(alias = "source_url")]
     pub url: String,
     /// How strongly the original signal relates (0.0-1.0)
     pub match_strength: f64,
@@ -143,7 +144,7 @@ Extract the tensions discovered in the investigation. For each tension:
 - severity: \"low\", \"medium\", \"high\", or \"critical\"
 - category: One of: {}. These are guidance, not constraints — propose a new category if none fit.
 - opposing: What is being opposed (e.g. \"proposed rezoning\", \"budget cuts\")
-- source_url: The URL where you found the strongest evidence for this tension
+- url: The URL where you found the strongest evidence for this tension
 - match_strength: 0.0-1.0 for how strongly the original signal relates to this tension
 - explanation: Why the signal responds to this tension
 
@@ -661,7 +662,7 @@ mod tests {
                 "severity": "high",
                 "category": "immigration",
                 "opposing": "Legal aid",
-                "source_url": "https://example.com/article",
+                "url": "https://example.com/article",
                 "match_strength": 0.9,
                 "explanation": "Workshop responds to enforcement fear"
             }]
