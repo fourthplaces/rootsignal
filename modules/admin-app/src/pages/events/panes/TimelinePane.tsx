@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, X, Copy, Check } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Search, X, Copy, Check, Maximize2 } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
 import { eventTextColor } from "../eventColor";
 
@@ -63,18 +64,128 @@ function formatPayload(raw: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// JsonSyntax — colorized JSON renderer (no dependencies)
+// ---------------------------------------------------------------------------
+
+function JsonSyntax({ json }: { json: string }) {
+  const tokens = tokenizeJson(json);
+  return (
+    <>
+      {tokens.map((t, i) => (
+        <span key={i} className={t.color}>{t.text}</span>
+      ))}
+    </>
+  );
+}
+
+type JsonToken = { text: string; color: string };
+
+function tokenizeJson(json: string): JsonToken[] {
+  const tokens: JsonToken[] = [];
+  const re = /("(?:[^"\\]|\\.)*")\s*:|("(?:[^"\\]|\\.)*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b)|(\bnull\b)|([{}[\]:,])/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(json)) !== null) {
+    if (match.index > lastIndex) {
+      tokens.push({ text: json.slice(lastIndex, match.index), color: "" });
+    }
+    if (match[1] !== undefined) {
+      tokens.push({ text: match[1], color: "text-blue-400" });
+      tokens.push({ text: ":", color: "text-zinc-500" });
+    } else if (match[2] !== undefined) {
+      tokens.push({ text: match[2], color: "text-green-400" });
+    } else if (match[3] !== undefined) {
+      tokens.push({ text: match[3], color: "text-amber-400" });
+    } else if (match[4] !== undefined) {
+      tokens.push({ text: match[4], color: "text-purple-400" });
+    } else if (match[5] !== undefined) {
+      tokens.push({ text: match[5], color: "text-zinc-500" });
+    } else if (match[6] !== undefined) {
+      tokens.push({ text: match[6], color: "text-zinc-500" });
+    }
+    lastIndex = re.lastIndex;
+  }
+  if (lastIndex < json.length) {
+    tokens.push({ text: json.slice(lastIndex), color: "" });
+  }
+  return tokens;
+}
+
+// ---------------------------------------------------------------------------
+// PayloadModal — full-screen overlay for reading large payloads
+// ---------------------------------------------------------------------------
+
+function PayloadModal({ formatted, onClose }: { formatted: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(formatted);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = formatted;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
+      <div
+        className="relative w-[90vw] max-h-[90vh] overflow-auto rounded-lg border border-border bg-background p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="absolute top-2 right-2 flex gap-1">
+          <button
+            onClick={handleCopy}
+            className="p-1 rounded hover:bg-accent transition-colors"
+            title="Copy payload"
+          >
+            {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-muted-foreground" />}
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-accent transition-colors"
+            title="Close"
+          >
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+        <pre className="text-xs whitespace-pre-wrap">
+          <JsonSyntax json={formatted} />
+        </pre>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CopyablePayload — shared expandable payload block with copy button
 // ---------------------------------------------------------------------------
 
 export function CopyablePayload({ payload, className = "" }: { payload: string; className?: string }) {
   const [copied, setCopied] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const formatted = formatPayload(payload);
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(formatted);
     } catch {
-      // Fallback for non-secure contexts
       const ta = document.createElement("textarea");
       ta.value = formatted;
       ta.style.position = "fixed";
@@ -90,16 +201,26 @@ export function CopyablePayload({ payload, className = "" }: { payload: string; 
 
   return (
     <div className={`relative ${className}`}>
-      <pre className="p-2 text-[10px] bg-background rounded border border-border overflow-auto whitespace-pre-wrap max-h-[inherit]">
-        {formatted}
+      <pre className="p-2 text-[10px] bg-background rounded border border-border overflow-auto whitespace-pre-wrap resize-y min-h-24 max-h-[80vh]">
+        <JsonSyntax json={formatted} />
       </pre>
-      <button
-        onClick={(e) => { e.stopPropagation(); handleCopy(); }}
-        className="absolute top-1.5 right-1.5 z-10 p-1 rounded bg-background/80 border border-border hover:bg-accent transition-colors"
-        title="Copy payload"
-      >
-        {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
-      </button>
+      <div className="absolute top-1.5 right-1.5 z-10 flex gap-1">
+        <button
+          onClick={(e) => { e.stopPropagation(); setModalOpen(true); }}
+          className="p-1 rounded bg-background/80 border border-border hover:bg-accent transition-colors"
+          title="Expand payload"
+        >
+          <Maximize2 className="w-3 h-3 text-muted-foreground" />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); handleCopy(); }}
+          className="p-1 rounded bg-background/80 border border-border hover:bg-accent transition-colors"
+          title="Copy payload"
+        >
+          {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+        </button>
+      </div>
+      {modalOpen && <PayloadModal formatted={formatted} onClose={() => setModalOpen(false)} />}
     </div>
   );
 }
