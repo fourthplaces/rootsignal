@@ -376,6 +376,7 @@ export const ADMIN_SCOUT_RUNS_BY_SOURCE = gql`
       sources { id label }
       startedAt
       finishedAt
+      signalCount
       stats {
         urlsScraped
         signalsExtracted

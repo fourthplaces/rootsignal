@@ -1943,6 +1943,22 @@ impl ScoutRun {
         ScoutRunStats::from(&self.row.stats)
     }
 
+    async fn signal_count(&self, ctx: &Context<'_>) -> Result<u32> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let mut result = client
+            .execute(
+                rootsignal_graph::query("MATCH (n) WHERE n.scout_run_id = $run_id RETURN count(n) AS cnt")
+                    .param("run_id", self.row.run_id.clone()),
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Neo4j query failed: {e}")))?;
+        let count: i64 = match result.next().await {
+            Ok(Some(row)) => row.get("cnt").unwrap_or(0),
+            _ => 0,
+        };
+        Ok(count as u32)
+    }
+
     async fn events(&self, ctx: &Context<'_>) -> Result<Vec<ScoutRunEvent>> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
         let pool = pool

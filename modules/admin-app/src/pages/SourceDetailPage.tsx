@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, Link, useNavigate } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { SOURCE_DETAIL, ADMIN_SCOUT_RUNS_BY_SOURCE } from "@/graphql/queries";
 import { RUN_SCOUT_SOURCE, UPDATE_SOURCE, CLEAR_SOURCE_SIGNALS } from "@/graphql/mutations";
 import { InvestigateDrawer, type InvestigateMode } from "@/components/InvestigateDrawer";
+import { DataTable, type Column } from "@/components/DataTable";
 
 const formatDate = (d: string | null | undefined) => {
   if (!d) return "Never";
@@ -87,6 +88,7 @@ type ScoutRunBrief = {
   sources: { id: string; label: string }[];
   startedAt: string;
   finishedAt: string | null;
+  signalCount: number;
   stats: RunStats;
 };
 
@@ -215,6 +217,7 @@ function DiscoveryTreeView({ tree }: { tree: DiscoveryTree }) {
 
 export function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { data, loading } = useQuery(SOURCE_DETAIL, {
     variables: { id },
   });
@@ -249,7 +252,7 @@ export function SourceDetailPage() {
     : [];
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-6xl">
       {/* Header */}
       <div className="space-y-2">
         <div className="flex items-center gap-3">
@@ -473,228 +476,186 @@ export function SourceDetailPage() {
       {/* Recent runs */}
       {(() => {
         const runs: ScoutRunBrief[] = runsData?.adminScoutRunsBySource ?? [];
+        const runColumns: Column<ScoutRunBrief>[] = [
+          {
+            key: "run", label: "Run", resizable: true, defaultWidth: 100,
+            render: (r) => (
+              <Link to={`/scout-runs/${r.runId}`} className="text-blue-400 hover:underline font-mono text-xs">
+                {r.runId.slice(0, 8)}
+              </Link>
+            ),
+          },
+          {
+            key: "flow", label: "Flow", resizable: true, defaultWidth: 120,
+            render: (r) => r.flowType ? (
+              <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
+                {r.flowType}
+              </span>
+            ) : null,
+          },
+          {
+            key: "started", label: "Started", resizable: true, defaultWidth: 180,
+            render: (r) => <span className="text-muted-foreground">{formatDate(r.startedAt)}</span>,
+          },
+          {
+            key: "status", label: "Status", resizable: true, defaultWidth: 120,
+            render: (r) => {
+              const finished = !!r.finishedAt;
+              const duration = finished
+                ? Math.round((new Date(r.finishedAt!).getTime() - new Date(r.startedAt).getTime()) / 1000)
+                : null;
+              return (
+                <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                  finished ? "bg-green-900/30 text-green-400 border-green-500/30" : "bg-amber-900/30 text-amber-400 border-amber-500/30"
+                }`}>
+                  {finished ? `Done${duration !== null ? ` (${duration}s)` : ""}` : "Running"}
+                </span>
+              );
+            },
+          },
+          {
+            key: "signals", label: "Signals", resizable: true, defaultWidth: 80, align: "right",
+            render: (r) => <span className="tabular-nums">{r.signalCount}</span>,
+          },
+          {
+            key: "failures", label: "Failures", resizable: true, defaultWidth: 80, align: "right",
+            render: (r) => {
+              const count = r.stats.handlerFailures ?? 0;
+              return count > 0
+                ? <span className="text-red-400 tabular-nums">{count}</span>
+                : <span className="text-muted-foreground tabular-nums">0</span>;
+            },
+          },
+        ];
         return (
-          <div className="rounded-lg border border-border">
-            <div className="px-4 py-3 border-b border-border">
+          <div>
+            <div className="mb-2">
               <h3 className="text-sm font-medium">Recent Runs</h3>
             </div>
-            {runs.length === 0 ? (
-              <p className="px-4 py-3 text-sm text-muted-foreground">
-                No scout runs found for this source
-              </p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
-                    <th className="px-4 py-2 font-medium">Run</th>
-                    <th className="px-4 py-2 font-medium">Flow</th>
-                    <th className="px-4 py-2 font-medium">Started</th>
-                    <th className="px-4 py-2 font-medium">Status</th>
-                    <th className="px-4 py-2 font-medium text-right">Signals</th>
-                    <th className="px-4 py-2 font-medium text-right">Failures</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((r) => {
-                    const finished = !!r.finishedAt;
-                    const duration = finished
-                      ? Math.round(
-                          (new Date(r.finishedAt!).getTime() -
-                            new Date(r.startedAt).getTime()) /
-                            1000
-                        )
-                      : null;
-                    return (
-                      <tr
-                        key={r.runId}
-                        className="border-b border-border last:border-0 hover:bg-muted/30"
-                      >
-                        <td className="px-4 py-2">
-                          <Link
-                            to={`/scout-runs/${r.runId}`}
-                            className="text-blue-400 hover:underline font-mono text-xs"
-                          >
-                            {r.runId.slice(0, 8)}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-2">
-                          {r.flowType && (
-                            <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
-                              {r.flowType}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                          {formatDate(r.startedAt)}
-                        </td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full border ${
-                              finished
-                                ? "bg-green-900/30 text-green-400 border-green-500/30"
-                                : "bg-amber-900/30 text-amber-400 border-amber-500/30"
-                            }`}
-                          >
-                            {finished
-                              ? `Done${duration !== null ? ` (${duration}s)` : ""}`
-                              : "Running"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {r.stats.signalsExtracted ?? 0}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {(r.stats.handlerFailures ?? 0) > 0 ? (
-                            <span className="text-red-400">
-                              {r.stats.handlerFailures}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">0</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
+            <DataTable
+              columns={runColumns}
+              data={runs}
+              getRowKey={(r) => r.runId}
+              onRowClick={(r) => navigate(`/scout-runs/${r.runId}`)}
+              emptyMessage="No scout runs found for this source"
+            />
           </div>
         );
       })()}
 
       {/* Signals produced */}
-      <div className="rounded-lg border border-border">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium">
-            Signals Produced ({source.signals.length}
-            {source.signals.length >= 50 ? "+" : ""})
-          </h3>
-          {source.signals.length > 0 && (
-            <button
-              onClick={async () => {
-                if (!confirm(`Clear all ${source.signals.length} signals from this source?`)) return;
-                await clearSourceSignals({
-                  variables: { sourceId: source.id },
-                  refetchQueries: [{ query: SOURCE_DETAIL, variables: { id } }],
-                });
-              }}
-              className="text-xs px-2.5 py-1 rounded-md border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
-            >
-              Clear Signals
-            </button>
-          )}
-        </div>
-        {source.signals.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted-foreground">
-            No signals produced yet
-          </p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
-                <th className="px-4 py-2 font-medium">Type</th>
-                <th className="px-4 py-2 font-medium">Title</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium text-right">
-                  Confidence
-                </th>
-                <th className="px-4 py-2 font-medium">Extracted</th>
-              </tr>
-            </thead>
-            <tbody>
-              {source.signals.map((s) => (
-                <tr
-                  key={s.id}
-                  className="border-b border-border last:border-0 hover:bg-muted/30"
+      {(() => {
+        const signalColumns: Column<SignalBrief>[] = [
+          {
+            key: "type", label: "Type", resizable: true, defaultWidth: 120,
+            render: (s) => (
+              <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                SIGNAL_TYPE_COLORS[s.signalType] ?? "bg-muted text-muted-foreground border-border"
+              }`}>
+                {s.signalType}
+              </span>
+            ),
+          },
+          {
+            key: "title", label: "Title", resizable: true, defaultWidth: 300,
+            render: (s) => (
+              <Link to={`/signals/${s.id}`} className="text-blue-400 hover:underline">
+                {s.title}
+              </Link>
+            ),
+          },
+          {
+            key: "status", label: "Status", resizable: true, defaultWidth: 100,
+            render: (s) => (
+              <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                s.reviewStatus === "live"
+                  ? "bg-green-900/30 text-green-400 border-green-500/30"
+                  : s.reviewStatus === "accepted"
+                    ? "bg-blue-900/30 text-blue-400 border-blue-500/30"
+                    : "bg-amber-900/30 text-amber-400 border-amber-500/30"
+              }`}>
+                {s.reviewStatus}
+              </span>
+            ),
+          },
+          {
+            key: "confidence", label: "Confidence", resizable: true, defaultWidth: 100, align: "right",
+            render: (s) => <span className="tabular-nums">{(s.confidence * 100).toFixed(0)}%</span>,
+          },
+          {
+            key: "extracted", label: "Extracted", resizable: true, defaultWidth: 180,
+            render: (s) => <span className="text-muted-foreground">{formatDate(s.extractedAt)}</span>,
+          },
+        ];
+        return (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium">
+                Signals Produced ({source.signals.length}
+                {source.signals.length >= 50 ? "+" : ""})
+              </h3>
+              {source.signals.length > 0 && (
+                <button
+                  onClick={async () => {
+                    if (!confirm(`Clear all ${source.signals.length} signals from this source?`)) return;
+                    await clearSourceSignals({
+                      variables: { sourceId: source.id },
+                      refetchQueries: [{ query: SOURCE_DETAIL, variables: { id } }],
+                    });
+                  }}
+                  className="text-xs px-2.5 py-1 rounded-md border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
                 >
-                  <td className="px-4 py-2">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full border ${
-                        SIGNAL_TYPE_COLORS[s.signalType] ??
-                        "bg-muted text-muted-foreground border-border"
-                      }`}
-                    >
-                      {s.signalType}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 max-w-[300px] truncate">
-                    <Link
-                      to={`/signals/${s.id}`}
-                      className="text-blue-400 hover:underline"
-                    >
-                      {s.title}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full border ${
-                        s.reviewStatus === "live"
-                          ? "bg-green-900/30 text-green-400 border-green-500/30"
-                          : s.reviewStatus === "accepted"
-                            ? "bg-blue-900/30 text-blue-400 border-blue-500/30"
-                            : "bg-amber-900/30 text-amber-400 border-amber-500/30"
-                      }`}
-                    >
-                      {s.reviewStatus}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {(s.confidence * 100).toFixed(0)}%
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                    {formatDate(s.extractedAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+                  Clear Signals
+                </button>
+              )}
+            </div>
+            <DataTable
+              columns={signalColumns}
+              data={source.signals}
+              getRowKey={(s) => s.id}
+              emptyMessage="No signals produced yet"
+            />
+          </div>
+        );
+      })()}
 
       {/* Actors */}
-      {source.actors.length > 0 && (
-        <div className="rounded-lg border border-border">
-          <div className="px-4 py-3 border-b border-border">
-            <h3 className="text-sm font-medium">
-              Actors ({source.actors.length})
-            </h3>
+      {source.actors.length > 0 && (() => {
+        const actorColumns: Column<ActorBrief>[] = [
+          {
+            key: "name", label: "Name", resizable: true, defaultWidth: 250,
+            render: (a) => (
+              <Link to={`/actors/${a.id}`} className="text-blue-400 hover:underline">
+                {a.name}
+              </Link>
+            ),
+          },
+          {
+            key: "type", label: "Type", resizable: true, defaultWidth: 120,
+            render: (a) => (
+              <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
+                {a.actorType}
+              </span>
+            ),
+          },
+          {
+            key: "signals", label: "Signals", resizable: true, defaultWidth: 80, align: "right",
+            render: (a) => <span className="tabular-nums">{a.signalCount}</span>,
+          },
+        ];
+        return (
+          <div>
+            <div className="mb-2">
+              <h3 className="text-sm font-medium">Actors ({source.actors.length})</h3>
+            </div>
+            <DataTable
+              columns={actorColumns}
+              data={source.actors}
+              getRowKey={(a) => a.id}
+            />
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
-                <th className="px-4 py-2 font-medium">Name</th>
-                <th className="px-4 py-2 font-medium">Type</th>
-                <th className="px-4 py-2 font-medium text-right">Signals</th>
-              </tr>
-            </thead>
-            <tbody>
-              {source.actors.map((a) => (
-                <tr
-                  key={a.id}
-                  className="border-b border-border last:border-0 hover:bg-muted/30"
-                >
-                  <td className="px-4 py-2">
-                    <Link
-                      to={`/actors/${a.id}`}
-                      className="text-blue-400 hover:underline"
-                    >
-                      {a.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2">
-                    <span className="text-xs px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
-                      {a.actorType}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {a.signalCount}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Archive summary */}
       {archiveEntries.length > 0 && (
