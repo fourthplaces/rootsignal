@@ -150,7 +150,7 @@ impl Agent for Gemini {
             system_instruction: Some(Content::system(system)),
             generation_config: Some(GenerationConfig {
                 temperature: Some(0.0),
-                max_output_tokens: Some(8192),
+                max_output_tokens: Some(65536),
                 response_mime_type: Some("application/json".to_string()),
                 response_json_schema: Some(gemini_schema),
             }),
