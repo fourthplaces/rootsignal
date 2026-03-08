@@ -64,7 +64,7 @@ impl ScoutDeps {
         let embedder: Arc<dyn TextEmbedder> =
             Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key));
         let ai: Arc<dyn ai_client::Agent> = Arc::new(
-            Gemini::new(&self.gemini_api_key, "gemini-2.5-flash"),
+            Gemini::new(&self.gemini_api_key, "gemini-3-flash-preview"),
         );
         let archive = create_archive(self);
         let budget = Arc::new(
