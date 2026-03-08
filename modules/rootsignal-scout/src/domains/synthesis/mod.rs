@@ -164,8 +164,16 @@ pub mod handlers {
             .collect();
         let results: Vec<_> = stream::iter(futures).buffer_unordered(5).collect().await;
 
-        for (target_events, _edges_created) in results {
-            out.extend(target_events);
+        for links in results {
+            for link in links {
+                out.push(SystemEvent::ResponseLinked {
+                    signal_id: link.signal_id,
+                    concern_id: link.concern_id,
+                    strength: link.strength,
+                    explanation: link.explanation,
+                    source_url: None,
+                });
+            }
         }
 
         out.push(SynthesisEvent::ResponsesMapped);

@@ -10,10 +10,15 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tracing::{info, warn};
 
-use rootsignal_common::system_events::SystemEvent;
 use rootsignal_graph::GraphQueries;
 
-use seesaw_core::Events;
+/// A verified response link between a signal and a concern.
+pub struct ResponseLink {
+    pub signal_id: uuid::Uuid,
+    pub concern_id: uuid::Uuid,
+    pub strength: f64,
+    pub explanation: String,
+}
 
 /// Structured output for response verification.
 #[derive(Deserialize, JsonSchema)]
@@ -32,8 +37,7 @@ pub async fn map_responses(
     center_lat: f64,
     center_lng: f64,
     radius_km: f64,
-    events: &mut Events,
-) -> Result<ResponseMappingStats, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(Vec<ResponseLink>, ResponseMappingStats), Box<dyn std::error::Error + Send + Sync>> {
     let lat_delta = radius_km / 111.0;
     let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
     let min_lat = center_lat - lat_delta;
@@ -42,13 +46,14 @@ pub async fn map_responses(
     let max_lng = center_lng + lng_delta;
 
     let mut stats = ResponseMappingStats::default();
+    let mut all_links = Vec::new();
 
     let tensions = graph
         .get_active_tensions(min_lat, max_lat, min_lng, max_lng)
         .await?;
     if tensions.is_empty() {
         info!("No active tensions for response mapping");
-        return Ok(stats);
+        return Ok((all_links, stats));
     }
 
     info!(tensions = tensions.len(), "Running response mapping");
@@ -92,12 +97,11 @@ pub async fn map_responses(
             .await
             {
                 Ok(Some(explanation)) => {
-                    events.push(SystemEvent::ResponseLinked {
+                    all_links.push(ResponseLink {
                         signal_id: *candidate_id,
                         concern_id: *concern_id,
                         strength: *candidate_similarity,
-                        explanation: explanation.clone(),
-                        source_url: None,
+                        explanation,
                     });
                     stats.edges_created += 1;
                     verified += 1;
@@ -123,11 +127,10 @@ pub async fn map_responses(
         candidates = stats.candidates_found,
         "Response mapping complete"
     );
-    Ok(stats)
+    Ok((all_links, stats))
 }
 
-/// Map responses for a single tension — returns events and edge count.
-/// Used by the per-target handler.
+/// Map responses for a single tension. Returns verified response links.
 pub async fn map_single_tension(
     graph: &dyn GraphQueries,
     ai: &dyn Agent,
@@ -137,9 +140,8 @@ pub async fn map_single_tension(
     max_lat: f64,
     min_lng: f64,
     max_lng: f64,
-) -> (Events, u32) {
-    let mut events = Events::new();
-    let mut edges_created = 0u32;
+) -> Vec<ResponseLink> {
+    let mut links = Vec::new();
 
     let candidates = match graph
         .find_response_candidates(tension_embedding, min_lat, max_lat, min_lng, max_lng)
@@ -148,20 +150,20 @@ pub async fn map_single_tension(
         Ok(c) => c,
         Err(e) => {
             warn!(error = %e, "Failed to find response candidates for tension");
-            return (events, edges_created);
+            return links;
         }
     };
 
     if candidates.is_empty() {
-        return (events, edges_created);
+        return links;
     }
 
     let tension_info = match graph.get_signal_info(concern_id).await {
         Ok(Some((title, summary))) => (title, summary),
-        Ok(None) => return (events, edges_created),
+        Ok(None) => return links,
         Err(e) => {
             warn!(error = %e, "Failed to get tension info");
-            return (events, edges_created);
+            return links;
         }
     };
 
@@ -186,14 +188,12 @@ pub async fn map_single_tension(
         .await
         {
             Ok(Some(explanation)) => {
-                events.push(SystemEvent::ResponseLinked {
+                links.push(ResponseLink {
                     signal_id: *candidate_id,
                     concern_id,
                     strength: *candidate_similarity,
-                    explanation: explanation.clone(),
-                    source_url: None,
+                    explanation,
                 });
-                edges_created += 1;
                 verified += 1;
             }
             Ok(None) => {}
@@ -211,7 +211,7 @@ pub async fn map_single_tension(
         tension_title, verified, checked,
     );
 
-    (events, edges_created)
+    links
 }
 
 /// LLM verifies whether a candidate signal actually responds to a tension.
