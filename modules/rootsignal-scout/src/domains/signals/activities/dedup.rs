@@ -1,53 +1,52 @@
-//! Dedup handler — 4-layer deduplication for extracted signals.
+//! Dedup activity — 4-layer deduplication for extracted signals.
 //!
-//! Triggered by scrape completion events (carry extracted batches in-memory).
-//! Runs dedup layers and emits final facts directly:
+//! Returns domain types (`DedupBatchResult`). The handler maps these to events.
 //!
-//! - Create: WorldEvent + SystemEvents + CitationPublished + DedupOutcome::Created
-//! - Corroborate: CitationPublished + DedupOutcome::Corroborated
+//! - Create: node + citation + actor actions + DedupOutcome::Created
+//! - Corroborate: citation + corroboration data + DedupOutcome::Corroborated
 //! - Refresh: DedupOutcome::Refreshed (no events — freshness is the default)
 //!
 //! Layer 1 (batch title dedup) is applied by the caller before stashing.
-//! This handler runs layers 2–4.
+//! This activity runs layers 2–4.
 
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
-use seesaw_core::Events;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::domains::signals::events::{DedupOutcome, ResolvedActor, SignalEvent};
+use crate::domains::signals::events::{
+    ActorAction, Corroboration, CreatedSignal, DedupBatchResult, DedupOutcome,
+    NewCitation, ResolvedActor,
+};
 use crate::domains::signals::activities::dedup_utils::{dedup_verdict, is_owned_source, normalize_title, DedupVerdict};
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::aggregate::{ExtractedBatch, PipelineState};
-use crate::store::event_sourced::{node_system_events, node_to_world_event};
 
-/// Handle extracted batch: run 4-layer dedup, emit final facts.
-///
-/// The batch is carried directly on the event payload — no stash/cleanup needed.
+/// Run 4-layer dedup on an extracted batch, returning domain types.
 pub async fn deduplicate_extracted_batch(
     url: &str,
     canonical_key: &str,
     batch: &ExtractedBatch,
     state: &PipelineState,
     deps: &ScoutEngineDeps,
-) -> Result<Events> {
+) -> Result<DedupBatchResult> {
+    let empty_result = || DedupBatchResult {
+        created: Vec::new(),
+        corroborations: Vec::new(),
+        actor_actions: Vec::new(),
+        verdicts: Vec::new(),
+    };
 
     if batch.nodes.is_empty() {
-        let mut events = Events::new();
-        events.push(SignalEvent::DedupCompleted {
-            url: url.to_string(),
-            canonical_key: canonical_key.to_string(),
-            verdicts: vec![],
-        });
-        return Ok(events);
+        return Ok(empty_result());
     }
 
     let content_hash_str = format!("{:x}", rootsignal_common::content_hash(&batch.content));
-    let mut events = Events::new();
+    let mut created = Vec::new();
+    let mut corroborations = Vec::new();
+    let mut actor_actions = Vec::new();
     let mut verdicts: Vec<DedupOutcome> = Vec::new();
 
     // Track seen actors within the batch to avoid duplicate creation
@@ -79,12 +78,7 @@ pub async fn deduplicate_extracted_batch(
     }
 
     if nodes.is_empty() {
-        events.push(SignalEvent::DedupCompleted {
-            url: url.to_string(),
-            canonical_key: canonical_key.to_string(),
-            verdicts: vec![],
-        });
-        return Ok(events);
+        return Ok(empty_result());
     }
 
     let ck = state
@@ -122,12 +116,12 @@ pub async fn deduplicate_extracted_batch(
                     new_source = url,
                     "Global title+type match from different source"
                 );
-                let (count, verdict) = build_corroboration(
+                let (corr, verdict) = build_corroboration(
                     existing_id, node.node_type(), url, similarity,
                     &content_hash_str, deps, &mut corroboration_counts,
                 ).await?;
-                events.extend(verdict.0);
-                verdicts.push(verdict.1);
+                corroborations.push(corr);
+                verdicts.push(verdict);
             }
             DedupVerdict::Refresh {
                 existing_id,
@@ -150,12 +144,7 @@ pub async fn deduplicate_extracted_batch(
     let nodes = remaining_nodes;
 
     if nodes.is_empty() {
-        events.push(SignalEvent::DedupCompleted {
-            url: url.to_string(),
-            canonical_key: canonical_key.to_string(),
-            verdicts,
-        });
-        return Ok(events);
+        return Ok(DedupBatchResult { created, corroborations, actor_actions, verdicts });
     }
 
     // --- Layer 2.75: Fingerprint dedup (url, node_type) ---
@@ -195,12 +184,12 @@ pub async fn deduplicate_extracted_batch(
                         new_source = url,
                         "Fingerprint match from different source"
                     );
-                    let (_count, verdict) = build_corroboration(
+                    let (corr, verdict) = build_corroboration(
                         existing_id, node.node_type(), url, similarity,
                         &content_hash_str, deps, &mut corroboration_counts,
                     ).await?;
-                    events.extend(verdict.0);
-                    verdicts.push(verdict.1);
+                    corroborations.push(corr);
+                    verdicts.push(verdict);
                 }
                 DedupVerdict::Refresh {
                     existing_id,
@@ -223,12 +212,7 @@ pub async fn deduplicate_extracted_batch(
     let nodes = remaining_nodes;
 
     if nodes.is_empty() {
-        events.push(SignalEvent::DedupCompleted {
-            url: url.to_string(),
-            canonical_key: canonical_key.to_string(),
-            verdicts,
-        });
-        return Ok(events);
+        return Ok(DedupBatchResult { created, corroborations, actor_actions, verdicts });
     }
 
     // --- Batch embed remaining signals ---
@@ -250,7 +234,7 @@ pub async fn deduplicate_extracted_batch(
         Ok(e) => e,
         Err(e) => {
             warn!(url, error = %e, "Batch embedding failed, skipping all signals");
-            return Ok(events);
+            return Ok(DedupBatchResult { created, corroborations, actor_actions, verdicts });
         }
     };
 
@@ -261,7 +245,7 @@ pub async fn deduplicate_extracted_batch(
             let lng_d = r.radius_km / (111.0 * r.center_lat.to_radians().cos());
             (lat_d, lng_d)
         }
-        None => (90.0, 180.0), // global fallback
+        None => (90.0, 180.0),
     };
     let (center_lat, center_lng) = state
         .run_scope
@@ -327,7 +311,6 @@ pub async fn deduplicate_extracted_batch(
                     source = source_layer,
                     "Same-source duplicate"
                 );
-                // Update embed cache if verdict came from graph
                 if cache_hit.is_none() {
                     if let Some((_, _, ref hit_ck, _)) = graph_hit {
                         deps.embed_cache.add(
@@ -357,7 +340,6 @@ pub async fn deduplicate_extracted_batch(
                     source = source_layer,
                     "Cross-source duplicate"
                 );
-                // Update embed cache if verdict came from graph
                 if cache_hit.is_none() {
                     if let Some((_, _, ref hit_ck, _)) = graph_hit {
                         deps.embed_cache.add(
@@ -368,18 +350,17 @@ pub async fn deduplicate_extracted_batch(
                         );
                     }
                 }
-                let (count, verdict) = build_corroboration(
+                let (corr, verdict) = build_corroboration(
                     existing_id, node_type, url, similarity,
                     &content_hash_str, deps, &mut corroboration_counts,
                 ).await?;
-                events.extend(verdict.0);
-                verdicts.push(verdict.1);
+                corroborations.push(corr);
+                verdicts.push(verdict);
             }
             DedupVerdict::Create => {
                 let node_id = node.id();
                 let meta_id = node.meta().map(|m| m.id);
 
-                // Add to embed cache
                 deps
                     .embed_cache
                     .add(embedding.clone(), node_id, node_type, ck.clone());
@@ -396,33 +377,20 @@ pub async fn deduplicate_extracted_batch(
                     .cloned()
                     .unwrap_or_default();
 
-                // 1. World fact — the discovery
-                events.push(node_to_world_event(&node));
-
-                // 2. System classifications
-                for sys in node_system_events(&node) {
-                    events.push(sys);
-                }
-
-                // 3. Citation evidence
-                events.push(WorldEvent::CitationPublished {
+                let citation = NewCitation {
                     citation_id: Uuid::new_v4(),
                     signal_id: node_id,
                     url: url.to_string(),
                     content_hash: content_hash_str.clone(),
                     snippet: node.meta().map(|m| m.summary.clone()),
-                    relevance: None,
                     channel_type: Some(rootsignal_common::channel_type(url)),
-                    evidence_confidence: None,
-                });
+                };
 
-                // 4. Resolve actor inline (batch-scoped dedup via seen_actors)
                 let resolved_actor = resolve_actor_inline(
                     node_id, url, &author_name, batch.source_id,
-                    &mut seen_actors, &mut events, deps,
+                    &mut seen_actors, &mut actor_actions, deps,
                 ).await?;
 
-                // 5. Build verdict
                 verdicts.push(DedupOutcome::Created {
                     node_id,
                     node_type,
@@ -434,20 +402,16 @@ pub async fn deduplicate_extracted_batch(
                     source_id: batch.source_id,
                     actor: resolved_actor,
                 });
+
+                created.push(CreatedSignal { node, citation });
             }
         }
     }
 
-    events.push(SignalEvent::DedupCompleted {
-        url: url.to_string(),
-        canonical_key: canonical_key.to_string(),
-        verdicts,
-    });
-
-    Ok(events)
+    Ok(DedupBatchResult { created, corroborations, actor_actions, verdicts })
 }
 
-/// Build corroboration events + verdict for a cross-source match.
+/// Build corroboration data + verdict for a cross-source match.
 ///
 /// Tracks cumulative counts per target within the batch via `corroboration_counts`.
 async fn build_corroboration(
@@ -458,8 +422,7 @@ async fn build_corroboration(
     content_hash: &str,
     deps: &ScoutEngineDeps,
     corroboration_counts: &mut HashMap<Uuid, u32>,
-) -> Result<(u32, (Events, DedupOutcome))> {
-    // Read base count once per unique target, then increment for batch duplicates
+) -> Result<(Corroboration, DedupOutcome)> {
     let base_count = if let std::collections::hash_map::Entry::Vacant(e) = corroboration_counts.entry(existing_id) {
         let count = deps
             .store
@@ -475,31 +438,21 @@ async fn build_corroboration(
     let new_count = base_count + 1;
     *corroboration_counts.get_mut(&existing_id).unwrap() = new_count;
 
-    let mut events = Events::new();
-
-    events.push(WorldEvent::CitationPublished {
-        citation_id: Uuid::new_v4(),
-        signal_id: existing_id,
-        url: source_url.to_string(),
-        content_hash: content_hash.to_string(),
-        snippet: None,
-        relevance: None,
-        channel_type: Some(rootsignal_common::channel_type(source_url)),
-        evidence_confidence: None,
-    });
-
-    events.push(SystemEvent::ObservationCorroborated {
+    let corroboration = Corroboration {
         signal_id: existing_id,
         node_type,
-        new_url: source_url.to_string(),
-        summary: None,
-    });
-
-    events.push(SystemEvent::CorroborationScored {
-        signal_id: existing_id,
+        url: source_url.to_string(),
         similarity,
         new_corroboration_count: new_count,
-    });
+        citation: NewCitation {
+            citation_id: Uuid::new_v4(),
+            signal_id: existing_id,
+            url: source_url.to_string(),
+            content_hash: content_hash.to_string(),
+            snippet: None,
+            channel_type: Some(rootsignal_common::channel_type(source_url)),
+        },
+    };
 
     let verdict = DedupOutcome::Corroborated {
         existing_id,
@@ -509,13 +462,10 @@ async fn build_corroboration(
         new_corroboration_count: new_count,
     };
 
-    Ok((new_count, (events, verdict)))
+    Ok((corroboration, verdict))
 }
 
-/// Build verdict for a same-source re-encounter.
-///
-/// No events emitted — "still there" is the default assumption.
-/// The projection bumps `last_confirmed_active` from the verdict directly.
+/// Build verdict for a same-source re-encounter (no events needed).
 fn build_freshness(
     existing_id: Uuid,
     node_type: NodeType,
@@ -528,17 +478,17 @@ fn build_freshness(
     }
 }
 
-/// Resolve author → Actor node on owned sources.
+/// Resolve author → Actor on owned sources.
 ///
-/// Uses `seen_actors` to avoid duplicate actor creation for same-author
-/// signals within the same batch.
+/// Appends `ActorAction`s to the accumulator instead of constructing events.
+/// Uses `seen_actors` to avoid duplicate actor creation within the same batch.
 async fn resolve_actor_inline(
     signal_id: Uuid,
     source_url: &str,
     author_name: &Option<String>,
     source_id: Option<Uuid>,
     seen_actors: &mut HashMap<String, Uuid>,
-    events: &mut Events,
+    actor_actions: &mut Vec<ActorAction>,
     deps: &ScoutEngineDeps,
 ) -> Result<Option<ResolvedActor>> {
     let author_name = match author_name {
@@ -553,12 +503,10 @@ async fn resolve_actor_inline(
 
     let canonical_key = rootsignal_common::canonical_value(source_url);
 
-    // Check batch-local cache first
     if let Some(&cached_id) = seen_actors.get(&canonical_key) {
-        events.push(SystemEvent::ActorLinkedToSignal {
+        actor_actions.push(ActorAction::LinkedToSignal {
             actor_id: cached_id,
             signal_id,
-            role: "authored".to_string(),
         });
         return Ok(Some(ResolvedActor {
             actor_id: cached_id,
@@ -569,14 +517,12 @@ async fn resolve_actor_inline(
         }));
     }
 
-    // Store lookup
     match deps.store.find_actor_by_canonical_key(&canonical_key).await {
         Ok(Some(actor_id)) => {
             seen_actors.insert(canonical_key.clone(), actor_id);
-            events.push(SystemEvent::ActorLinkedToSignal {
+            actor_actions.push(ActorAction::LinkedToSignal {
                 actor_id,
                 signal_id,
-                role: "authored".to_string(),
             });
             Ok(Some(ResolvedActor {
                 actor_id,
@@ -590,29 +536,20 @@ async fn resolve_actor_inline(
             let new_id = Uuid::new_v4();
             seen_actors.insert(canonical_key.clone(), new_id);
 
-            events.push(SystemEvent::ActorIdentified {
+            actor_actions.push(ActorAction::Identified {
                 actor_id: new_id,
                 name: author_name.to_string(),
-                actor_type: rootsignal_common::ActorType::Organization,
                 canonical_key: canonical_key.clone(),
-                domains: vec![],
-                social_urls: vec![],
-                description: String::new(),
-                bio: None,
-                location_lat: None,
-                location_lng: None,
-                location_name: None,
             });
             if let Some(sid) = source_id {
-                events.push(WorldEvent::ActorLinkedToSource {
+                actor_actions.push(ActorAction::LinkedToSource {
                     actor_id: new_id,
                     source_id: sid,
                 });
             }
-            events.push(SystemEvent::ActorLinkedToSignal {
+            actor_actions.push(ActorAction::LinkedToSignal {
                 actor_id: new_id,
                 signal_id,
-                role: "authored".to_string(),
             });
             Ok(Some(ResolvedActor {
                 actor_id: new_id,

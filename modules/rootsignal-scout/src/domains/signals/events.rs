@@ -1,10 +1,70 @@
-//! Signal domain events: dedup verdicts.
+//! Signal domain events and domain types for dedup results.
 
-use rootsignal_common::types::NodeType;
+use rootsignal_common::types::{ChannelType, NodeType};
+use rootsignal_common::Node;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::core::extractor::ResourceTag;
+
+// ---------------------------------------------------------------------------
+// Domain types returned by dedup activity
+// ---------------------------------------------------------------------------
+
+/// Result of deduplicating an extracted batch.
+pub struct DedupBatchResult {
+    pub created: Vec<CreatedSignal>,
+    pub corroborations: Vec<Corroboration>,
+    pub actor_actions: Vec<ActorAction>,
+    pub verdicts: Vec<DedupOutcome>,
+}
+
+/// A newly created signal with its associated citation.
+pub struct CreatedSignal {
+    pub node: Node,
+    pub citation: NewCitation,
+}
+
+/// A cross-source corroboration of an existing signal.
+pub struct Corroboration {
+    pub signal_id: Uuid,
+    pub node_type: NodeType,
+    pub url: String,
+    pub similarity: f64,
+    pub new_corroboration_count: u32,
+    pub citation: NewCitation,
+}
+
+/// Citation evidence linking a signal to a source URL.
+pub struct NewCitation {
+    pub citation_id: Uuid,
+    pub signal_id: Uuid,
+    pub url: String,
+    pub content_hash: String,
+    pub snippet: Option<String>,
+    pub channel_type: Option<ChannelType>,
+}
+
+/// Actor-related action from inline actor resolution during dedup.
+pub enum ActorAction {
+    Identified {
+        actor_id: Uuid,
+        name: String,
+        canonical_key: String,
+    },
+    LinkedToSource {
+        actor_id: Uuid,
+        source_id: Uuid,
+    },
+    LinkedToSignal {
+        actor_id: Uuid,
+        signal_id: Uuid,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Persisted event types (serialized to event store)
+// ---------------------------------------------------------------------------
 
 /// Resolved actor from dedup handler's inline lookup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
