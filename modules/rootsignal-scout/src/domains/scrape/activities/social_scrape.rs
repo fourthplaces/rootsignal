@@ -439,42 +439,58 @@ async fn extract_content_batches(
     source_url: &str,
     logger: &Logger,
 ) -> BatchedExtractionResult {
+    let prepared: Vec<_> = items
+        .chunks(EXTRACTION_BATCH_SIZE)
+        .filter_map(|chunk| {
+            let permalink_map: HashMap<String, String> = chunk
+                .iter()
+                .filter_map(|item| {
+                    item.permalink.as_ref().map(|url| (item.key.clone(), url.clone()))
+                })
+                .collect();
+
+            let mut batch_text: String = chunk
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            if batch_text.is_empty() {
+                return None;
+            }
+            if let Some(prefix) = actor_prefix {
+                batch_text = format!("{prefix}{batch_text}");
+            }
+
+            Some((batch_text, permalink_map, chunk.len()))
+        })
+        .collect();
+
+    let batch_results: Vec<_> = stream::iter(prepared.into_iter().map(|(batch_text, permalink_map, batch_size)| {
+        let logger = logger.clone();
+        let source_url = source_url.to_string();
+        async move {
+            logger.info(format!(
+                "{source_url}: extracting batch of {batch_size} items ({} bytes)",
+                batch_text.len(),
+            ));
+            let extraction = extractor.extract(&batch_text, &source_url).await;
+            (batch_text, permalink_map, extraction, source_url, logger)
+        }
+    }))
+    .buffer_unordered(4)
+    .collect()
+    .await;
+
     let mut all_nodes = Vec::new();
     let mut all_resource_tags = Vec::new();
     let mut all_signal_tags = Vec::new();
     let mut all_author_actors: HashMap<Uuid, String> = HashMap::new();
     let mut combined_text = String::new();
 
-    for chunk in items.chunks(EXTRACTION_BATCH_SIZE) {
-        // Per-batch permalink map: batch-relative indices avoid cross-batch collision
-        let permalink_map: HashMap<String, String> = chunk
-            .iter()
-            .filter_map(|item| {
-                item.permalink.as_ref().map(|url| (item.key.clone(), url.clone()))
-            })
-            .collect();
-
-        let mut batch_text: String = chunk
-            .iter()
-            .map(|item| item.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        if batch_text.is_empty() {
-            continue;
-        }
-        if let Some(prefix) = actor_prefix {
-            batch_text = format!("{prefix}{batch_text}");
-        }
+    for (batch_text, permalink_map, extraction, source_url, logger) in batch_results {
         combined_text.push_str(&batch_text);
-
-        let batch_size = chunk.len();
-        logger.info(format!(
-            "{source_url}: extracting batch of {batch_size} items ({} bytes)",
-            batch_text.len(),
-        ));
-
-        match extractor.extract(&batch_text, source_url).await {
+        match extraction {
             Ok(result) => {
                 if !result.rejected.is_empty() {
                     logger.info(format!(
