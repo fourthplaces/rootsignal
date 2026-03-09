@@ -509,19 +509,18 @@ impl<'a> SourceFinder<'a> {
         stats: &mut SourceFinderStats,
         sources: &mut Vec<SourceNode>,
     ) {
-        let actors = match self
-            .graph
-            .get_actors_with_domains(Some(MAX_DISCOVERY_DEPTH))
-            .await
-        {
+        let (actors_res, existing_res) = tokio::join!(
+            self.graph.get_actors_with_domains(Some(MAX_DISCOVERY_DEPTH)),
+            self.graph.get_active_sources(),
+        );
+        let actors = match actors_res {
             Ok(a) => a,
             Err(e) => {
                 warn!(error = %e, "Failed to get actors for discovery");
                 return;
             }
         };
-
-        let existing = match self.graph.get_active_sources().await {
+        let existing = match existing_res {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to get existing sources for dedup");
@@ -793,54 +792,34 @@ impl<'a> SourceFinder<'a> {
 
     /// Build a DiscoveryBriefing from graph queries.
     async fn build_briefing(&self) -> anyhow::Result<DiscoveryBriefing> {
-        let tensions = self
-            .graph
-            .get_unmet_tensions(10)
-            .await
-            .map_err(|e| anyhow::anyhow!("get_unmet_tensions: {e}"))?;
+        let (
+            tensions_res,
+            situations_res,
+            signal_counts_res,
+            perf_res,
+            gap_type_stats_res,
+            extraction_yield_res,
+            response_shapes_res,
+            existing_res,
+        ) = tokio::join!(
+            self.graph.get_unmet_tensions(10),
+            self.graph.get_situation_landscape(10),
+            self.graph.get_signal_type_counts(),
+            self.graph.get_discovery_performance(),
+            self.graph.get_gap_type_stats(),
+            self.graph.get_extraction_yield(),
+            self.graph.get_tension_response_shape(10),
+            self.graph.get_active_sources(),
+        );
 
-        let situations = self
-            .graph
-            .get_situation_landscape(10)
-            .await
-            .map_err(|e| anyhow::anyhow!("get_situation_landscape: {e}"))?;
-
-        let signal_counts = self
-            .graph
-            .get_signal_type_counts()
-            .await
-            .map_err(|e| anyhow::anyhow!("get_signal_type_counts: {e}"))?;
-
-        let (successes, failures) = self
-            .graph
-            .get_discovery_performance()
-            .await
-            .map_err(|e| anyhow::anyhow!("get_discovery_performance: {e}"))?;
-
-        let gap_type_stats = self
-            .graph
-            .get_gap_type_stats()
-            .await
-            .map_err(|e| anyhow::anyhow!("get_gap_type_stats: {e}"))?;
-
-        let extraction_yield = self
-            .graph
-            .get_extraction_yield()
-            .await
-            .map_err(|e| anyhow::anyhow!("get_extraction_yield: {e}"))?;
-
-        let response_shapes = self
-            .graph
-            .get_tension_response_shape(10)
-            .await
-            .map_err(|e| anyhow::anyhow!("get_tension_response_shape: {e}"))?;
-
-        // Get existing WebQuery sources for dedup
-        let existing = self
-            .graph
-            .get_active_sources()
-            .await
-            .map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
+        let tensions = tensions_res.map_err(|e| anyhow::anyhow!("get_unmet_tensions: {e}"))?;
+        let situations = situations_res.map_err(|e| anyhow::anyhow!("get_situation_landscape: {e}"))?;
+        let signal_counts = signal_counts_res.map_err(|e| anyhow::anyhow!("get_signal_type_counts: {e}"))?;
+        let (successes, failures) = perf_res.map_err(|e| anyhow::anyhow!("get_discovery_performance: {e}"))?;
+        let gap_type_stats = gap_type_stats_res.map_err(|e| anyhow::anyhow!("get_gap_type_stats: {e}"))?;
+        let extraction_yield = extraction_yield_res.map_err(|e| anyhow::anyhow!("get_extraction_yield: {e}"))?;
+        let response_shapes = response_shapes_res.map_err(|e| anyhow::anyhow!("get_tension_response_shape: {e}"))?;
+        let existing = existing_res.map_err(|e| anyhow::anyhow!("get_active_sources: {e}"))?;
         let existing_queries: Vec<String> = existing
             .iter()
             .filter(|s| is_web_query(&s.canonical_value))
@@ -872,8 +851,11 @@ impl<'a> SourceFinder<'a> {
         social_topics: &mut Vec<String>,
         sources: &mut Vec<SourceNode>,
     ) {
-        // Get tensions with engagement data, sorted by engagement within unmet-first grouping
-        let mut tensions = match self.graph.get_unmet_tensions(20).await {
+        let (tensions_res, existing_res) = tokio::join!(
+            self.graph.get_unmet_tensions(20),
+            self.graph.get_active_sources(),
+        );
+        let mut tensions = match tensions_res {
             Ok(t) => t,
             Err(e) => {
                 warn!(error = %e, "Failed to get tensions for gap analysis");
@@ -896,7 +878,7 @@ impl<'a> SourceFinder<'a> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let existing = match self.graph.get_active_sources().await {
+        let existing = match existing_res {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to get sources for gap analysis");
