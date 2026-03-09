@@ -145,6 +145,11 @@ async fn commit_inner(ctx: &MigrateContext, migrations: &[Migration]) -> Result<
     let mut applied = 0;
 
     for m in &pending {
+        print!("  \u{25cb} {} ...", m.name);
+        // Flush so the name appears before the migration runs
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+
         let start = Instant::now();
 
         sqlx::query(
@@ -160,7 +165,7 @@ async fn commit_inner(ctx: &MigrateContext, migrations: &[Migration]) -> Result<
         match &m.body {
             MigrationBody::Sql(sql) => {
                 let mut tx = pg.begin().await?;
-                sqlx::query(sql)
+                sqlx::raw_sql(sql)
                     .execute(&mut *tx)
                     .await
                     .with_context(|| format!("migration {} failed", m.name))?;
@@ -188,7 +193,7 @@ async fn commit_inner(ctx: &MigrateContext, migrations: &[Migration]) -> Result<
         .execute(pg)
         .await?;
 
-        println!("  \u{2713} {} ({:.1}s)", m.name, elapsed.as_secs_f64());
+        println!("\r  \u{2713} {} ({:.1}s)", m.name, elapsed.as_secs_f64());
         applied += 1;
     }
 
@@ -196,6 +201,49 @@ async fn commit_inner(ctx: &MigrateContext, migrations: &[Migration]) -> Result<
         "\n{} migration{} applied.\n",
         applied,
         if applied == 1 { "" } else { "s" }
+    );
+
+    Ok(())
+}
+
+/// Mark specific migrations as completed without running them.
+pub async fn mark_completed(ctx: &MigrateContext, migrations: &[Migration], names: &[String]) -> Result<()> {
+    let pg = ctx.pg();
+    ensure_table(pg).await?;
+
+    let known: HashSet<&str> = migrations.iter().map(|m| m.name).collect();
+    for name in names {
+        if !known.contains(name.as_str()) {
+            anyhow::bail!("unknown migration: {name}");
+        }
+    }
+
+    let requested: HashSet<&str> = names.iter().map(|s| s.as_str()).collect();
+    let mut marked = 0;
+
+    for m in migrations {
+        if !requested.contains(m.name) {
+            continue;
+        }
+        let cs = m.sql_text().map(checksum);
+        sqlx::query(
+            "INSERT INTO _migrations (name, kind, started_at, completed_at, duration_ms, checksum)
+             VALUES ($1, $2, now(), now(), 0, $3)
+             ON CONFLICT (name) DO UPDATE SET completed_at = now()",
+        )
+        .bind(m.name)
+        .bind(m.kind())
+        .bind(&cs)
+        .execute(pg)
+        .await?;
+
+        println!("  \u{2713} {} (marked completed)", m.name);
+        marked += 1;
+    }
+
+    println!(
+        "\n{marked} migration{} marked completed.\n",
+        if marked == 1 { "" } else { "s" }
     );
 
     Ok(())
@@ -212,7 +260,7 @@ pub async fn baseline(ctx: &MigrateContext, migrations: &[Migration], up_to: &st
         sqlx::query(
             "INSERT INTO _migrations (name, kind, started_at, completed_at, duration_ms, checksum)
              VALUES ($1, $2, now(), now(), 0, $3)
-             ON CONFLICT (name) DO NOTHING",
+             ON CONFLICT (name) DO UPDATE SET completed_at = now()",
         )
         .bind(m.name)
         .bind(m.kind())

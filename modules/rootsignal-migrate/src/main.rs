@@ -21,6 +21,11 @@ struct Cli {
     #[arg(long)]
     baseline: Option<String>,
 
+    /// Mark specific migrations as completed without running them.
+    /// Comma-separated list of migration names.
+    #[arg(long, value_delimiter = ',')]
+    mark_completed: Vec<String>,
+
     /// Postgres connection string. Defaults to DATABASE_URL env var.
     #[arg(long, env = "DATABASE_URL")]
     database_url: String,
@@ -59,6 +64,10 @@ async fn main() -> Result<()> {
             println!("\n{} warning{}.\n", warnings.len(), if warnings.len() == 1 { "" } else { "s" });
         }
         return Ok(());
+    }
+
+    if !cli.mark_completed.is_empty() {
+        return runner::mark_completed(&ctx, &all, &cli.mark_completed).await;
     }
 
     if let Some(ref target) = cli.baseline {

@@ -227,6 +227,7 @@ fn migrate_submenu(ctx: &AppContext) -> Result<()> {
         "Status (dry run — show pending)",
         "Commit (apply pending migrations)",
         "Check (lint SQL for risky patterns)",
+        "Mark completed (skip specific migrations)",
         "← Back",
     ];
 
@@ -240,6 +241,12 @@ fn migrate_submenu(ctx: &AppContext) -> Result<()> {
         0 => cmd::migrate::run(ctx, cmd::migrate::MigrateCommand::Status),
         1 => cmd::migrate::run(ctx, cmd::migrate::MigrateCommand::Commit),
         2 => cmd::migrate::run(ctx, cmd::migrate::MigrateCommand::Check),
+        3 => {
+            let name: String = dialoguer::Input::with_theme(&ctx.theme())
+                .with_prompt("Migration names (comma-separated)")
+                .interact_text()?;
+            cmd::migrate::run(ctx, cmd::migrate::MigrateCommand::MarkCompleted { names: name })
+        }
         _ => Ok(()),
     }
 }
