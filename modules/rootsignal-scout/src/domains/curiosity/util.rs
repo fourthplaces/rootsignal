@@ -6,7 +6,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    canonical_value, DiscoveryMethod, GeoPoint, GeoPrecision, NodeMeta, ReviewStatus, ScoutScope,
+    canonical_value, DiscoveryMethod, GeoPoint, GeoPrecision, Location, NodeMeta, ReviewStatus, ScoutScope,
     SensitivityLevel, SourceNode, SourceRole,
 };
 use rootsignal_graph::GraphQueries;
@@ -79,13 +79,16 @@ pub fn build_node_meta(
         sensitivity: SensitivityLevel::General,
         confidence,
         corroboration_count: 0,
-        about_location: Some(GeoPoint {
-            lat: region.center_lat,
-            lng: region.center_lng,
-            precision: GeoPrecision::Approximate,
-        }),
-        from_location: None,
-        about_location_name: Some(region.name.clone()),
+        locations: vec![Location {
+            point: Some(GeoPoint {
+                lat: region.center_lat,
+                lng: region.center_lng,
+                precision: GeoPrecision::Approximate,
+            }),
+            name: Some(region.name.clone()),
+            address: None,
+            role: None,
+        }],
         url: source_url,
         extracted_at: now,
         published_at: None,

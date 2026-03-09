@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use neo4rs::query;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::events::{
@@ -251,7 +251,7 @@ impl GraphProjector {
                 schedule,
                 action_url,
             } => {
-                let location = locations.into_iter().next();
+                // locations passed directly to build_discovery_query
                 let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Gathering",
@@ -261,7 +261,7 @@ impl GraphProjector {
                        n.action_url = $action_url,
                        n.is_recurring = CASE WHEN $rrule <> '' THEN true ELSE false END",
                     id, &title, &summary, 0.5, &url,
-                    &event.ts, published_at, &location, event,
+                    &event.ts, published_at, &locations, event,
                 )
                 .param("starts_at", starts_at)
                 .param("ends_at", ends_at)
@@ -290,7 +290,7 @@ impl GraphProjector {
                 availability,
                 eligibility,
             } => {
-                let location = locations.into_iter().next();
+                // locations passed directly to build_discovery_query
                 let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Resource",
@@ -305,7 +305,7 @@ impl GraphProjector {
                     &url,
                     &event.ts,
                     published_at,
-                    &location,
+                    &locations,
                     event,
                 )
                 .param("action_url", action_url.as_deref().unwrap_or(""))
@@ -336,7 +336,7 @@ impl GraphProjector {
                 what_needed,
                 stated_goal,
             } => {
-                let location = locations.into_iter().next();
+                // locations passed directly to build_discovery_query
                 let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "HelpRequest",
@@ -351,7 +351,7 @@ impl GraphProjector {
                     &url,
                     &event.ts,
                     published_at,
-                    &location,
+                    &locations,
                     event,
                 )
                 .param("what_needed", what_needed.as_deref().unwrap_or(""))
@@ -381,7 +381,7 @@ impl GraphProjector {
                 subject,
                 effective_date,
             } => {
-                let location = locations.into_iter().next();
+                // locations passed directly to build_discovery_query
                 let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Announcement",
@@ -391,7 +391,7 @@ impl GraphProjector {
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
                        n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
                     id, &title, &summary, 0.5, &url,
-                    &event.ts, published_at, &location, event,
+                    &event.ts, published_at, &locations, event,
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
                 .param("effective_date", effective_date.map(|dt| format_dt(&dt)).unwrap_or_default())
@@ -420,7 +420,7 @@ impl GraphProjector {
                 subject,
                 opposing,
             } => {
-                let location = locations.into_iter().next();
+                // locations passed directly to build_discovery_query
                 let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Concern",
@@ -435,7 +435,7 @@ impl GraphProjector {
                     &url,
                     &event.ts,
                     published_at,
-                    &location,
+                    &locations,
                     event,
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
@@ -467,7 +467,7 @@ impl GraphProjector {
                 measurement,
                 affected_scope,
             } => {
-                let location = locations.into_iter().next();
+                // locations passed directly to build_discovery_query
                 let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Condition",
@@ -477,7 +477,7 @@ impl GraphProjector {
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
                        n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
                     id, &title, &summary, 0.5, &url,
-                    &event.ts, published_at, &location, event,
+                    &event.ts, published_at, &locations, event,
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
                 .param("observed_by", observed_by.as_deref().unwrap_or(""))
@@ -513,9 +513,35 @@ impl GraphProjector {
                 debug!(citation_id = %citation_id, reason = %reason, "CitationRetracted (no-op placeholder)");
                 Ok(ApplyResult::NoOp)
             }
-            WorldEvent::DetailsChanged { signal_id, summary, .. } => {
-                debug!(signal_id = %signal_id, summary = %summary, "DetailsChanged (no-op placeholder)");
-                Ok(ApplyResult::NoOp)
+            WorldEvent::DetailsChanged { signal_id, node_type, title, summary, .. } => {
+                let label = match node_type {
+                    NodeType::Gathering => "Gathering",
+                    NodeType::Resource => "Resource",
+                    NodeType::HelpRequest => "HelpRequest",
+                    NodeType::Announcement => "Announcement",
+                    NodeType::Concern => "Concern",
+                    NodeType::Condition => "Condition",
+                    NodeType::Citation => {
+                        debug!(signal_id = %signal_id, "DetailsChanged on Citation — skipping");
+                        return Ok(ApplyResult::NoOp);
+                    }
+                };
+
+                let q = query(&format!(
+                    "MATCH (n:{label} {{id: $signal_id}})
+                     SET n.title = $title, n.summary = $summary,
+                         n.last_confirmed_active = datetime($ts)"
+                ))
+                .param("signal_id", signal_id.to_string())
+                .param("title", title.as_str())
+                .param("summary", summary.as_str())
+                .param("ts", format_dt_from_stored(event));
+
+                self.client.run(q).await?;
+                self.set_embedding(label, &signal_id, &title, &summary).await;
+
+                info!(signal_id = %signal_id, label = label, "DetailsChanged projected");
+                Ok(ApplyResult::Applied)
             }
 
             // ---------------------------------------------------------
@@ -2946,12 +2972,19 @@ fn build_discovery_query(
     url: &str,
     extracted_at: &DateTime<Utc>,
     published_at: Option<DateTime<Utc>>,
-    location: &Option<Location>,
+    locations: &[Location],
     event: &StoredEvent,
 ) -> neo4rs::Query {
-    let (lat, lng) = location_lat_lng(location);
-    let loc_name = location_name_str(location);
-    let loc_address = location_address_str(location);
+    let primary = locations.first().cloned();
+    let primary_opt = primary.as_ref().map(|l| Some(l.clone())).unwrap_or(None);
+    let (lat, lng) = location_lat_lng(&primary_opt);
+    let loc_name = location_name_str(&primary_opt);
+    let loc_address = location_address_str(&primary_opt);
+    let locations_json = if locations.is_empty() {
+        String::new()
+    } else {
+        serde_json::to_string(locations).unwrap_or_default()
+    };
     let actor_str = event.actor.as_deref().unwrap_or("").to_string();
     let run_id = event.run_id.as_deref().unwrap_or("").to_string();
 
@@ -2969,6 +3002,7 @@ fn build_discovery_query(
              n.address = $address,
              n.lat = $lat,
              n.lng = $lng,
+             n.locations_json = $locations_json,
              n.sensitivity = 'general',
              n.corroboration_count = 0,
              n.review_status = 'staged',
@@ -2992,6 +3026,7 @@ fn build_discovery_query(
         .param("address", loc_address)
         .param("lat", lat)
         .param("lng", lng)
+        .param("locations_json", locations_json)
         .param("created_by", actor_str)
         .param("scout_run_id", run_id)
 }

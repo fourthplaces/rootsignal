@@ -788,6 +788,8 @@ fn build_all_events() -> Vec<Event> {
         }),
         Event::World(WorldEvent::DetailsChanged {
             signal_id: id,
+            node_type: NodeType::Concern,
+            title: "updated title".into(),
             summary: "updated details".into(),
             url: "x".into(),
         }),

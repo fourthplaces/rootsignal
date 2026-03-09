@@ -10,7 +10,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ResourceOfferNode, GatheringNode, GeoAccuracy, GeoPoint, GeoPrecision, HelpRequestNode, Node, NodeMeta,
+    ResourceOfferNode, GatheringNode, GeoAccuracy, GeoPoint, GeoPrecision, HelpRequestNode, Location, Node, NodeMeta,
     AnnouncementNode, ReviewStatus, SensitivityLevel, Severity, ConcernNode, Urgency,
 };
 use rootsignal_scout::domains::enrichment::activities::quality;
@@ -27,9 +27,7 @@ fn test_meta() -> NodeMeta {
         sensitivity: SensitivityLevel::General,
         confidence: 0.0,
         corroboration_count: 0,
-        about_location: None,
-        about_location_name: None,
-        from_location: None,
+        locations: vec![],
         url: "https://example.com".into(),
         extracted_at: Utc::now(),
         published_at: None,
@@ -59,13 +57,16 @@ fn community_garden_gathering_scores_high_confidence() {
         meta: NodeMeta {
             title: "Spring Volunteer Day at Powderhorn Community Garden".into(),
             summary: "Annual spring kickoff — preparing raised beds, compost, planting".into(),
-            about_location: Some(GeoPoint {
-                lat: 44.9486,
-                lng: -93.2636,
-                precision: GeoPrecision::Exact,
-            }),
-            about_location_name: Some("Powderhorn Community Garden, 3524 15th Ave S".into()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9486,
+                    lng: -93.2636,
+                    precision: GeoPrecision::Exact,
+                }),
+                name: Some("Powderhorn Community Garden, 3524 15th Ave S".into()),
+                address: None,
+                role: None,
+            }],
             url: "https://powderhornpark.org/events".into(),
             ..test_meta()
         },
@@ -116,13 +117,16 @@ fn food_shelf_aid_scores_high_confidence() {
         meta: NodeMeta {
             title: "Briva Health Community Food Shelf".into(),
             summary: "Free food shelf — no ID, proof of income, or appointment needed".into(),
-            about_location: Some(GeoPoint {
-                lat: 44.9696,
-                lng: -93.2466,
-                precision: GeoPrecision::Exact,
-            }),
-            about_location_name: Some("420 15th Ave S, Minneapolis, MN 55454".into()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9696,
+                    lng: -93.2466,
+                    precision: GeoPrecision::Exact,
+                }),
+                name: Some("420 15th Ave S, Minneapolis, MN 55454".into()),
+                address: None,
+                role: None,
+            }],
             url: "https://brivahealth.org/food-shelf".into(),
             ..test_meta()
         },
@@ -153,13 +157,16 @@ fn food_shelf_aid_without_url_not_actionable() {
         meta: NodeMeta {
             title: "Briva Health Community Food Shelf".into(),
             summary: "Free food shelf".into(),
-            about_location: Some(GeoPoint {
-                lat: 44.9696,
-                lng: -93.2466,
-                precision: GeoPrecision::Exact,
-            }),
-            about_location_name: Some("420 15th Ave S".into()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9696,
+                    lng: -93.2466,
+                    precision: GeoPrecision::Exact,
+                }),
+                name: Some("420 15th Ave S".into()),
+                address: None,
+                role: None,
+            }],
             ..test_meta()
         },
         action_url: String::new(),
@@ -188,13 +195,16 @@ fn ice_enforcement_tension_moderate_confidence() {
             title: "ICE Enforcement Activity in Phillips Neighborhood".into(),
             summary: "Multiple reports of ICE vehicles and plainclothes agents near Lake St and Bloomington Ave".into(),
             sensitivity: SensitivityLevel::Sensitive,
-            about_location: Some(GeoPoint {
-                lat: 44.9486,
-                lng: -93.2476,
-                precision: GeoPrecision::Neighborhood,
-            }),
-            about_location_name: Some("Phillips neighborhood, Minneapolis".into()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9486,
+                    lng: -93.2476,
+                    precision: GeoPrecision::Neighborhood,
+                }),
+                name: Some("Phillips neighborhood, Minneapolis".into()),
+                address: None,
+                role: None,
+            }],
             ..test_meta()
         },
         severity: Severity::High,
@@ -224,13 +234,16 @@ fn emergency_meeting_gathering_is_actionable() {
         meta: NodeMeta {
             title: "Emergency Community Meeting".into(),
             summary: "Wednesday 6 PM at Sagrado Corazón Church to coordinate ICE response".into(),
-            about_location: Some(GeoPoint {
-                lat: 44.9480,
-                lng: -93.2380,
-                precision: GeoPrecision::Exact,
-            }),
-            about_location_name: Some("Sagrado Corazón Church, 2018 E. Lake St".into()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9480,
+                    lng: -93.2380,
+                    precision: GeoPrecision::Exact,
+                }),
+                name: Some("Sagrado Corazón Church, 2018 E. Lake St".into()),
+                address: None,
+                role: None,
+            }],
             ..test_meta()
         },
         starts_at: Some(Utc::now()), // placeholder for the actual date
@@ -263,13 +276,16 @@ fn legal_aid_signal_scores_reasonably() {
             title: "Legal Support for Immigrants".into(),
             summary: "MIRAC legal aid available at Centro de Trabajadores Unidos".into(),
             sensitivity: SensitivityLevel::Elevated,
-            about_location: Some(GeoPoint {
-                lat: 44.9480,
-                lng: -93.2476,
-                precision: GeoPrecision::Exact,
-            }),
-            about_location_name: Some("Centro de Trabajadores Unidos, 2104 Bloomington Ave".into()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9480,
+                    lng: -93.2476,
+                    precision: GeoPrecision::Exact,
+                }),
+                name: Some("Centro de Trabajadores Unidos, 2104 Bloomington Ave".into()),
+                address: None,
+                role: None,
+            }],
             ..test_meta()
         },
         action_url: String::new(),
@@ -333,11 +349,16 @@ fn gathering_action_url_same_as_source_url_not_actionable() {
             title: "Event from news article".into(),
             summary: "Some event".into(),
             url: source.into(),
-            about_location: Some(GeoPoint {
-                lat: 44.97,
-                lng: -93.26,
-                precision: GeoPrecision::Exact,
-            }),
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.97,
+                    lng: -93.26,
+                    precision: GeoPrecision::Exact,
+                }),
+                name: None,
+                address: None,
+                role: None,
+            }],
             ..test_meta()
         },
         starts_at: Some(Utc::now()),
@@ -365,11 +386,16 @@ fn need_with_url_is_actionable_without_timing() {
         meta: NodeMeta {
             title: "Winter Coat Drive".into(),
             summary: "Need 500 coats by Jan 31".into(),
-            about_location: Some(GeoPoint {
-                lat: 44.97,
-                lng: -93.26,
-                precision: GeoPrecision::Exact,
-            }),
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.97,
+                    lng: -93.26,
+                    precision: GeoPrecision::Exact,
+                }),
+                name: None,
+                address: None,
+                role: None,
+            }],
             ..test_meta()
         },
         urgency: Urgency::High,
@@ -413,11 +439,16 @@ fn need_without_url_not_actionable() {
 #[test]
 fn one_time_aid_distribution_scores_lower_than_ongoing() {
     let base_meta = NodeMeta {
-        about_location: Some(GeoPoint {
-            lat: 44.97,
-            lng: -93.26,
-            precision: GeoPrecision::Exact,
-        }),
+        locations: vec![Location {
+            point: Some(GeoPoint {
+                lat: 44.97,
+                lng: -93.26,
+                precision: GeoPrecision::Exact,
+            }),
+            name: None,
+            address: None,
+            role: None,
+        }],
         ..test_meta()
     };
 
@@ -466,13 +497,16 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         meta: NodeMeta {
             title: "Issue at 3524 15th Ave S".into(),
             summary: "Specific address issue".into(),
-            about_location: Some(GeoPoint {
-                lat: 44.9778,
-                lng: -93.2650,
-                precision: GeoPrecision::Approximate, // backfilled
-            }),
-            about_location_name: Some("3524 15th Ave S, Minneapolis".into()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9778,
+                    lng: -93.2650,
+                    precision: GeoPrecision::Approximate, // backfilled
+                }),
+                name: Some("3524 15th Ave S, Minneapolis".into()),
+                address: None,
+                role: None,
+            }],
             ..test_meta()
         },
         severity: Severity::Medium,
@@ -485,13 +519,16 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         meta: NodeMeta {
             title: "Issue in Powderhorn area".into(),
             summary: "Neighborhood-level issue".into(),
-            about_location: Some(GeoPoint {
-                lat: 44.9486,
-                lng: -93.2636,
-                precision: GeoPrecision::Neighborhood,
-            }),
-            about_location_name: Some("Powderhorn area".into()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9486,
+                    lng: -93.2636,
+                    precision: GeoPrecision::Neighborhood,
+                }),
+                name: Some("Powderhorn area".into()),
+                address: None,
+                role: None,
+            }],
             ..test_meta()
         },
         severity: Severity::Medium,

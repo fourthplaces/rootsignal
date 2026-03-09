@@ -315,7 +315,12 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     // then backfills exact coordinates from the actor context.
     let mut node = tension("Food Distribution at MLK Park");
     if let Some(meta) = node.meta_mut() {
-        meta.about_location_name = Some("Minneapolis, MN".to_string());
+        meta.locations.push(rootsignal_common::Location {
+                point: None,
+                name: Some("Minneapolis, MN".to_string()),
+                address: None,
+                role: None,
+            });
         meta.confidence = 0.7;
     }
     let node_id = node.meta().unwrap().id;

@@ -60,7 +60,7 @@ mod tests {
     use chrono::Utc;
     use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{GeoPoint, HelpRequestNode, NodeMeta, Severity, ConcernNode, Urgency};
-    use rootsignal_common::{CitationNode, GeoPrecision, ReviewStatus, ScrapingStrategy, SocialPlatform};
+    use rootsignal_common::{CitationNode, GeoPrecision, Location, ReviewStatus, ScrapingStrategy, SocialPlatform};
     use uuid::Uuid;
 
     fn tension(title: &str) -> Node {
@@ -72,9 +72,7 @@ mod tests {
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.8,
                 corroboration_count: 0,
-                about_location: None,
-                about_location_name: None,
-                from_location: None,
+                locations: vec![],
                 url: "https://example.com".to_string(),
                 extracted_at: Utc::now(),
                 published_at: None,
@@ -105,9 +103,7 @@ mod tests {
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.8,
                 corroboration_count: 0,
-                about_location: None,
-                about_location_name: None,
-                from_location: None,
+                locations: vec![],
                 url: "https://example.com".to_string(),
                 extracted_at: Utc::now(),
                 published_at: None,
@@ -213,9 +209,7 @@ mod tests {
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.0,
                 corroboration_count: 0,
-                about_location: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }),
-                about_location_name: None,
-                from_location: None,
+                locations: vec![Location { point: Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate }), name: None, address: None, role: None }],
                 url: String::new(),
                 extracted_at: Utc::now(),
                 published_at: None,
@@ -246,9 +240,7 @@ mod tests {
                 sensitivity: SensitivityLevel::General,
                 confidence: 0.0,
                 corroboration_count: 0,
-                about_location: None,
-                about_location_name: Some(location_name.to_string()),
-                from_location: None,
+                locations: vec![Location { point: None, name: Some(location_name.to_string()), address: None, role: None }],
                 url: String::new(),
                 extracted_at: Utc::now(),
                 published_at: None,
@@ -323,8 +315,8 @@ mod tests {
         let result = score_and_filter(nodes, Some(&actor));
         assert_eq!(result.len(), 1);
         let meta = result[0].meta().unwrap();
-        assert!(meta.about_location.is_none(), "about_location should NOT be backfilled from actor");
-        assert!(meta.from_location.is_none(), "from_location should NOT be set at write time");
+        assert!(meta.about_point().is_none(), "about_location should NOT be backfilled from actor");
+        assert!(meta.from_point().is_none(), "from_location should NOT be set at write time");
     }
 
     #[test]
@@ -333,8 +325,8 @@ mod tests {
         let result = score_and_filter(nodes, None);
         assert_eq!(result.len(), 1);
         let meta = result[0].meta().unwrap();
-        assert!(meta.about_location.is_none());
-        assert!(meta.from_location.is_none());
+        assert!(meta.about_point().is_none());
+        assert!(meta.from_point().is_none());
     }
 
     #[test]
@@ -350,9 +342,9 @@ mod tests {
         };
         let result = score_and_filter(nodes, Some(&actor));
         let meta = result[0].meta().unwrap();
-        let about = meta.about_location.as_ref().unwrap();
+        let about = meta.about_point().unwrap();
         assert!((about.lat - 44.95).abs() < 0.001, "existing about_location should be preserved");
-        assert!(meta.from_location.is_none(), "from_location should NOT be set at write time");
+        assert!(meta.from_point().is_none(), "from_location should NOT be set at write time");
     }
 
     #[test]
@@ -380,7 +372,7 @@ mod tests {
         let result = score_and_filter(nodes, Some(&actor));
         for node in &result {
             let meta = node.meta().unwrap();
-            assert!(meta.from_location.is_none(), "{} should NOT have from_location at write time", meta.title);
+            assert!(meta.from_point().is_none(), "{} should NOT have from_location at write time", meta.title);
         }
     }
 
@@ -397,8 +389,8 @@ mod tests {
         };
         let result = score_and_filter(nodes, Some(&actor));
         let meta = result[0].meta().unwrap();
-        assert!(meta.about_location.is_none());
-        assert!(meta.from_location.is_none());
+        assert!(meta.about_point().is_none());
+        assert!(meta.from_point().is_none());
     }
 
     #[test]

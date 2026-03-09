@@ -361,10 +361,10 @@ impl GqlGatheringSignal {
         self.meta().confidence
     }
     async fn location(&self) -> Option<GqlGeoPoint> {
-        self.meta().about_location.map(GqlGeoPoint)
+        self.meta().about_point().copied().map(GqlGeoPoint)
     }
     async fn location_name(&self) -> Option<&str> {
-        self.meta().about_location_name.as_deref()
+        self.meta().about_location_name()
     }
     async fn url(&self) -> &str {
         &self.meta().url
@@ -477,10 +477,10 @@ impl GqlResourceSignal {
         self.meta().confidence
     }
     async fn location(&self) -> Option<GqlGeoPoint> {
-        self.meta().about_location.map(GqlGeoPoint)
+        self.meta().about_point().copied().map(GqlGeoPoint)
     }
     async fn location_name(&self) -> Option<&str> {
-        self.meta().about_location_name.as_deref()
+        self.meta().about_location_name()
     }
     async fn url(&self) -> &str {
         &self.meta().url
@@ -587,10 +587,10 @@ impl GqlHelpRequestSignal {
         self.meta().confidence
     }
     async fn location(&self) -> Option<GqlGeoPoint> {
-        self.meta().about_location.map(GqlGeoPoint)
+        self.meta().about_point().copied().map(GqlGeoPoint)
     }
     async fn location_name(&self) -> Option<&str> {
-        self.meta().about_location_name.as_deref()
+        self.meta().about_location_name()
     }
     async fn url(&self) -> &str {
         &self.meta().url
@@ -696,10 +696,10 @@ impl GqlAnnouncementSignal {
         self.meta().confidence
     }
     async fn location(&self) -> Option<GqlGeoPoint> {
-        self.meta().about_location.map(GqlGeoPoint)
+        self.meta().about_point().copied().map(GqlGeoPoint)
     }
     async fn location_name(&self) -> Option<&str> {
-        self.meta().about_location_name.as_deref()
+        self.meta().about_location_name()
     }
     async fn url(&self) -> &str {
         &self.meta().url
@@ -805,10 +805,10 @@ impl GqlConcernSignal {
         self.meta().confidence
     }
     async fn location(&self) -> Option<GqlGeoPoint> {
-        self.meta().about_location.map(GqlGeoPoint)
+        self.meta().about_point().copied().map(GqlGeoPoint)
     }
     async fn location_name(&self) -> Option<&str> {
-        self.meta().about_location_name.as_deref()
+        self.meta().about_location_name()
     }
     async fn url(&self) -> &str {
         &self.meta().url
@@ -919,10 +919,10 @@ impl GqlConditionSignal {
         self.meta().confidence
     }
     async fn location(&self) -> Option<GqlGeoPoint> {
-        self.meta().about_location.map(GqlGeoPoint)
+        self.meta().about_point().copied().map(GqlGeoPoint)
     }
     async fn location_name(&self) -> Option<&str> {
-        self.meta().about_location_name.as_deref()
+        self.meta().about_location_name()
     }
     async fn url(&self) -> &str {
         &self.meta().url

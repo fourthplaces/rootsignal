@@ -2558,7 +2558,9 @@ fn test_actor_at(name: &str, lat: f64, lng: f64, loc_name: &str) -> rootsignal_c
 fn tension_at_named(title: &str, lat: f64, lng: f64, loc_name: &str) -> rootsignal_common::Node {
     let mut node = tension_at(title, lat, lng);
     if let Some(meta) = node.meta_mut() {
-        meta.about_location_name = Some(loc_name.to_string());
+        if let Some(loc) = meta.locations.first_mut() {
+            loc.name = Some(loc_name.to_string());
+        }
     }
     node
 }

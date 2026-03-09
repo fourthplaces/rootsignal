@@ -639,7 +639,7 @@ mod tests {
             is_ongoing: true,
         });
 
-        let loc = node.meta().unwrap().about_location.as_ref().unwrap();
+        let loc = node.meta().unwrap().about_point().unwrap();
         assert!((loc.lat - 44.9778).abs() < 0.001);
         assert!((loc.lng - (-93.2650)).abs() < 0.001);
         assert_eq!(loc.precision, rootsignal_common::GeoPrecision::Approximate);

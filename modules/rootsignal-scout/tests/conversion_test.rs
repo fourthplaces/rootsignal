@@ -381,13 +381,13 @@ fn geo_precision_string_converts_to_typed_precision() {
 
     let result = Extractor::convert_signals(response, "https://example.com");
 
-    let loc0 = result.nodes[0].meta().unwrap().about_location.unwrap();
+    let loc0 = *result.nodes[0].meta().unwrap().about_point().unwrap();
     assert_eq!(loc0.precision, GeoPrecision::Exact);
 
-    let loc1 = result.nodes[1].meta().unwrap().about_location.unwrap();
+    let loc1 = *result.nodes[1].meta().unwrap().about_point().unwrap();
     assert_eq!(loc1.precision, GeoPrecision::Neighborhood);
 
-    let loc2 = result.nodes[2].meta().unwrap().about_location.unwrap();
+    let loc2 = *result.nodes[2].meta().unwrap().about_point().unwrap();
     assert_eq!(
         loc2.precision,
         GeoPrecision::Approximate,
@@ -395,7 +395,7 @@ fn geo_precision_string_converts_to_typed_precision() {
     );
 
     assert!(
-        result.nodes[3].meta().unwrap().about_location.is_none(),
+        result.nodes[3].meta().unwrap().about_point().is_none(),
         "no lat/lng means no location"
     );
 }

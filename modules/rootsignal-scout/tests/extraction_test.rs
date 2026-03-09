@@ -154,10 +154,10 @@ async fn community_garden_post_yields_gathering_signal() {
 
     // Location should be near Powderhorn (44.9486, -93.2636)
     assert!(
-        meta.about_location.is_some(),
+        meta.about_point().is_some(),
         "Should have location coordinates"
     );
-    if let Some(loc) = &meta.about_location {
+    if let Some(loc) = meta.about_point() {
         let dist = rootsignal_common::haversine_km(loc.lat, loc.lng, 44.9486, -93.2636);
         assert!(
             dist < 2.0,
@@ -169,12 +169,11 @@ async fn community_garden_post_yields_gathering_signal() {
 
     // Location name should mention Powderhorn
     assert!(
-        meta.about_location_name
-            .as_deref()
+        meta.about_location_name()
             .map(|n| n.to_lowercase().contains("powderhorn"))
             .unwrap_or(false),
         "location_name should contain 'Powderhorn', got {:?}",
-        meta.about_location_name
+        meta.about_location_name()
     );
 
     // Organizer should mention Powderhorn Park Neighborhood Association
@@ -258,10 +257,10 @@ async fn food_shelf_post_yields_aid_signal() {
 
     // Location near 420 15th Ave S (44.9696, -93.2466)
     assert!(
-        meta.about_location.is_some(),
+        meta.about_point().is_some(),
         "Should have location coordinates"
     );
-    if let Some(loc) = &meta.about_location {
+    if let Some(loc) = meta.about_point() {
         let dist = rootsignal_common::haversine_km(loc.lat, loc.lng, 44.9696, -93.2466);
         assert!(
             dist < 2.0,
@@ -604,7 +603,7 @@ async fn multi_location_service_extracts_multiple_signals() {
     // Each Aid signal should have a distinct location
     let locations: Vec<Option<&rootsignal_common::GeoPoint>> = aid_signals
         .iter()
-        .map(|n| n.meta().unwrap().about_location.as_ref())
+        .map(|n| n.meta().unwrap().about_point())
         .collect();
 
     let with_coords: Vec<_> = locations.iter().filter(|l| l.is_some()).collect();
@@ -617,7 +616,7 @@ async fn multi_location_service_extracts_multiple_signals() {
     // Location names should cover different neighborhoods
     let location_names: Vec<String> = aid_signals
         .iter()
-        .filter_map(|n| n.meta().unwrap().about_location_name.clone())
+        .filter_map(|n| n.meta().unwrap().about_location_name().map(|s| s.to_string()))
         .map(|n| n.to_lowercase())
         .collect();
 
@@ -739,8 +738,7 @@ async fn spanish_content_yields_signals_in_english() {
     // Location should be in Phillips/Minneapolis area
     let has_local_location = result.nodes.iter().any(|n| {
         let meta = n.meta().unwrap();
-        meta.about_location_name
-            .as_deref()
+        meta.about_location_name()
             .map(|l| {
                 let lower = l.to_lowercase();
                 lower.contains("minneapolis")
@@ -750,7 +748,7 @@ async fn spanish_content_yields_signals_in_english() {
             })
             .unwrap_or(false)
             || meta
-                .about_location
+                .about_point()
                 .map(|loc| {
                     rootsignal_common::haversine_km(loc.lat, loc.lng, 44.9486, -93.2476) < 5.0
                 })

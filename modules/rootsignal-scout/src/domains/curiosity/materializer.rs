@@ -3,8 +3,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ConcernNode, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode, Node, NodeMeta,
-    ResourceOfferNode, ReviewStatus, ScoutScope, Severity, SensitivityLevel, Urgency,
+    ConcernNode, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode, Location, Node,
+    NodeMeta, ResourceOfferNode, ReviewStatus, ScoutScope, Severity, SensitivityLevel, Urgency,
 };
 
 use crate::core::extractor::{ResourceRole, ResourceTag};
@@ -293,13 +293,16 @@ fn build_meta(
         sensitivity: SensitivityLevel::General,
         confidence,
         corroboration_count: 0,
-        about_location: region.map(|r| GeoPoint {
-            lat: r.center_lat,
-            lng: r.center_lng,
-            precision: GeoPrecision::Approximate,
-        }),
-        from_location: None,
-        about_location_name: region.map(|r| r.name.clone()),
+        locations: region.map(|r| vec![Location {
+            point: Some(GeoPoint {
+                lat: r.center_lat,
+                lng: r.center_lng,
+                precision: GeoPrecision::Approximate,
+            }),
+            name: Some(r.name.clone()),
+            address: None,
+            role: None,
+        }]).unwrap_or_default(),
         url: source_url.to_string(),
         extracted_at: now,
         published_at: None,

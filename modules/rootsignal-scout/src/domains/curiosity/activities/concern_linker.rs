@@ -292,7 +292,7 @@ impl<'a> ConcernLinker<'a> {
 mod tests {
     use chrono::Utc;
     use rootsignal_common::{
-        ConcernNode, GeoPoint, GeoPrecision, NodeMeta, ReviewStatus, SensitivityLevel, Severity,
+        ConcernNode, GeoPoint, GeoPrecision, Location, NodeMeta, ReviewStatus, SensitivityLevel, Severity,
     };
     use crate::infra::agent_tools::{WebSearchOutput, WebSearchResultItem};
     use super::*;
@@ -382,13 +382,16 @@ mod tests {
                 confidence: 0.7,
 
                 corroboration_count: 0,
-                about_location: Some(GeoPoint {
-                    lat: region.center_lat,
-                    lng: region.center_lng,
-                    precision: GeoPrecision::Approximate,
-                }),
-                from_location: None,
-                about_location_name: Some(region.name.clone()),
+                locations: vec![Location {
+                    point: Some(GeoPoint {
+                        lat: region.center_lat,
+                        lng: region.center_lng,
+                        precision: GeoPrecision::Approximate,
+                    }),
+                    name: Some(region.name.clone()),
+                    address: None,
+                    role: None,
+                }],
                 url: tension.url.clone(),
                 extracted_at: now,
                 published_at: None,
@@ -413,7 +416,8 @@ mod tests {
         // Key assertions: location is set to region center
         let loc = tension_node
             .meta
-            .about_location
+            .about_point()
+            .copied()
             .expect("Concern should have location");
         assert!(
             (loc.lat - 44.9778).abs() < 0.001,
@@ -425,7 +429,7 @@ mod tests {
         );
         assert_eq!(loc.precision, GeoPrecision::Approximate);
         assert_eq!(
-            tension_node.meta.about_location_name.as_deref(),
+            tension_node.meta.about_location_name(),
             Some("Minneapolis")
         );
         assert_eq!(tension_node.severity, Severity::High);

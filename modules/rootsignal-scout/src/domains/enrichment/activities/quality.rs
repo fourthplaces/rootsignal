@@ -18,9 +18,9 @@ pub fn score(node: &Node) -> ExtractionQuality {
         }
     };
 
-    let has_location = meta.about_location.is_some();
-    let geo_accuracy = match meta.about_location {
-        Some(ref loc) => match loc.precision {
+    let has_location = meta.about_point().is_some();
+    let geo_accuracy = match meta.about_point() {
+        Some(loc) => match loc.precision {
             rootsignal_common::GeoPrecision::Exact => GeoAccuracy::High,
             rootsignal_common::GeoPrecision::Neighborhood => GeoAccuracy::Medium,
             _ => GeoAccuracy::Low,
@@ -104,7 +104,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rootsignal_common::{
-        GatheringNode, GeoPoint, GeoPrecision, NodeMeta, ReviewStatus, SensitivityLevel,
+        GatheringNode, GeoPoint, GeoPrecision, Location, NodeMeta, ReviewStatus, SensitivityLevel,
     };
     use uuid::Uuid;
 
@@ -116,13 +116,16 @@ mod tests {
             sensitivity: SensitivityLevel::General,
             confidence: 0.0,
             corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat: 44.97,
-                lng: -93.26,
-                precision: GeoPrecision::Exact,
-            }),
-            about_location_name: Some("Powderhorn Park".to_string()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.97,
+                    lng: -93.26,
+                    precision: GeoPrecision::Exact,
+                }),
+                name: Some("Powderhorn Park".to_string()),
+                address: None,
+                role: None,
+            }],
             url: "https://example.com/events".to_string(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -192,7 +195,7 @@ mod tests {
         // Bare Gathering: no optional fields filled (0/3), geo = Low (0.3)
         // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
         let mut meta = test_meta();
-        meta.about_location = None;
+        meta.locations.clear();
         let node = Node::Gathering(GatheringNode {
             meta,
             starts_at: None,
@@ -236,11 +239,16 @@ mod tests {
         // and medium geo: confidence = 1.0 * 0.5 + 0.7 * 0.5 = 0.85
         use rootsignal_common::{AnnouncementNode, Severity};
         let mut meta = test_meta();
-        meta.about_location = Some(GeoPoint {
-            lat: 44.97,
-            lng: -93.26,
-            precision: GeoPrecision::Neighborhood,
-        });
+        meta.locations = vec![Location {
+            point: Some(GeoPoint {
+                lat: 44.97,
+                lng: -93.26,
+                precision: GeoPrecision::Neighborhood,
+            }),
+            name: None,
+            address: None,
+            role: None,
+        }];
         let node = Node::Announcement(AnnouncementNode {
             meta,
             severity: Severity::Medium,
@@ -262,7 +270,7 @@ mod tests {
         // confidence = 0.0 * 0.5 + 0.3 * 0.5 = 0.15
         use rootsignal_common::{Severity, ConcernNode};
         let mut meta = test_meta();
-        meta.about_location = None;
+        meta.locations.clear();
         let node = Node::Concern(ConcernNode {
             meta,
             severity: Severity::High,

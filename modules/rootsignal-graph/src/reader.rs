@@ -4,7 +4,7 @@ use neo4rs::query;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    fuzz_location, ConditionNode, ResourceOfferNode, CitationNode, GatheringNode, GeoPoint,
+    fuzz_location, ConditionNode, Location, ResourceOfferNode, CitationNode, GatheringNode, GeoPoint,
     GeoPrecision, HelpRequestNode, Node, NodeMeta, NodeType, AnnouncementNode, ScheduleNode,
     SensitivityLevel, Severity, ConcernNode,
     ConcernResponse, Urgency, CONFIDENCE_DISPLAY_LIMITED, FRESHNESS_MAX_DAYS,
@@ -140,10 +140,15 @@ impl PublicGraphReader {
                         (row.get::<f64>("author_lat"), row.get::<f64>("author_lng"))
                     {
                         if let Some(meta) = node.meta_mut() {
-                            meta.from_location = Some(GeoPoint {
-                                lat,
-                                lng,
-                                precision: GeoPrecision::Approximate,
+                            meta.locations.push(Location {
+                                point: Some(GeoPoint {
+                                    lat,
+                                    lng,
+                                    precision: GeoPrecision::Approximate,
+                                }),
+                                name: None,
+                                address: None,
+                                role: Some("origin".to_string()),
                             });
                         }
                     }
@@ -1631,10 +1636,15 @@ pub(crate) fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
     // Derive from_location at query time from authored actor's location
     if let (Ok(lat), Ok(lng)) = (row.get::<f64>("author_lat"), row.get::<f64>("author_lng")) {
         if let Some(meta) = node.meta_mut() {
-            meta.from_location = Some(GeoPoint {
-                lat,
-                lng,
-                precision: GeoPrecision::Approximate,
+            meta.locations.push(Location {
+                point: Some(GeoPoint {
+                    lat,
+                    lng,
+                    precision: GeoPrecision::Approximate,
+                }),
+                name: None,
+                address: None,
+                role: Some("origin".to_string()),
             });
         }
     }
@@ -1682,8 +1692,10 @@ pub(crate) fn expiry_clause(nt: NodeType) -> String {
 /// Apply sensitivity-based coordinate fuzzing to a node.
 pub(crate) fn fuzz_node(mut node: Node) -> Node {
     if let Some(meta) = node_meta_mut(&mut node) {
-        if let Some(ref mut loc) = meta.about_location {
-            *loc = fuzz_location(*loc, meta.sensitivity);
+        if let Some(first) = meta.locations.first_mut() {
+            if let Some(ref mut pt) = first.point {
+                *pt = fuzz_location(*pt, meta.sensitivity);
+            }
         }
     }
     node
@@ -1788,16 +1800,31 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         sensitivity,
         confidence: confidence as f32,
         corroboration_count: corroboration_count as u32,
-        about_location: location,
-        about_location_name: {
-            let name: String = n.get("location_name").unwrap_or_default();
-            if name.is_empty() {
-                None
-            } else {
-                Some(name)
+        locations: {
+            let loc_name: String = n.get("location_name").unwrap_or_default();
+            let loc_name_opt = if loc_name.is_empty() { None } else { Some(loc_name) };
+            let loc_address: String = n.get("address").unwrap_or_default();
+            let loc_address_opt = if loc_address.is_empty() { None } else { Some(loc_address) };
+            let mut locs = Vec::new();
+            if location.is_some() || loc_name_opt.is_some() {
+                locs.push(Location {
+                    point: location,
+                    name: loc_name_opt,
+                    address: loc_address_opt,
+                    role: None,
+                });
             }
+            // Merge additional locations from JSON if present
+            let json_str: String = n.get("locations_json").unwrap_or_default();
+            if !json_str.is_empty() {
+                if let Ok(extra) = serde_json::from_str::<Vec<Location>>(&json_str) {
+                    for loc in extra.into_iter().skip(1) {
+                        locs.push(loc);
+                    }
+                }
+            }
+            locs
         },
-        from_location: None,
         url,
         extracted_at,
         published_at,

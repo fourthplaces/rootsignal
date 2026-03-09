@@ -198,14 +198,10 @@ pub struct NodeMeta {
     pub sensitivity: SensitivityLevel,
     pub confidence: f32,
     pub corroboration_count: u32,
-    /// The canonical query/map field — where the content is ABOUT.
-    /// At write time: content location if extracted, else falls back to from_location.
-    pub about_location: Option<GeoPoint>,
-    /// Human-readable content location name.
-    pub about_location_name: Option<String>,
-    /// Actor's location — provenance for where the signal was posted FROM.
+    /// Typed locations: each has optional point, name, address, and role.
+    /// Primary (about) location has role=None or "venue"; origin has role="origin".
     #[serde(default)]
-    pub from_location: Option<GeoPoint>,
+    pub locations: Vec<Location>,
     #[serde(alias = "source_url")]
     pub url: String,
     pub extracted_at: DateTime<Utc>,
@@ -240,6 +236,36 @@ pub struct NodeMeta {
     /// Written by CategoryClassified system event, not set during extraction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+}
+
+impl NodeMeta {
+    /// Primary "about" location — the place the signal content is about.
+    /// Prefers role=None or role="venue", falls back to first location.
+    pub fn about_location(&self) -> Option<&Location> {
+        self.locations
+            .iter()
+            .find(|l| l.role.is_none() || l.role.as_deref() == Some("venue"))
+            .or_else(|| self.locations.first())
+    }
+
+    pub fn about_point(&self) -> Option<&GeoPoint> {
+        self.about_location().and_then(|l| l.point.as_ref())
+    }
+
+    pub fn about_location_name(&self) -> Option<&str> {
+        self.about_location().and_then(|l| l.name.as_deref())
+    }
+
+    /// Origin location — where the signal was posted FROM (actor's location).
+    pub fn from_location(&self) -> Option<&Location> {
+        self.locations
+            .iter()
+            .find(|l| l.role.as_deref() == Some("origin"))
+    }
+
+    pub fn from_point(&self) -> Option<&GeoPoint> {
+        self.from_location().and_then(|l| l.point.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1516,9 +1542,7 @@ mod tests {
             sensitivity: SensitivityLevel::General,
             confidence: 0.8,
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
+            locations: vec![],
             url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
             published_at: None,

@@ -81,7 +81,7 @@ impl CachedReader {
                         return false;
                     }
                 }
-                if let Some(loc) = n.meta().and_then(|m| m.about_location) {
+                if let Some(loc) = n.meta().and_then(|m| m.about_point().copied()) {
                     loc.lat >= min_lat
                         && loc.lat <= max_lat
                         && loc.lng >= min_lng
@@ -115,7 +115,7 @@ impl CachedReader {
                 if !passes_display_filter(n) {
                     return false;
                 }
-                n.meta().and_then(|m| m.about_location).is_none()
+                n.meta().and_then(|m| m.about_point().copied()).is_none()
             })
             .cloned()
             .collect();
@@ -146,7 +146,7 @@ impl CachedReader {
                 if !passes_display_filter(n) {
                     return false;
                 }
-                if let Some(loc) = n.meta().and_then(|m| m.about_location) {
+                if let Some(loc) = n.meta().and_then(|m| m.about_point().copied()) {
                     loc.lat >= min_lat
                         && loc.lat <= max_lat
                         && loc.lng >= min_lng
@@ -255,7 +255,7 @@ impl CachedReader {
             .signals
             .iter()
             .filter(|n| {
-                if let Some(loc) = n.meta().and_then(|m| m.about_location) {
+                if let Some(loc) = n.meta().and_then(|m| m.about_point().copied()) {
                     loc.lat >= lat - lat_delta
                         && loc.lat <= lat + lat_delta
                         && loc.lng >= lng - lng_delta
@@ -406,7 +406,7 @@ impl CachedReader {
 
                 // Bounds filter
                 if has_bounds {
-                    if let Some(loc) = meta.about_location {
+                    if let Some(loc) = meta.about_point() {
                         if loc.lat < min_lat.unwrap()
                             || loc.lat > max_lat.unwrap()
                             || loc.lng < min_lng.unwrap()
@@ -421,7 +421,7 @@ impl CachedReader {
                 total_count += 1;
                 if nodes.len() < limit as usize {
                     let (lat, lng) = meta
-                        .about_location
+                        .about_point()
                         .map(|l| (Some(l.lat), Some(l.lng)))
                         .unwrap_or((None, None));
 

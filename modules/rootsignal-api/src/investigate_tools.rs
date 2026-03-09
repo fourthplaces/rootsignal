@@ -285,7 +285,7 @@ fn node_to_signal_output(node: &Node) -> SignalOutput {
             confidence: Some(meta.confidence),
             category: meta.category.clone(),
             url: Some(meta.url.clone()),
-            location_name: meta.about_location_name.clone(),
+            location_name: meta.about_location_name().map(|s| s.to_string()),
             review_status: Some(format!("{:?}", meta.review_status)),
             extracted_at: Some(meta.extracted_at.to_rfc3339()),
             published_at: meta.published_at.map(|t| t.to_rfc3339()),

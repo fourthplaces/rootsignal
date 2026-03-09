@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use rootsignal_common::{
     ResourceOfferNode, ConditionNode, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode,
-    Node, NodeMeta, AnnouncementNode, ReviewStatus, ScheduleNode, SensitivityLevel, Severity,
-    ConcernNode, Urgency,
+    Location, Node, NodeMeta, AnnouncementNode, ReviewStatus, ScheduleNode, SensitivityLevel,
+    Severity, ConcernNode, Urgency,
 };
 use rootsignal_common::telemetry_events::TelemetryEvent;
 use serde::de;
@@ -442,9 +442,18 @@ impl Extractor {
                 confidence: 0.0, // Will be computed by QualityScorer
 
                 corroboration_count: 0,
-                about_location: location,
-                about_location_name: signal.location_name.clone(),
-                from_location: None,
+                locations: {
+                    let mut locs = Vec::new();
+                    if location.is_some() || signal.location_name.is_some() {
+                        locs.push(Location {
+                            point: location,
+                            name: signal.location_name.clone(),
+                            address: None,
+                            role: None,
+                        });
+                    }
+                    locs
+                },
                 url: effective_source_url.clone(),
                 extracted_at: now,
                 published_at,
@@ -1153,9 +1162,7 @@ mod tests {
             sensitivity: SensitivityLevel::General,
             confidence: 0.0,
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
+            locations: vec![],
             url: "https://example.com".to_string(),
             extracted_at: chrono::Utc::now(),
             published_at: None,
@@ -1191,9 +1198,7 @@ mod tests {
             sensitivity: SensitivityLevel::General,
             confidence: 0.0,
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
+            locations: vec![],
             url: "https://example.com".to_string(),
             extracted_at: chrono::Utc::now(),
             published_at: None,

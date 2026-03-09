@@ -256,7 +256,7 @@ impl GraphReader {
     pub async fn find_by_fingerprints(
         &self,
         pairs: &[(String, NodeType)],
-    ) -> Result<std::collections::HashMap<(String, NodeType), (Uuid, String)>, neo4rs::Error> {
+    ) -> Result<std::collections::HashMap<(String, NodeType), (Uuid, String, Option<Vec<f32>>)>, neo4rs::Error> {
         let mut results = std::collections::HashMap::new();
         if pairs.is_empty() {
             return Ok(results);
@@ -294,7 +294,7 @@ impl GraphReader {
                 "MATCH (n:{label})
                  WHERE n.url IN $urls
                  OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
-                 RETURN n.url AS url, n.id AS id, s.canonical_key AS canonical_key"
+                 RETURN n.url AS url, n.id AS id, s.canonical_key AS canonical_key, n.embedding AS embedding"
             ))
             .param("urls", urls_for_type);
 
@@ -303,8 +303,11 @@ impl GraphReader {
                 let url: String = row.get("url").unwrap_or_default();
                 let id_str: String = row.get("id").unwrap_or_default();
                 let canonical_key: String = row.get("canonical_key").unwrap_or_default();
+                let embedding: Option<Vec<f32>> = row.get::<Vec<f64>>("embedding")
+                    .ok()
+                    .map(|v| v.into_iter().map(|x| x as f32).collect());
                 if let Ok(id) = Uuid::parse_str(&id_str) {
-                    results.insert((url, *nt), (id, canonical_key));
+                    results.insert((url, *nt), (id, canonical_key, embedding));
                 }
             }
         }
@@ -2644,9 +2647,9 @@ impl GraphReader {
     ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>, neo4rs::Error> {
         let q = query(
             "MATCH (a:Actor {id: $id})-[:ACTED_IN {role: 'authored'}]->(n)
-             WHERE n.about_lat IS NOT NULL
-             RETURN n.about_lat AS lat, n.about_lng AS lng,
-                    n.about_location_name AS name, n.extracted_at AS ts",
+             WHERE n.lat IS NOT NULL
+             RETURN n.lat AS lat, n.lng AS lng,
+                    n.location_name AS name, n.extracted_at AS ts",
         )
         .param("id", actor_id.to_string());
 
