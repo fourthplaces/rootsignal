@@ -19,6 +19,13 @@ use rootsignal_common::types::{
     ShortVideo, SocialPlatform, SourceNode, Story,
 };
 
+/// Result of a fingerprint match against the graph.
+#[derive(Debug, Clone)]
+pub struct FingerprintMatch {
+    pub id: Uuid,
+    pub canonical_key: String,
+    pub embedding: Option<Vec<f32>>,
+}
 
 #[async_trait]
 pub trait ContentFetcher: Send + Sync {
@@ -128,11 +135,10 @@ pub trait SignalReader: Send + Sync {
     // --- Dedup queries ---
 
     /// Batch-find existing signals by exact (url, node_type) fingerprint.
-    /// Returns map of (url, node_type) → (node_id, canonical_key).
     async fn find_by_fingerprints(
         &self,
         pairs: &[(String, NodeType)],
-    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>>;
+    ) -> Result<HashMap<(String, NodeType), FingerprintMatch>>;
 
     // --- Actor graph ---
 
@@ -174,7 +180,7 @@ impl SignalReader for NoOpSignalReader {
     async fn blocked_urls(&self, _: &[String]) -> Result<HashSet<String>> { Ok(HashSet::new()) }
     async fn content_already_processed(&self, _: &str, _: &str) -> Result<bool> { Ok(false) }
     async fn signal_ids_for_url(&self, _: &str) -> Result<Vec<(Uuid, NodeType)>> { Ok(vec![]) }
-    async fn find_by_fingerprints(&self, _: &[(String, NodeType)]) -> Result<HashMap<(String, NodeType), (Uuid, String)>> { Ok(HashMap::new()) }
+    async fn find_by_fingerprints(&self, _: &[(String, NodeType)]) -> Result<HashMap<(String, NodeType), FingerprintMatch>> { Ok(HashMap::new()) }
     async fn find_actor_by_canonical_key(&self, _: &str) -> Result<Option<Uuid>> { Ok(None) }
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> { Ok(vec![]) }
     async fn find_source_by_canonical_key(&self, _: &str) -> Result<Option<Uuid>> { Ok(None) }

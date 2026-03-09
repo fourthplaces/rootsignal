@@ -216,10 +216,8 @@ pub struct StoredSignal {
     pub canonical_key: String,
     pub corroboration_count: u32,
     pub embedding: Vec<f32>,
-    pub about_location: Option<rootsignal_common::GeoPoint>,
-    pub from_location: Option<rootsignal_common::GeoPoint>,
+    pub locations: Vec<rootsignal_common::Location>,
     pub published_at: Option<DateTime<Utc>>,
-    pub about_location_name: Option<String>,
     pub confidence: f32,
     pub extracted_at: DateTime<Utc>,
 }
@@ -486,10 +484,8 @@ impl MockSignalReader {
             source_url: source_url.clone(),
             corroboration_count: 0,
             embedding: embedding.to_vec(),
-            about_location: meta.and_then(|m| m.about_location),
-            from_location: meta.and_then(|m| m.from_location),
+            locations: meta.map(|m| m.locations.clone()).unwrap_or_default(),
             published_at: meta.and_then(|m| m.published_at),
-            about_location_name: meta.and_then(|m| m.about_location_name.clone()),
             confidence: meta.map(|m| m.confidence).unwrap_or(0.0),
             extracted_at: meta.map(|m| m.extracted_at).unwrap_or_else(Utc::now),
         };
@@ -514,10 +510,8 @@ impl MockSignalReader {
                 canonical_key: canonical_value(source_url),
                 corroboration_count: 0,
                 embedding: vec![],
-                about_location: None,
-                from_location: None,
+                locations: vec![],
                 published_at: None,
-                about_location_name: None,
                 confidence: 0.5,
                 extracted_at: Utc::now(),
             },
@@ -546,10 +540,37 @@ impl MockSignalReader {
                 canonical_key: source_canonical_key.to_string(),
                 corroboration_count: 0,
                 embedding: vec![],
-                about_location: None,
-                from_location: None,
+                locations: vec![],
                 published_at: None,
-                about_location_name: None,
+                confidence: 0.5,
+                extracted_at: Utc::now(),
+            },
+        );
+        id
+    }
+
+    /// Insert a signal with a stored embedding (for content change detection tests).
+    pub fn insert_signal_with_embedding(
+        &self,
+        title: &str,
+        node_type: NodeType,
+        source_url: &str,
+        embedding: Vec<f32>,
+    ) -> Uuid {
+        let mut inner = self.inner.lock().unwrap();
+        let id = Uuid::new_v4();
+        inner.signals.insert(
+            id,
+            StoredSignal {
+                id,
+                title: title.to_string(),
+                node_type,
+                source_url: source_url.to_string(),
+                canonical_key: canonical_value(source_url),
+                corroboration_count: 0,
+                embedding,
+                locations: vec![],
+                published_at: None,
                 confidence: 0.5,
                 extracted_at: Utc::now(),
             },
@@ -756,13 +777,22 @@ impl SignalReader for MockSignalReader {
     async fn find_by_fingerprints(
         &self,
         pairs: &[(String, NodeType)],
-    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
+    ) -> Result<HashMap<(String, NodeType), crate::traits::FingerprintMatch>> {
         let inner = self.inner.lock().unwrap();
         let mut results = HashMap::new();
         for (url, nt) in pairs {
             for signal in inner.signals.values() {
                 if signal.source_url == *url && signal.node_type == *nt {
-                    results.insert((url.clone(), *nt), (signal.id, signal.canonical_key.clone()));
+                    let embedding = if signal.embedding.is_empty() {
+                        None
+                    } else {
+                        Some(signal.embedding.clone())
+                    };
+                    results.insert((url.clone(), *nt), crate::traits::FingerprintMatch {
+                        id: signal.id,
+                        canonical_key: signal.canonical_key.clone(),
+                        embedding,
+                    });
                     break;
                 }
             }
@@ -800,9 +830,11 @@ impl SignalReader for MockSignalReader {
         for link in &inner.actor_links {
             if link.actor_id == actor_id && link.role == "authored" {
                 if let Some(signal) = inner.signals.get(&link.signal_id) {
-                    if let Some(ref loc) = signal.about_location {
-                        let name = signal.about_location_name.clone().unwrap_or_default();
-                        results.push((loc.lat, loc.lng, name, signal.extracted_at));
+                    if let Some(first) = signal.locations.first() {
+                        if let Some(ref pt) = first.point {
+                            let name = first.name.clone().unwrap_or_default();
+                            results.push((pt.lat, pt.lng, name, signal.extracted_at));
+                        }
                     }
                 }
             }
@@ -1051,9 +1083,7 @@ pub fn tension(title: &str) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
+            locations: vec![],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1089,13 +1119,16 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat,
-                lng,
-                precision: GeoPrecision::Approximate,
-            }),
-            about_location_name: None,
-            from_location: None,
+            locations: vec![rootsignal_common::Location {
+                point: Some(GeoPoint {
+                    lat,
+                    lng,
+                    precision: GeoPrecision::Approximate,
+                }),
+                name: None,
+                address: None,
+                role: None,
+            }],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1130,9 +1163,7 @@ pub fn need(title: &str) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
+            locations: vec![],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1169,13 +1200,16 @@ pub fn need_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat,
-                lng,
-                precision: GeoPrecision::Approximate,
-            }),
-            about_location_name: None,
-            from_location: None,
+            locations: vec![rootsignal_common::Location {
+                point: Some(GeoPoint {
+                    lat,
+                    lng,
+                    precision: GeoPrecision::Approximate,
+                }),
+                name: None,
+                address: None,
+                role: None,
+            }],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1211,9 +1245,7 @@ pub fn gathering(title: &str) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
+            locations: vec![],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1251,13 +1283,16 @@ pub fn gathering_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat,
-                lng,
-                precision: GeoPrecision::Approximate,
-            }),
-            about_location_name: None,
-            from_location: None,
+            locations: vec![rootsignal_common::Location {
+                point: Some(GeoPoint {
+                    lat,
+                    lng,
+                    precision: GeoPrecision::Approximate,
+                }),
+                name: None,
+                address: None,
+                role: None,
+            }],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1294,9 +1329,7 @@ pub fn aid(title: &str) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
+            locations: vec![],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1333,13 +1366,16 @@ pub fn aid_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat,
-                lng,
-                precision: GeoPrecision::Approximate,
-            }),
-            about_location_name: None,
-            from_location: None,
+            locations: vec![rootsignal_common::Location {
+                point: Some(GeoPoint {
+                    lat,
+                    lng,
+                    precision: GeoPrecision::Approximate,
+                }),
+                name: None,
+                address: None,
+                role: None,
+            }],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1375,9 +1411,7 @@ pub fn notice(title: &str) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
+            locations: vec![],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1414,13 +1448,16 @@ pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
             confidence: 0.8,
 
             corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat,
-                lng,
-                precision: GeoPrecision::Approximate,
-            }),
-            about_location_name: None,
-            from_location: None,
+            locations: vec![rootsignal_common::Location {
+                point: Some(GeoPoint {
+                    lat,
+                    lng,
+                    precision: GeoPrecision::Approximate,
+                }),
+                name: None,
+                address: None,
+                role: None,
+            }],
             url: String::new(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -1736,9 +1773,7 @@ pub fn test_meta(source_url: &str) -> NodeMeta {
         sensitivity: SensitivityLevel::General,
         confidence: 0.8,
         corroboration_count: 0,
-        about_location: None,
-        about_location_name: None,
-        from_location: None,
+        locations: vec![],
         url: source_url.to_string(),
         extracted_at: Utc::now(),
         published_at: None,
@@ -1956,6 +1991,14 @@ pub fn test_scout_deps(
     )
 }
 
+/// Create a test ScoutEngineDeps with a custom embedder (for content change detection tests).
+pub fn test_scout_deps_with_embedder(
+    store: Arc<dyn SignalReader>,
+    embedder: Arc<dyn rootsignal_common::TextEmbedder>,
+) -> ScoutEngineDeps {
+    ScoutEngineDeps::new(store, embedder, Uuid::new_v4())
+}
+
 /// Create a test ScoutEngineDeps pre-loaded with scrape deps (store + extractor + fetcher).
 pub fn test_scrape_deps(
     store: Arc<dyn SignalReader>,
@@ -2112,10 +2155,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        let (found_id, _found_ck) = results
+        let fp_match = results
             .get(&("https://example.com".to_string(), NodeType::Concern))
             .unwrap();
-        assert_eq!(*found_id, id);
+        assert_eq!(fp_match.id, id);
     }
 
     #[tokio::test]

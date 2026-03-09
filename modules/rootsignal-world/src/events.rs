@@ -274,6 +274,8 @@ pub enum WorldEvent {
 
     DetailsChanged {
         signal_id: Uuid,
+        node_type: NodeType,
+        title: String,
         summary: String,
         #[serde(alias = "source_url")]
         url: String,

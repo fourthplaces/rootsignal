@@ -492,11 +492,8 @@ async fn project_dedup_verdicts(
                 }
             }
 
-            DedupOutcome::Refreshed {
-                existing_id,
-                node_type,
-                ..
-            } => {
+            DedupOutcome::Refreshed { existing_id, node_type, .. }
+            | DedupOutcome::ContentChanged { existing_id, node_type, .. } => {
                 let label = node_type_label(*node_type);
                 let q = query(&format!(
                     "MATCH (n:{label} {{id: $id}})

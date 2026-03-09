@@ -25,6 +25,7 @@ pub struct ScoutStats {
     pub expansion_deferred_expanded: u32,
     pub expansion_social_topics_queued: u32,
     pub sources_discovered: u32,
+    pub signals_updated: u32,
     pub link_failures: u32,
     pub handler_failures: u32,
     pub spent_cents: u64,
@@ -54,6 +55,7 @@ impl ScoutStats {
             expansion_deferred_expanded,
             expansion_social_topics_queued,
             sources_discovered,
+            signals_updated,
             link_failures,
             handler_failures,
             spent_cents,
@@ -79,6 +81,7 @@ impl ScoutStats {
         self.expansion_deferred_expanded += expansion_deferred_expanded;
         self.expansion_social_topics_queued += expansion_social_topics_queued;
         self.sources_discovered += sources_discovered;
+        self.signals_updated += signals_updated;
         self.link_failures += link_failures;
         self.handler_failures += handler_failures;
         self.spent_cents += spent_cents;
@@ -107,6 +110,7 @@ impl std::fmt::Display for ScoutStats {
             expansion_deferred_expanded,
             expansion_social_topics_queued,
             sources_discovered,
+            signals_updated,
             link_failures,
             handler_failures,
             spent_cents,
@@ -122,6 +126,9 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "Signals extracted:  {signals_extracted}")?;
         writeln!(f, "Signals deduped:    {signals_deduplicated}")?;
         writeln!(f, "Signals stored:     {signals_stored}")?;
+        if signals_updated > 0 {
+            writeln!(f, "Signals updated:    {signals_updated}")?;
+        }
         if !by_type.is_empty() {
             writeln!(f, "\nBy type:")?;
             let mut entries: Vec<_> = by_type.iter().collect();

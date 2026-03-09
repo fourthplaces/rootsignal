@@ -161,6 +161,8 @@ pub struct ExtractedBatch {
     pub resource_tags: HashMap<Uuid, Vec<ResourceTag>>,
     pub signal_tags: HashMap<Uuid, Vec<String>>,
     pub author_actors: HashMap<Uuid, String>,
+    #[serde(default)]
+    pub author_actor_types: HashMap<Uuid, rootsignal_common::ActorType>,
     pub source_id: Option<Uuid>,
 }
 
@@ -342,6 +344,9 @@ impl PipelineState {
                         }
                         DedupOutcome::Refreshed { .. } => {
                             deduped += 1;
+                        }
+                        DedupOutcome::ContentChanged { .. } => {
+                            self.stats.signals_updated += 1;
                         }
                     }
                 }

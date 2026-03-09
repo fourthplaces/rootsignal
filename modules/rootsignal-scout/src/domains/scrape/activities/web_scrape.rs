@@ -245,6 +245,7 @@ async fn process_results(
                         resource_tags: resource_tags.into_iter().collect(),
                         signal_tags: signal_tags.into_iter().collect(),
                         author_actors,
+                        author_actor_types: HashMap::new(),
                         source_id,
                     };
 

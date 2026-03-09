@@ -36,41 +36,8 @@ impl EventSourcedReader {
 // Node → Event conversion helpers
 // ---------------------------------------------------------------------------
 
-fn meta_to_location(meta: &rootsignal_common::types::NodeMeta) -> Option<Location> {
-    meta.about_location.as_ref().map(|point| Location {
-        point: Some(GeoPoint {
-            lat: point.lat,
-            lng: point.lng,
-            precision: point.precision,
-        }),
-        name: meta.about_location_name.clone(),
-        address: None,
-        role: None,
-    })
-}
-
-fn meta_to_from_location(meta: &rootsignal_common::types::NodeMeta) -> Option<Location> {
-    meta.from_location.as_ref().map(|point| Location {
-        point: Some(GeoPoint {
-            lat: point.lat,
-            lng: point.lng,
-            precision: point.precision,
-        }),
-        name: None,
-        address: None,
-        role: Some("origin".into()),
-    })
-}
-
 fn meta_to_locations(meta: &rootsignal_common::types::NodeMeta) -> Vec<Location> {
-    let mut locs = Vec::new();
-    if let Some(loc) = meta_to_location(meta) {
-        locs.push(loc);
-    }
-    if let Some(loc) = meta_to_from_location(meta) {
-        locs.push(loc);
-    }
-    locs
+    meta.locations.clone()
 }
 
 fn meta_to_mentioned_entities(meta: &rootsignal_common::types::NodeMeta) -> Vec<Entity> {
@@ -262,8 +229,11 @@ impl SignalReader for EventSourcedReader {
     async fn find_by_fingerprints(
         &self,
         pairs: &[(String, NodeType)],
-    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
-        Ok(self.graph.find_by_fingerprints(pairs).await?)
+    ) -> Result<HashMap<(String, NodeType), crate::traits::FingerprintMatch>> {
+        let raw = self.graph.find_by_fingerprints(pairs).await?;
+        Ok(raw.into_iter().map(|(key, (id, canonical_key, embedding))| {
+            (key, crate::traits::FingerprintMatch { id, canonical_key, embedding })
+        }).collect())
     }
 
     // --- Actor graph (append event → project to graph) ---
@@ -404,13 +374,16 @@ mod tests {
             sensitivity: SensitivityLevel::General,
             confidence: 0.85,
             corroboration_count: 0,
-            about_location: Some(GeoPoint {
-                lat: 44.9778,
-                lng: -93.265,
-                precision: GeoPrecision::Neighborhood,
-            }),
-            about_location_name: Some("Minneapolis".to_string()),
-            from_location: None,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9778,
+                    lng: -93.265,
+                    precision: GeoPrecision::Neighborhood,
+                }),
+                name: Some("Minneapolis".to_string()),
+                address: None,
+                role: None,
+            }],
             url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
             published_at: None,
@@ -650,9 +623,9 @@ mod tests {
     #[test]
     fn location_maps_from_node_meta_geo_point() {
         let meta = test_meta("Location Test");
-        let loc = meta_to_location(&meta);
-        assert!(loc.is_some());
-        let loc = loc.unwrap();
+        let locs = meta_to_locations(&meta);
+        assert_eq!(locs.len(), 1);
+        let loc = &locs[0];
         assert!(loc.point.is_some());
         let point = loc.point.unwrap();
         assert!((point.lat - 44.9778).abs() < f64::EPSILON);

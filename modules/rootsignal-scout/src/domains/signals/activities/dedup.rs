@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::domains::signals::events::{
-    ActorAction, CreatedSignal, DedupBatchResult, DedupOutcome,
+    ActorAction, ContentChangedSignal, CreatedSignal, DedupBatchResult, DedupOutcome,
     NewCitation, ResolvedActor,
 };
 use crate::domains::signals::activities::dedup_utils::is_owned_source;
@@ -40,6 +40,7 @@ pub async fn deduplicate_extracted_batch(
 ) -> Result<DedupBatchResult> {
     let empty_result = || DedupBatchResult {
         created: Vec::new(),
+        content_changed: Vec::new(),
         actor_actions: Vec::new(),
         verdicts: Vec::new(),
     };
@@ -50,6 +51,7 @@ pub async fn deduplicate_extracted_batch(
 
     let content_hash_str = format!("{:x}", rootsignal_common::content_hash(&batch.content));
     let mut created = Vec::new();
+    let mut content_changed = Vec::new();
     let mut actor_actions = Vec::new();
     let mut verdicts: Vec<DedupOutcome> = Vec::new();
 
@@ -82,7 +84,53 @@ pub async fn deduplicate_extracted_batch(
         let sig_url = signal_url(node, url);
         let fp_key = (sig_url.to_string(), node_type);
 
-        if let Some((existing_id, _existing_ck)) = fingerprint_matches.get(&fp_key) {
+        if let Some(fp_match) = fingerprint_matches.get(&fp_key) {
+            let existing_id = fp_match.id;
+
+            // Content change detection via vector comparison
+            if let Some(ref stored_embedding) = fp_match.embedding {
+                let new_text = format!("{} {}", node.title(), node.meta().map(|m| m.summary.as_str()).unwrap_or(""));
+                if let Ok(new_embedding) = deps.embedder.embed(&new_text).await {
+                    if !new_embedding.is_empty() {
+                        let stored_f64: Vec<f64> = stored_embedding.iter().map(|v| *v as f64).collect();
+                        let new_f64: Vec<f64> = new_embedding.iter().map(|v| *v as f64).collect();
+                        let similarity = crate::infra::util::cosine_similarity(&stored_f64, &new_f64);
+
+                        if similarity < 0.92 {
+                            info!(
+                                existing_id = %existing_id,
+                                title = node.title(),
+                                url = sig_url,
+                                similarity = similarity,
+                                "Content changed — similarity {similarity:.3} below threshold",
+                            );
+
+                            let citation = NewCitation {
+                                citation_id: Uuid::new_v4(),
+                                signal_id: existing_id,
+                                url: sig_url.to_string(),
+                                content_hash: content_hash_str.clone(),
+                                snippet: node.meta().map(|m| m.summary.clone()),
+                                channel_type: Some(rootsignal_common::channel_type(sig_url)),
+                            };
+
+                            verdicts.push(DedupOutcome::ContentChanged {
+                                existing_id,
+                                node_type,
+                                url: sig_url.to_string(),
+                                similarity,
+                            });
+                            content_changed.push(ContentChangedSignal {
+                                existing_id,
+                                node: node.clone(),
+                                citation,
+                            });
+                            continue;
+                        }
+                    }
+                }
+            }
+
             info!(
                 existing_id = %existing_id,
                 title = node.title(),
@@ -90,7 +138,7 @@ pub async fn deduplicate_extracted_batch(
                 "Fingerprint match — refreshing"
             );
             verdicts.push(DedupOutcome::Refreshed {
-                existing_id: *existing_id,
+                existing_id,
                 node_type,
                 url: sig_url.to_string(),
             });
@@ -104,6 +152,10 @@ pub async fn deduplicate_extracted_batch(
         let author_name = meta_id
             .and_then(|mid| batch.author_actors.get(&mid))
             .cloned();
+        let author_actor_type = meta_id
+            .and_then(|mid| batch.author_actor_types.get(&mid))
+            .copied()
+            .unwrap_or(rootsignal_common::ActorType::Organization);
         let node_resource_tags = meta_id
             .and_then(|mid| batch.resource_tags.get(&mid))
             .cloned()
@@ -123,7 +175,7 @@ pub async fn deduplicate_extracted_batch(
         };
 
         let resolved_actor = resolve_actor_inline(
-            node_id, url, &author_name, batch.source_id,
+            node_id, url, &author_name, author_actor_type, batch.source_id,
             &mut seen_actors, &mut actor_actions, deps,
         ).await?;
 
@@ -142,7 +194,7 @@ pub async fn deduplicate_extracted_batch(
         created.push(CreatedSignal { node: node.clone(), citation });
     }
 
-    Ok(DedupBatchResult { created, actor_actions, verdicts })
+    Ok(DedupBatchResult { created, content_changed, actor_actions, verdicts })
 }
 
 /// Resolve author → Actor on owned sources.
@@ -153,6 +205,7 @@ async fn resolve_actor_inline(
     signal_id: Uuid,
     source_url: &str,
     author_name: &Option<String>,
+    actor_type: rootsignal_common::ActorType,
     source_id: Option<Uuid>,
     seen_actors: &mut HashMap<String, Uuid>,
     actor_actions: &mut Vec<ActorAction>,
@@ -207,6 +260,7 @@ async fn resolve_actor_inline(
                 actor_id: new_id,
                 name: author_name.to_string(),
                 canonical_key: canonical_key.clone(),
+                actor_type,
             });
             if let Some(sid) = source_id {
                 actor_actions.push(ActorAction::LinkedToSource {

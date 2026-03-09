@@ -14,12 +14,20 @@ use crate::core::extractor::ResourceTag;
 /// Result of deduplicating an extracted batch.
 pub struct DedupBatchResult {
     pub created: Vec<CreatedSignal>,
+    pub content_changed: Vec<ContentChangedSignal>,
     pub actor_actions: Vec<ActorAction>,
     pub verdicts: Vec<DedupOutcome>,
 }
 
 /// A newly created signal with its associated citation.
 pub struct CreatedSignal {
+    pub node: Node,
+    pub citation: NewCitation,
+}
+
+/// A signal whose content has changed since last encounter.
+pub struct ContentChangedSignal {
+    pub existing_id: Uuid,
     pub node: Node,
     pub citation: NewCitation,
 }
@@ -40,6 +48,7 @@ pub enum ActorAction {
         actor_id: Uuid,
         name: String,
         canonical_key: String,
+        actor_type: rootsignal_common::ActorType,
     },
     LinkedToSource {
         actor_id: Uuid,
@@ -86,6 +95,12 @@ pub enum DedupOutcome {
         node_type: NodeType,
         #[serde(alias = "source_url")]
         url: String,
+    },
+    ContentChanged {
+        existing_id: Uuid,
+        node_type: NodeType,
+        url: String,
+        similarity: f64,
     },
 }
 

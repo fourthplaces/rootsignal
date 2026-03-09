@@ -122,6 +122,7 @@ async fn new_signal_dispatches_full_event_chain() {
         resource_tags: HashMap::new(),
         signal_tags,
         author_actors,
+        author_actor_types: HashMap::new(),
         source_id: None,
     };
 
@@ -189,6 +190,7 @@ async fn same_source_reencounter_emits_no_freshness_events() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
+        author_actor_types: HashMap::new(),
         source_id: None,
     };
 
@@ -230,6 +232,7 @@ async fn scrape_completed_dispatches_dedup_and_creation_chain() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
+        author_actor_types: HashMap::new(),
         source_id: None,
     };
 
@@ -285,6 +288,7 @@ async fn same_source_title_match_counts_dedup_without_events() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
+        author_actor_types: HashMap::new(),
         source_id: None,
     };
 
@@ -788,7 +792,9 @@ async fn actor_location_emits_events_on_response_complete() {
     let node1 = {
         let mut n = tension_at("Community Event A", 44.9489, -93.2601);
         if let Some(meta) = n.meta_mut() {
-            meta.about_location_name = Some("Phillips".to_string());
+            if let Some(loc) = meta.locations.first_mut() {
+                loc.name = Some("Phillips".to_string());
+            }
         }
         n
     };
@@ -804,7 +810,9 @@ async fn actor_location_emits_events_on_response_complete() {
     let node2 = {
         let mut n = tension_at("Community Event B", 44.9489, -93.2601);
         if let Some(meta) = n.meta_mut() {
-            meta.about_location_name = Some("Phillips".to_string());
+            if let Some(loc) = meta.locations.first_mut() {
+                loc.name = Some("Phillips".to_string());
+            }
         }
         n
     };

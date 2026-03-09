@@ -78,14 +78,26 @@ pub mod handlers {
                 all_events.push(citation_published(signal.citation));
             }
 
+            // Content-changed signals: updated world fact + new citation
+            for changed in result.content_changed {
+                all_events.push(WorldEvent::DetailsChanged {
+                    signal_id: changed.existing_id,
+                    node_type: changed.node.node_type(),
+                    title: changed.node.title().to_string(),
+                    summary: changed.node.meta().map(|m| m.summary.clone()).unwrap_or_default(),
+                    url: changed.citation.url.clone(),
+                });
+                all_events.push(citation_published(changed.citation));
+            }
+
             // Actor actions from inline resolution
             for action in result.actor_actions {
                 match action {
-                    ActorAction::Identified { actor_id, name, canonical_key } => {
+                    ActorAction::Identified { actor_id, name, canonical_key, actor_type } => {
                         all_events.push(SystemEvent::ActorIdentified {
                             actor_id,
                             name,
-                            actor_type: rootsignal_common::ActorType::Organization,
+                            actor_type,
                             canonical_key,
                             domains: vec![],
                             social_urls: vec![],

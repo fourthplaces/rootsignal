@@ -50,6 +50,17 @@ fn count_refreshed(result: &DedupBatchResult) -> usize {
     result.verdicts.iter().filter(|v| matches!(v, DedupOutcome::Refreshed { .. })).count()
 }
 
+fn count_content_changed(result: &DedupBatchResult) -> usize {
+    result.verdicts.iter().filter(|v| matches!(v, DedupOutcome::ContentChanged { .. })).count()
+}
+
+fn test_deps_with_embedder(
+    store: Arc<MockSignalReader>,
+    embedder: Arc<dyn rootsignal_common::TextEmbedder>,
+) -> ScoutEngineDeps {
+    test_scout_deps_with_embedder(store as Arc<dyn crate::traits::SignalReader>, embedder)
+}
+
 // ---------------------------------------------------------------------------
 // No match → create signal
 // ---------------------------------------------------------------------------
@@ -71,6 +82,7 @@ async fn new_signal_creates_with_citation_and_verdict() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -110,6 +122,7 @@ async fn create_carries_tags_and_source_on_verdict() {
             resource_tags: HashMap::new(),
             signal_tags: tag_map,
             author_actors,
+            author_actor_types: HashMap::new(),
             source_id: Some(source_id),
         },
         &state,
@@ -149,6 +162,7 @@ async fn empty_batch_produces_empty_result() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -188,6 +202,7 @@ async fn citation_nodes_in_batch_are_skipped() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -215,6 +230,7 @@ async fn signal_without_url_falls_back_to_batch_url_for_matching() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -247,6 +263,7 @@ async fn all_signals_matching_produces_no_creates() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -285,6 +302,7 @@ async fn same_author_in_batch_creates_one_actor() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -340,6 +358,7 @@ async fn same_author_across_post_urls_creates_one_actor() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -397,6 +416,7 @@ async fn reencountered_signal_refreshes() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -425,6 +445,7 @@ async fn same_url_from_different_source_still_refreshes() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -450,6 +471,7 @@ async fn no_fingerprint_match_creates_signal() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -476,6 +498,7 @@ async fn signal_without_url_uses_batch_url_for_fingerprint() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -507,6 +530,7 @@ async fn mixed_batch_fingerprint_hit_and_miss() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -535,6 +559,7 @@ async fn same_url_different_type_creates_new_signal() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -566,6 +591,7 @@ async fn duplicate_urls_in_batch_both_refresh() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -602,6 +628,7 @@ async fn owned_source_actor_links_to_source() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
+            author_actor_types: HashMap::new(),
             source_id: Some(source_id),
         },
         &state,
@@ -642,6 +669,7 @@ async fn web_page_source_creates_no_actor() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -676,6 +704,7 @@ async fn owned_source_without_source_id_creates_actor_but_no_source_link() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
+            author_actor_types: HashMap::new(),
             source_id: None, // no source_id
         },
         &state,
@@ -720,6 +749,7 @@ async fn actor_canonical_key_derives_from_source_url_not_name() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -777,6 +807,7 @@ async fn second_scrape_reuses_existing_actor_by_canonical_key() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
+            author_actor_types: HashMap::new(),
             source_id: Some(Uuid::new_v4()),
         },
         &state,
@@ -822,6 +853,7 @@ async fn created_citation_uses_per_signal_url_not_batch_url() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
             source_id: None,
         },
         &state,
@@ -842,4 +874,595 @@ async fn created_citation_uses_per_signal_url_not_batch_url() {
         }
         _ => panic!("expected a Created verdict"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Content change detection
+// ---------------------------------------------------------------------------
+
+/// Unit vector along dimension 0 — represents "old" content.
+fn old_content_vector() -> Vec<f32> {
+    let mut v = vec![0.0f32; TEST_EMBEDDING_DIM];
+    v[0] = 1.0;
+    v
+}
+
+/// Unit vector along dimension 1 — orthogonal to old_content_vector (similarity ≈ 0.0).
+fn changed_content_vector() -> Vec<f32> {
+    let mut v = vec![0.0f32; TEST_EMBEDDING_DIM];
+    v[1] = 1.0;
+    v
+}
+
+#[tokio::test]
+async fn reencounter_with_same_content_refreshes() {
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let store = Arc::new(MockSignalReader::new());
+    store.insert_signal_with_embedding("Food Shelf Hours", NodeType::Concern, post_url, old_content_vector());
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_with_url("Food Shelf Hours", 44.95, -93.27, post_url);
+    let embed_text = format!("{} {}", node.title(), node.meta().unwrap().summary);
+
+    let embedder = Arc::new(
+        FixedEmbedder::new(TEST_EMBEDDING_DIM)
+            .on_text(&embed_text, old_content_vector()),
+    );
+    let deps = test_deps_with_embedder(store, embedder);
+
+    let result = run_dedup(post_url, ExtractedBatch {
+        content: "page content".to_string(),
+        nodes: vec![node],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        author_actor_types: HashMap::new(),
+        source_id: None,
+    }, &state, &deps).await;
+
+    assert_eq!(count_refreshed(&result), 1, "identical content should refresh");
+    assert_eq!(count_content_changed(&result), 0, "no content change expected");
+}
+
+#[tokio::test]
+async fn reencounter_with_changed_content_emits_content_changed() {
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let store = Arc::new(MockSignalReader::new());
+    let existing_id = store.insert_signal_with_embedding(
+        "Food Shelf Hours", NodeType::Concern, post_url, old_content_vector(),
+    );
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_with_url("Food Shelf NEW Hours", 44.95, -93.27, post_url);
+    let embed_text = format!("{} {}", node.title(), node.meta().unwrap().summary);
+
+    let embedder = Arc::new(
+        FixedEmbedder::new(TEST_EMBEDDING_DIM)
+            .on_text(&embed_text, changed_content_vector()),
+    );
+    let deps = test_deps_with_embedder(store, embedder);
+
+    let result = run_dedup(post_url, ExtractedBatch {
+        content: "page content".to_string(),
+        nodes: vec![node],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        author_actor_types: HashMap::new(),
+        source_id: None,
+    }, &state, &deps).await;
+
+    assert_eq!(count_content_changed(&result), 1, "changed content should emit ContentChanged");
+    assert_eq!(count_refreshed(&result), 0, "should not refresh when content changed");
+
+    match &result.verdicts[0] {
+        DedupOutcome::ContentChanged { existing_id: eid, similarity, .. } => {
+            assert_eq!(*eid, existing_id);
+            assert!(*similarity < 0.92, "similarity {similarity} should be below threshold");
+        }
+        other => panic!("expected ContentChanged, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn content_changed_produces_citation_not_created_signal() {
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let store = Arc::new(MockSignalReader::new());
+    let existing_id = store.insert_signal_with_embedding(
+        "Food Shelf Hours", NodeType::Concern, post_url, old_content_vector(),
+    );
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_with_url("Food Shelf NEW Hours", 44.95, -93.27, post_url);
+    let embed_text = format!("{} {}", node.title(), node.meta().unwrap().summary);
+
+    let embedder = Arc::new(
+        FixedEmbedder::new(TEST_EMBEDDING_DIM)
+            .on_text(&embed_text, changed_content_vector()),
+    );
+    let deps = test_deps_with_embedder(store, embedder);
+
+    let result = run_dedup(post_url, ExtractedBatch {
+        content: "page content".to_string(),
+        nodes: vec![node],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        author_actor_types: HashMap::new(),
+        source_id: None,
+    }, &state, &deps).await;
+
+    assert!(result.created.is_empty(), "changed signal should not appear in created");
+    assert_eq!(result.content_changed.len(), 1, "should appear in content_changed");
+    assert_eq!(result.content_changed[0].existing_id, existing_id);
+}
+
+#[tokio::test]
+async fn missing_stored_embedding_falls_back_to_refresh() {
+    let post_url = "https://www.instagram.com/p/ABC123";
+    let store = Arc::new(MockSignalReader::new());
+    store.insert_signal("Food Shelf Hours", NodeType::Concern, post_url);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_with_url("Food Shelf NEW Hours", 44.95, -93.27, post_url);
+    let deps = test_deps(store);
+
+    let result = run_dedup(post_url, ExtractedBatch {
+        content: "page content".to_string(),
+        nodes: vec![node],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        author_actor_types: HashMap::new(),
+        source_id: None,
+    }, &state, &deps).await;
+
+    assert_eq!(count_refreshed(&result), 1, "missing embedding should fall back to refresh");
+    assert_eq!(count_content_changed(&result), 0);
+}
+
+#[tokio::test]
+async fn mixed_batch_new_refreshed_and_changed() {
+    let new_url = "https://www.instagram.com/p/NEW";
+    let same_url = "https://www.instagram.com/p/SAME";
+    let changed_url = "https://www.instagram.com/p/CHANGED";
+
+    let store = Arc::new(MockSignalReader::new());
+    store.insert_signal_with_embedding("Same Signal", NodeType::Concern, same_url, old_content_vector());
+    store.insert_signal_with_embedding("Changed Signal", NodeType::Concern, changed_url, old_content_vector());
+    let state = PipelineState::new(HashMap::new());
+
+    let node_new = tension_with_url("Brand New", 44.93, -93.26, new_url);
+    let node_same = tension_with_url("Same Signal", 44.94, -93.25, same_url);
+    let node_changed = tension_with_url("Changed Signal Updated", 44.95, -93.27, changed_url);
+
+    let same_text = format!("{} {}", node_same.title(), node_same.meta().unwrap().summary);
+    let changed_text = format!("{} {}", node_changed.title(), node_changed.meta().unwrap().summary);
+
+    let embedder = Arc::new(
+        FixedEmbedder::new(TEST_EMBEDDING_DIM)
+            .on_text(&same_text, old_content_vector())
+            .on_text(&changed_text, changed_content_vector()),
+    );
+    let deps = test_deps_with_embedder(store, embedder);
+
+    let result = run_dedup("https://www.instagram.com/local_org", ExtractedBatch {
+        content: "page content".to_string(),
+        nodes: vec![node_new, node_same, node_changed],
+        resource_tags: HashMap::new(),
+        signal_tags: HashMap::new(),
+        author_actors: HashMap::new(),
+        author_actor_types: HashMap::new(),
+        source_id: None,
+    }, &state, &deps).await;
+
+    assert_eq!(count_created(&result), 1, "new signal should be created");
+    assert_eq!(count_refreshed(&result), 1, "same-content signal should refresh");
+    assert_eq!(count_content_changed(&result), 1, "changed-content signal should emit ContentChanged");
+    assert_eq!(result.created.len(), 1);
+    assert_eq!(result.content_changed.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Actor type classification
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn individual_actor_type_flows_through_to_identified_action() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Community Event", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "Jane Reporter".to_string());
+    let mut author_actor_types = HashMap::new();
+    author_actor_types.insert(meta_id, rootsignal_common::ActorType::Individual);
+
+    let result = run_dedup(
+        "https://www.instagram.com/janereporter",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            author_actor_types,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    ).await;
+
+    let identified: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(identified.len(), 1);
+    assert_eq!(identified[0], rootsignal_common::ActorType::Individual,
+        "actor type should be Individual, not the default Organization");
+}
+
+#[tokio::test]
+async fn missing_actor_type_defaults_to_organization() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Press Release", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "City News Network".to_string());
+    // No entry in author_actor_types — should default to Organization
+
+    let result = run_dedup(
+        "https://www.instagram.com/citynewsnetwork",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            author_actor_types: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    ).await;
+
+    let identified: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(identified.len(), 1);
+    assert_eq!(identified[0], rootsignal_common::ActorType::Organization,
+        "missing actor_type should default to Organization");
+}
+
+#[tokio::test]
+async fn government_body_actor_type_flows_through() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Public Hearing", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "City of Minneapolis".to_string());
+    let mut author_actor_types = HashMap::new();
+    author_actor_types.insert(meta_id, rootsignal_common::ActorType::GovernmentBody);
+
+    let result = run_dedup(
+        "https://www.instagram.com/cityofminneapolis",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            author_actor_types,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    ).await;
+
+    let identified: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(identified.len(), 1);
+    assert_eq!(identified[0], rootsignal_common::ActorType::GovernmentBody);
+}
+
+#[tokio::test]
+async fn coalition_actor_type_flows_through() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Joint Statement", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "North Side Alliance".to_string());
+    let mut author_actor_types = HashMap::new();
+    author_actor_types.insert(meta_id, rootsignal_common::ActorType::Coalition);
+
+    let result = run_dedup(
+        "https://www.instagram.com/northsidealliance",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            author_actor_types,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    ).await;
+
+    let identified: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(identified.len(), 1);
+    assert_eq!(identified[0], rootsignal_common::ActorType::Coalition);
+}
+
+#[tokio::test]
+async fn actor_type_does_not_affect_identity_dedup() {
+    let source_url = "https://www.instagram.com/someorg";
+    let existing_actor_id = Uuid::new_v4();
+    let expected_ck = rootsignal_common::canonical_value(source_url);
+
+    let store = Arc::new(MockSignalReader::new());
+    store.add_actor_by_canonical_key(&expected_ck, existing_actor_id);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Weekly Meetup", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "Some Org".to_string());
+    let mut author_actor_types = HashMap::new();
+    // Classify as Individual even though the existing actor was created as Organization.
+    // Identity is by canonical_key, not by actor type — should still reuse the actor.
+    author_actor_types.insert(meta_id, rootsignal_common::ActorType::Individual);
+
+    let result = run_dedup(
+        source_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            author_actor_types,
+            source_id: Some(Uuid::new_v4()),
+        },
+        &state,
+        &deps,
+    ).await;
+
+    let identified_count = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::Identified { .. }))
+        .count();
+    assert_eq!(identified_count, 0,
+        "should reuse existing actor regardless of actor_type mismatch");
+
+    let linked: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::LinkedToSignal { actor_id, .. } => Some(*actor_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(linked.len(), 1);
+    assert_eq!(linked[0], existing_actor_id,
+        "should link to the existing actor, not create a new one");
+}
+
+#[tokio::test]
+async fn actor_type_carried_on_created_verdict() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Activist Rally", 44.95, -93.27);
+    let meta_id = node.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id, "Jane Doe".to_string());
+    let mut author_actor_types = HashMap::new();
+    author_actor_types.insert(meta_id, rootsignal_common::ActorType::Individual);
+
+    let result = run_dedup(
+        "https://www.instagram.com/janedoe",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            author_actor_types,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    ).await;
+
+    let created_verdict = result.verdicts.iter()
+        .find(|v| matches!(v, DedupOutcome::Created { .. }))
+        .expect("should have a Created verdict");
+
+    match created_verdict {
+        DedupOutcome::Created { actor, .. } => {
+            let resolved = actor.as_ref().expect("should have a resolved actor");
+            assert!(resolved.is_new, "actor should be newly created");
+            assert_eq!(resolved.name, "Jane Doe");
+        }
+        _ => unreachable!(),
+    }
+
+    // The actor type is on the ActorAction, not on ResolvedActor — verify it there
+    let identified_type = result.actor_actions.iter()
+        .find_map(|a| match a {
+            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
+            _ => None,
+        })
+        .expect("should have an Identified action");
+    assert_eq!(identified_type, rootsignal_common::ActorType::Individual);
+}
+
+#[tokio::test]
+async fn blank_author_name_does_not_create_actor() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Anonymous Event", 44.95, -93.27);
+    // No author_actors entry → no actor should be created regardless of actor type
+
+    let result = run_dedup(
+        "https://www.instagram.com/someorg",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            author_actor_types: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    ).await;
+
+    assert!(result.actor_actions.is_empty(),
+        "no author name → no actor actions, regardless of actor_type");
+
+    let created_verdict = result.verdicts.iter()
+        .find(|v| matches!(v, DedupOutcome::Created { .. }))
+        .expect("should still create the signal");
+    match created_verdict {
+        DedupOutcome::Created { actor, .. } => {
+            assert!(actor.is_none(), "no author → no resolved actor");
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// Actor identity is pinned to the source URL, not to author names within posts.
+/// Multiple posts from the same source produce one actor — the source owner.
+#[tokio::test]
+async fn multiple_posts_from_same_source_produce_one_actor() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node1 = tension_with_url("Council Meeting", 44.93, -93.26, "https://www.instagram.com/p/POST1");
+    let node2 = tension_with_url("Volunteer Call", 44.95, -93.27, "https://www.instagram.com/p/POST2");
+    let meta_id1 = node1.meta().unwrap().id;
+    let meta_id2 = node2.meta().unwrap().id;
+
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id1, "Local Page".to_string());
+    author_actors.insert(meta_id2, "Local Page".to_string());
+
+    let mut author_actor_types = HashMap::new();
+    author_actor_types.insert(meta_id1, rootsignal_common::ActorType::Organization);
+    author_actor_types.insert(meta_id2, rootsignal_common::ActorType::Organization);
+
+    let result = run_dedup(
+        "https://www.instagram.com/localpage",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node1, node2],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            author_actor_types,
+            source_id: None,
+        },
+        &state,
+        &deps,
+    ).await;
+
+    let identified_count = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::Identified { .. }))
+        .count();
+    assert_eq!(identified_count, 1,
+        "one source URL = one actor, regardless of how many posts");
+
+    let linked_count = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::LinkedToSignal { .. }))
+        .count();
+    assert_eq!(linked_count, 2, "both signals should link to the single actor");
+}
+
+/// Mentioned entities in posts do not create actors — actor identity comes only
+/// from source URLs. Different author names on the same source URL still resolve
+/// to one actor (the source owner), because canonical_key derives from the URL.
+#[tokio::test]
+async fn mentioned_names_on_same_source_collapse_to_source_owner() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node1 = tension_with_url("Council Meeting", 44.93, -93.26, "https://www.instagram.com/p/POST1");
+    let node2 = tension_with_url("Volunteer Call", 44.95, -93.27, "https://www.instagram.com/p/POST2");
+    let meta_id1 = node1.meta().unwrap().id;
+    let meta_id2 = node2.meta().unwrap().id;
+
+    // Even with different author names, the canonical_key is from the source URL
+    let mut author_actors = HashMap::new();
+    author_actors.insert(meta_id1, "City Council".to_string());
+    author_actors.insert(meta_id2, "Jane Activist".to_string());
+
+    let result = run_dedup(
+        "https://www.instagram.com/localpage",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node1, node2],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors,
+            author_actor_types: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    ).await;
+
+    let identified_count = result.actor_actions.iter()
+        .filter(|a| matches!(a, ActorAction::Identified { .. }))
+        .count();
+    assert_eq!(identified_count, 1,
+        "different author names on the same source URL produce one actor — the source owner");
+
+    // The first author name wins (insertion order), but identity is from the URL
+    let identified: Vec<_> = result.actor_actions.iter()
+        .filter_map(|a| match a {
+            ActorAction::Identified { canonical_key, .. } => Some(canonical_key.as_str()),
+            _ => None,
+        })
+        .collect();
+    let expected_ck = rootsignal_common::canonical_value("https://www.instagram.com/localpage");
+    assert_eq!(identified[0], expected_ck,
+        "canonical_key must derive from source URL, never from author name");
 }
