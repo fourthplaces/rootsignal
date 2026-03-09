@@ -36,6 +36,7 @@ mod investigate;
 mod investigate_tools;
 mod jwt;
 mod link_preview;
+mod projection;
 mod scout_runner;
 
 
@@ -152,16 +153,49 @@ async fn main() -> Result<()> {
     let config = Config::web_from_env();
     config.log_redacted();
 
+    // ========== Postgres ==========
+    let pg_pool = match std::env::var("DATABASE_URL") {
+        Ok(database_url) => {
+            match sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .connect(&database_url)
+                .await
+            {
+                Ok(pool) => Some(pool),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to connect to Postgres — scout workflows disabled");
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            tracing::warn!("DATABASE_URL not set — scout workflows disabled");
+            None
+        }
+    };
+
+    // Resolve which Neo4j database to target.
+    let neo4j_db = projection::resolve_neo4j_db(&config).await?;
+    info!(db = neo4j_db.as_str(), "Connecting to Neo4j");
+
     let client = connect_graph(
         &config.neo4j_uri,
         &config.neo4j_user,
         &config.neo4j_password,
+        &neo4j_db,
     )
     .await?;
 
     rootsignal_graph::migrate::migrate(&client)
         .await
         .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
+
+    // REPLAY mode: run full projection, health check, promote, exit.
+    if std::env::var("REPLAY").is_ok() {
+        let pool = pg_pool.expect("REPLAY requires DATABASE_URL");
+        projection::run(pool, client).await?;
+        return Ok(());
+    }
 
     // Build the in-memory cache. Block until loaded — no HTTP traffic until ready.
     info!("Loading signal cache from Neo4j…");
@@ -200,33 +234,17 @@ async fn main() -> Result<()> {
         None
     };
 
-    // ========== Postgres ==========
-    let pg_pool = match std::env::var("DATABASE_URL") {
-        Ok(database_url) => {
-            match sqlx::postgres::PgPoolOptions::new()
-                .max_connections(5)
-                .connect(&database_url)
-                .await
-            {
-                Ok(pool) => Some(pool),
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to connect to Postgres — scout workflows disabled");
-                    None
-                }
-            }
-        }
-        Err(_) => {
-            tracing::warn!("DATABASE_URL not set — scout workflows disabled");
-            None
-        }
-    };
-
     // Migrations are handled by `rootsignal-migrate` binary (run before deploy).
 
     // Spawn live event broadcast (PgListener → broadcast channel)
     let event_broadcast = pg_pool
         .as_ref()
         .map(|pool| event_broadcast::EventBroadcast::spawn(pool.clone()));
+
+    // Spawn projection stream — catches up from pointer, then tails via PG NOTIFY.
+    if let Some(ref pool) = pg_pool {
+        projection::spawn(pool.clone(), client.clone());
+    }
 
     // Hydrate in-memory event cache (most recent 500K events)
     let event_cache = if let Some(ref pool) = pg_pool {

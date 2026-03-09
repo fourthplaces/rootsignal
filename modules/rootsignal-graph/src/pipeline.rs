@@ -9,9 +9,8 @@
 //! Replay guarantee: the same events always produce the same graph.
 
 use anyhow::Result;
-use tracing::info;
 
-use rootsignal_events::{EventStore, StoredEvent};
+use seesaw_core::types::PersistedEvent;
 
 use crate::projector::{ApplyResult, GraphProjector};
 use crate::GraphClient;
@@ -54,7 +53,7 @@ impl Pipeline {
     /// Process a batch of events through the full pipeline: project → cause_heat.
     pub async fn process(
         &self,
-        events: &[StoredEvent],
+        events: &[PersistedEvent],
         bbox: &BBox,
     ) -> Result<PipelineStats> {
         let (mut applied, mut noop, mut errors) = (0u32, 0u32, 0u32);
@@ -83,84 +82,6 @@ impl Pipeline {
             events_applied: applied,
             events_noop: noop,
             events_error: errors,
-            cause_heat_updated,
-        })
-    }
-
-    /// Full rebuild: wipe graph, replay all events, compute cause_heat.
-    pub async fn rebuild(
-        &self,
-        store: &EventStore,
-        bbox: &BBox,
-    ) -> Result<PipelineStats> {
-        info!("Pipeline: full rebuild starting");
-
-        let last_seq = self.projector.rebuild(store).await?;
-
-        let cause_heat_updated = crate::cause_heat::compute_cause_heat(
-            &self.client,
-            self.cause_heat_threshold,
-            bbox.min_lat,
-            bbox.max_lat,
-            bbox.min_lng,
-            bbox.max_lng,
-        )
-        .await
-        .map(|_| 0u32)
-        .unwrap_or(0);
-
-        let events = store.read_from(1, 1).await?;
-        let total = if events.is_empty() {
-            0
-        } else {
-            last_seq as u32
-        };
-
-        info!(last_seq, "Pipeline: full rebuild complete");
-
-        Ok(PipelineStats {
-            events_applied: total,
-            events_noop: 0,
-            events_error: 0,
-            cause_heat_updated,
-        })
-    }
-
-    /// Replay from a specific sequence number, then compute cause_heat.
-    pub async fn replay_from(
-        &self,
-        store: &EventStore,
-        seq: i64,
-        bbox: &BBox,
-    ) -> Result<PipelineStats> {
-        info!(seq, "Pipeline: incremental replay starting");
-
-        let last_seq = self.projector.replay_from(store, seq).await?;
-
-        let cause_heat_updated = crate::cause_heat::compute_cause_heat(
-            &self.client,
-            self.cause_heat_threshold,
-            bbox.min_lat,
-            bbox.max_lat,
-            bbox.min_lng,
-            bbox.max_lng,
-        )
-        .await
-        .map(|_| 0u32)
-        .unwrap_or(0);
-
-        let applied = if last_seq >= seq {
-            (last_seq - seq + 1) as u32
-        } else {
-            0
-        };
-
-        info!(last_seq, "Pipeline: incremental replay complete");
-
-        Ok(PipelineStats {
-            events_applied: applied,
-            events_noop: 0,
-            events_error: 0,
             cause_heat_updated,
         })
     }

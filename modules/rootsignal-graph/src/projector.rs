@@ -22,8 +22,18 @@ use rootsignal_common::events::{
 };
 use rootsignal_common::types::{Entity, NodeType, SourceNode};
 use rootsignal_common::EmbeddingLookup;
-use rootsignal_events::StoredEvent;
+use seesaw_core::types::PersistedEvent;
 use crate::GraphClient;
+
+fn schema_v(event: &PersistedEvent) -> i16 {
+    event.metadata.get("schema_v").and_then(|v| v.as_i64()).unwrap_or(1) as i16
+}
+fn run_id_str(event: &PersistedEvent) -> String {
+    event.metadata.get("run_id").and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
+fn actor_str(event: &PersistedEvent) -> String {
+    event.metadata.get("actor").and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
 
 
 // ---------------------------------------------------------------------------
@@ -92,14 +102,14 @@ impl GraphProjector {
     ///
     /// Routes by `EventDomain` — Rust forces exhaustive match arms, so adding
     /// a new domain variant produces a compile error here until handled.
-    pub async fn project(&self, event: &StoredEvent) -> Result<ApplyResult> {
+    pub async fn project(&self, event: &PersistedEvent) -> Result<ApplyResult> {
         use rootsignal_common::events::EventDomain;
 
         let domain = match EventDomain::from_event_type(&event.event_type) {
             Some(d) => d,
             None => {
                 warn!(
-                    seq = event.seq,
+                    seq = event.position,
                     event_type = event.event_type,
                     "Unknown event domain — update EventDomain enum"
                 );
@@ -130,14 +140,14 @@ impl GraphProjector {
     }
 
     /// Project a World/System/Telemetry fact event to the graph.
-    async fn project_fact(&self, event: &StoredEvent) -> Result<ApplyResult> {
+    async fn project_fact(&self, event: &PersistedEvent) -> Result<ApplyResult> {
         let mut payload = event.payload.clone();
-        rootsignal_events::upcast(&event.event_type, event.schema_v, &mut payload);
+        rootsignal_events::upcast(&event.event_type, schema_v(event), &mut payload);
 
         let parsed = match Event::from_payload(&payload) {
             Ok(e) => e,
             Err(e) => {
-                warn!(seq = event.seq, error = %e, "Failed to deserialize fact event payload");
+                warn!(seq = event.position, error = %e, "Failed to deserialize fact event payload");
                 return Ok(ApplyResult::DeserializeError(e.to_string()));
             }
         };
@@ -145,7 +155,7 @@ impl GraphProjector {
         match parsed {
             Event::Telemetry(_) => {
                 debug!(
-                    seq = event.seq,
+                    seq = event.position,
                     event_type = event.event_type,
                     "No-op (telemetry)"
                 );
@@ -160,7 +170,7 @@ impl GraphProjector {
     // Pipeline events — only projectable variants
     // =================================================================
 
-    async fn project_pipeline(&self, event: &StoredEvent) -> Result<ApplyResult> {
+    async fn project_pipeline(&self, event: &PersistedEvent) -> Result<ApplyResult> {
         match event.event_type.as_str() {
             "pipeline:source_discovered" | "discovery:source_discovered" => {
                 #[derive(serde::Deserialize)]
@@ -206,7 +216,7 @@ impl GraphProjector {
                 .param("canonical_value", s.canonical_value.as_str())
                 .param("url", s.url.as_deref().unwrap_or(""))
                 .param("discovery_method", s.discovery_method.to_string())
-                .param("ts", format_dt_from_stored(event))
+                .param("ts", format_dt_from_event(event))
                 .param("weight", s.weight)
                 .param("source_role", s.source_role.to_string())
                 .param("gap_context", s.gap_context.clone().unwrap_or_default())
@@ -223,7 +233,7 @@ impl GraphProjector {
                 Ok(ApplyResult::NoOp)
             }
             _ => {
-                debug!(seq = event.seq, event_type = %event.event_type, "No-op (pipeline)");
+                debug!(seq = event.position, event_type = %event.event_type, "No-op (pipeline)");
                 Ok(ApplyResult::NoOp)
             }
         }
@@ -233,7 +243,7 @@ impl GraphProjector {
     // World events — observed facts
     // =================================================================
 
-    async fn project_world(&self, world: WorldEvent, event: &StoredEvent) -> Result<ApplyResult> {
+    async fn project_world(&self, world: WorldEvent, event: &PersistedEvent) -> Result<ApplyResult> {
         match world {
             // ---------------------------------------------------------
             // Discovery facts — 5 typed variants
@@ -263,7 +273,7 @@ impl GraphProjector {
                        n.action_url = $action_url,
                        n.is_recurring = CASE WHEN $rrule <> '' THEN true ELSE false END",
                     id, &title, &summary, 0.5, &url,
-                    &event.ts, published_at, &locations, event,
+                    &event.created_at, published_at, &locations, event,
                 )
                 .param("starts_at", sp.starts_at)
                 .param("ends_at", sp.ends_at)
@@ -312,7 +322,7 @@ impl GraphProjector {
                     &summary,
                     0.5,
                     &url,
-                    &event.ts,
+                    &event.created_at,
                     published_at,
                     &locations,
                     event,
@@ -365,7 +375,7 @@ impl GraphProjector {
                     &summary,
                     0.5,
                     &url,
-                    &event.ts,
+                    &event.created_at,
                     published_at,
                     &locations,
                     event,
@@ -414,7 +424,7 @@ impl GraphProjector {
                        n.rdates = [d IN $rdates | datetime(d)],
                        n.exdates = [d IN $exdates | datetime(d)]",
                     id, &title, &summary, 0.5, &url,
-                    &event.ts, published_at, &locations, event,
+                    &event.created_at, published_at, &locations, event,
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
                 .param("effective_date", effective_date.map(|dt| format_dt(&dt)).unwrap_or_default())
@@ -463,7 +473,7 @@ impl GraphProjector {
                     &summary,
                     0.5,
                     &url,
-                    &event.ts,
+                    &event.created_at,
                     published_at,
                     &locations,
                     event,
@@ -514,7 +524,7 @@ impl GraphProjector {
                        n.rdates = [d IN $rdates | datetime(d)],
                        n.exdates = [d IN $exdates | datetime(d)]",
                     id, &title, &summary, 0.5, &url,
-                    &event.ts, published_at, &locations, event,
+                    &event.created_at, published_at, &locations, event,
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
                 .param("observed_by", observed_by.as_deref().unwrap_or(""))
@@ -577,7 +587,7 @@ impl GraphProjector {
                 .param("signal_id", signal_id.to_string())
                 .param("title", title.as_str())
                 .param("summary", summary.as_str())
-                .param("ts", format_dt_from_stored(event));
+                .param("ts", format_dt_from_event(event));
 
                 self.client.run(q).await?;
                 self.set_embedding(label, &signal_id, &title, &summary).await;
@@ -624,7 +634,7 @@ impl GraphProjector {
                 .param("ev_id", citation_id.to_string())
                 .param("signal_id", signal_id.to_string())
                 .param("url", url.as_str())
-                .param("ts", format_dt_from_stored(event))
+                .param("ts", format_dt_from_event(event))
                 .param("content_hash", content_hash.as_str())
                 .param("snippet", snippet.unwrap_or_default())
                 .param("relevance", relevance.unwrap_or_default())
@@ -669,7 +679,7 @@ impl GraphProjector {
                 .param("id", resource_id.to_string())
                 .param("name", name.as_str())
                 .param("description", description.as_str())
-                .param("ts", format_dt_from_stored(event));
+                .param("ts", format_dt_from_event(event));
 
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -741,7 +751,7 @@ impl GraphProjector {
             // Provenance links
             // ---------------------------------------------------------
             WorldEvent::SourceLinkDiscovered { .. } => {
-                debug!(seq = event.seq, "No-op (source link — informational)");
+                debug!(seq = event.position, "No-op (source link — informational)");
                 Ok(ApplyResult::NoOp)
             }
 
@@ -789,7 +799,7 @@ impl GraphProjector {
     async fn project_system(
         &self,
         system: SystemEvent,
-        event: &StoredEvent,
+        event: &PersistedEvent,
     ) -> Result<ApplyResult> {
         match system {
             // ---------------------------------------------------------
@@ -915,7 +925,7 @@ impl GraphProjector {
                          n.corroboration_count = coalesce(n.corroboration_count, 0) + 1"
                 ))
                 .param("id", signal_id.to_string())
-                .param("ts", format_dt_from_stored(event));
+                .param("ts", format_dt_from_event(event));
 
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -993,14 +1003,14 @@ impl GraphProjector {
 
             SystemEvent::ObservationRejected { .. } => {
                 debug!(
-                    seq = event.seq,
+                    seq = event.position,
                     "No-op (observation rejected — informational)"
                 );
                 Ok(ApplyResult::NoOp)
             }
 
             SystemEvent::SignalsExpired { signals } => {
-                let ts = format_dt_from_stored(event);
+                let ts = format_dt_from_event(event);
                 for s in signals.iter() {
                     let label = node_type_label(s.node_type);
                     let q = query(&format!(
@@ -1041,7 +1051,7 @@ impl GraphProjector {
 
             SystemEvent::DuplicateDetected { .. } => {
                 debug!(
-                    seq = event.seq,
+                    seq = event.position,
                     "No-op (duplicate detected — informational)"
                 );
                 Ok(ApplyResult::NoOp)
@@ -1049,7 +1059,7 @@ impl GraphProjector {
 
             SystemEvent::ExtractionDroppedNoDate { .. } => {
                 debug!(
-                    seq = event.seq,
+                    seq = event.position,
                     "No-op (extraction dropped — informational)"
                 );
                 Ok(ApplyResult::NoOp)
@@ -1452,7 +1462,7 @@ impl GraphProjector {
                 .param::<Option<f64>>("location_lat", location_lat)
                 .param::<Option<f64>>("location_lng", location_lng)
                 .param::<Option<String>>("location_name", location_name)
-                .param("ts", format_dt_from_stored(event));
+                .param("ts", format_dt_from_event(event));
 
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -1657,7 +1667,7 @@ impl GraphProjector {
                 .param("sensitivity", sensitivity.as_str())
                 .param("category", category.unwrap_or_default())
                 .param("structured_state", structured_state.as_str())
-                .param("ts", format_dt_from_stored(event));
+                .param("ts", format_dt_from_event(event));
 
                 self.client.run(q).await?;
 
@@ -1699,7 +1709,7 @@ impl GraphProjector {
                 change,
             } => {
                 let id_str = situation_id.to_string();
-                let ts = format_dt_from_stored(event);
+                let ts = format_dt_from_event(event);
                 match change {
                     SituationChange::Headline { new, .. } => {
                         let q = query("MATCH (s:Situation {id: $id}) SET s.headline = $value, s.last_updated = datetime($ts)")
@@ -1771,7 +1781,7 @@ impl GraphProjector {
                 flagged_for_review,
                 flag_reason,
             } => {
-                let ts = format_dt_from_stored(event);
+                let ts = format_dt_from_event(event);
                 let q = query(
                     "MERGE (d:Dispatch {id: $id})
                      ON CREATE SET
@@ -2102,7 +2112,7 @@ impl GraphProjector {
             // Source registry
             // ---------------------------------------------------------
             SystemEvent::SourcesRegistered { sources } => {
-                let ts = format_dt_from_stored(event);
+                let ts = format_dt_from_event(event);
                 for source in sources {
                     let q = query(
                         "MERGE (s:Source {canonical_key: $canonical_key})
@@ -2280,7 +2290,7 @@ impl GraphProjector {
                 .param("lng", location_lng)
                 .param("source_id", source_id.to_string())
                 .param("created_by", created_by.as_str())
-                .param("ts", format_dt_from_stored(event));
+                .param("ts", format_dt_from_event(event));
 
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -2321,7 +2331,7 @@ impl GraphProjector {
                 .param("lat", center_lat)
                 .param("lng", center_lng)
                 .param("radius", radius_km)
-                .param("ts", format_dt_from_stored(event));
+                .param("ts", format_dt_from_event(event));
 
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
@@ -2348,7 +2358,7 @@ impl GraphProjector {
                 .param("id", submission_id.to_string())
                 .param("url", url.as_str())
                 .param("reason", reason.unwrap_or_default())
-                .param("ts", format_dt_from_stored(event))
+                .param("ts", format_dt_from_event(event))
                 .param("canonical_key", source_canonical_key.unwrap_or_default());
 
                 self.client.run(q).await?;
@@ -2409,7 +2419,7 @@ impl GraphProjector {
                 )
                 .param("sit_id", situation_id.to_string())
                 .param("sig_ids", sig_id_strings)
-                .param("ts", format_dt_from_stored(event));
+                .param("ts", format_dt_from_event(event));
                 self.client.run(q).await?;
                 Ok(ApplyResult::Applied)
             }
@@ -2619,7 +2629,7 @@ impl GraphProjector {
             // System curiosity
             // ---------------------------------------------------------
             SystemEvent::ExpansionQueryCollected { .. } => {
-                debug!(seq = event.seq, "No-op (expansion query — informational)");
+                debug!(seq = event.position, "No-op (expansion query — informational)");
                 Ok(ApplyResult::NoOp)
             }
 
@@ -3107,45 +3117,6 @@ impl GraphProjector {
         Ok(())
     }
 
-    /// Replay events from seq_start in order. Returns the last seq applied.
-    pub async fn replay_from(
-        &self,
-        store: &rootsignal_events::EventStore,
-        seq_start: i64,
-    ) -> Result<i64> {
-        let batch_size = 1000;
-        let mut cursor = seq_start;
-        let mut last_applied = seq_start.saturating_sub(1);
-
-        loop {
-            let events = store.read_from(cursor, batch_size).await?;
-            if events.is_empty() {
-                break;
-            }
-
-            for event in &events {
-                self.project(event).await?;
-                last_applied = event.seq;
-            }
-
-            cursor = last_applied + 1;
-
-            if events.len() < batch_size {
-                break;
-            }
-        }
-
-        Ok(last_applied)
-    }
-
-    /// Full rebuild: wipe graph, replay all facts from the beginning.
-    pub async fn rebuild(&self, store: &rootsignal_events::EventStore) -> Result<i64> {
-        self.client
-            .run(query("MATCH (n) DETACH DELETE n"))
-            .await?;
-
-        self.replay_from(store, 1).await
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3170,9 +3141,10 @@ fn format_dt(dt: &DateTime<Utc>) -> String {
 
 /// Use the event's stored timestamp (from the events table) when no explicit timestamp
 /// exists in the payload. This is the fact's timestamp — never wall-clock time.
-fn format_dt_from_stored(event: &StoredEvent) -> String {
-    format_dt(&event.ts)
+fn format_dt_from_event(event: &PersistedEvent) -> String {
+    format_dt(&event.created_at)
 }
+
 
 /// Map signal label + location role to a typed Neo4j edge.
 fn location_edge_type(signal_label: &str, role: Option<&str>) -> &'static str {
@@ -3256,15 +3228,15 @@ fn build_discovery_query(
     extracted_at: &DateTime<Utc>,
     published_at: Option<DateTime<Utc>>,
     locations: &[Location],
-    event: &StoredEvent,
+    event: &PersistedEvent,
 ) -> neo4rs::Query {
     let locations_json = if locations.is_empty() {
         String::new()
     } else {
         serde_json::to_string(locations).unwrap_or_default()
     };
-    let actor_str = event.actor.as_deref().unwrap_or("").to_string();
-    let run_id = event.run_id.as_deref().unwrap_or("").to_string();
+    let actor = actor_str(event);
+    let run_id = run_id_str(event);
 
     let cypher = format!(
         "MERGE (n:{label} {{id: $id}})
@@ -3297,7 +3269,7 @@ fn build_discovery_query(
             published_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
         )
         .param("locations_json", locations_json)
-        .param("created_by", actor_str)
+        .param("created_by", actor)
         .param("scout_run_id", run_id)
 }
 

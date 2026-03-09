@@ -8,26 +8,29 @@ use uuid::Uuid;
 use rootsignal_common::events::{Event, Location, WorldEvent};
 use rootsignal_common::system_events::SystemEvent;
 use rootsignal_common::{DiscoveryMethod, GeoPoint, GeoPrecision, SourceNode, SourceRole};
-use rootsignal_events::StoredEvent;
+use seesaw_core::types::PersistedEvent;
 use rootsignal_graph::{query, BBox, GraphClient, GraphProjector, GraphStore, Pipeline};
 
-fn stored(seq: i64, event: &Event) -> StoredEvent {
-    StoredEvent {
-        seq,
-        ts: Utc::now(),
-        event_type: event.event_type().to_string(),
-        parent_seq: None,
-        caused_by_seq: None,
-        run_id: Some("test".to_string()),
-        actor: None,
-        payload: serde_json::to_value(event).expect("serialize event"),
-        schema_v: 1,
-        id: None,
+fn stored(seq: i64, event: &Event) -> PersistedEvent {
+    PersistedEvent {
+        position: seq as u64,
+        event_id: Uuid::new_v4(),
         parent_id: None,
-        correlation_id: None,
+        correlation_id: Uuid::new_v4(),
+        event_type: event.event_type().to_string(),
+        payload: serde_json::to_value(event).expect("serialize event"),
+        created_at: Utc::now(),
         aggregate_type: None,
         aggregate_id: None,
-        handler_id: None,
+        version: None,
+        metadata: {
+            let mut m = serde_json::Map::new();
+            m.insert("run_id".into(), serde_json::json!("test"));
+            m.insert("schema_v".into(), serde_json::json!(1));
+            m
+        },
+        ephemeral: None,
+        persistent: true,
     }
 }
 

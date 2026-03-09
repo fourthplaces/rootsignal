@@ -16,7 +16,7 @@ use rootsignal_graph::{query, GraphClient, GraphProjector};
 use seesaw_core::{events, on_any, project, AnyEvent, Context, Events, Handler, Projection};
 use tracing::info;
 
-use rootsignal_common::events::{Event, EventDomain, Eventlike, SystemEvent, WorldEvent};
+use rootsignal_common::events::{Event, EventDomain, SystemEvent, WorldEvent};
 use rootsignal_common::telemetry_events::TelemetryEvent;
 
 use crate::core::aggregate::PipelineState;
@@ -80,24 +80,27 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                 };
 
                 let deps = ctx.deps();
-                let stored = rootsignal_events::StoredEvent {
-                    seq: 0,
-                    ts: Utc::now(),
-                    event_type,
-                    parent_seq: None,
-                    caused_by_seq: None,
-                    run_id: Some(deps.run_id.to_string()),
-                    actor: None,
-                    payload,
-                    schema_v: 1,
-                    id: Some(ctx.current_event_id()),
+                let persisted = seesaw_core::types::PersistedEvent {
+                    position: 0,
+                    event_id: ctx.current_event_id(),
                     parent_id: ctx.parent_event_id(),
-                    correlation_id: None,
+                    correlation_id: ctx.correlation_id,
+                    event_type,
+                    payload,
+                    created_at: Utc::now(),
                     aggregate_type: None,
                     aggregate_id: None,
-                    handler_id: None,
+                    version: None,
+                    metadata: {
+                        let mut m = serde_json::Map::new();
+                        m.insert("run_id".into(), serde_json::json!(deps.run_id.to_string()));
+                        m.insert("schema_v".into(), serde_json::json!(1));
+                        m
+                    },
+                    ephemeral: None,
+                    persistent: true,
                 };
-                projector.project(&stored).await?;
+                projector.project(&persisted).await?;
                 Ok(events![])
             }
         })
@@ -111,33 +114,35 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
 fn classify_event(
     event: &AnyEvent,
 ) -> (EventDomain, Option<String>, Option<serde_json::Value>) {
+    use seesaw_core::event::Event as _;
+
     if let Some(e) = event.downcast_ref::<WorldEvent>() {
         (
             EventDomain::Fact,
-            Some(e.event_type().to_string()),
-            Some(Event::World(e.clone()).to_payload()),
+            Some(e.durable_name().to_string()),
+            Some(serde_json::to_value(e).unwrap()),
         )
     } else if let Some(e) = event.downcast_ref::<SystemEvent>() {
         (
             EventDomain::Fact,
-            Some(e.event_type().to_string()),
-            Some(Event::System(e.clone()).to_payload()),
+            Some(e.durable_name().to_string()),
+            Some(serde_json::to_value(e).unwrap()),
         )
     } else if let Some(e) = event.downcast_ref::<TelemetryEvent>() {
         (
             EventDomain::Fact,
-            Some(e.event_type().to_string()),
-            Some(Event::Telemetry(e.clone()).to_payload()),
+            Some(e.durable_name().to_string()),
+            Some(serde_json::to_value(e).unwrap()),
         )
     } else if let Some(e) = event.downcast_ref::<DiscoveryEvent>() {
         if e.is_projectable() {
-            (EventDomain::Discovery, Some(e.event_type_str()), Some(e.to_persist_payload()))
+            (EventDomain::Discovery, Some(e.durable_name().to_string()), Some(serde_json::to_value(e).unwrap()))
         } else {
             (EventDomain::Discovery, None, None)
         }
     } else if let Some(e) = event.downcast_ref::<PipelineEvent>() {
         if e.is_projectable() {
-            (EventDomain::Pipeline, Some(e.event_type_str()), Some(e.to_persist_payload()))
+            (EventDomain::Pipeline, Some(e.durable_name().to_string()), Some(serde_json::to_value(e).unwrap()))
         } else {
             (EventDomain::Pipeline, None, None)
         }
@@ -146,8 +151,8 @@ fn classify_event(
     } else if let Some(e) = event.downcast_ref::<SignalEvent>() {
         (
             EventDomain::Signal,
-            Some(e.event_type_str()),
-            Some(e.to_persist_payload()),
+            Some(e.durable_name().to_string()),
+            Some(serde_json::to_value(e).unwrap()),
         )
     } else if event.downcast_ref::<LifecycleEvent>().is_some() {
         (EventDomain::Lifecycle, None, None)
@@ -162,10 +167,8 @@ fn classify_event(
     } else if event.downcast_ref::<SupervisorEvent>().is_some() {
         (EventDomain::Supervisor, None, None)
     } else if let Some(e) = event.downcast_ref::<SchedulingEvent>() {
-        (EventDomain::Scheduling, Some(e.event_type_str()), Some(e.to_persist_payload()))
+        (EventDomain::Scheduling, Some(e.durable_name().to_string()), Some(serde_json::to_value(e).unwrap()))
     } else {
-        // Genuinely unknown event type — log at debug, not warn.
-        // If this fires frequently, a new event type needs adding above.
         tracing::debug!("neo4j_projection: unrecognized event type (not in any known domain)");
         (EventDomain::Fact, None, None)
     }

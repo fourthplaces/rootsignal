@@ -13,7 +13,6 @@ members = [
     "modules/simweb",
     "modules/rootsignal-archive",
     "modules/rootsignal-world",
-    "modules/rootsignal-replay",
     "modules/rootsignal-migrate",
 ]
 resolver = "2"
@@ -87,8 +86,10 @@ typed-builder = "0.20"
 testcontainers = "0.23"
 
 # Event sourcing
-seesaw_core = "0.25.0"
+seesaw_core = "0.26.0"
+seesaw_core_macros = "0.26.0"
 seesaw_utils = "0.24.0"
+seesaw_replay = { version = "0.26.0", features = ["postgres"] }
 
 # Local crates
 ai-client = { path = "modules/ai-client" }

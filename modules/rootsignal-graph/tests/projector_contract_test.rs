@@ -11,27 +11,32 @@ use rootsignal_common::events::{
 };
 use rootsignal_common::safety::SensitivityLevel;
 use rootsignal_common::types::*;
+use seesaw_core::types::PersistedEvent;
 use serde_json::json;
 use uuid::Uuid;
 
-/// Build a minimal StoredEvent from an Event for testing.
-fn stored_event(event: &Event) -> rootsignal_events::StoredEvent {
-    rootsignal_events::StoredEvent {
-        seq: 1,
-        ts: Utc::now(),
-        event_type: event.event_type().to_string(),
-        parent_seq: None,
-        caused_by_seq: None,
-        run_id: Some("test-run".to_string()),
-        actor: Some("test-actor".to_string()),
-        payload: event.to_payload(),
-        schema_v: 1,
-        id: None,
+/// Build a minimal PersistedEvent from an Event for testing.
+fn stored_event(event: &Event) -> PersistedEvent {
+    PersistedEvent {
+        position: 1,
+        event_id: Uuid::new_v4(),
         parent_id: None,
-        correlation_id: None,
+        correlation_id: Uuid::new_v4(),
+        event_type: event.event_type().to_string(),
+        payload: event.to_payload(),
+        created_at: Utc::now(),
         aggregate_type: None,
         aggregate_id: None,
-        handler_id: None,
+        version: None,
+        metadata: {
+            let mut m = serde_json::Map::new();
+            m.insert("run_id".into(), json!("test-run"));
+            m.insert("schema_v".into(), json!(1));
+            m.insert("actor".into(), json!("test-actor"));
+            m
+        },
+        ephemeral: None,
+        persistent: true,
     }
 }
 
@@ -42,138 +47,138 @@ fn stored_event(event: &Event) -> rootsignal_events::StoredEvent {
 /// All telemetry + informational events produce no Cypher.
 const NOOP_EVENT_TYPES: &[&str] = &[
     // Telemetry
-    "url_scraped",
-    "feed_scraped",
-    "social_scraped",
-    "social_topics_searched",
-    "search_performed",
-    "llm_extraction_completed",
-    "budget_checkpoint",
-    "bootstrap_completed",
-    "agent_web_searched",
-    "agent_page_read",
-    "agent_future_query",
-    "pins_removed",
-    "demand_aggregated",
+    "telemetry:url_scraped",
+    "telemetry:feed_scraped",
+    "telemetry:social_scraped",
+    "telemetry:social_topics_searched",
+    "telemetry:search_performed",
+    "telemetry:llm_extraction_completed",
+    "telemetry:budget_checkpoint",
+    "telemetry:bootstrap_completed",
+    "telemetry:agent_web_searched",
+    "telemetry:agent_page_read",
+    "telemetry:agent_future_query",
+    "telemetry:pins_removed",
+    "telemetry:demand_aggregated",
     // System informational — no graph mutation
-    "expansion_query_collected",
-    "source_link_discovered",
+    "system:expansion_query_collected",
+    "world:source_link_discovered",
     // System informational — no graph mutation
-    "observation_rejected",
-    "extraction_dropped_no_date",
-    "duplicate_detected",
-    "dispatch_created",
+    "system:observation_rejected",
+    "system:extraction_dropped_no_date",
+    "system:duplicate_detected",
+    "system:dispatch_created",
 ];
 
 /// All graph-mutating events produce Cypher.
 const APPLIED_EVENT_TYPES: &[&str] = &[
     // World: Discovery (6 typed variants)
-    "gathering_announced",
-    "resource_offered",
-    "help_requested",
-    "announcement_shared",
-    "concern_raised",
-    "condition_observed",
-    // World: Corroboration fact
-    "observation_corroborated",
+    "world:gathering_announced",
+    "world:resource_offered",
+    "world:help_requested",
+    "world:announcement_shared",
+    "world:concern_raised",
+    "world:condition_observed",
+    // System: Corroboration fact
+    "system:observation_corroborated",
     // World: Citations
-    "citation_published",
-    // World: Actors
-    "actor_identified",
-    "actor_linked_to_signal",
-    "actor_location_identified",
-    // World: Relationship edges
-    "resource_linked",
-    "response_linked",
-    "concern_linked",
-    // World: Lifecycle
-    "gathering_cancelled",
-    "resource_depleted",
-    "announcement_retracted",
-    "citation_retracted",
-    "details_changed",
-    // World: Resource identification
-    "resource_identified",
-    // World: Signal-source links
-    "signal_linked_to_source",
-    // System: Observation lifecycle
-    "freshness_confirmed",
-    "confidence_scored",
-    "corroboration_scored",
-    "signals_expired",
-    "entity_purged",
-    "review_verdict_reached",
-    "implied_queries_consumed",
-    // System: Classifications
-    "sensitivity_classified",
-    "tone_classified",
-    "severity_classified",
-    "urgency_classified",
-    "category_classified",
-    "implied_queries_extracted",
-    // System: Corrections (5 typed variants)
-    "gathering_corrected",
-    "resource_corrected",
-    "help_request_corrected",
-    "announcement_corrected",
-    "concern_corrected",
+    "world:citation_published",
     // System: Actors
-    "duplicate_actors_merged",
-    "orphaned_actors_cleaned",
+    "system:actor_identified",
+    "system:actor_linked_to_signal",
+    "system:actor_location_identified",
+    // World: Relationship edges
+    "world:resource_linked",
+    "system:response_linked",
+    "system:concern_linked",
+    // World: Lifecycle
+    "world:gathering_cancelled",
+    "world:resource_depleted",
+    "world:announcement_retracted",
+    "world:citation_retracted",
+    "world:details_changed",
+    // World: Resource identification
+    "world:resource_identified",
+    // World: Signal-source links
+    "world:signal_linked_to_source",
+    // System: Observation lifecycle
+    "system:freshness_confirmed",
+    "system:confidence_scored",
+    "system:corroboration_scored",
+    "system:signals_expired",
+    "system:entity_purged",
+    "system:review_verdict_reached",
+    "system:implied_queries_consumed",
+    // System: Classifications
+    "system:sensitivity_classified",
+    "system:tone_classified",
+    "system:severity_classified",
+    "system:urgency_classified",
+    "system:category_classified",
+    "system:implied_queries_extracted",
+    // System: Corrections (5 typed variants)
+    "system:gathering_corrected",
+    "system:resource_corrected",
+    "system:help_request_corrected",
+    "system:announcement_corrected",
+    "system:concern_corrected",
+    // System: Actors
+    "system:duplicate_actors_merged",
+    "system:orphaned_actors_cleaned",
     // System: Situations
-    "situation_identified",
-    "situation_changed",
-    "situation_promoted",
-    "signal_assigned_to_situation",
-    "situation_tags_aggregated",
-    "dispatch_flagged_for_review",
-    "signals_pending_weaving",
+    "system:situation_identified",
+    "system:situation_changed",
+    "system:situation_promoted",
+    "system:signal_assigned_to_situation",
+    "system:situation_tags_aggregated",
+    "system:dispatch_flagged_for_review",
+    "system:signals_pending_weaving",
     // System: Tags
-    "signal_tagged",
-    "tag_suppressed",
-    "tags_merged",
+    "system:signal_tagged",
+    "system:tag_suppressed",
+    "system:tags_merged",
     // System: Quality / lint
-    "empty_entities_cleaned",
-    "fake_coordinates_nulled",
-    "orphaned_citations_cleaned",
+    "system:empty_entities_cleaned",
+    "system:fake_coordinates_nulled",
+    "system:orphaned_citations_cleaned",
     // System: Source editorial
-    "source_system_changed",
+    "system:source_system_changed",
     // System: Source registry
-    "sources_registered",
-    "source_changed",
-    "source_deactivated",
-    // System: Actor-source links
-    "actor_linked_to_source",
+    "system:sources_registered",
+    "system:source_changed",
+    "system:source_deactivated",
+    // World: Actor-source links
+    "world:actor_linked_to_source",
     // System: App user actions
-    "pin_created",
-    "pins_consumed",
-    "demand_received",
-    "submission_received",
+    "system:pin_created",
+    "system:pins_consumed",
+    "system:demand_received",
+    "system:submission_received",
     // System: Source scrape telemetry
-    "source_scraped",
+    "system:source_scraped",
     // System: Synthesis telemetry
-    "response_scouted",
-    "query_embedding_stored",
-    "curiosity_triggered",
-    "signal_investigated",
-    "exhausted_retries_promoted",
-    "concern_linker_outcome_recorded",
-    "gathering_scouted",
+    "system:response_scouted",
+    "system:query_embedding_stored",
+    "system:curiosity_triggered",
+    "system:signal_investigated",
+    "system:exhausted_retries_promoted",
+    "system:concern_linker_outcome_recorded",
+    "system:gathering_scouted",
     // System: Place & gathering geography
-    "place_discovered",
-    "gathers_at_place_linked",
+    "system:place_discovered",
+    "system:gathers_at_place_linked",
     // System: Concern deduplication
-    "duplicate_concern_merged",
+    "system:duplicate_concern_merged",
     // System: Source weight adjustments
-    "sources_boosted_for_situation",
+    "system:sources_boosted_for_situation",
     // System: Supervisor analytics
-    "echo_scored",
-    "cause_heat_computed",
-    "signal_diversity_computed",
-    "actor_stats_computed",
-    "similarity_edges_rebuilt",
+    "system:echo_scored",
+    "system:cause_heat_computed",
+    "system:signal_diversity_computed",
+    "system:actor_stats_computed",
+    "system:similarity_edges_rebuilt",
     // System: Admin actions
-    "validation_issue_dismissed",
+    "system:validation_issue_dismissed",
 ];
 
 #[test]
@@ -285,22 +290,20 @@ fn projector_source_has_no_freshness_score_writes() {
 
 #[test]
 fn malformed_payload_returns_deserialize_error() {
-    let stored = rootsignal_events::StoredEvent {
-        seq: 1,
-        ts: Utc::now(),
-        event_type: "gathering_announced".to_string(),
-        parent_seq: None,
-        caused_by_seq: None,
-        run_id: None,
-        actor: None,
-        payload: json!({"type": "gathering_announced", "bogus": true}),
-        schema_v: 1,
-        id: None,
+    let stored = PersistedEvent {
+        position: 1,
+        event_id: Uuid::new_v4(),
         parent_id: None,
-        correlation_id: None,
+        correlation_id: Uuid::new_v4(),
+        event_type: "gathering_announced".to_string(),
+        payload: json!({"type": "gathering_announced", "bogus": true}),
+        created_at: Utc::now(),
         aggregate_type: None,
         aggregate_id: None,
-        handler_id: None,
+        version: None,
+        metadata: serde_json::Map::new(),
+        ephemeral: None,
+        persistent: true,
     };
 
     let result = Event::from_payload(&stored.payload);
@@ -321,7 +324,7 @@ fn noop_event_stored_event_deserializes_cleanly() {
     let stored = stored_event(&event);
 
     let parsed = Event::from_payload(&stored.payload).unwrap();
-    assert_eq!(parsed.event_type(), "url_scraped");
+    assert_eq!(parsed.event_type(), "telemetry:url_scraped");
 }
 
 #[test]

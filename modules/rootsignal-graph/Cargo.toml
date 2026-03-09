@@ -30,4 +30,5 @@ hex = "0.4"
 geohash = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+seesaw_core = { workspace = true }
 testcontainers = { workspace = true, optional = true }

@@ -23,11 +23,23 @@ async fn main() -> Result<()> {
     let config = Config::supervisor_from_env();
     config.log_redacted();
 
-    // Connect to Neo4j
+    // Connect to Postgres
+    let database_url =
+        std::env::var("DATABASE_URL").context("DATABASE_URL required for validation issues")?;
+    let pg_pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .context("Failed to connect to Postgres")?;
+
+    let neo4j_db = std::env::var("NEO4J_DB").unwrap_or_else(|_| "neo4j".into());
+    info!(db = neo4j_db.as_str(), "Connecting to Neo4j");
+
     let client = connect_graph(
         &config.neo4j_uri,
         &config.neo4j_user,
         &config.neo4j_password,
+        &neo4j_db,
     )
     .await?;
 
@@ -58,15 +70,6 @@ async fn main() -> Result<()> {
             Box::new(NoopBackend)
         }
     };
-
-    // Connect to Postgres
-    let database_url =
-        std::env::var("DATABASE_URL").context("DATABASE_URL required for validation issues")?;
-    let pg_pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .context("Failed to connect to Postgres")?;
 
     // Create and run supervisor
     let supervisor = Supervisor::new(

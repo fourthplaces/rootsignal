@@ -36,5 +36,6 @@ pub fn migrations() -> Vec<Migration> {
         sql("032_rename_scheduled_scrapes",      include_str!("../migrations/032_rename_scheduled_scrapes.sql")),
         sql("033_budget_configs",                include_str!("../migrations/033_budget_configs.sql")),
         sql("034_simplify_budget",               include_str!("../migrations/034_simplify_budget.sql")),
+        sql("035_seesaw_026_schema",             include_str!("../migrations/035_seesaw_026_schema.sql")),
     ]
 }

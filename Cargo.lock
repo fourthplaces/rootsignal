@@ -3567,6 +3567,7 @@ dependencies = [
  "rrule",
  "schemars 0.8.22",
  "seesaw_core",
+ "seesaw_replay",
  "serde",
  "serde_json",
  "sha2",
@@ -3625,6 +3626,8 @@ dependencies = [
  "rootsignal-world",
  "rrule",
  "schemars 0.8.22",
+ "seesaw_core",
+ "seesaw_core_macros",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3666,6 +3669,7 @@ dependencies = [
  "rootsignal-events",
  "rootsignal-world",
  "schemars 0.8.22",
+ "seesaw_core",
  "serde",
  "serde_json",
  "sha2",
@@ -3686,23 +3690,6 @@ dependencies = [
  "chrono",
  "clap",
  "sha2",
- "sqlx",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "rootsignal-replay"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "dotenvy",
- "rootsignal-common",
- "rootsignal-events",
- "rootsignal-graph",
  "sqlx",
  "tokio",
  "tracing",
@@ -3782,6 +3769,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "schemars 0.8.22",
+ "seesaw_core",
+ "seesaw_core_macros",
  "serde",
  "serde_json",
  "uuid",
@@ -4083,9 +4072,9 @@ dependencies = [
 
 [[package]]
 name = "seesaw_core"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fe9d3f0e522bc8527b6b723056c68af849deb71c740603aa65dbe45c93d1704"
+checksum = "d33570040521e0a41514421d2511b50946d1675b1030cf0f444d97e14a0263a7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4104,13 +4093,28 @@ dependencies = [
 
 [[package]]
 name = "seesaw_core_macros"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dd37fd8e992a17bb06593a6da5e4497bba6b9cfc8c1585b1393421f40deb4f0"
+checksum = "3d92220e1cfef6d7a54451a587e51a018eb8ab8adcdad375d6a714bb04ad8f9e"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "seesaw_replay"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a3335cff9cce33dad2d6f7f69930dc5153ec98b61b69f5b6bf62ef7f83fa880"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "seesaw_core",
+ "sqlx",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
