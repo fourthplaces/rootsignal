@@ -90,7 +90,8 @@ fn mentioned_entities_for(node: &Node) -> Vec<Entity> {
 }
 
 /// Build the world-fact event for a discovery — no sensitivity or implied_queries.
-pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
+/// `schedule_override` merges validated rrule/rdates/exdates into the schedule when present.
+pub(crate) fn node_to_world_event(node: &Node, schedule_override: Option<&Schedule>) -> WorldEvent {
     let entities = mentioned_entities_for(node);
     match node {
         Node::Gathering(n) => WorldEvent::GatheringAnnounced {
@@ -103,7 +104,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             locations: meta_to_locations(&n.meta),
             mentioned_entities: entities.clone(),
             references: vec![],
-            schedule: schedule_from_gathering(n),
+            schedule: schedule_override.cloned().or_else(|| schedule_from_gathering(n)),
             action_url: if n.action_url.is_empty() {
                 None
             } else {
@@ -456,7 +457,7 @@ mod tests {
             is_recurring: false,
         });
 
-        let world = node_to_world_event(&node);
+        let world = node_to_world_event(&node, None);
         match world {
             WorldEvent::GatheringAnnounced {
                 id: eid,
@@ -548,7 +549,7 @@ mod tests {
             is_ongoing: true,
         });
 
-        let world = node_to_world_event(&node);
+        let world = node_to_world_event(&node, None);
         match world {
             WorldEvent::ResourceOffered {
                 id: eid,
@@ -576,7 +577,7 @@ mod tests {
             stated_goal: Some("clean up after storm".to_string()),
         });
 
-        let world = node_to_world_event(&node);
+        let world = node_to_world_event(&node, None);
         match world {
             WorldEvent::HelpRequested {
                 id: eid,
@@ -649,7 +650,7 @@ mod tests {
             is_recurring: false,
         });
 
-        let world = node_to_world_event(&node);
+        let world = node_to_world_event(&node, None);
         let event = Event::World(world);
         let payload = event.to_payload();
         let roundtripped = Event::from_payload(&payload).unwrap();
@@ -687,7 +688,7 @@ mod tests {
             is_recurring: false,
         });
 
-        let world = node_to_world_event(&node);
+        let world = node_to_world_event(&node, None);
         match world {
             WorldEvent::GatheringAnnounced {
                 action_url,
@@ -792,7 +793,7 @@ mod tests {
             stated_goal: None,
         });
 
-        let world = node_to_world_event(&node);
+        let world = node_to_world_event(&node, None);
         match world {
             WorldEvent::HelpRequested {
                 mentioned_entities, ..
@@ -818,7 +819,7 @@ mod tests {
             is_recurring: false,
         });
 
-        let world = node_to_world_event(&node);
+        let world = node_to_world_event(&node, None);
         match world {
             WorldEvent::GatheringAnnounced { mentioned_entities, .. } => {
                 assert_eq!(mentioned_entities.len(), 1);
@@ -846,7 +847,7 @@ mod tests {
             is_recurring: false,
         });
 
-        let world = node_to_world_event(&node);
+        let world = node_to_world_event(&node, None);
         match world {
             WorldEvent::GatheringAnnounced { mentioned_entities, .. } => {
                 assert_eq!(mentioned_entities.len(), 1, "organizer should not be duplicated");

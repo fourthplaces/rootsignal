@@ -11,7 +11,7 @@ use uuid::Uuid;
 use rootsignal_world::Eventlike;
 
 use crate::events::{
-    ActorStatScore, AnnouncementCorrection, CauseHeatScore, ConcernCorrection,
+    ActorStatScore, AnnouncementCorrection, CauseHeatScore, ConditionCorrection, ConcernCorrection,
     GatheringCorrection, HelpRequestCorrection, ResourceCorrection, SignalDiversityScore,
     SimilarityEdge, SituationChange, SourceChange, SystemSourceChange,
 };
@@ -244,6 +244,12 @@ pub enum SystemEvent {
     ConcernCorrected {
         signal_id: Uuid,
         correction: ConcernCorrection,
+        reason: String,
+    },
+
+    ConditionCorrected {
+        signal_id: Uuid,
+        correction: ConditionCorrection,
         reason: String,
     },
 
@@ -604,6 +610,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::HelpRequestCorrected { .. } => "help_request_corrected",
             SystemEvent::AnnouncementCorrected { .. } => "announcement_corrected",
             SystemEvent::ConcernCorrected { .. } => "concern_corrected",
+            SystemEvent::ConditionCorrected { .. } => "condition_corrected",
             SystemEvent::DuplicateActorsMerged { .. } => "duplicate_actors_merged",
             SystemEvent::OrphanedActorsCleaned { .. } => "orphaned_actors_cleaned",
             SystemEvent::SituationIdentified { .. } => "situation_identified",

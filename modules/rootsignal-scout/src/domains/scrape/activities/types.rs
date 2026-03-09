@@ -151,6 +151,7 @@ pub(crate) enum ScrapeOutcome {
         resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
         signal_tags: Vec<(Uuid, Vec<String>)>,
         author_actors: HashMap<Uuid, String>,
+        schedules: HashMap<Uuid, rootsignal_common::Schedule>,
         logs: Vec<TelemetryEvent>,
     },
     Unchanged,

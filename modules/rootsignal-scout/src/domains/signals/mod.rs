@@ -71,7 +71,8 @@ pub mod handlers {
 
             // Created signals: world fact + system classifications + citation
             for signal in result.created {
-                all_events.push(node_to_world_event(&signal.node));
+                let schedule = extraction.batch.schedules.get(&signal.node.id());
+                all_events.push(node_to_world_event(&signal.node, schedule));
                 for sys in node_system_events(&signal.node) {
                     all_events.push(sys);
                 }

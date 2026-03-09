@@ -170,7 +170,7 @@ pub(crate) async fn discover_from_topics(
                         resource_tags: result.resource_tags.into_iter().collect(),
                         signal_tags: result.signal_tags.into_iter().collect(),
                         author_actors,
-                        author_actor_types: HashMap::new(),
+                        schedules: HashMap::new(),
                         source_id: None,
                     };
 
@@ -308,7 +308,7 @@ pub(crate) async fn discover_from_topics(
                             resource_tags: extracted.resource_tags.into_iter().collect(),
                             signal_tags: extracted.signal_tags.into_iter().collect(),
                             author_actors,
-                            author_actor_types: HashMap::new(),
+                            schedules: HashMap::new(),
                             source_id: None,
                         };
 

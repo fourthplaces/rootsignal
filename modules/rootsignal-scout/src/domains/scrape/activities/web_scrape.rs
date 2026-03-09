@@ -143,6 +143,19 @@ async fn fetch_pages(
                             result.raw_signal_count,
                         ));
                     }
+                    let schedules: HashMap<Uuid, rootsignal_common::Schedule> = result.schedules
+                        .into_iter()
+                        .map(|(id, sn)| (id, rootsignal_common::Schedule {
+                            starts_at: sn.dtstart,
+                            ends_at: sn.dtend,
+                            all_day: false,
+                            rrule: sn.rrule,
+                            timezone: sn.timezone,
+                            schedule_text: sn.schedule_text,
+                            rdates: sn.rdates,
+                            exdates: sn.exdates,
+                        }))
+                        .collect();
                     (
                         clean_url,
                         ScrapeOutcome::New {
@@ -151,6 +164,7 @@ async fn fetch_pages(
                             resource_tags: result.resource_tags,
                             signal_tags: result.signal_tags,
                             author_actors: result.author_actors.into_iter().collect(),
+                            schedules,
                             logs: result.logs,
                         },
                         page_links,
@@ -210,6 +224,7 @@ async fn process_results(
                 resource_tags,
                 signal_tags,
                 author_actors,
+                schedules,
                 logs,
             } => {
                 result.stats.urls_scraped += 1;
@@ -245,7 +260,7 @@ async fn process_results(
                         resource_tags: resource_tags.into_iter().collect(),
                         signal_tags: signal_tags.into_iter().collect(),
                         author_actors,
-                        author_actor_types: HashMap::new(),
+                        schedules,
                         source_id,
                     };
 

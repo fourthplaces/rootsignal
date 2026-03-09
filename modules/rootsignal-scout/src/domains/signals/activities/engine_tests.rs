@@ -122,7 +122,7 @@ async fn new_signal_dispatches_full_event_chain() {
         resource_tags: HashMap::new(),
         signal_tags,
         author_actors,
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     };
 
@@ -190,7 +190,7 @@ async fn same_source_reencounter_emits_no_freshness_events() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     };
 
@@ -232,7 +232,7 @@ async fn scrape_completed_dispatches_dedup_and_creation_chain() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     };
 
@@ -288,7 +288,7 @@ async fn same_source_title_match_counts_dedup_without_events() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     };
 

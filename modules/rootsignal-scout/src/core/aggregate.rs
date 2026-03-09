@@ -162,7 +162,7 @@ pub struct ExtractedBatch {
     pub signal_tags: HashMap<Uuid, Vec<String>>,
     pub author_actors: HashMap<Uuid, String>,
     #[serde(default)]
-    pub author_actor_types: HashMap<Uuid, rootsignal_common::ActorType>,
+    pub schedules: HashMap<Uuid, rootsignal_common::Schedule>,
     pub source_id: Option<Uuid>,
 }
 

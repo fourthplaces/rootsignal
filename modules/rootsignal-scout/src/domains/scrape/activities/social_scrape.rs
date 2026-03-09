@@ -390,7 +390,7 @@ pub(crate) async fn scrape_social_sources(
                     resource_tags: resource_tags.into_iter().collect(),
                     signal_tags: signal_tags.into_iter().collect(),
                     author_actors,
-                    author_actor_types: HashMap::new(),
+                    schedules: HashMap::new(),
                     source_id,
                 };
 

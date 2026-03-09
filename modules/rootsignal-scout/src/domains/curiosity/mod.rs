@@ -777,7 +777,7 @@ pub mod handlers {
         let mut out = Events::new();
 
         // World fact + system classifications
-        out.push(node_to_world_event(&result.node));
+        out.push(node_to_world_event(&result.node, None));
         for sys in node_system_events(&result.node) {
             out.push(sys);
         }

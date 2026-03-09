@@ -329,6 +329,46 @@ pub enum ConcernCorrection {
     Unknown,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "field", content = "value", rename_all = "snake_case")]
+pub enum ConditionCorrection {
+    Title {
+        old: String,
+        new: String,
+    },
+    Summary {
+        old: String,
+        new: String,
+    },
+    Sensitivity {
+        old: SensitivityLevel,
+        new: SensitivityLevel,
+    },
+    Location {
+        old: Option<Location>,
+        new: Option<Location>,
+    },
+    Subject {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    ObservedBy {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    Measurement {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    AffectedScope {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    /// Absorbs unknown/removed correction fields during deserialization.
+    #[serde(other)]
+    Unknown,
+}
+
 // ---------------------------------------------------------------------------
 // The Event wrapper — thin dispatch to three layers
 // ---------------------------------------------------------------------------

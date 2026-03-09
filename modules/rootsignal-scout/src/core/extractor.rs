@@ -494,7 +494,7 @@ impl Extractor {
                         ends_at,
                         action_url: signal.action_url.unwrap_or(effective_source_url),
                         organizer: signal.organizer,
-                        is_recurring: signal.is_recurring.unwrap_or(false),
+                        is_recurring: false,
                     })
                 }
                 "resource" => Node::Resource(ResourceOfferNode {
@@ -853,7 +853,6 @@ Do NOT classify news reportage as a HelpRequest based on the urgency of the topi
 - Today's date is {today}. Resolve relative dates: "next Saturday" → the actual date, "March 15" → "2026-03-15T00:00:00Z"
 - If the page has NO parseable date for an event, omit starts_at entirely (null). Do NOT guess.
 - is_ongoing: true for ongoing services
-- is_recurring: true for recurring events
 
 ## Schedule / Recurrence (Gathering and Resource signals)
 For gathering and resource signals with recurring schedules, extract structured recurrence data:
@@ -869,7 +868,7 @@ For gathering and resource signals with recurring schedules, extract structured 
 - **exception_dates**: Dates excluded from the recurrence pattern as ISO 8601 strings (e.g., holiday closures).
 - **schedule_timezone**: IANA timezone if stated or clearly implied (e.g., "America/Chicago"). Omit if unknown.
 
-When the source mentions a recurring schedule, always set is_recurring to true AND provide schedule fields. The schedule_text fallback is always valuable, even when rrule is also provided.
+When the source mentions a recurring schedule, provide the schedule fields above. The schedule_text fallback is always valuable, even when rrule is also provided.
 
 ## Publication Date (published_at)
 Set published_at to the ISO 8601 date when this content was originally published.

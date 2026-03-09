@@ -16,11 +16,11 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::events::{
-    AnnouncementCorrection, ConcernCorrection, Event, GatheringCorrection,
+    AnnouncementCorrection, ConcernCorrection, ConditionCorrection, Event, GatheringCorrection,
     HelpRequestCorrection, Location, ResourceCorrection, Schedule, SignalDiversityScore,
     SituationChange, SourceChange, SystemEvent, SystemSourceChange, WorldEvent,
 };
-use rootsignal_common::types::{NodeType, SourceNode};
+use rootsignal_common::types::{Entity, NodeType, SourceNode};
 use rootsignal_common::EmbeddingLookup;
 use rootsignal_events::StoredEvent;
 use crate::GraphClient;
@@ -246,31 +246,37 @@ impl GraphProjector {
                 published_at,
                 extraction_id: _,
                 locations,
-                mentioned_entities: _,
+                mentioned_entities,
                 references: _,
                 schedule,
                 action_url,
             } => {
-                // locations passed directly to build_discovery_query
-                let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
+                let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Gathering",
                     ", n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
                        n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
+                       n.schedule_text = $schedule_text,
+                       n.rdates = [d IN $rdates | datetime(d)],
+                       n.exdates = [d IN $exdates | datetime(d)],
                        n.action_url = $action_url,
                        n.is_recurring = CASE WHEN $rrule <> '' THEN true ELSE false END",
                     id, &title, &summary, 0.5, &url,
                     &event.ts, published_at, &locations, event,
                 )
-                .param("starts_at", starts_at)
-                .param("ends_at", ends_at)
-                .param("rrule", rrule)
-                .param("all_day", all_day)
-                .param("timezone", timezone)
+                .param("starts_at", sp.starts_at)
+                .param("ends_at", sp.ends_at)
+                .param("rrule", sp.rrule)
+                .param("all_day", sp.all_day)
+                .param("timezone", sp.timezone)
+                .param("schedule_text", sp.schedule_text)
+                .param("rdates", sp.rdates)
+                .param("exdates", sp.exdates)
                 .param("action_url", action_url.as_deref().unwrap_or(""));
 
                 self.client.run(q).await?;
+                self.project_entities(&id, "Gathering", &mentioned_entities).await?;
                 self.set_embedding("Gathering", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -283,7 +289,7 @@ impl GraphProjector {
                 published_at,
                 extraction_id: _,
                 locations,
-                mentioned_entities: _,
+                mentioned_entities,
                 references: _,
                 schedule,
                 action_url,
@@ -291,13 +297,16 @@ impl GraphProjector {
                 eligibility,
             } => {
                 // locations passed directly to build_discovery_query
-                let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
+                let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Resource",
                     ", n.action_url = $action_url, n.availability = $availability, n.eligibility = $eligibility,
                        n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
-                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
+                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
+                       n.schedule_text = $schedule_text,
+                       n.rdates = [d IN $rdates | datetime(d)],
+                       n.exdates = [d IN $exdates | datetime(d)]",
                     id,
                     &title,
                     &summary,
@@ -311,13 +320,17 @@ impl GraphProjector {
                 .param("action_url", action_url.as_deref().unwrap_or(""))
                 .param("availability", availability.as_deref().unwrap_or(""))
                 .param("eligibility", eligibility.as_deref().unwrap_or(""))
-                .param("starts_at", starts_at)
-                .param("ends_at", ends_at)
-                .param("rrule", rrule)
-                .param("all_day", all_day)
-                .param("timezone", timezone);
+                .param("starts_at", sp.starts_at)
+                .param("ends_at", sp.ends_at)
+                .param("rrule", sp.rrule)
+                .param("all_day", sp.all_day)
+                .param("timezone", sp.timezone)
+                .param("schedule_text", sp.schedule_text)
+                .param("rdates", sp.rdates)
+                .param("exdates", sp.exdates);
 
                 self.client.run(q).await?;
+                self.project_entities(&id, "Resource", &mentioned_entities).await?;
                 self.set_embedding("Resource", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -330,20 +343,23 @@ impl GraphProjector {
                 published_at,
                 extraction_id: _,
                 locations,
-                mentioned_entities: _,
+                mentioned_entities,
                 references: _,
                 schedule,
                 what_needed,
                 stated_goal,
             } => {
                 // locations passed directly to build_discovery_query
-                let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
+                let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "HelpRequest",
                     ", n.what_needed = $what_needed, n.stated_goal = $stated_goal,
                        n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
-                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
+                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
+                       n.schedule_text = $schedule_text,
+                       n.rdates = [d IN $rdates | datetime(d)],
+                       n.exdates = [d IN $exdates | datetime(d)]",
                     id,
                     &title,
                     &summary,
@@ -356,13 +372,17 @@ impl GraphProjector {
                 )
                 .param("what_needed", what_needed.as_deref().unwrap_or(""))
                 .param("stated_goal", stated_goal.unwrap_or_default())
-                .param("starts_at", starts_at)
-                .param("ends_at", ends_at)
-                .param("rrule", rrule)
-                .param("all_day", all_day)
-                .param("timezone", timezone);
+                .param("starts_at", sp.starts_at)
+                .param("ends_at", sp.ends_at)
+                .param("rrule", sp.rrule)
+                .param("all_day", sp.all_day)
+                .param("timezone", sp.timezone)
+                .param("schedule_text", sp.schedule_text)
+                .param("rdates", sp.rdates)
+                .param("exdates", sp.exdates);
 
                 self.client.run(q).await?;
+                self.project_entities(&id, "HelpRequest", &mentioned_entities).await?;
                 self.set_embedding("HelpRequest", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -375,33 +395,40 @@ impl GraphProjector {
                 published_at,
                 extraction_id: _,
                 locations,
-                mentioned_entities: _,
+                mentioned_entities,
                 references: _,
                 schedule,
                 subject,
                 effective_date,
             } => {
                 // locations passed directly to build_discovery_query
-                let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
+                let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Announcement",
                     ", n.subject = $subject,
                        n.effective_date = CASE WHEN $effective_date = '' THEN null ELSE datetime($effective_date) END,
                        n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
-                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
+                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
+                       n.schedule_text = $schedule_text,
+                       n.rdates = [d IN $rdates | datetime(d)],
+                       n.exdates = [d IN $exdates | datetime(d)]",
                     id, &title, &summary, 0.5, &url,
                     &event.ts, published_at, &locations, event,
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
                 .param("effective_date", effective_date.map(|dt| format_dt(&dt)).unwrap_or_default())
-                .param("starts_at", starts_at)
-                .param("ends_at", ends_at)
-                .param("rrule", rrule)
-                .param("all_day", all_day)
-                .param("timezone", timezone);
+                .param("starts_at", sp.starts_at)
+                .param("ends_at", sp.ends_at)
+                .param("rrule", sp.rrule)
+                .param("all_day", sp.all_day)
+                .param("timezone", sp.timezone)
+                .param("schedule_text", sp.schedule_text)
+                .param("rdates", sp.rdates)
+                .param("exdates", sp.exdates);
 
                 self.client.run(q).await?;
+                self.project_entities(&id, "Announcement", &mentioned_entities).await?;
                 self.set_embedding("Announcement", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -414,20 +441,23 @@ impl GraphProjector {
                 published_at,
                 extraction_id: _,
                 locations,
-                mentioned_entities: _,
+                mentioned_entities,
                 references: _,
                 schedule,
                 subject,
                 opposing,
             } => {
                 // locations passed directly to build_discovery_query
-                let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
+                let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Concern",
                     ", n.subject = $subject, n.opposing = $opposing,
                        n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
-                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
+                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
+                       n.schedule_text = $schedule_text,
+                       n.rdates = [d IN $rdates | datetime(d)],
+                       n.exdates = [d IN $exdates | datetime(d)]",
                     id,
                     &title,
                     &summary,
@@ -440,13 +470,17 @@ impl GraphProjector {
                 )
                 .param("subject", subject.as_deref().unwrap_or(""))
                 .param("opposing", opposing.as_deref().unwrap_or(""))
-                .param("starts_at", starts_at)
-                .param("ends_at", ends_at)
-                .param("rrule", rrule)
-                .param("all_day", all_day)
-                .param("timezone", timezone);
+                .param("starts_at", sp.starts_at)
+                .param("ends_at", sp.ends_at)
+                .param("rrule", sp.rrule)
+                .param("all_day", sp.all_day)
+                .param("timezone", sp.timezone)
+                .param("schedule_text", sp.schedule_text)
+                .param("rdates", sp.rdates)
+                .param("exdates", sp.exdates);
 
                 self.client.run(q).await?;
+                self.project_entities(&id, "Concern", &mentioned_entities).await?;
                 self.set_embedding("Concern", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -459,7 +493,7 @@ impl GraphProjector {
                 published_at,
                 extraction_id: _,
                 locations,
-                mentioned_entities: _,
+                mentioned_entities,
                 references: _,
                 schedule,
                 subject,
@@ -468,14 +502,17 @@ impl GraphProjector {
                 affected_scope,
             } => {
                 // locations passed directly to build_discovery_query
-                let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(&schedule);
+                let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Condition",
                     ", n.subject = $subject, n.observed_by = $observed_by,
                        n.measurement = $measurement, n.affected_scope = $affected_scope,
                        n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
                        n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
-                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone",
+                       n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
+                       n.schedule_text = $schedule_text,
+                       n.rdates = [d IN $rdates | datetime(d)],
+                       n.exdates = [d IN $exdates | datetime(d)]",
                     id, &title, &summary, 0.5, &url,
                     &event.ts, published_at, &locations, event,
                 )
@@ -483,13 +520,17 @@ impl GraphProjector {
                 .param("observed_by", observed_by.as_deref().unwrap_or(""))
                 .param("measurement", measurement.as_deref().unwrap_or(""))
                 .param("affected_scope", affected_scope.as_deref().unwrap_or(""))
-                .param("starts_at", starts_at)
-                .param("ends_at", ends_at)
-                .param("rrule", rrule)
-                .param("all_day", all_day)
-                .param("timezone", timezone);
+                .param("starts_at", sp.starts_at)
+                .param("ends_at", sp.ends_at)
+                .param("rrule", sp.rrule)
+                .param("all_day", sp.all_day)
+                .param("timezone", sp.timezone)
+                .param("schedule_text", sp.schedule_text)
+                .param("rdates", sp.rdates)
+                .param("exdates", sp.exdates);
 
                 self.client.run(q).await?;
+                self.project_entities(&id, "Condition", &mentioned_entities).await?;
                 self.set_embedding("Condition", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -1294,6 +1335,69 @@ impl GraphProjector {
                     }
                     ConcernCorrection::Unknown => {
                         debug!("Ignoring unknown concern correction field");
+                        return Ok(ApplyResult::NoOp);
+                    }
+                }
+                Ok(ApplyResult::Applied)
+            }
+
+            SystemEvent::ConditionCorrected {
+                signal_id,
+                correction,
+                ..
+            } => {
+                match correction {
+                    ConditionCorrection::Title { new, .. } => {
+                        self.set_str("Condition", signal_id, "title", &new).await?
+                    }
+                    ConditionCorrection::Summary { new, .. } => {
+                        self.set_str("Condition", signal_id, "summary", &new).await?
+                    }
+                    ConditionCorrection::Sensitivity { new, .. } => {
+                        self.set_str("Condition", signal_id, "sensitivity", new.as_str())
+                            .await?
+                    }
+                    ConditionCorrection::Location { new, .. } => {
+                        self.set_location("Condition", signal_id, &new).await?
+                    }
+                    ConditionCorrection::Subject { new, .. } => {
+                        self.set_str(
+                            "Condition",
+                            signal_id,
+                            "subject",
+                            new.as_deref().unwrap_or(""),
+                        )
+                        .await?
+                    }
+                    ConditionCorrection::ObservedBy { new, .. } => {
+                        self.set_str(
+                            "Condition",
+                            signal_id,
+                            "observed_by",
+                            new.as_deref().unwrap_or(""),
+                        )
+                        .await?
+                    }
+                    ConditionCorrection::Measurement { new, .. } => {
+                        self.set_str(
+                            "Condition",
+                            signal_id,
+                            "measurement",
+                            new.as_deref().unwrap_or(""),
+                        )
+                        .await?
+                    }
+                    ConditionCorrection::AffectedScope { new, .. } => {
+                        self.set_str(
+                            "Condition",
+                            signal_id,
+                            "affected_scope",
+                            new.as_deref().unwrap_or(""),
+                        )
+                        .await?
+                    }
+                    ConditionCorrection::Unknown => {
+                        debug!("Ignoring unknown condition correction field");
                         return Ok(ApplyResult::NoOp);
                     }
                 }
@@ -2838,20 +2942,84 @@ impl GraphProjector {
         id: uuid::Uuid,
         schedule: &Option<Schedule>,
     ) -> Result<()> {
-        let (starts_at, ends_at, rrule, all_day, timezone) = extract_schedule(schedule);
+        let sp = extract_schedule(schedule);
         let q = query(&format!(
             "MATCH (n:{label} {{id: $id}}) SET
              n.starts_at = CASE WHEN $starts_at = '' THEN null ELSE datetime($starts_at) END,
              n.ends_at = CASE WHEN $ends_at = '' THEN null ELSE datetime($ends_at) END,
-             n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone"
+             n.rrule = $rrule, n.all_day = $all_day, n.timezone = $timezone,
+             n.schedule_text = $schedule_text,
+             n.rdates = [d IN $rdates | datetime(d)],
+             n.exdates = [d IN $exdates | datetime(d)]"
         ))
         .param("id", id.to_string())
-        .param("starts_at", starts_at)
-        .param("ends_at", ends_at)
-        .param("rrule", rrule)
-        .param("all_day", all_day)
-        .param("timezone", timezone);
+        .param("starts_at", sp.starts_at)
+        .param("ends_at", sp.ends_at)
+        .param("rrule", sp.rrule)
+        .param("all_day", sp.all_day)
+        .param("timezone", sp.timezone)
+        .param("schedule_text", sp.schedule_text)
+        .param("rdates", sp.rdates)
+        .param("exdates", sp.exdates);
         self.client.run(q).await?;
+        Ok(())
+    }
+
+    /// Project mentioned entities as `:Entity` nodes with `MENTIONED_IN` edges to the signal,
+    /// and `SAME_AS` edges to matching Actor nodes.
+    async fn project_entities(
+        &self,
+        signal_id: &Uuid,
+        signal_label: &str,
+        entities: &[Entity],
+    ) -> Result<()> {
+        if entities.is_empty() {
+            return Ok(());
+        }
+
+        let signal_id_str = signal_id.to_string();
+
+        let entity_params: Vec<neo4rs::BoltType> = entities
+            .iter()
+            .map(|e| {
+                neo4rs::BoltType::Map(neo4rs::BoltMap::from_iter(vec![
+                    (
+                        neo4rs::BoltString::from("name"),
+                        neo4rs::BoltType::String(neo4rs::BoltString::from(e.name.as_str())),
+                    ),
+                    (
+                        neo4rs::BoltString::from("entity_type"),
+                        neo4rs::BoltType::String(neo4rs::BoltString::from(
+                            e.entity_type.to_string().as_str(),
+                        )),
+                    ),
+                    (
+                        neo4rs::BoltString::from("role"),
+                        neo4rs::BoltType::String(neo4rs::BoltString::from(
+                            e.role.as_deref().unwrap_or(""),
+                        )),
+                    ),
+                ]))
+            })
+            .collect();
+
+        let q = query(&format!(
+            "MATCH (s:{signal_label} {{id: $signal_id}})
+             UNWIND $entities AS ent
+             MERGE (e:Entity {{name: ent.name, entity_type: ent.entity_type}})
+             MERGE (e)-[r:MENTIONED_IN]->(s)
+             SET r.role = ent.role
+             WITH e
+             OPTIONAL MATCH (a:Actor)
+               WHERE a.name = e.name OR a.canonical_key = e.name
+             FOREACH (_ IN CASE WHEN a IS NOT NULL THEN [1] ELSE [] END |
+               MERGE (e)-[:SAME_AS]->(a)
+             )"
+        ))
+        .param("signal_id", signal_id_str)
+        .param("entities", entity_params);
+        self.client.run(q).await?;
+
         Ok(())
     }
 
@@ -2941,22 +3109,39 @@ fn location_address_str(loc: &Option<Location>) -> String {
         .unwrap_or_default()
 }
 
-fn extract_schedule(schedule: &Option<Schedule>) -> (String, String, String, bool, String) {
+struct ScheduleProps {
+    starts_at: String,
+    ends_at: String,
+    rrule: String,
+    all_day: bool,
+    timezone: String,
+    schedule_text: String,
+    rdates: Vec<String>,
+    exdates: Vec<String>,
+}
+
+fn extract_schedule(schedule: &Option<Schedule>) -> ScheduleProps {
     match schedule {
-        Some(s) => (
-            s.starts_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
-            s.ends_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
-            s.rrule.clone().unwrap_or_default(),
-            s.all_day,
-            s.timezone.clone().unwrap_or_default(),
-        ),
-        None => (
-            String::new(),
-            String::new(),
-            String::new(),
-            false,
-            String::new(),
-        ),
+        Some(s) => ScheduleProps {
+            starts_at: s.starts_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
+            ends_at: s.ends_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
+            rrule: s.rrule.clone().unwrap_or_default(),
+            all_day: s.all_day,
+            timezone: s.timezone.clone().unwrap_or_default(),
+            schedule_text: s.schedule_text.clone().unwrap_or_default(),
+            rdates: s.rdates.iter().map(|dt| format_dt(dt)).collect(),
+            exdates: s.exdates.iter().map(|dt| format_dt(dt)).collect(),
+        },
+        None => ScheduleProps {
+            starts_at: String::new(),
+            ends_at: String::new(),
+            rrule: String::new(),
+            all_day: false,
+            timezone: String::new(),
+            schedule_text: String::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+        },
     }
 }
 

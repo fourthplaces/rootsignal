@@ -82,8 +82,8 @@ async fn new_signal_creates_with_citation_and_verdict() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -122,8 +122,8 @@ async fn create_carries_tags_and_source_on_verdict() {
             resource_tags: HashMap::new(),
             signal_tags: tag_map,
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: Some(source_id),
+            schedules: HashMap::new(),
+        source_id: Some(source_id),
         },
         &state,
         &deps,
@@ -162,8 +162,8 @@ async fn empty_batch_produces_empty_result() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -202,8 +202,8 @@ async fn citation_nodes_in_batch_are_skipped() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -230,8 +230,8 @@ async fn signal_without_url_falls_back_to_batch_url_for_matching() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -263,8 +263,8 @@ async fn all_signals_matching_produces_no_creates() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -302,8 +302,8 @@ async fn same_author_in_batch_creates_one_actor() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -358,8 +358,8 @@ async fn same_author_across_post_urls_creates_one_actor() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -416,8 +416,8 @@ async fn reencountered_signal_refreshes() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -445,8 +445,8 @@ async fn same_url_from_different_source_still_refreshes() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -471,8 +471,8 @@ async fn no_fingerprint_match_creates_signal() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -498,8 +498,8 @@ async fn signal_without_url_uses_batch_url_for_fingerprint() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -530,8 +530,8 @@ async fn mixed_batch_fingerprint_hit_and_miss() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -559,8 +559,8 @@ async fn same_url_different_type_creates_new_signal() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -591,8 +591,8 @@ async fn duplicate_urls_in_batch_both_refresh() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -628,8 +628,8 @@ async fn owned_source_actor_links_to_source() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: Some(source_id),
+            schedules: HashMap::new(),
+        source_id: Some(source_id),
         },
         &state,
         &deps,
@@ -669,8 +669,8 @@ async fn web_page_source_creates_no_actor() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -704,8 +704,8 @@ async fn owned_source_without_source_id_creates_actor_but_no_source_link() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: None, // no source_id
+            schedules: HashMap::new(),
+        source_id: None, // no source_id
         },
         &state,
         &deps,
@@ -749,8 +749,8 @@ async fn actor_canonical_key_derives_from_source_url_not_name() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -807,8 +807,8 @@ async fn second_scrape_reuses_existing_actor_by_canonical_key() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: Some(Uuid::new_v4()),
+            schedules: HashMap::new(),
+        source_id: Some(Uuid::new_v4()),
         },
         &state,
         &deps,
@@ -853,8 +853,8 @@ async fn created_citation_uses_per_signal_url_not_batch_url() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -916,7 +916,7 @@ async fn reencounter_with_same_content_refreshes() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     }, &state, &deps).await;
 
@@ -948,7 +948,7 @@ async fn reencounter_with_changed_content_emits_content_changed() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     }, &state, &deps).await;
 
@@ -988,7 +988,7 @@ async fn content_changed_produces_citation_not_created_signal() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     }, &state, &deps).await;
 
@@ -1013,7 +1013,7 @@ async fn missing_stored_embedding_falls_back_to_refresh() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     }, &state, &deps).await;
 
@@ -1052,7 +1052,7 @@ async fn mixed_batch_new_refreshed_and_changed() {
         resource_tags: HashMap::new(),
         signal_tags: HashMap::new(),
         author_actors: HashMap::new(),
-        author_actor_types: HashMap::new(),
+        schedules: HashMap::new(),
         source_id: None,
     }, &state, &deps).await;
 
@@ -1068,47 +1068,7 @@ async fn mixed_batch_new_refreshed_and_changed() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn individual_actor_type_flows_through_to_identified_action() {
-    let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let node = tension_at("Community Event", 44.95, -93.27);
-    let meta_id = node.meta().unwrap().id;
-
-    let mut author_actors = HashMap::new();
-    author_actors.insert(meta_id, "Jane Reporter".to_string());
-    let mut author_actor_types = HashMap::new();
-    author_actor_types.insert(meta_id, rootsignal_common::ActorType::Individual);
-
-    let result = run_dedup(
-        "https://www.instagram.com/janereporter",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![node],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors,
-            author_actor_types,
-            source_id: None,
-        },
-        &state,
-        &deps,
-    ).await;
-
-    let identified: Vec<_> = result.actor_actions.iter()
-        .filter_map(|a| match a {
-            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(identified.len(), 1);
-    assert_eq!(identified[0], rootsignal_common::ActorType::Individual,
-        "actor type should be Individual, not the default Organization");
-}
-
-#[tokio::test]
-async fn missing_actor_type_defaults_to_organization() {
+async fn actor_type_defaults_to_organization() {
     let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let state = PipelineState::new(HashMap::new());
@@ -1118,7 +1078,6 @@ async fn missing_actor_type_defaults_to_organization() {
 
     let mut author_actors = HashMap::new();
     author_actors.insert(meta_id, "City News Network".to_string());
-    // No entry in author_actor_types — should default to Organization
 
     let result = run_dedup(
         "https://www.instagram.com/citynewsnetwork",
@@ -1128,8 +1087,8 @@ async fn missing_actor_type_defaults_to_organization() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -1144,84 +1103,6 @@ async fn missing_actor_type_defaults_to_organization() {
     assert_eq!(identified.len(), 1);
     assert_eq!(identified[0], rootsignal_common::ActorType::Organization,
         "missing actor_type should default to Organization");
-}
-
-#[tokio::test]
-async fn government_body_actor_type_flows_through() {
-    let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let node = tension_at("Public Hearing", 44.95, -93.27);
-    let meta_id = node.meta().unwrap().id;
-
-    let mut author_actors = HashMap::new();
-    author_actors.insert(meta_id, "City of Minneapolis".to_string());
-    let mut author_actor_types = HashMap::new();
-    author_actor_types.insert(meta_id, rootsignal_common::ActorType::GovernmentBody);
-
-    let result = run_dedup(
-        "https://www.instagram.com/cityofminneapolis",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![node],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors,
-            author_actor_types,
-            source_id: None,
-        },
-        &state,
-        &deps,
-    ).await;
-
-    let identified: Vec<_> = result.actor_actions.iter()
-        .filter_map(|a| match a {
-            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(identified.len(), 1);
-    assert_eq!(identified[0], rootsignal_common::ActorType::GovernmentBody);
-}
-
-#[tokio::test]
-async fn coalition_actor_type_flows_through() {
-    let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let node = tension_at("Joint Statement", 44.95, -93.27);
-    let meta_id = node.meta().unwrap().id;
-
-    let mut author_actors = HashMap::new();
-    author_actors.insert(meta_id, "North Side Alliance".to_string());
-    let mut author_actor_types = HashMap::new();
-    author_actor_types.insert(meta_id, rootsignal_common::ActorType::Coalition);
-
-    let result = run_dedup(
-        "https://www.instagram.com/northsidealliance",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![node],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors,
-            author_actor_types,
-            source_id: None,
-        },
-        &state,
-        &deps,
-    ).await;
-
-    let identified: Vec<_> = result.actor_actions.iter()
-        .filter_map(|a| match a {
-            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(identified.len(), 1);
-    assert_eq!(identified[0], rootsignal_common::ActorType::Coalition);
 }
 
 #[tokio::test]
@@ -1240,10 +1121,8 @@ async fn actor_type_does_not_affect_identity_dedup() {
 
     let mut author_actors = HashMap::new();
     author_actors.insert(meta_id, "Some Org".to_string());
-    let mut author_actor_types = HashMap::new();
     // Classify as Individual even though the existing actor was created as Organization.
     // Identity is by canonical_key, not by actor type — should still reuse the actor.
-    author_actor_types.insert(meta_id, rootsignal_common::ActorType::Individual);
 
     let result = run_dedup(
         source_url,
@@ -1253,8 +1132,8 @@ async fn actor_type_does_not_affect_identity_dedup() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types,
-            source_id: Some(Uuid::new_v4()),
+            schedules: HashMap::new(),
+        source_id: Some(Uuid::new_v4()),
         },
         &state,
         &deps,
@@ -1278,58 +1157,6 @@ async fn actor_type_does_not_affect_identity_dedup() {
 }
 
 #[tokio::test]
-async fn actor_type_carried_on_created_verdict() {
-    let store = Arc::new(MockSignalReader::new());
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let node = tension_at("Activist Rally", 44.95, -93.27);
-    let meta_id = node.meta().unwrap().id;
-
-    let mut author_actors = HashMap::new();
-    author_actors.insert(meta_id, "Jane Doe".to_string());
-    let mut author_actor_types = HashMap::new();
-    author_actor_types.insert(meta_id, rootsignal_common::ActorType::Individual);
-
-    let result = run_dedup(
-        "https://www.instagram.com/janedoe",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![node],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors,
-            author_actor_types,
-            source_id: None,
-        },
-        &state,
-        &deps,
-    ).await;
-
-    let created_verdict = result.verdicts.iter()
-        .find(|v| matches!(v, DedupOutcome::Created { .. }))
-        .expect("should have a Created verdict");
-
-    match created_verdict {
-        DedupOutcome::Created { actor, .. } => {
-            let resolved = actor.as_ref().expect("should have a resolved actor");
-            assert!(resolved.is_new, "actor should be newly created");
-            assert_eq!(resolved.name, "Jane Doe");
-        }
-        _ => unreachable!(),
-    }
-
-    // The actor type is on the ActorAction, not on ResolvedActor — verify it there
-    let identified_type = result.actor_actions.iter()
-        .find_map(|a| match a {
-            ActorAction::Identified { actor_type, .. } => Some(*actor_type),
-            _ => None,
-        })
-        .expect("should have an Identified action");
-    assert_eq!(identified_type, rootsignal_common::ActorType::Individual);
-}
-
-#[tokio::test]
 async fn blank_author_name_does_not_create_actor() {
     let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
@@ -1346,8 +1173,8 @@ async fn blank_author_name_does_not_create_actor() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors: HashMap::new(),
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -1384,9 +1211,6 @@ async fn multiple_posts_from_same_source_produce_one_actor() {
     author_actors.insert(meta_id1, "Local Page".to_string());
     author_actors.insert(meta_id2, "Local Page".to_string());
 
-    let mut author_actor_types = HashMap::new();
-    author_actor_types.insert(meta_id1, rootsignal_common::ActorType::Organization);
-    author_actor_types.insert(meta_id2, rootsignal_common::ActorType::Organization);
 
     let result = run_dedup(
         "https://www.instagram.com/localpage",
@@ -1396,8 +1220,8 @@ async fn multiple_posts_from_same_source_produce_one_actor() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types,
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,
@@ -1442,8 +1266,8 @@ async fn mentioned_names_on_same_source_collapse_to_source_owner() {
             resource_tags: HashMap::new(),
             signal_tags: HashMap::new(),
             author_actors,
-            author_actor_types: HashMap::new(),
-            source_id: None,
+            schedules: HashMap::new(),
+        source_id: None,
         },
         &state,
         &deps,

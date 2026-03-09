@@ -152,10 +152,7 @@ pub async fn deduplicate_extracted_batch(
         let author_name = meta_id
             .and_then(|mid| batch.author_actors.get(&mid))
             .cloned();
-        let author_actor_type = meta_id
-            .and_then(|mid| batch.author_actor_types.get(&mid))
-            .copied()
-            .unwrap_or(rootsignal_common::ActorType::Organization);
+        let author_actor_type = rootsignal_common::ActorType::Organization;
         let node_resource_tags = meta_id
             .and_then(|mid| batch.resource_tags.get(&mid))
             .cloned()

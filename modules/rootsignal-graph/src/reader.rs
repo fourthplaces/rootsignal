@@ -904,6 +904,55 @@ impl PublicGraphReader {
         Ok(map)
     }
 
+    pub async fn batch_entities_by_signal_ids(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<rootsignal_common::types::Entity>>, neo4rs::Error>
+    {
+        use rootsignal_common::types::EntityType;
+
+        let mut map: std::collections::HashMap<Uuid, Vec<rootsignal_common::types::Entity>> =
+            std::collections::HashMap::new();
+
+        if ids.is_empty() {
+            return Ok(map);
+        }
+
+        let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let q = query(
+            "MATCH (e:Entity)-[r:MENTIONED_IN]->(n)
+             WHERE n.id IN $ids
+             RETURN n.id AS signal_id, e.name AS name, e.entity_type AS entity_type, r.role AS role",
+        )
+        .param("ids", id_strs);
+        let mut stream = self.client.execute(q).await?;
+
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("signal_id").unwrap_or_default();
+            let Ok(id) = Uuid::parse_str(&id_str) else {
+                continue;
+            };
+            let name: String = row.get("name").unwrap_or_default();
+            let et_str: String = row.get("entity_type").unwrap_or_default();
+            let role: String = row.get("role").unwrap_or_default();
+
+            let entity_type = match et_str.as_str() {
+                "Group" => EntityType::Group,
+                "GovernmentBody" => EntityType::GovernmentBody,
+                "Thing" => EntityType::Thing,
+                _ => EntityType::Organization,
+            };
+
+            map.entry(id).or_default().push(rootsignal_common::types::Entity {
+                name,
+                entity_type,
+                role: if role.is_empty() { None } else { Some(role) },
+            });
+        }
+
+        Ok(map)
+    }
+
     // ─── Resource Capability Matching ────────────────────────────────
 
     /// Find Need/Gathering nodes that REQUIRE a specific resource.
