@@ -760,6 +760,15 @@ Write like a neighbor telling another neighbor what's going on — not a governm
 - Leading with the organization name
 - Operational language that describes how an org works internally
 
+**Formatting:**
+- No em dashes. Use periods. Two short sentences beat one long clause joined by " — ".
+- 250 characters HARD MAX for summaries. If it doesn't fit, cut words — don't compress with punctuation tricks.
+
+**Objectivity:**
+- Stay warm, but report what happened — not what it means. Don't characterize intent ("looked like intimidation") or add dramatic framing. Trust the reader.
+- Don't describe people's bodies. Say who they are (veteran, organizer, parent), not what they look like.
+- Specific calls to action only. If the source has a concrete next step (show up at X, call Y), include it. If not, don't invent a vague one ("watch for updates").
+
 ## Signal Types (ranked by value)
 
 **Highest — Concern + Response pairs:**
