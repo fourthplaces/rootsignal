@@ -60,7 +60,7 @@ impl PublicGraphReader {
                 format!(
                     "MATCH (n:{label})
                      OPTIONAL MATCH (n)<-[:ACTED_IN {{role: 'authored'}}]-(author:Actor)
-                     WHERE n.review_status = 'live'
+                     WHERE n.review_status = 'accepted'
                        AND n.lat <> 0.0
                        AND n.lat >= $min_lat AND n.lat <= $max_lat
                        AND n.lng >= $min_lng AND n.lng <= $max_lng
@@ -180,7 +180,7 @@ impl PublicGraphReader {
                 let label = node_type_label(*nt);
                 format!(
                     "MATCH (n:{label})
-                     WHERE n.review_status = 'live'
+                     WHERE n.review_status = 'accepted'
                        AND n.confidence >= $min_confidence
                        {expiry}
                      RETURN n, labels(n)[0] AS node_label
@@ -494,7 +494,7 @@ impl PublicGraphReader {
     ) -> Result<Vec<Node>, neo4rs::Error> {
         let q = query(
             "MATCH (t:Concern)
-             WHERE t.review_status = 'live'
+             WHERE t.review_status = 'accepted'
                AND t.lat IS NOT NULL
                AND t.lat >= $min_lat AND t.lat <= $max_lat
                AND t.lng >= $min_lng AND t.lng <= $max_lng
@@ -556,7 +556,7 @@ impl PublicGraphReader {
                     let cypher = "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
                          YIELD node, score
                          WHERE score >= $min_score
-                           AND node.review_status = 'live'
+                           AND node.review_status = 'accepted'
                            AND node.lat <> 0.0
                            AND node.lat >= $min_lat AND node.lat <= $max_lat
                            AND node.lng >= $min_lng AND node.lng <= $max_lng
@@ -1349,7 +1349,7 @@ impl PublicGraphReader {
     /// Fetch recent signals produced by a source.
     pub async fn signals_for_source(&self, source_id: &Uuid) -> Result<Vec<SignalBrief>, neo4rs::Error> {
         let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
-            WHERE n.review_status IN ['staged', 'accepted', 'live']
+            WHERE n.review_status IN ['staged', 'accepted']
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
                    s.url AS source_url_from_source, n.review_status AS review_status
@@ -1422,7 +1422,7 @@ impl PublicGraphReader {
 
     pub async fn signal_count_for_source(&self, source_id: &Uuid) -> Result<i64, neo4rs::Error> {
         let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
-            WHERE n.review_status IN ['staged', 'accepted', 'live']
+            WHERE n.review_status IN ['staged', 'accepted']
             RETURN count(n) AS cnt";
 
         let q = query(cypher).param("id", source_id.to_string());

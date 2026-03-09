@@ -59,7 +59,7 @@ fn review_verdict(signal_id: Uuid, decision: &str, rejection_reason: Option<&str
         _ => SystemEvent::ReviewVerdictReached {
             signal_id,
             old_status: "staged".into(),
-            new_status: "live".into(),
+            new_status: "accepted".into(),
             reason: "passed_review".into(),
         },
     }

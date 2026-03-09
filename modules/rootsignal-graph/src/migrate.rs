@@ -199,6 +199,15 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     g.run(query("CREATE CONSTRAINT domainverdict_domain_unique IF NOT EXISTS FOR (d:DomainVerdict) REQUIRE d.domain IS UNIQUE")).await?;
 
+    // ── Data migrations (idempotent) ─────────────────────────────────────
+
+    // Rename review_status 'live' → 'accepted' across all signal + situation nodes
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition", "Situation"] {
+        g.run(query(&format!(
+            "MATCH (n:{label}) WHERE n.review_status = 'live' SET n.review_status = 'accepted'"
+        ))).await?;
+    }
+
     info!("Neo4j schema ready");
     Ok(())
 }

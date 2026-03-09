@@ -438,13 +438,13 @@ fn review_verdict_event_captures_status_change() {
     let event = Event::System(SystemEvent::ReviewVerdictReached {
         signal_id: Uuid::new_v4(),
         old_status: "staged".into(),
-        new_status: "live".into(),
+        new_status: "accepted".into(),
         reason: "Verified against source content".into(),
     });
 
     let payload = event.to_payload();
     assert_eq!(payload["old_status"], "staged");
-    assert_eq!(payload["new_status"], "live");
+    assert_eq!(payload["new_status"], "accepted");
 }
 
 #[test]
@@ -852,7 +852,7 @@ fn build_all_events() -> Vec<Event> {
         Event::System(SystemEvent::ReviewVerdictReached {
             signal_id: id,
             old_status: "staged".into(),
-            new_status: "live".into(),
+            new_status: "accepted".into(),
             reason: "ok".into(),
         }),
         Event::System(SystemEvent::ImpliedQueriesConsumed {

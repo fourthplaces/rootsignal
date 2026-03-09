@@ -1010,8 +1010,8 @@ impl GraphProjector {
                 self.client.run(q).await?;
 
                 // Reactively promote situations: if all constituent signals
-                // are now 'live', promote the situation too.
-                if new_status == "live" {
+                // are now 'accepted', promote the situation too.
+                if new_status == "accepted" {
                     let promote = query(
                         "OPTIONAL MATCH (g:Gathering {id: $id})
                          OPTIONAL MATCH (a:Resource {id: $id})
@@ -1025,9 +1025,9 @@ impl GraphProjector {
                          WHERE sit.review_status = 'staged'
                            AND NOT EXISTS {
                              MATCH (other)-[:PART_OF]->(sit)
-                             WHERE other.review_status <> 'live'
+                             WHERE other.review_status <> 'accepted'
                            }
-                         SET sit.review_status = 'live'",
+                         SET sit.review_status = 'accepted'",
                     )
                     .param("id", signal_id.to_string());
 
@@ -1621,7 +1621,7 @@ impl GraphProjector {
                 let q = query(
                     "UNWIND $ids AS id
                      MATCH (s:Situation {id: id})
-                     SET s.review_status = 'live'",
+                     SET s.review_status = 'accepted'",
                 )
                 .param("ids", ids);
 

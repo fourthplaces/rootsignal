@@ -350,7 +350,7 @@ pub async fn review_batch(
                 events.push(SystemEvent::ReviewVerdictReached {
                     signal_id,
                     old_status: "staged".into(),
-                    new_status: "live".into(),
+                    new_status: "accepted".into(),
                     reason: "passed_review".into(),
                 });
                 passed += 1;
@@ -394,7 +394,7 @@ pub async fn review_batch(
                 events.push(SystemEvent::ReviewVerdictReached {
                     signal_id,
                     old_status: "staged".into(),
-                    new_status: "live".into(),
+                    new_status: "accepted".into(),
                     reason: "passed_review".into(),
                 });
                 passed += 1;

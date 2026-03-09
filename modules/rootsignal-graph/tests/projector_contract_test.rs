@@ -683,7 +683,7 @@ fn build_all_events() -> Vec<Event> {
         Event::System(SystemEvent::ReviewVerdictReached {
             signal_id: id,
             old_status: "staged".into(),
-            new_status: "live".into(),
+            new_status: "accepted".into(),
             reason: "".into(),
         }),
         Event::System(SystemEvent::ImpliedQueriesConsumed {

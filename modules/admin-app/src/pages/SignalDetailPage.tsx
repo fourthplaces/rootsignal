@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { useQuery } from "@apollo/client";
 import { SIGNAL_DETAIL } from "@/graphql/queries";
 import { LinkPreview } from "@/components/LinkPreview";
@@ -31,7 +31,7 @@ export function SignalDetailPage() {
         <div className="flex items-center justify-between mb-1">
           <p className="text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
             <span className="px-2 py-0.5 rounded-full bg-secondary">{typeName}</span>
-            <ReviewStatusBadge status={signal.reviewStatus ?? "live"} wasCorrected={signal.wasCorrected} />
+            <ReviewStatusBadge status={signal.reviewStatus ?? "accepted"} wasCorrected={signal.wasCorrected} />
             <span>&middot; {(signal.confidence * 100).toFixed(0)}% confidence</span>
             <span>&middot; {new Date(signal.contentDate ?? signal.extractedAt).toLocaleDateString()}</span>
           </p>
@@ -164,10 +164,10 @@ export function SignalDetailPage() {
           <h2 className="text-sm font-medium mb-3">Actors ({signal.actors.length})</h2>
           <div className="flex flex-wrap gap-2">
             {signal.actors.map((a: { id: string; name: string; actorType: string }) => (
-              <span key={a.id} className="px-2 py-1 rounded-md bg-secondary text-sm">
+              <Link key={a.id} to={`/actors/${a.id}`} className="px-2 py-1 rounded-md bg-secondary text-sm text-blue-400 hover:underline">
                 {a.name}
                 <span className="ml-1 text-muted-foreground text-xs">{a.actorType}</span>
-              </span>
+              </Link>
             ))}
           </div>
         </div>

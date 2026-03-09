@@ -18,7 +18,7 @@ const SIGNAL_TYPES = ["All", "Gathering", "Resource", "HelpRequest", "Announceme
 const STATUS_OPTIONS = [
   { value: "", label: "All" },
   { value: "staged", label: "Staged" },
-  { value: "live", label: "Published" },
+  { value: "accepted", label: "Accepted" },
   { value: "rejected", label: "Rejected" },
 ];
 
@@ -48,7 +48,7 @@ function getSignalFields(s: Record<string, unknown>): Signal {
     confidence: s.confidence as number,
     extractedAt: s.extractedAt as string,
     contentDate: (s.contentDate as string) ?? null,
-    reviewStatus: (s.reviewStatus as string) ?? "live",
+    reviewStatus: (s.reviewStatus as string) ?? "accepted",
     wasCorrected: (s.wasCorrected as boolean) ?? false,
     sourceUrl: (s.sourceUrl as string) ?? null,
     type: typeName,
