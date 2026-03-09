@@ -221,14 +221,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Run SQL migrations if Postgres is available
-    if let Some(ref pool) = pg_pool {
-        sqlx::migrate!("./migrations")
-            .run(pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("Postgres migration failed: {e}"))?;
-        info!("Postgres migrations applied");
-    }
+    // Migrations are handled by `rootsignal-migrate` binary (run before deploy).
 
     // Spawn live event broadcast (PgListener → broadcast channel)
     let event_broadcast = pg_pool

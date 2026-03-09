@@ -14,6 +14,20 @@ use crate::GraphClient;
 use crate::writer::{row_to_source_node, row_datetime_opt_pub, SignalBrief};
 use rootsignal_common::SourceNode;
 
+/// Pipe-separated location edge types for Cypher MATCH patterns.
+const LOC_EDGES: &str = "HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION";
+
+/// Returns a Cypher EXISTS subquery for bounding-box filtering through Location edges.
+/// Assumes `$min_lat`, `$max_lat`, `$min_lng`, `$max_lng` params are bound.
+fn bbox_exists(node_var: &str) -> String {
+    format!(
+        "EXISTS {{
+           MATCH ({node_var})-[:{LOC_EDGES}]->(l:Location)
+           WHERE l.lat >= $min_lat AND l.lat <= $max_lat
+             AND l.lng >= $min_lng AND l.lng <= $max_lng
+         }}"
+    )
+}
 
 /// Read-only wrapper for the graph. Used by the web server.
 /// Enforces sensitivity-based coordinate fuzzing, confidence thresholds,
@@ -59,13 +73,11 @@ impl PublicGraphReader {
                 let label = node_type_label(*nt);
                 format!(
                     "MATCH (n:{label})
-                     OPTIONAL MATCH (n)<-[:ACTED_IN {{role: 'authored'}}]-(author:Actor)
                      WHERE n.review_status = 'accepted'
-                       AND n.lat <> 0.0
-                       AND n.lat >= $min_lat AND n.lat <= $max_lat
-                       AND n.lng >= $min_lng AND n.lng <= $max_lng
                        AND n.confidence >= $min_confidence
                        {expiry}
+                       AND {bbox}
+                     OPTIONAL MATCH (n)<-[:ACTED_IN {{role: 'authored'}}]-(author:Actor)
                      RETURN n, labels(n)[0] AS node_label,
                             n.cause_heat AS _sort_heat,
                             n.confidence AS _sort_conf,
@@ -75,6 +87,7 @@ impl PublicGraphReader {
                      ORDER BY _sort_heat DESC, _sort_conf DESC, _sort_time DESC
                      LIMIT 200",
                     expiry = expiry_clause(*nt),
+                    bbox = bbox_exists("n"),
                 )
             })
             .collect();
@@ -255,12 +268,11 @@ impl PublicGraphReader {
                 let label = node_type_label(*nt);
                 format!(
                     "MATCH (n:{label})
-                     WHERE n.lat <> 0.0
-                       AND n.lat >= $min_lat AND n.lat <= $max_lat
-                       AND n.lng >= $min_lng AND n.lng <= $max_lng
+                     WHERE {bbox}
                      RETURN n, labels(n)[0] AS node_label
                      ORDER BY coalesce(n.cause_heat, 0) DESC, n.last_confirmed_active DESC
-                     LIMIT $limit"
+                     LIMIT $limit",
+                    bbox = bbox_exists("n"),
                 )
             })
             .collect();
@@ -443,15 +455,14 @@ impl PublicGraphReader {
                 let label = node_type_label(*nt);
                 format!(
                     "MATCH (n:{label})
-                     WHERE n.lat <> 0.0
-                       AND n.lat >= $min_lat AND n.lat <= $max_lat
-                       AND n.lng >= $min_lng AND n.lng <= $max_lng
-                       AND n.confidence >= $min_confidence
+                     WHERE n.confidence >= $min_confidence
                        {expiry}
+                       AND {bbox}
                      RETURN n, labels(n)[0] AS node_label
                      ORDER BY coalesce(n.cause_heat, 0) DESC, n.confidence DESC
                      LIMIT $limit",
                     expiry = expiry_clause(*nt),
+                    bbox = bbox_exists("n"),
                 )
             })
             .collect();
@@ -497,19 +508,18 @@ impl PublicGraphReader {
         max_lng: f64,
         limit: u32,
     ) -> Result<Vec<Node>, neo4rs::Error> {
-        let q = query(
+        let bbox = bbox_exists("t");
+        let q = query(&format!(
             "MATCH (t:Concern)
              WHERE t.review_status = 'accepted'
-               AND t.lat IS NOT NULL
-               AND t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
+               AND {bbox}
              OPTIONAL MATCH (t)<-[:RESPONDS_TO|DRAWN_TO|EVIDENCE_OF]-(r)
              WITH t, count(r) AS resp_count
              WHERE resp_count < 2
              RETURN t AS n
              ORDER BY coalesce(t.cause_heat, 0.0) DESC
              LIMIT $limit",
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -558,17 +568,16 @@ impl PublicGraphReader {
                 let embedding_vec = embedding_vec.clone();
                 let graph = &self.client;
                 async move {
-                    let cypher = "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
+                    let bbox = bbox_exists("node");
+                    let cypher = format!("CALL db.index.vector.queryNodes($index_name, $k, $embedding)
                          YIELD node, score
                          WHERE score >= $min_score
                            AND node.review_status = 'accepted'
-                           AND node.lat <> 0.0
-                           AND node.lat >= $min_lat AND node.lat <= $max_lat
-                           AND node.lng >= $min_lng AND node.lng <= $max_lng
                            AND node.confidence >= $min_confidence
-                         RETURN node AS n, score";
+                           AND {bbox}
+                         RETURN node AS n, score");
 
-                    let q = query(cypher)
+                    let q = query(&cypher)
                         .param("index_name", *index_name)
                         .param("k", k_per_type)
                         .param("embedding", embedding_vec)
@@ -982,26 +991,22 @@ impl PublicGraphReader {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
 
-        // Find all Need/Gathering nodes linked to ANY of the requested resources
-        let cypher = "MATCH (r:Resource)<-[e:REQUIRES|PREFERS]-(n)
+        let bbox = bbox_exists("n");
+        let cypher = format!("MATCH (r:Resource)<-[e:REQUIRES|PREFERS]-(n)
              WHERE r.slug IN $slugs
                AND (n:HelpRequest OR n:Gathering)
                AND n.confidence >= $min_confidence
-               AND (
-                   (n.lat IS NOT NULL AND n.lat >= $min_lat AND n.lat <= $max_lat
-                    AND n.lng >= $min_lng AND n.lng <= $max_lng)
-                   OR n.lat IS NULL
-               )
-             WITH n, collect({slug: r.slug, type: type(e)}) AS matched_resources
+               AND ({bbox} OR NOT EXISTS {{ MATCH (n)-[:{LOC_EDGES}]->(:Location) }})
+             WITH n, collect({{slug: r.slug, type: type(e)}}) AS matched_resources
              OPTIONAL MATCH (n)-[:REQUIRES]->(all_req:Resource)
              OPTIONAL MATCH (n)-[:PREFERS]->(all_pref:Resource)
              RETURN n,
                     matched_resources,
                     collect(DISTINCT all_req.slug) AS all_requires,
-                    collect(DISTINCT all_pref.slug) AS all_prefers";
+                    collect(DISTINCT all_pref.slug) AS all_prefers");
 
         let slug_strings: Vec<String> = slugs.iter().map(|s| s.to_string()).collect();
-        let q = query(cypher)
+        let q = query(&cypher)
             .param("slugs", slug_strings)
             .param("min_lat", lat - lat_delta)
             .param("max_lat", lat + lat_delta)
@@ -1081,18 +1086,15 @@ impl PublicGraphReader {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
 
-        let cypher = "MATCH (r:Resource {slug: $slug})<-[:OFFERS]-(n:Resource)
+        let bbox = bbox_exists("n");
+        let cypher = format!("MATCH (r:Resource {{slug: $slug}})<-[:OFFERS]-(n:Resource)
              WHERE n.confidence >= $min_confidence
-               AND (
-                   (n.lat IS NOT NULL AND n.lat >= $min_lat AND n.lat <= $max_lat
-                    AND n.lng >= $min_lng AND n.lng <= $max_lng)
-                   OR n.lat IS NULL
-               )
+               AND ({bbox} OR NOT EXISTS {{ MATCH (n)-[:{LOC_EDGES}]->(:Location) }})
              RETURN n
              ORDER BY n.cause_heat DESC, n.confidence DESC
-             LIMIT $limit";
+             LIMIT $limit");
 
-        let q = query(cypher)
+        let q = query(&cypher)
             .param("slug", slug)
             .param("min_lat", lat - lat_delta)
             .param("max_lat", lat + lat_delta)
@@ -1828,8 +1830,6 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
     let confidence: f64 = n.get("confidence").unwrap_or(0.5);
     let corroboration_count: i64 = n.get("corroboration_count").unwrap_or(0);
     let url: String = n.get("url").unwrap_or_default();
-    // Parse location from point
-    let location = parse_location(&n);
 
     // Parse timestamps
     let extracted_at = parse_datetime_prop(&n, "extracted_at");
@@ -1850,29 +1850,12 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         confidence: confidence as f32,
         corroboration_count: corroboration_count as u32,
         locations: {
-            let loc_name: String = n.get("location_name").unwrap_or_default();
-            let loc_name_opt = if loc_name.is_empty() { None } else { Some(loc_name) };
-            let loc_address: String = n.get("address").unwrap_or_default();
-            let loc_address_opt = if loc_address.is_empty() { None } else { Some(loc_address) };
-            let mut locs = Vec::new();
-            if location.is_some() || loc_name_opt.is_some() {
-                locs.push(Location {
-                    point: location,
-                    name: loc_name_opt,
-                    address: loc_address_opt,
-                    role: None,
-                });
-            }
-            // Merge additional locations from JSON if present
             let json_str: String = n.get("locations_json").unwrap_or_default();
-            if !json_str.is_empty() {
-                if let Ok(extra) = serde_json::from_str::<Vec<Location>>(&json_str) {
-                    for loc in extra.into_iter().skip(1) {
-                        locs.push(loc);
-                    }
-                }
+            if json_str.is_empty() {
+                Vec::new()
+            } else {
+                serde_json::from_str::<Vec<Location>>(&json_str).unwrap_or_default()
             }
-            locs
         },
         url,
         extracted_at,
@@ -2087,19 +2070,6 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         }
         NodeType::Citation => None,
     }
-}
-
-pub fn parse_location(n: &neo4rs::Node) -> Option<GeoPoint> {
-    let lat: f64 = n.get("lat").ok()?;
-    let lng: f64 = n.get("lng").ok()?;
-    if lat == 0.0 && lng == 0.0 {
-        return None;
-    }
-    Some(GeoPoint {
-        lat,
-        lng,
-        precision: GeoPrecision::Exact,
-    })
 }
 
 fn parse_optional_datetime_prop(n: &neo4rs::Node, prop: &str) -> Option<DateTime<Utc>> {

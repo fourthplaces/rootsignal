@@ -56,10 +56,6 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
                 "CREATE INDEX {l}_{prop} IF NOT EXISTS FOR (n:{label}) ON (n.{prop})"
             ))).await?;
         }
-        // Composite geo index
-        g.run(query(&format!(
-            "CREATE INDEX {l}_lat_lng IF NOT EXISTS FOR (n:{label}) ON (n.lat, n.lng)"
-        ))).await?;
     }
 
     info!("Signal property indexes created");
@@ -198,6 +194,11 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
     // ── DomainVerdict constraint ─────────────────────────────────────────
 
     g.run(query("CREATE CONSTRAINT domainverdict_domain_unique IF NOT EXISTS FOR (d:DomainVerdict) REQUIRE d.domain IS UNIQUE")).await?;
+
+    // ── Location node indexes ────────────────────────────────────────────
+
+    g.run(query("CREATE INDEX location_lat_lng IF NOT EXISTS FOR (l:Location) ON (l.lat, l.lng)")).await?;
+    g.run(query("CREATE INDEX location_normalized_name IF NOT EXISTS FOR (l:Location) ON (l.normalized_name)")).await?;
 
     // ── Data migrations (idempotent) ─────────────────────────────────────
 

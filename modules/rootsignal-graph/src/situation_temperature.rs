@@ -497,10 +497,12 @@ async fn compute_dampened_centroid(
         "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.embedding IS NOT NULL
+         OPTIONAL MATCH (sig)-[:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(loc:Location)
+         WITH sig, e, head(collect(loc)) AS primary_loc
          RETURN sig.embedding AS embedding,
                 coalesce(sig.cause_heat, 0.0) AS cause_heat,
                 sig.created_at AS created_at,
-                sig.lat AS lat, sig.lng AS lng",
+                primary_loc.lat AS lat, primary_loc.lng AS lng",
     )
     .param("id", situation_id);
 

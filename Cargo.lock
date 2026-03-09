@@ -3679,6 +3679,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rootsignal-migrate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "sha2",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "rootsignal-replay"
 version = "0.1.0"
 dependencies = [

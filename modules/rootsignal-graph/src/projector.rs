@@ -2044,7 +2044,10 @@ impl GraphProjector {
                      OPTIONAL MATCH (t:Concern {id: id})
                      WITH coalesce(g, a, n, nc, t) AS node
                      WHERE node IS NOT NULL
-                     SET node.lat = null, node.lng = null",
+                     SET node.locations_json = ''
+                     WITH node
+                     OPTIONAL MATCH (node)-[r:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
+                     DELETE r",
                 )
                 .param("ids", ids);
 
@@ -3086,22 +3089,16 @@ impl GraphProjector {
         .param("id", id.to_string());
         self.client.run(delete_q).await?;
 
-        // Update flat properties for reader compat until Phase 2
-        let (lat, lng) = loc.as_ref()
-            .and_then(|l| l.point.as_ref())
-            .map(|p| (p.lat, p.lng))
-            .unwrap_or((0.0, 0.0));
-        let name = loc.as_ref().and_then(|l| l.name.clone()).unwrap_or_default();
-        let address = loc.as_ref().and_then(|l| l.address.clone()).unwrap_or_default();
-        let flat_q = query(&format!(
-            "MATCH (n:{label} {{id: $id}}) SET n.lat = $lat, n.lng = $lng, n.location_name = $name, n.address = $address"
+        let locations_json = match loc {
+            Some(l) => serde_json::to_string(&[l]).unwrap_or_default(),
+            None => String::new(),
+        };
+        let json_q = query(&format!(
+            "MATCH (n:{label} {{id: $id}}) SET n.locations_json = $locations_json"
         ))
         .param("id", id.to_string())
-        .param("lat", lat)
-        .param("lng", lng)
-        .param("name", name)
-        .param("address", address);
-        self.client.run(flat_q).await?;
+        .param("locations_json", locations_json);
+        self.client.run(json_q).await?;
 
         if let Some(loc) = loc {
             self.project_locations(&id, label, std::slice::from_ref(loc)).await?;
@@ -3261,14 +3258,6 @@ fn build_discovery_query(
     locations: &[Location],
     event: &StoredEvent,
 ) -> neo4rs::Query {
-    // Flat location properties kept for reader compat until Phase 2 migration
-    let primary = locations.first();
-    let (lat, lng) = primary
-        .and_then(|l| l.point.as_ref())
-        .map(|p| (p.lat, p.lng))
-        .unwrap_or((0.0, 0.0));
-    let loc_name = primary.and_then(|l| l.name.clone()).unwrap_or_default();
-    let loc_address = primary.and_then(|l| l.address.clone()).unwrap_or_default();
     let locations_json = if locations.is_empty() {
         String::new()
     } else {
@@ -3287,10 +3276,6 @@ fn build_discovery_query(
              n.extracted_at = datetime($extracted_at),
              n.last_confirmed_active = datetime($extracted_at),
              n.published_at = CASE WHEN $published_at = '' THEN null ELSE datetime($published_at) END,
-             n.location_name = $location_name,
-             n.address = $address,
-             n.lat = $lat,
-             n.lng = $lng,
              n.locations_json = $locations_json,
              n.sensitivity = 'general',
              n.corroboration_count = 0,
@@ -3311,10 +3296,6 @@ fn build_discovery_query(
             "published_at",
             published_at.map(|dt| format_dt(&dt)).unwrap_or_default(),
         )
-        .param("location_name", loc_name)
-        .param("address", loc_address)
-        .param("lat", lat)
-        .param("lng", lng)
         .param("locations_json", locations_json)
         .param("created_by", actor_str)
         .param("scout_run_id", run_id)

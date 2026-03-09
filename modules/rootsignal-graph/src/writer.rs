@@ -14,6 +14,19 @@ use crate::GraphClient;
 use std::collections::HashMap;
 pub use format_datetime_pub as memgraph_datetime_pub;
 
+/// Pipe-separated location edge types for Cypher MATCH patterns.
+const LOC_EDGES: &str = "HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION";
+
+/// Returns a Cypher EXISTS subquery for bounding-box filtering through Location edges.
+fn bbox_exists(node_var: &str) -> String {
+    format!(
+        "EXISTS {{
+           MATCH ({node_var})-[:{LOC_EDGES}]->(l:Location)
+           WHERE l.lat >= $min_lat AND l.lat <= $max_lat
+             AND l.lng >= $min_lng AND l.lng <= $max_lng
+         }}"
+    )
+}
 
 /// Read-only graph access for handlers and activities.
 #[derive(Clone)]
@@ -105,13 +118,11 @@ impl GraphReader {
             NodeType::Citation => return Ok(None),
         };
 
-        // Over-fetch 10 from vector index, then bbox-filter to find the best
-        // local match. This prevents cross-region deduplication.
+        let bbox = bbox_exists("node");
         let q = query(&format!(
             "CALL db.index.vector.queryNodes('{}', 10, $embedding)
              YIELD node, score AS similarity
-             WHERE node.lat >= $min_lat AND node.lat <= $max_lat
-               AND node.lng >= $min_lng AND node.lng <= $max_lng
+             WHERE {bbox}
              OPTIONAL MATCH (node)-[:PRODUCED_BY]->(s:Source)
              RETURN node.id AS id, node.url AS url, s.canonical_key AS canonical_key, similarity
              ORDER BY similarity DESC
@@ -839,16 +850,14 @@ impl GraphReader {
         let min_lng = lng - lng_delta;
         let max_lng = lng + lng_delta;
 
-        // Find sources whose signals have locations within the bounding box.
-        // Also include never-scraped sources (they haven't had a chance to produce signals yet).
-        let q = query(
-            "MATCH (s:Source {active: true})
+        let bbox = bbox_exists("n");
+        let q = query(&format!(
+            "MATCH (s:Source {{active: true}})
              WHERE (s.signals_produced = 0 AND s.last_scraped IS NULL)
-                OR EXISTS {
+                OR EXISTS {{
                     MATCH (n) WHERE n.url = s.canonical_value
-                      AND n.lat >= $min_lat AND n.lat <= $max_lat
-                      AND n.lng >= $min_lng AND n.lng <= $max_lng
-                }
+                      AND {bbox}
+                }}
              RETURN s.id AS id, s.canonical_key AS canonical_key,
                     s.canonical_value AS canonical_value, s.url AS url,
                     s.discovery_method AS discovery_method,
@@ -863,7 +872,7 @@ impl GraphReader {
                     s.quality_penalty AS quality_penalty,
                     s.source_role AS source_role,
                     s.scrape_count AS scrape_count",
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -1691,13 +1700,13 @@ impl GraphReader {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<(Uuid, Vec<f64>)>, neo4rs::Error> {
-        let q = query(
+        let bbox = bbox_exists("t");
+        let q = query(&format!(
             "MATCH (t:Concern)
              WHERE datetime(t.last_confirmed_active) >= datetime() - duration('P30D')
-               AND t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
+               AND {bbox}
              RETURN t.id AS id, t.embedding AS embedding",
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -1728,14 +1737,14 @@ impl GraphReader {
         max_lng: f64,
     ) -> Result<Vec<(Uuid, f64)>, neo4rs::Error> {
         let mut candidates = Vec::new();
+        let bbox = bbox_exists("node");
 
         for index in &["aid_embedding", "gathering_embedding", "need_embedding"] {
             let q = query(&format!(
                 "CALL db.index.vector.queryNodes('{}', 20, $embedding)
                  YIELD node, score AS similarity
                  WHERE similarity >= 0.4
-                   AND node.lat >= $min_lat AND node.lat <= $max_lat
-                   AND node.lng >= $min_lng AND node.lng <= $max_lng
+                   AND {bbox}
                  RETURN node.id AS id, similarity
                  ORDER BY similarity DESC
                  LIMIT 5",
@@ -1799,12 +1808,15 @@ impl GraphReader {
         let mut targets = Vec::new();
         let mut seen_domains = std::collections::HashSet::new();
 
+        let bbox_t = bbox_exists("t");
+        let bbox_a = bbox_exists("a");
+        let bbox_n = bbox_exists("n");
+
         // Priority 1: New tensions (last 24h, < 2 evidence nodes, not investigated in 7d)
-        let q = query(
+        let q = query(&format!(
             "MATCH (t:Concern)
              WHERE datetime(t.extracted_at) > datetime() - duration('P1D')
-               AND t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
+               AND {bbox_t}
                AND (t.investigated_at IS NULL OR datetime(t.investigated_at) < datetime() - duration('P7D'))
              OPTIONAL MATCH (t)-[:SOURCED_FROM]->(ev:Citation)
              WITH t, count(ev) AS ev_count
@@ -1812,7 +1824,7 @@ impl GraphReader {
              RETURN t.id AS id, 'Tension' AS label, t.title AS title, t.summary AS summary,
                     t.url AS url, t.sensitivity AS sensitivity
              LIMIT 10"
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -1821,11 +1833,10 @@ impl GraphReader {
             .await?;
 
         // Priority 2: High-urgency needs (urgency high/critical, < 2 evidence nodes)
-        let q = query(
+        let q = query(&format!(
             "MATCH (a:HelpRequest)
              WHERE a.urgency IN ['high', 'critical']
-               AND a.lat >= $min_lat AND a.lat <= $max_lat
-               AND a.lng >= $min_lng AND a.lng <= $max_lng
+               AND {bbox_a}
                AND (a.investigated_at IS NULL OR datetime(a.investigated_at) < datetime() - duration('P7D'))
              OPTIONAL MATCH (a)-[:SOURCED_FROM]->(ev:Citation)
              WITH a, count(ev) AS ev_count
@@ -1833,7 +1844,7 @@ impl GraphReader {
              RETURN a.id AS id, 'Need' AS label, a.title AS title, a.summary AS summary,
                     a.url AS url, a.sensitivity AS sensitivity
              LIMIT 10"
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -1842,11 +1853,10 @@ impl GraphReader {
             .await?;
 
         // Priority 3: Thin-story signals (from emerging situations, < 2 citation nodes)
-        let q = query(
-            "MATCH (n)-[:PART_OF]->(s:Situation {arc: 'emerging'})
+        let q = query(&format!(
+            "MATCH (n)-[:PART_OF]->(s:Situation {{arc: 'emerging'}})
              WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-               AND n.lat >= $min_lat AND n.lat <= $max_lat
-               AND n.lng >= $min_lng AND n.lng <= $max_lng
+               AND {bbox_n}
                AND (n.investigated_at IS NULL OR datetime(n.investigated_at) < datetime() - duration('P7D'))
              OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              WITH n, count(ev) AS ev_count,
@@ -1860,7 +1870,7 @@ impl GraphReader {
              RETURN n.id AS id, label, n.title AS title, n.summary AS summary,
                     n.url AS url, n.sensitivity AS sensitivity
              LIMIT 10"
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -1931,14 +1941,14 @@ impl GraphReader {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<(String, String)>, neo4rs::Error> {
-        let q = query(
+        let bbox = bbox_exists("t");
+        let q = query(&format!(
             "MATCH (t:Concern)
-             WHERE t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
+             WHERE {bbox}
              RETURN t.title AS title, t.summary AS summary
              ORDER BY t.extracted_at DESC
              LIMIT 50",
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -1966,19 +1976,19 @@ impl GraphReader {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<ConcernHub>, neo4rs::Error> {
-        let q = query(
+        let bbox = bbox_exists("sig");
+        let q = query(&format!(
             "MATCH (t:Concern)<-[r:RESPONDS_TO|DRAWN_TO]-(sig)
              WHERE NOT (t)-[:PART_OF]->(:Situation)
-               AND sig.lat >= $min_lat AND sig.lat <= $max_lat
-               AND sig.lng >= $min_lng AND sig.lng <= $max_lng
-             WITH t, collect({
+               AND {bbox}
+             WITH t, collect({{
                  sig_id: sig.id,
                  url: sig.url,
                  strength: r.match_strength,
                  explanation: r.explanation,
                  edge_type: type(r),
                  gathering_type: r.gathering_type
-             }) AS respondents
+             }}) AS respondents
              WHERE size(respondents) >= 2
              RETURN t.id AS concern_id, t.title AS title, t.summary AS summary,
                     t.category AS category, t.opposing AS opposing,
@@ -1986,7 +1996,7 @@ impl GraphReader {
                     respondents
              ORDER BY size(respondents) DESC, coalesce(t.cause_heat, 0.0) DESC
              LIMIT $limit",
-        )
+        ))
         .param("limit", limit as i64)
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
@@ -2337,11 +2347,11 @@ impl GraphReader {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<ResponseFinderTarget>, neo4rs::Error> {
-        let q = query(
+        let bbox = bbox_exists("t");
+        let q = query(&format!(
             "MATCH (t:Concern)
              WHERE t.confidence >= 0.5
-               AND t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
+               AND {bbox}
                AND coalesce(datetime(t.response_scouted_at), datetime('2000-01-01'))
                    < datetime() - duration('P14D')
              OPTIONAL MATCH (t)<-[:RESPONDS_TO]-(r)
@@ -2353,7 +2363,7 @@ impl GraphReader {
                     response_count
              ORDER BY response_count ASC, t.cause_heat DESC, t.confidence DESC
              LIMIT $limit",
-        )
+        ))
         .param("limit", limit as i64)
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
@@ -2434,28 +2444,28 @@ impl GraphReader {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<GatheringFinderTarget>, neo4rs::Error> {
-        let q = query(
+        let bbox = bbox_exists("t");
+        let q = query(&format!(
             "MATCH (t:Concern)
              WHERE t.confidence >= 0.5
-               AND t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
+               AND {bbox}
                AND coalesce(t.cause_heat, 0.0) >= 0.1
                AND coalesce(datetime(t.gravity_scouted_at), datetime('2000-01-01'))
-                   < datetime() - duration({days:
+                   < datetime() - duration({{days:
                        CASE
                          WHEN coalesce(t.gravity_scout_miss_count, 0) = 0 THEN 7
                          WHEN coalesce(t.gravity_scout_miss_count, 0) = 1 THEN 14
                          WHEN coalesce(t.gravity_scout_miss_count, 0) = 2 THEN 21
                          ELSE 30
                        END
-                     })
+                     }})
              RETURN t.id AS id, t.title AS title, t.summary AS summary,
                     t.severity AS severity, t.category AS category,
                     t.opposing AS opposing,
                     coalesce(t.cause_heat, 0.0) AS cause_heat
              ORDER BY t.cause_heat DESC, t.confidence DESC
              LIMIT $limit",
-        )
+        ))
         .param("limit", limit as i64)
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
@@ -2507,19 +2517,22 @@ impl GraphReader {
     ) -> Result<Vec<ResponseHeuristic>, neo4rs::Error> {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * center_lat.to_radians().cos());
-        let q = query(
-            "MATCH (r)-[rel:DRAWN_TO]->(t:Concern {id: $id})
+        let q = query(&format!(
+            "MATCH (r)-[rel:DRAWN_TO]->(t:Concern {{id: $id}})
              WHERE (r:Resource OR r:Gathering OR r:HelpRequest)
-               AND r.lat >= $lat_min AND r.lat <= $lat_max
-               AND r.lng >= $lng_min AND r.lng <= $lng_max
+               AND EXISTS {{
+                 MATCH (r)-[:{LOC_EDGES}]->(l:Location)
+                 WHERE l.lat >= $min_lat AND l.lat <= $max_lat
+                   AND l.lng >= $min_lng AND l.lng <= $max_lng
+               }}
              RETURN r.title AS title, r.summary AS summary, labels(r)[0] AS label
              LIMIT 5",
-        )
+        ))
         .param("id", concern_id.to_string())
-        .param("lat_min", center_lat - lat_delta)
-        .param("lat_max", center_lat + lat_delta)
-        .param("lng_min", center_lng - lng_delta)
-        .param("lng_max", center_lng + lng_delta);
+        .param("min_lat", center_lat - lat_delta)
+        .param("max_lat", center_lat + lat_delta)
+        .param("min_lng", center_lng - lng_delta)
+        .param("max_lng", center_lng + lng_delta);
 
         let mut results = Vec::new();
         let mut stream = self.client().execute(q).await?;
@@ -2640,17 +2653,17 @@ impl GraphReader {
     }
 
     /// Get signal location observations for an actor's authored signals.
-    /// Returns (lat, lng, location_name, extracted_at) for each signal with about_location.
+    /// Returns (lat, lng, location_name, extracted_at) per Location edge.
     pub async fn get_signals_for_actor(
         &self,
         actor_id: Uuid,
     ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>, neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor {id: $id})-[:ACTED_IN {role: 'authored'}]->(n)
-             WHERE n.lat IS NOT NULL
-             RETURN n.lat AS lat, n.lng AS lng,
-                    n.location_name AS name, n.extracted_at AS ts",
-        )
+        let q = query(&format!(
+            "MATCH (a:Actor {{id: $id}})-[:ACTED_IN {{role: 'authored'}}]->(n)
+             MATCH (n)-[:{LOC_EDGES}]->(loc:Location)
+             RETURN loc.lat AS lat, loc.lng AS lng,
+                    coalesce(loc.name, '') AS name, n.extracted_at AS ts",
+        ))
         .param("id", actor_id.to_string());
 
         let g = self.client().clone();
@@ -2691,10 +2704,10 @@ impl GraphReader {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<NoticeInferenceRow>, neo4rs::Error> {
-        let cypher = r#"
-            MATCH (n:Announcement)
-            WHERE n.lat >= $min_lat AND n.lat <= $max_lat
-              AND n.lng >= $min_lng AND n.lng <= $max_lng
+        let bbox = bbox_exists("n");
+        let cypher = format!(
+            "MATCH (n:Announcement)
+            WHERE {bbox}
               AND n.review_status IN ['staged', 'accepted']
             OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
             WITH n, s, EXISTS((n)-[:EVIDENCE_OF]->(:Concern)) AS has_evidence
@@ -2702,13 +2715,13 @@ impl GraphReader {
                    n.corroboration_count AS corr, n.source_diversity AS div,
                    has_evidence,
                    s.scrape_count AS sc, s.signals_corroborated AS scorr,
-                   s.quality_penalty AS qp, s.avg_signals_per_scrape AS avg_sps
-        "#;
+                   s.quality_penalty AS qp, s.avg_signals_per_scrape AS avg_sps"
+        );
 
         let mut result = self
             .client
             .execute(
-                query(cypher)
+                query(&cypher)
                     .param("min_lat", min_lat)
                     .param("max_lat", max_lat)
                     .param("min_lng", min_lng)
@@ -2856,14 +2869,14 @@ impl GraphReader {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<ConcernLinkerTarget>, neo4rs::Error> {
-        let q = query(
+        let bbox = bbox_exists("n");
+        let q = query(&format!(
             "MATCH (n)
              WHERE (n:Resource OR n:Gathering OR n:HelpRequest OR n:Announcement)
                AND (n.curiosity_investigated IS NULL OR n.curiosity_investigated = 'failed')
                AND NOT (n)-[:RESPONDS_TO|DRAWN_TO]->(:Concern)
                AND n.confidence >= 0.5
-               AND n.lat >= $min_lat AND n.lat <= $max_lat
-               AND n.lng >= $min_lng AND n.lng <= $max_lng
+               AND {bbox}
              RETURN n.id AS id, n.title AS title, n.summary AS summary,
                     n.url AS url,
                     CASE WHEN n:Gathering THEN 'Gathering'
@@ -2873,7 +2886,7 @@ impl GraphReader {
                     END AS label
              ORDER BY n.extracted_at DESC
              LIMIT $limit",
-        )
+        ))
         .param("limit", limit as i64)
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
@@ -2909,14 +2922,14 @@ impl GraphReader {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
-        let q = query(
+        let bbox = bbox_exists("t");
+        let q = query(&format!(
             "MATCH (t:Concern)
              WHERE t.embedding IS NOT NULL
-               AND t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
+               AND {bbox}
              RETURN t.id AS id, t.embedding AS embedding, t.extracted_at AS extracted_at
              ORDER BY t.extracted_at ASC",
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -2986,11 +2999,13 @@ impl GraphReader {
                 "MATCH (n:{label} {{scout_run_id: $run_id}})
                  WHERE NOT (n)-[:PART_OF]->(:Situation)
                    AND NOT n:Citation
+                 OPTIONAL MATCH (n)-[:{LOC_EDGES}]->(loc:Location)
+                 WITH n, head(collect(loc)) AS primary_loc
                  RETURN n.id AS id, n.title AS title, n.summary AS summary,
                         '{label}' AS node_type, n.embedding AS embedding,
                         n.url AS url,
                         coalesce(n.cause_heat, 0.0) AS cause_heat,
-                        n.lat AS lat, n.lng AS lng,
+                        primary_loc.lat AS lat, primary_loc.lng AS lng,
                         n.published_at AS published_at"
             ))
             .param("run_id", scout_run_id);

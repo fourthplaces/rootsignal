@@ -5,6 +5,19 @@ use rootsignal_common::events::CauseHeatScore;
 
 use crate::GraphClient;
 
+/// Pipe-separated location edge types for Cypher MATCH patterns.
+const LOC_EDGES: &str = "HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION";
+
+fn bbox_exists(node_var: &str) -> String {
+    format!(
+        "EXISTS {{
+           MATCH ({node_var})-[:{LOC_EDGES}]->(l:Location)
+           WHERE l.lat >= $min_lat AND l.lat <= $max_lat
+             AND l.lng >= $min_lng AND l.lng <= $max_lng
+         }}"
+    )
+}
+
 /// A signal with its embedding and source diversity, loaded for batch computation.
 struct SignalEmbed {
     id: String,
@@ -47,11 +60,11 @@ pub async fn compute_cause_heat(
     let mut signals: Vec<SignalEmbed> = Vec::new();
 
     for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
+        let bbox = bbox_exists("n");
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.embedding IS NOT NULL
-               AND n.lat >= $min_lat AND n.lat <= $max_lat
-               AND n.lng >= $min_lng AND n.lng <= $max_lng
+               AND {bbox}
              RETURN n.id AS id, n.embedding AS embedding,
                     n.source_diversity AS source_diversity,
                     n.channel_diversity AS channel_diversity"
