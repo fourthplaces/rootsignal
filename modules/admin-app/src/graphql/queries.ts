@@ -1033,16 +1033,10 @@ export const EVENTS_SUBSCRIPTION = gql`
 export const BUDGET_STATUS = gql`
   query BudgetStatus {
     budgetStatus {
-      globalDailyLimitCents
-      globalSpentTodayCents
-      globalRemainingCents
-      runDefaultMaxCents
-      regions {
-        regionId
-        dailyLimitCents
-        spentTodayCents
-        remainingCents
-      }
+      dailyLimitCents
+      spentTodayCents
+      remainingCents
+      perRunMaxCents
     }
   }
 `;

@@ -167,6 +167,12 @@ export const DISMISS_FINDING = gql`
   }
 `;
 
+export const SET_BUDGET = gql`
+  mutation SetBudget($dailyLimitCents: Int!, $perRunMaxCents: Int!) {
+    setBudget(dailyLimitCents: $dailyLimitCents, perRunMaxCents: $perRunMaxCents)
+  }
+`;
+
 export const SCRAPE_URL = gql`
   mutation ScrapeUrl($url: String!) {
     scrapeUrl(url: $url) {

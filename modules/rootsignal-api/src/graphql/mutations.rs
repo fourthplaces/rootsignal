@@ -852,23 +852,19 @@ impl MutationRoot {
         Ok(true)
     }
 
-    /// Set a budget limit. Scope: "global", "run_default", or "region".
+    /// Set the budget config: daily spend ceiling and per-run cap. 0 = unlimited.
     #[graphql(guard = "AdminGuard")]
-    async fn set_budget_limit(
+    async fn set_budget(
         &self,
         ctx: &Context<'_>,
-        scope: String,
-        scope_id: Option<String>,
         daily_limit_cents: i64,
+        per_run_max_cents: i64,
     ) -> Result<bool> {
-        if !["global", "run_default", "region"].contains(&scope.as_str()) {
-            return Err("scope must be 'global', 'run_default', or 'region'".into());
-        }
-        if scope == "region" && scope_id.is_none() {
-            return Err("scope_id required for region scope".into());
-        }
         if daily_limit_cents < 0 {
             return Err("daily_limit_cents must be non-negative".into());
+        }
+        if per_run_max_cents < 0 {
+            return Err("per_run_max_cents must be non-negative".into());
         }
 
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
@@ -876,16 +872,11 @@ impl MutationRoot {
             .as_ref()
             .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
 
-        crate::db::models::budget::upsert_budget_config(
-            pool,
-            &scope,
-            scope_id.as_deref(),
-            daily_limit_cents,
-        )
-        .await
-        .map_err(|e| async_graphql::Error::new(format!("Failed to set budget limit: {e}")))?;
+        crate::db::models::budget::set_config(pool, daily_limit_cents, per_run_max_cents)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to set budget: {e}")))?;
 
-        info!(scope = scope.as_str(), scope_id = ?scope_id, daily_limit_cents, "Budget limit updated");
+        info!(daily_limit_cents, per_run_max_cents, "Budget updated");
         Ok(true)
     }
 

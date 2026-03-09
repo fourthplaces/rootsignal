@@ -1543,7 +1543,7 @@ impl QueryRoot {
             .collect())
     }
 
-    /// Budget status: global + region limits and today's spend.
+    /// Budget status: daily limit, today's spend, and per-run cap.
     #[graphql(guard = "AdminGuard")]
     async fn budget_status(&self, ctx: &Context<'_>) -> Result<BudgetStatus> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
@@ -1551,46 +1551,24 @@ impl QueryRoot {
             .as_ref()
             .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
 
-        let config = crate::db::models::budget::load_budget_config(pool, None)
+        let config = crate::db::models::budget::load_config(pool)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to load budget config: {e}")))?;
-        let spend = crate::db::models::budget::daily_spend(pool, None)
+        let spent = crate::db::models::budget::daily_spend(pool)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to load daily spend: {e}")))?;
-        let region_configs = crate::db::models::budget::all_region_configs(pool)
-            .await
-            .unwrap_or_default();
 
-        let global_remaining = if config.global_daily_limit_cents > 0 {
-            (config.global_daily_limit_cents - spend.global_spent_cents).max(0)
+        let remaining = if config.daily_limit_cents > 0 {
+            (config.daily_limit_cents - spent).max(0)
         } else {
             0
         };
 
-        let mut regions = Vec::new();
-        for (region_id, limit) in &region_configs {
-            let region_spend = crate::db::models::budget::daily_spend(pool, Some(region_id))
-                .await
-                .unwrap_or(crate::db::models::budget::DailySpend {
-                    global_spent_cents: 0,
-                    region_spent_cents: Some(0),
-                });
-            let spent = region_spend.region_spent_cents.unwrap_or(0);
-            let remaining = if *limit > 0 { (*limit - spent).max(0) } else { 0 };
-            regions.push(RegionBudgetStatus {
-                region_id: region_id.clone(),
-                daily_limit_cents: *limit,
-                spent_today_cents: spent,
-                remaining_cents: remaining,
-            });
-        }
-
         Ok(BudgetStatus {
-            global_daily_limit_cents: config.global_daily_limit_cents,
-            global_spent_today_cents: spend.global_spent_cents,
-            global_remaining_cents: global_remaining,
-            run_default_max_cents: config.run_default_max_cents,
-            regions,
+            daily_limit_cents: config.daily_limit_cents,
+            spent_today_cents: spent,
+            remaining_cents: remaining,
+            per_run_max_cents: config.per_run_max_cents,
         })
     }
 }
@@ -1599,19 +1577,10 @@ impl QueryRoot {
 
 #[derive(SimpleObject)]
 struct BudgetStatus {
-    global_daily_limit_cents: i64,
-    global_spent_today_cents: i64,
-    global_remaining_cents: i64,
-    run_default_max_cents: i64,
-    regions: Vec<RegionBudgetStatus>,
-}
-
-#[derive(SimpleObject)]
-struct RegionBudgetStatus {
-    region_id: String,
     daily_limit_cents: i64,
     spent_today_cents: i64,
     remaining_cents: i64,
+    per_run_max_cents: i64,
 }
 
 #[derive(SimpleObject)]

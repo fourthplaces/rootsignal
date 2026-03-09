@@ -483,13 +483,6 @@ impl PipelineState {
         self.stats.discovery_accounts_found += output.stats_delta.discovery_accounts_found;
     }
 
-    /// Apply a telemetry event (budget checkpoints update spend tracking).
-    pub fn apply_telemetry(&mut self, event: &TelemetryEvent) {
-        if let TelemetryEvent::BudgetCheckpoint { spent_cents, .. } = event {
-            self.stats.spent_cents = *spent_cents;
-        }
-    }
-
     /// Apply a pipeline event to aggregate state.
     pub fn apply_pipeline(&mut self, event: &PipelineEvent) {
         match event {
@@ -554,9 +547,7 @@ pub mod pipeline_aggregators {
         state.apply_system(&event);
     }
 
-    fn on_telemetry(state: &mut PipelineState, event: TelemetryEvent) {
-        state.apply_telemetry(&event);
-    }
+    fn on_telemetry(_state: &mut PipelineState, _event: TelemetryEvent) {}
 
     fn on_situation_weaving(_state: &mut PipelineState, _event: SituationWeavingEvent) {}
 

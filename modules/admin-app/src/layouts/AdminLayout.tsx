@@ -10,6 +10,7 @@ import {
   Archive,
   Waypoints,
   ScrollText,
+  Wallet,
   LogOut,
   ChevronsLeft,
   ChevronsRight,
@@ -19,6 +20,7 @@ import {
 const navItems: { to: string; label: string; icon: ComponentType<LucideProps> }[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/scout", label: "Scout", icon: Radar },
+  { to: "/budget", label: "Budget", icon: Wallet },
   { to: "/graph", label: "Graph", icon: Waypoints },
   { to: "/events", label: "Events", icon: ScrollText },
   { to: "/archive", label: "Archive", icon: Archive },

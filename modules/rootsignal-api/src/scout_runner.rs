@@ -37,7 +37,7 @@ impl ScoutRunner {
         let deps = self.deps.clone();
         let run_id = uuid::Uuid::new_v4();
         let budget = crate::db::models::budget::effective_budget(
-            &deps.pg_pool, None, deps.daily_budget_cents,
+            &deps.pg_pool, deps.daily_budget_cents,
         ).await;
 
         info!("Spawning news scan");
@@ -67,7 +67,7 @@ impl ScoutRunner {
         let scope = scope.clone();
         let run_id = uuid::Uuid::new_v4();
         let budget = crate::db::models::budget::effective_budget(
-            &deps.pg_pool, Some(&region_id), deps.daily_budget_cents,
+            &deps.pg_pool, deps.daily_budget_cents,
         ).await;
 
         info!(region_id = region_id.as_str(), %run_id, "Spawning bootstrap flow");
@@ -100,7 +100,7 @@ impl ScoutRunner {
         let scope = scope.clone();
         let run_id = uuid::Uuid::new_v4();
         let budget = crate::db::models::budget::effective_budget(
-            &deps.pg_pool, Some(&region_id), deps.daily_budget_cents,
+            &deps.pg_pool, deps.daily_budget_cents,
         ).await;
 
         info!(region_id = region_id.as_str(), %run_id, "Spawning scrape flow");
@@ -133,7 +133,7 @@ impl ScoutRunner {
         let scope = scope.clone();
         let run_id = uuid::Uuid::new_v4();
         let budget = crate::db::models::budget::effective_budget(
-            &deps.pg_pool, Some(&region_id), deps.daily_budget_cents,
+            &deps.pg_pool, deps.daily_budget_cents,
         ).await;
 
         info!(region_id = region_id.as_str(), %run_id, "Spawning weave flow");
@@ -169,9 +169,8 @@ impl ScoutRunner {
         let deps = self.deps.clone();
         let source_ids_owned: Vec<String> = source_ids.to_vec();
         let run_id = uuid::Uuid::new_v4();
-        let region_id_str = region.as_ref().map(|r| r.id.to_string());
         let budget = crate::db::models::budget::effective_budget(
-            &deps.pg_pool, region_id_str.as_deref(), deps.daily_budget_cents,
+            &deps.pg_pool, deps.daily_budget_cents,
         ).await;
         let metadata_scope = region.as_ref()
             .map(ScoutScope::from)

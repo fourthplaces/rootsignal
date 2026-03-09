@@ -16,6 +16,7 @@ import { SourceDetailPage } from "@/pages/SourceDetailPage";
 import { GraphExplorerPage } from "@/pages/GraphExplorerPage";
 import { EventsPage } from "@/pages/events/EventsPage";
 import { DanglingSignalsPage } from "@/pages/DanglingSignalsPage";
+import { BudgetPage } from "@/pages/BudgetPage";
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
       <Route element={<AdminLayout />}>
         <Route index element={<DashboardPage />} />
         <Route path="scout" element={<ScoutPage />} />
+        <Route path="budget" element={<BudgetPage />} />
         <Route path="sources/:id" element={<SourceDetailPage />} />
         <Route path="graph" element={<GraphExplorerPage />} />
         <Route path="events" element={<EventsPage />} />
