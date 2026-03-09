@@ -3,7 +3,7 @@
 DROP TABLE IF EXISTS budget_configs;
 
 CREATE TABLE budget_config (
-    id              BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    id              INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     daily_limit_cents   BIGINT NOT NULL DEFAULT 0,
     per_run_max_cents   BIGINT NOT NULL DEFAULT 0,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
