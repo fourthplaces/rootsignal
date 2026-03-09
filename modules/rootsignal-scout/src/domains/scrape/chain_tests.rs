@@ -142,8 +142,6 @@ async fn linktree_page_discovers_outbound_links() {
         );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = web_query_source(query);
@@ -231,8 +229,6 @@ async fn page_creates_signal_wires_actors_and_records_evidence() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
@@ -280,8 +276,6 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
@@ -293,67 +287,6 @@ async fn dallas_signal_is_stored_by_minneapolis_scout() {
 
     // No geo-filter — all signals stored
     assert_eq!(ctx.stats.signals_stored, 1);
-}
-
-// ---------------------------------------------------------------------------
-// Chain Test 3: Multi-Source Corroboration
-//
-// 3 pages describe the same event → scrape_web_sources → 1 signal, corroborations,
-// evidence trails from each source.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn same_event_from_three_sites_produces_one_signal_with_two_corroborations() {
-    let urls = [
-        "https://org-a.org/events",
-        "https://org-b.org/calendar",
-        "https://nextdoor.com/post/xyz",
-    ];
-
-    let mut fetcher = MockFetcher::new();
-    let mut extractor = MockExtractor::new();
-
-    for url in &urls {
-        fetcher = fetcher.on_page(url, archived_page(url, "Community garden cleanup..."));
-        extractor = extractor.on_url(
-            url,
-            ExtractionResult {
-                nodes: vec![tension_at("Community Garden Cleanup", 44.9489, -93.2654)],
-                implied_queries: vec![],
-                resource_tags: Vec::new(),
-                signal_tags: Vec::new(),
-                raw_signal_count: 0,
-                rejected: Vec::new(),
-                schedules: Vec::new(),
-                author_actors: Vec::new(),
-            categories: Vec::new(),
-            source_ids: Vec::new(),
-            logs: vec![],
-            },
-        );
-    }
-
-    // All three signals get near-identical embeddings → vector dedup fires
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM).on_text(
-        "Community Garden Cleanup ",
-        vec![0.5f32; TEST_EMBEDDING_DIM],
-    ));
-
-    let store = Arc::new(MockSignalReader::new());
-
-    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
-
-    let source_nodes: Vec<_> = urls.iter().map(|u| page_source(u)).collect();
-    let sources: Vec<&_> = source_nodes.iter().collect();
-    let mut ctx = PipelineState::from_sources(&source_nodes);
-
-    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
-    scrape_and_dispatch(output, &mut ctx, &store).await;
-
-    // ONE signal, not three
-    assert_eq!(ctx.stats.signals_stored, 1, "should dedup to 1 signal");
-
-    // Corroborated by the other two
 }
 
 // ---------------------------------------------------------------------------
@@ -405,8 +338,6 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -479,8 +410,6 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -541,8 +470,6 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -623,8 +550,6 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -701,8 +626,6 @@ async fn unchanged_page_is_not_re_extracted_but_links_still_collected() {
     // fetch_and_extract sanitizes the URL before checking — pre-populate with sanitized URL
     let clean_url = sanitize_url(url);
     let store = Arc::new(MockSignalReader::new().with_processed_hash(&hash, &clean_url));
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
@@ -797,7 +720,6 @@ async fn linktree_discovery_feeds_second_scrape_that_produces_signal() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
     // --- Phase A: scrape the Linktree ---
     let deps = test_scrape_deps(store.clone(), extractor.clone(), fetcher.clone());
@@ -904,8 +826,6 @@ async fn gathering_with_rrule_creates_linked_schedule_node() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
@@ -947,8 +867,6 @@ async fn gathering_without_schedule_creates_no_schedule_node() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
@@ -1003,8 +921,6 @@ async fn schedule_text_only_fallback_creates_schedule_node() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
@@ -1061,8 +977,6 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = web_query_source(query);

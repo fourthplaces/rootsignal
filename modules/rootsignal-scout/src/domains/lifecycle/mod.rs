@@ -51,7 +51,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         // Branch on run modality
         let mut output = match state.run_scope.input_sources() {

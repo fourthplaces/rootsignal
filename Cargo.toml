@@ -86,7 +86,7 @@ typed-builder = "0.20"
 testcontainers = "0.23"
 
 # Event sourcing
-seesaw_core = "0.24.2"
+seesaw_core = "0.25.0"
 seesaw_utils = "0.24.0"
 
 # Local crates

@@ -26,12 +26,12 @@ fn is_expansion_completed(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -
 
 fn similarity_and_mapping_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
     if matches!(e, SynthesisEvent::SeverityInferred) { return false; }
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     state.similarity_computed && state.responses_mapped
 }
 
 fn describe_synthesis_progress(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     vec![
         Block::Checklist {
             label: "Synthesis".into(),
@@ -44,7 +44,7 @@ fn describe_synthesis_progress(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
 }
 
 fn describe_synthesis_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     vec![
         Block::Checklist {
             label: "Synthesis".into(),
@@ -104,7 +104,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (region, graph, budget) = match (
             state.run_scope.region(),
@@ -191,7 +191,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (region, graph) = match (state.run_scope.region(), deps.graph.as_deref()) {
             (Some(r), Some(g)) => (r, g),

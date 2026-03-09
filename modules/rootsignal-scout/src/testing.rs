@@ -299,6 +299,29 @@ impl MockSignalReader {
         self
     }
 
+    /// Add a source to the mock store (keyed by canonical_value).
+    pub fn add_source(self, source: SourceNode) -> Self {
+        self.inner
+            .lock()
+            .unwrap()
+            .sources
+            .insert(source.canonical_value.clone(), source);
+        self
+    }
+
+    /// Pre-populate an actor with its linked sources for list_all_actors.
+    pub fn with_actor(self, actor: ActorNode, sources: Vec<SourceNode>) -> Self {
+        let mut inner = self.inner.lock().unwrap();
+        let actor_id = actor.id;
+        inner.actor_by_canonical_key.insert(actor.canonical_key.clone(), actor_id);
+        for source in &sources {
+            inner.actor_sources.push((actor_id, source.id));
+        }
+        inner.actors.insert(actor_id, actor);
+        drop(inner);
+        self
+    }
+
     /// Pre-populate a processed content hash.
     pub fn with_processed_hash(self, hash: &str, url: &str) -> Self {
         self.inner
@@ -792,7 +815,15 @@ impl SignalReader for MockSignalReader {
         Ok(inner
             .actors
             .values()
-            .map(|a| (a.clone(), Vec::new()))
+            .map(|a| {
+                let linked: Vec<SourceNode> = inner
+                    .actor_sources
+                    .iter()
+                    .filter(|(aid, _)| *aid == a.id)
+                    .filter_map(|(_, sid)| inner.sources.values().find(|s| s.id == *sid).cloned())
+                    .collect();
+                (a.clone(), linked)
+            })
             .collect())
     }
 }
@@ -1460,6 +1491,65 @@ pub fn social_source(url: &str) -> SourceNode {
         rootsignal_common::SourceRole::Mixed,
         None,
     )
+}
+
+/// Build a SourceNode with a specific URL and canonical_key.
+pub fn make_source(url: &str, canonical_key: &str) -> SourceNode {
+    SourceNode::new(
+        canonical_key.to_string(),
+        canonical_value(url),
+        Some(url.to_string()),
+        rootsignal_common::DiscoveryMethod::Curated,
+        1.0,
+        rootsignal_common::SourceRole::Mixed,
+        None,
+    )
+}
+
+/// Build an ActorNode with an external_url for source claiming tests.
+pub fn actor_with_external_url(name: &str, canonical_key: &str, external_url: &str) -> ActorNode {
+    ActorNode {
+        id: Uuid::new_v4(),
+        name: name.to_string(),
+        actor_type: rootsignal_common::types::ActorType::Organization,
+        canonical_key: canonical_key.to_string(),
+        domains: vec![],
+        social_urls: vec![],
+        description: String::new(),
+        signal_count: 0,
+        first_seen: chrono::Utc::now(),
+        last_active: chrono::Utc::now(),
+        typical_roles: vec![],
+        bio: Some("A community org".to_string()),
+        external_url: Some(external_url.to_string()),
+        location_lat: None,
+        location_lng: None,
+        location_name: None,
+        discovery_depth: 0,
+    }
+}
+
+/// Build an ActorNode without an external_url.
+pub fn actor_without_external_url(name: &str, canonical_key: &str) -> ActorNode {
+    ActorNode {
+        id: Uuid::new_v4(),
+        name: name.to_string(),
+        actor_type: rootsignal_common::types::ActorType::Organization,
+        canonical_key: canonical_key.to_string(),
+        domains: vec![],
+        social_urls: vec![],
+        description: String::new(),
+        signal_count: 0,
+        first_seen: chrono::Utc::now(),
+        last_active: chrono::Utc::now(),
+        typical_roles: vec![],
+        bio: Some("A community org".to_string()),
+        external_url: None,
+        location_lat: None,
+        location_lng: None,
+        location_name: None,
+        discovery_depth: 0,
+    }
 }
 
 /// Build a minimal SourcesPrepared for tests.

@@ -27,7 +27,7 @@ fn should_promote_links(event: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) -> 
     if !event.is_completion() {
         return false;
     }
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     if state.collected_links.is_empty() {
         return false;
     }
@@ -42,7 +42,7 @@ fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngine
     if !event.is_completion() {
         return false;
     }
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     let result = state.tension_scrape_done() && !state.source_expansion_completed;
     ctx.logger.info(&format!(
         "expand_sources filter: has_plan={}, tension_done={}, expansion_done={}, tension_web={}, tension_social={}, result={}",
@@ -57,7 +57,7 @@ fn tension_done_expansion_pending(event: &ScrapeEvent, ctx: &Context<ScoutEngine
 }
 
 fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     let plan = state.source_plan.as_ref();
     let mut total = 0u32;
     let mut done = 0u32;
@@ -91,7 +91,7 @@ fn describe_promote_links_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
 }
 
 fn describe_expansion_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     let plan = state.source_plan.as_ref();
     let mut total = 0u32;
     let mut done = 0u32;
@@ -136,7 +136,7 @@ pub mod handlers {
         }
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let region_name = state.run_scope.region().map(|r| r.name.clone());
 
         let accepted = activities::domain_filter_gate::filter_discovered_sources(
@@ -162,7 +162,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let sources = bootstrap::seed_sources_if_empty(&state, deps).await?;
         if sources.is_empty() {
@@ -181,7 +181,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let result = link_promotion::promote_scraped_links(
             &state.collected_links,
@@ -217,7 +217,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (graph, budget) = match (deps.graph.as_deref(), deps.budget.as_ref()) {
             (Some(g), Some(b)) => (g, b),

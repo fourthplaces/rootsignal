@@ -1,56 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use uuid::Uuid;
-
     use rootsignal_common::canonical_value;
-    use rootsignal_common::types::{ActorNode, ActorType, ProfileSnapshot, SourceNode};
 
-    use crate::testing::{make_source, MockSignalReader};
+    use crate::testing::{actor_with_external_url, actor_without_external_url, make_source, MockSignalReader};
     use crate::domains::enrichment::activities::source_claimer;
-
-    fn actor_with_external_url(name: &str, canonical_key: &str, external_url: &str) -> ActorNode {
-        ActorNode {
-            id: Uuid::new_v4(),
-            name: name.to_string(),
-            actor_type: ActorType::Organization,
-            canonical_key: canonical_key.to_string(),
-            domains: vec![],
-            social_urls: vec![],
-            description: String::new(),
-            signal_count: 0,
-            first_seen: chrono::Utc::now(),
-            last_active: chrono::Utc::now(),
-            typical_roles: vec![],
-            bio: Some("A community org".to_string()),
-            external_url: Some(external_url.to_string()),
-            location_lat: None,
-            location_lng: None,
-            location_name: None,
-            discovery_depth: 0,
-        }
-    }
-
-    fn actor_without_external_url(name: &str, canonical_key: &str) -> ActorNode {
-        ActorNode {
-            id: Uuid::new_v4(),
-            name: name.to_string(),
-            actor_type: ActorType::Organization,
-            canonical_key: canonical_key.to_string(),
-            domains: vec![],
-            social_urls: vec![],
-            description: String::new(),
-            signal_count: 0,
-            first_seen: chrono::Utc::now(),
-            last_active: chrono::Utc::now(),
-            typical_roles: vec![],
-            bio: Some("A community org".to_string()),
-            external_url: None,
-            location_lat: None,
-            location_lng: None,
-            location_name: None,
-            discovery_depth: 0,
-        }
-    }
 
     // ---------------------------------------------------------------
     // Sub-problem A: external URL matches a known source
@@ -64,17 +17,16 @@ mod tests {
             "https://www.facebook.com/sanctuarysupplydepot",
         );
         let fb_ck = canonical_value("https://www.facebook.com/sanctuarysupplydepot");
-        let fb_source = make_source(&format!("https://www.facebook.com/sanctuarysupplydepot"), &fb_ck);
+        let fb_source = make_source("https://www.facebook.com/sanctuarysupplydepot", &fb_ck);
         let ig_source = make_source("https://www.instagram.com/sanctuarysupply", "instagram.com/sanctuarysupply");
 
         let store = MockSignalReader::new()
             .add_source(fb_source.clone())
             .add_source(ig_source.clone());
 
-        // Actor currently only linked to Instagram source
         let actors = vec![(actor.clone(), vec![ig_source])];
 
-        let result = source_claimer::claim_profile_sources(&store, &actors).await;
+        let result = source_claimer::claim_profile_sources(&store, &actors).await.unwrap();
 
         assert_eq!(result.link_events.len(), 1, "should link actor to the known Facebook source");
         let event = &result.link_events[0];
@@ -103,10 +55,9 @@ mod tests {
             .add_source(fb_source.clone())
             .add_source(ig_source.clone());
 
-        // Actor already linked to BOTH sources
         let actors = vec![(actor, vec![ig_source, fb_source])];
 
-        let result = source_claimer::claim_profile_sources(&store, &actors).await;
+        let result = source_claimer::claim_profile_sources(&store, &actors).await.unwrap();
 
         assert!(result.link_events.is_empty(), "should not re-link an already-linked source");
         assert!(result.new_sources.is_empty());
@@ -125,13 +76,12 @@ mod tests {
         );
         let ig_source = make_source("https://www.instagram.com/sanctuarysupply", "instagram.com/sanctuarysupply");
 
-        // No source exists for sanctuarysupply.org
         let store = MockSignalReader::new()
             .add_source(ig_source.clone());
 
         let actors = vec![(actor.clone(), vec![ig_source])];
 
-        let result = source_claimer::claim_profile_sources(&store, &actors).await;
+        let result = source_claimer::claim_profile_sources(&store, &actors).await.unwrap();
 
         assert_eq!(result.new_sources.len(), 1, "should promote external URL as new source");
         let new_source = &result.new_sources[0];
@@ -164,7 +114,7 @@ mod tests {
 
         let actors = vec![(actor, vec![ig_source])];
 
-        let result = source_claimer::claim_profile_sources(&store, &actors).await;
+        let result = source_claimer::claim_profile_sources(&store, &actors).await.unwrap();
 
         assert!(result.link_events.is_empty());
         assert!(result.new_sources.is_empty());
@@ -172,7 +122,6 @@ mod tests {
 
     #[tokio::test]
     async fn external_url_same_as_own_source_ignored() {
-        // Actor's external_url points to their own Instagram — nothing to claim
         let actor = actor_with_external_url(
             "Sanctuary Supply",
             "instagram.com/sanctuarysupply",
@@ -185,9 +134,64 @@ mod tests {
 
         let actors = vec![(actor, vec![ig_source])];
 
-        let result = source_claimer::claim_profile_sources(&store, &actors).await;
+        let result = source_claimer::claim_profile_sources(&store, &actors).await.unwrap();
 
         assert!(result.link_events.is_empty(), "should not re-link own source");
         assert!(result.new_sources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn batch_processes_multiple_actors_independently() {
+        let actor_a = actor_with_external_url(
+            "Sanctuary Supply",
+            "instagram.com/sanctuarysupply",
+            "https://www.sanctuarysupply.org",
+        );
+        let actor_b = actor_without_external_url(
+            "Quiet Collective",
+            "instagram.com/quietcollective",
+        );
+        let actor_c = actor_with_external_url(
+            "Midway Mutual Aid",
+            "instagram.com/midwaymutualaid",
+            "https://www.facebook.com/midwaymutualaid",
+        );
+
+        let ig_a = make_source("https://www.instagram.com/sanctuarysupply", "instagram.com/sanctuarysupply");
+        let ig_b = make_source("https://www.instagram.com/quietcollective", "instagram.com/quietcollective");
+        let ig_c = make_source("https://www.instagram.com/midwaymutualaid", "instagram.com/midwaymutualaid");
+        let fb_ck = canonical_value("https://www.facebook.com/midwaymutualaid");
+        let fb_c = make_source("https://www.facebook.com/midwaymutualaid", &fb_ck);
+
+        let store = MockSignalReader::new()
+            .add_source(ig_a.clone())
+            .add_source(ig_b.clone())
+            .add_source(ig_c.clone())
+            .add_source(fb_c.clone());
+
+        let actors = vec![
+            (actor_a.clone(), vec![ig_a]),
+            (actor_b, vec![ig_b]),
+            (actor_c.clone(), vec![ig_c]),
+        ];
+
+        let result = source_claimer::claim_profile_sources(&store, &actors).await.unwrap();
+
+        // actor_a: unknown URL → new source + link
+        // actor_b: no external_url → skip
+        // actor_c: known FB source → link only
+        assert_eq!(result.link_events.len(), 2);
+        assert_eq!(result.new_sources.len(), 1, "only actor_a's unknown URL becomes a new source");
+
+        let c_event = result.link_events.iter().find(|e| match e {
+            rootsignal_common::events::WorldEvent::ActorLinkedToSource { actor_id, .. } => *actor_id == actor_c.id,
+            _ => false,
+        }).expect("actor_c should have a link event");
+        match c_event {
+            rootsignal_common::events::WorldEvent::ActorLinkedToSource { source_id, .. } => {
+                assert_eq!(*source_id, fb_c.id);
+            }
+            _ => unreachable!(),
+        }
     }
 }

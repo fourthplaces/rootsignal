@@ -6,7 +6,11 @@ pub mod link_promoter;
 pub mod profile_enrichment;
 pub mod quality;
 pub mod signal_reviewer;
+pub mod source_claimer;
 pub mod universe_check;
+
+#[cfg(test)]
+mod source_claimer_tests;
 
 use std::collections::{HashMap, HashSet};
 

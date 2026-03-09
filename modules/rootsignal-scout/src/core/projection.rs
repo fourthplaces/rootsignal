@@ -232,7 +232,7 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                     0
                 };
 
-                let (_, state) = ctx.singleton::<PipelineState>();
+                let state = ctx.aggregate::<PipelineState>().curr;
                 let mut final_stats = state.stats.clone();
                 final_stats.spent_cents = spent_cents;
                 info!("{}", final_stats);

@@ -45,7 +45,7 @@ fn signal_not_investigated(e: &WorldEvent, ctx: &Context<ScoutEngineDeps>) -> bo
         Some(id) => id,
         None => return false,
     };
-    let (_, lifecycle) = ctx.aggregate::<SignalLifecycle>(signal_id);
+    let lifecycle = ctx.aggregate_of::<SignalLifecycle>(signal_id).curr;
     !lifecycle.investigated
 }
 
@@ -54,7 +54,7 @@ fn signal_not_concern_linked(e: &WorldEvent, ctx: &Context<ScoutEngineDeps>) -> 
         Some(id) => id,
         None => return false,
     };
-    let (_, lifecycle) = ctx.aggregate::<SignalLifecycle>(signal_id);
+    let lifecycle = ctx.aggregate_of::<SignalLifecycle>(signal_id).curr;
     !lifecycle.concern_linked
 }
 
@@ -63,7 +63,7 @@ fn concern_not_response_scouted(e: &WorldEvent, ctx: &Context<ScoutEngineDeps>) 
         WorldEvent::ConcernRaised { id, .. } => *id,
         _ => return false,
     };
-    let (_, lifecycle) = ctx.aggregate::<ConcernLifecycle>(concern_id);
+    let lifecycle = ctx.aggregate_of::<ConcernLifecycle>(concern_id).curr;
     !lifecycle.responses_scouted
 }
 
@@ -72,7 +72,7 @@ fn concern_not_gathering_scouted(e: &WorldEvent, ctx: &Context<ScoutEngineDeps>)
         WorldEvent::ConcernRaised { id, .. } => *id,
         _ => return false,
     };
-    let (_, lifecycle) = ctx.aggregate::<ConcernLifecycle>(concern_id);
+    let lifecycle = ctx.aggregate_of::<ConcernLifecycle>(concern_id).curr;
     !lifecycle.gatherings_scouted
 }
 
@@ -113,7 +113,7 @@ pub mod handlers {
         let mut out = Events::new();
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (region, graph, budget, archive) = match (
             state.run_scope.region(),
@@ -199,7 +199,7 @@ pub mod handlers {
         let mut out = Events::new();
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (region, graph, budget, archive) = match (
             state.run_scope.region(),
@@ -396,7 +396,7 @@ pub mod handlers {
         let mut out = Events::new();
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (region, graph, budget, archive) = match (
             state.run_scope.region(),
@@ -585,7 +585,7 @@ pub mod handlers {
         let mut out = Events::new();
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (region, graph, budget, archive) = match (
             state.run_scope.region(),
@@ -766,7 +766,7 @@ pub mod handlers {
         event: CuriosityEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let region = state.run_scope.region();
 
         let result = match materializer::materialize(event, region) {

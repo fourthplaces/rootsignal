@@ -18,7 +18,7 @@ fn is_severity_inferred(e: &SynthesisEvent, _ctx: &Context<ScoutEngineDeps>) -> 
 }
 
 fn describe_weaving_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     vec![
         Block::Checklist {
             label: "Synthesis".into(),
@@ -42,7 +42,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let mut all_events = activities::weave_situations(&deps, state.run_scope.region()).await;
         all_events.push(SituationWeavingEvent::SituationsWeaved);
         Ok(all_events)

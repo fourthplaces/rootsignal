@@ -48,7 +48,7 @@ pub mod handlers {
         }
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let mut all_events = Events::new();
         let mut has_created = false;
         let mut total_created = 0u32;

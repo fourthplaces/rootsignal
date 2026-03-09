@@ -167,58 +167,6 @@ async fn new_signal_dispatches_full_event_chain() {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-source match via dedup — corroboration events
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn cross_source_match_dispatches_citation_and_scoring_events() {
-    let store = Arc::new(MockSignalReader::new());
-    // Pre-populate: "Community Dinner" exists at a DIFFERENT source
-    store.insert_signal(
-        "Community Dinner",
-        NodeType::Concern,
-        "https://other-source.org/events",
-    );
-    let (engine, captured, _scope) = test_engine_with_capture_for_store(
-        store.clone() as Arc<dyn crate::traits::SignalReader>,
-        Some(mpls_region()),
-    );
-
-    let batch = ExtractedBatch {
-        content: "page content".to_string(),
-        nodes: vec![tension_at("Community Dinner", 44.95, -93.27)],
-        resource_tags: HashMap::new(),
-        signal_tags: HashMap::new(),
-        author_actors: HashMap::new(),
-        source_id: None,
-    };
-
-    engine
-        .emit(scrape_completed_with_batch(
-            "https://example.org/events",
-            "example.org",
-            batch,
-        ))
-        .settled()
-        .await
-        .unwrap();
-
-    // Reducer counted the dedup
-    let state = engine.singleton::<PipelineState>();
-    assert_eq!(state.stats.signals_deduplicated, 1);
-
-    let names = event_names(&captured);
-    // Dedup emits CitationPublished + ObservationCorroborated + CorroborationScored directly
-    assert!(names.contains(&"citation_published".to_string()), "expected CitationPublished, got: {names:?}");
-    assert!(names.contains(&"observation_corroborated".to_string()), "expected ObservationCorroborated, got: {names:?}");
-    assert!(names.contains(&"corroboration_scored".to_string()), "expected CorroborationScored, got: {names:?}");
-
-    // Corroborated verdict
-    let vs = captured_verdicts(&captured);
-    assert!(vs.iter().any(|v| matches!(v, DedupOutcome::Corroborated { .. })));
-}
-
-// ---------------------------------------------------------------------------
 // Same-source reencounter via dedup — no freshness events
 // ---------------------------------------------------------------------------
 
@@ -831,6 +779,7 @@ async fn actor_location_emits_events_on_response_complete() {
         location_lat: None,
         location_lng: None,
         location_name: None,
+        external_url: None,
         discovery_depth: 0,
     };
     store.upsert_actor(&actor).await.unwrap();

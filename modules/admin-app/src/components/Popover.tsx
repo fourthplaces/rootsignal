@@ -1,4 +1,4 @@
-import { useState, useCallback, type ReactNode, type RefCallback } from "react";
+import { useState, useCallback, useEffect, type ReactNode, type RefCallback } from "react";
 import {
   useFloating,
   autoUpdate,
@@ -79,12 +79,15 @@ export function VirtualPopover({ anchor, open, onClose, placement = "bottom-star
   const dismiss = useDismiss(context);
   const { getFloatingProps } = useInteractions([dismiss]);
 
-  // Sync virtual reference to anchor rect
-  if (anchor) {
-    refs.setReference({
-      getBoundingClientRect: () => anchor,
-    });
-  }
+  // Sync virtual reference to anchor rect — must be in useEffect
+  // to avoid triggering floating-ui state updates during render.
+  useEffect(() => {
+    if (anchor) {
+      refs.setReference({
+        getBoundingClientRect: () => anchor,
+      });
+    }
+  }, [anchor, refs]);
 
   if (!open || !anchor) return null;
 

@@ -30,7 +30,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (graph, budget) = match (deps.graph.as_deref(), deps.budget.as_ref()) {
             (Some(g), Some(b)) => (g, b),
@@ -75,7 +75,7 @@ pub mod handlers {
         let region_name = state.run_scope.region().map(|r| r.name.as_str());
         let expansion = Expansion::new(graph, &*deps.embedder);
 
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let output = activities::expand_and_discover(
             &expansion,
             Some(deps),

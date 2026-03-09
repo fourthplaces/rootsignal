@@ -9,7 +9,6 @@ use crate::core::extractor::{ExtractionResult, ResourceRole, ResourceTag};
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::core::aggregate::PipelineState;
 use crate::domains::scrape::activities::ScrapeOutput;
-use crate::infra::embedder::TextEmbedder;
 use crate::testing::*;
 
 use rootsignal_common::types::SourceNode;
@@ -35,48 +34,24 @@ async fn dispatch_events(
     ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
 ) {
-    dispatch_events_with(events, ctx, store, None).await;
-}
-
-/// Dispatch collected events with an optional custom embedder for dedup.
-async fn dispatch_events_with(
-    events: seesaw_core::Events,
-    ctx: &mut PipelineState,
-    store: &Arc<MockSignalReader>,
-    embedder: Option<Arc<dyn TextEmbedder>>,
-) {
     let store_arc = store.clone() as Arc<dyn SignalReader>;
-    let engine = match embedder {
-        Some(e) => test_engine_for_store_with_embedder(store_arc, e),
-        None => test_engine_for_store(store_arc),
-    };
+    let engine = test_engine_for_store(store_arc);
     for output in events.into_outputs() {
         let _ = engine.emit_output(output).settled().await;
     }
-    // Sync engine stats back to ctx so test assertions work.
     let state = engine.singleton::<crate::core::aggregate::PipelineState>();
     ctx.stats = state.stats.clone();
 }
 
 /// Take events from scrape output, apply state, and dispatch through engine.
-async fn scrape_and_dispatch(
-    output: ScrapeOutput,
-    ctx: &mut PipelineState,
-    store: &Arc<MockSignalReader>,
-) {
-    scrape_and_dispatch_with(output, ctx, store, None).await;
-}
-
-/// Take events from scrape output, apply state, and dispatch with custom embedder.
 ///
 /// Mirrors what the scrape handler does: dispatches freshness events, then
 /// constructs a WebScrapeCompleted carrying extracted_batches so the dedup
 /// handler triggers and processes new signals through the engine.
-async fn scrape_and_dispatch_with(
+async fn scrape_and_dispatch(
     output: ScrapeOutput,
     ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
-    embedder: Option<Arc<dyn TextEmbedder>>,
 ) {
     use crate::domains::scrape::events::ScrapeEvent;
 
@@ -85,17 +60,12 @@ async fn scrape_and_dispatch_with(
     let extracted_batches = std::mem::take(&mut output.extracted_batches);
     ctx.apply_scrape_output(output);
 
-    // Build engine and dispatch scrape events (freshness, etc.)
     let store_arc = store.clone() as Arc<dyn SignalReader>;
-    let engine = match embedder {
-        Some(e) => test_engine_for_store_with_embedder(store_arc, e),
-        None => test_engine_for_store(store_arc),
-    };
+    let engine = test_engine_for_store(store_arc);
     for out in events.into_outputs() {
         let _ = engine.emit_output(out).settled().await;
     }
 
-    // Dispatch WebScrapeCompleted with extracted batches — triggers dedup handler
     if !extracted_batches.is_empty() {
         let _ = engine
             .emit(ScrapeEvent::from(TestWebScrapeCompleted::builder()
@@ -106,7 +76,6 @@ async fn scrape_and_dispatch_with(
             .await;
     }
 
-    // Sync engine stats back to ctx so test assertions work.
     let state = engine.singleton::<PipelineState>();
     ctx.stats = state.stats.clone();
 }
@@ -157,8 +126,6 @@ async fn page_with_content_produces_signal() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://localorg.org/events");
@@ -194,8 +161,6 @@ async fn empty_page_produces_nothing() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://empty.org");
@@ -215,8 +180,6 @@ async fn unreachable_page_does_not_crash() {
     let extractor = MockExtractor::new();
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://doesnt-exist.org");
@@ -268,8 +231,6 @@ async fn page_with_multiple_issues_produces_multiple_signals() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://news.org/article");
@@ -314,8 +275,6 @@ async fn same_title_extracted_twice_produces_one_signal() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://news.org/dupe");
@@ -370,8 +329,6 @@ async fn all_signals_stored_regardless_of_region() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://news.org/far-away");
@@ -412,8 +369,6 @@ async fn blocked_url_produces_nothing() {
     );
 
     let store = Arc::new(MockSignalReader::new().block_url("blocked.org"));
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://blocked.org/page");
@@ -448,8 +403,6 @@ async fn unchanged_content_is_not_re_extracted() {
 
     let store =
         Arc::new(MockSignalReader::new().with_processed_hash(&hash, "https://news.org/same"));
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://news.org/same");
@@ -500,8 +453,6 @@ async fn outbound_links_on_page_are_collected() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://linktree.org");
@@ -621,8 +572,6 @@ async fn scrape_then_promote_creates_new_sources() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://hub.org");
@@ -662,8 +611,6 @@ async fn unreachable_page_produces_no_signals() {
     let extractor = MockExtractor::new();
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://unreachable.org/page");
@@ -702,8 +649,6 @@ async fn page_with_no_extractable_content_produces_nothing() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/empty-extract");
@@ -747,8 +692,6 @@ async fn database_write_failure_does_not_crash() {
     );
 
     let store = Arc::new(MockSignalReader::new().failing_creates());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/store-fail");
@@ -793,8 +736,6 @@ async fn blocked_url_produces_no_signals() {
     );
 
     let store = Arc::new(MockSignalReader::new().block_url("spam-site.org"));
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://spam-site.org/page");
@@ -841,8 +782,6 @@ async fn all_signal_types_are_stored() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/mixed-types");
@@ -889,8 +828,6 @@ async fn unicode_and_emoji_titles_are_preserved() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/unicode");
@@ -929,8 +866,6 @@ async fn signal_at_zero_zero_is_still_stored() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/null-island");
@@ -958,8 +893,6 @@ async fn broken_extraction_skips_page_gracefully() {
     let extractor = MockExtractor::new();
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/extract-fail");
@@ -1004,8 +937,6 @@ async fn blank_author_name_does_not_create_actor() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/ws-author");
@@ -1061,8 +992,6 @@ async fn signal_with_resource_needs_gets_resource_edge() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/resources");
@@ -1080,8 +1009,6 @@ async fn zero_sources_produces_nothing() {
     let fetcher = MockFetcher::new();
     let extractor = MockExtractor::new();
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let sources: Vec<&SourceNode> = vec![];
@@ -1109,8 +1036,6 @@ async fn outbound_links_collected_despite_extraction_failure() {
     let extractor = MockExtractor::new();
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/links-but-error");
@@ -1146,8 +1071,6 @@ async fn empty_social_account_produces_nothing() {
     let extractor = MockExtractor::new();
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -1173,8 +1096,6 @@ async fn image_only_posts_produce_no_signals() {
     let extractor = MockExtractor::new();
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -1207,8 +1128,6 @@ async fn empty_markdown_page_still_collects_outbound_links() {
     let extractor = MockExtractor::new();
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/empty-md");
@@ -1264,8 +1183,6 @@ async fn mixed_outcome_pages_each_handled_independently() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let s1 = page_source("https://good.org/events");
@@ -1294,8 +1211,6 @@ async fn social_scrape_failure_does_not_crash() {
     let extractor = MockExtractor::new();
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -1343,8 +1258,6 @@ async fn batch_title_dedup_is_case_insensitive() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/case-dedup");
@@ -1391,8 +1304,6 @@ async fn web_source_without_actor_stores_content_location_only() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://localorg.org/events");
@@ -1430,8 +1341,6 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -1480,8 +1389,6 @@ async fn explicit_content_location_not_overwritten_by_actor() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -1540,8 +1447,6 @@ async fn new_actor_inherits_parent_depth_plus_one() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -1597,8 +1502,6 @@ async fn bootstrap_actor_gets_depth_zero() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -1666,8 +1569,6 @@ async fn rss_pub_date_becomes_published_at_when_llm_omits_it() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(feed_url);
@@ -1727,8 +1628,6 @@ async fn llm_published_at_not_overwritten_by_rss_pub_date() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(feed_url);
@@ -1771,8 +1670,6 @@ async fn social_published_at_becomes_published_at_fallback() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -1822,8 +1719,6 @@ async fn ocean_coordinates_store_ecological_signal() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://news.org/oil-spill");
@@ -1872,8 +1767,6 @@ async fn antarctic_coordinates_store_signal() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://science.org/antarctic");
@@ -1924,8 +1817,6 @@ async fn out_of_bounds_coordinates_do_not_crash_pipeline() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/hallucinated-geo");
@@ -1985,8 +1876,6 @@ async fn environmental_disaster_produces_all_signal_types() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://news.org/hurricane-response");
@@ -2044,8 +1933,6 @@ async fn hallucinated_future_date_does_not_crash() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/future-date");
@@ -2092,8 +1979,6 @@ async fn epoch_zero_date_does_not_crash() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/epoch-date");
@@ -2143,8 +2028,6 @@ async fn extremely_long_title_survives_pipeline() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/long-title");
@@ -2215,8 +2098,6 @@ async fn same_signal_from_two_sources_corroborates() {
         );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     // Process source A first
@@ -2301,8 +2182,6 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -2351,8 +2230,6 @@ async fn minimum_viable_signal_with_no_optional_fields() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/bare-signal");
@@ -2403,8 +2280,6 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -2447,8 +2322,6 @@ async fn aggregator_source_author_does_not_create_actor_node() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://aggregator.com/news");
@@ -2491,8 +2364,6 @@ async fn mentioned_actors_do_not_create_actor_nodes() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/mentions");
@@ -2537,8 +2408,6 @@ async fn signal_has_produced_by_edge_to_its_source() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://localorg.org/events");
@@ -2576,8 +2445,6 @@ async fn social_signal_has_produced_by_edge() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = social_source(ig_url);
@@ -2674,6 +2541,7 @@ fn test_actor(name: &str) -> rootsignal_common::ActorNode {
         location_lat: None,
         location_lng: None,
         location_name: None,
+        external_url: None,
         discovery_depth: 0,
     }
 }
@@ -3284,8 +3152,6 @@ async fn low_confidence_resource_tag_does_not_create_edge() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/low-conf");
@@ -3351,8 +3217,6 @@ async fn resource_roles_wire_to_correct_edge_types() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/multi-role");
@@ -3415,8 +3279,6 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source("https://example.com/multi-res");
@@ -3427,191 +3289,6 @@ async fn multiple_resources_on_one_signal_all_create_edges() {
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
-}
-
-// ---------------------------------------------------------------------------
-// Semantic dedup via embedding cache — boundary tests
-//
-// MOCK → scrape_web_sources → OUTPUT
-// Tests that the in-memory EmbeddingCache catches cross-source duplicates
-// using vector similarity when titles differ.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn cross_source_high_similarity_signals_corroborate_via_cache() {
-    // Two sources report the same event with different titles.
-    // Embeddings have cosine similarity ~0.95 (above 0.92 cross-source threshold).
-    // The cache should catch this and corroborate instead of creating two signals.
-
-    let fetcher = MockFetcher::new()
-        .on_page(
-            "https://source-a.org/page",
-            archived_page("https://source-a.org/page", "Alpha content"),
-        )
-        .on_page(
-            "https://source-b.org/page",
-            archived_page("https://source-b.org/page", "Beta content"),
-        );
-
-    let extractor = MockExtractor::new()
-        .on_url(
-            "https://source-a.org/page",
-            ExtractionResult {
-                nodes: vec![tension_at("Food Shelf Opening", 44.975, -93.270)],
-                implied_queries: vec![],
-                resource_tags: vec![],
-                signal_tags: vec![],
-                raw_signal_count: 0,
-                rejected: Vec::new(),
-                schedules: Vec::new(),
-                author_actors: Vec::new(),
-                categories: Vec::new(),
-            source_ids: Vec::new(),
-            logs: vec![],
-            },
-        )
-        .on_url(
-            "https://source-b.org/page",
-            ExtractionResult {
-                nodes: vec![tension_at("New Food Shelf Launch", 44.975, -93.270)],
-                implied_queries: vec![],
-                resource_tags: vec![],
-                signal_tags: vec![],
-                raw_signal_count: 0,
-                rejected: Vec::new(),
-                schedules: Vec::new(),
-                author_actors: Vec::new(),
-                categories: Vec::new(),
-            source_ids: Vec::new(),
-            logs: vec![],
-            },
-        );
-
-    // Build unit vectors with known cosine similarity ~0.95.
-    // vec_a = [1, 0, 0, ..., 0]
-    // vec_b = [0.95, 0.3122, 0, ..., 0]  → cos(a,b) = 0.95 / (1.0 * sqrt(0.9025 + 0.0975)) = 0.95
-    let mut vec_a = vec![0.0f32; TEST_EMBEDDING_DIM];
-    vec_a[0] = 1.0;
-
-    let mut vec_b = vec![0.0f32; TEST_EMBEDDING_DIM];
-    vec_b[0] = 0.95;
-    vec_b[1] = 0.3122; // sqrt(1 - 0.95^2) ≈ 0.3122, so vec_b is unit-length
-                       // Normalize vec_b precisely
-    let norm_b: f32 = vec_b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    for v in vec_b.iter_mut() {
-        *v /= norm_b;
-    }
-
-    let embedder = Arc::new(
-        FixedEmbedder::new(TEST_EMBEDDING_DIM)
-            .on_text("Food Shelf Opening Alpha content", vec_a.clone())
-            .on_text("New Food Shelf Launch Beta content", vec_b),
-    );
-
-    let store = Arc::new(MockSignalReader::new());
-
-    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
-
-    let source_a = page_source("https://source-a.org/page");
-    let source_b = page_source("https://source-b.org/page");
-    let sources: Vec<&SourceNode> = vec![&source_a, &source_b];
-    let mut ctx = PipelineState::from_sources(&[source_a.clone(), source_b.clone()]);
-
-    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
-    scrape_and_dispatch_with(output, &mut ctx, &store, Some(embedder)).await;
-
-    assert_eq!(
-        ctx.stats.signals_stored, 1,
-        "second signal should corroborate the first, not create a new one"
-    );
-}
-
-#[tokio::test]
-async fn cross_source_below_threshold_similarity_creates_separate_signals() {
-    // Two sources report different events with moderate embedding similarity.
-    // Similarity ~0.88 is above 0.85 entry threshold but below 0.92 cross-source threshold.
-    // Both signals should be created independently.
-
-    let fetcher = MockFetcher::new()
-        .on_page(
-            "https://alpha.org/page",
-            archived_page("https://alpha.org/page", "Alpha info"),
-        )
-        .on_page(
-            "https://beta.org/page",
-            archived_page("https://beta.org/page", "Beta info"),
-        );
-
-    let extractor = MockExtractor::new()
-        .on_url(
-            "https://alpha.org/page",
-            ExtractionResult {
-                nodes: vec![tension_at("Food Pantry Hours", 44.975, -93.270)],
-                implied_queries: vec![],
-                resource_tags: vec![],
-                signal_tags: vec![],
-                raw_signal_count: 0,
-                rejected: Vec::new(),
-                schedules: Vec::new(),
-                author_actors: Vec::new(),
-                categories: Vec::new(),
-            source_ids: Vec::new(),
-            logs: vec![],
-            },
-        )
-        .on_url(
-            "https://beta.org/page",
-            ExtractionResult {
-                nodes: vec![tension_at("Pantry Schedule Info", 44.975, -93.270)],
-                implied_queries: vec![],
-                resource_tags: vec![],
-                signal_tags: vec![],
-                raw_signal_count: 0,
-                rejected: Vec::new(),
-                schedules: Vec::new(),
-                author_actors: Vec::new(),
-                categories: Vec::new(),
-            source_ids: Vec::new(),
-            logs: vec![],
-            },
-        );
-
-    // Build unit vectors with cosine similarity ~0.88.
-    // vec_a = [1, 0, ..., 0]
-    // vec_b = [0.88, 0.4750, ..., 0]  → cos sim = 0.88
-    let mut vec_a = vec![0.0f32; TEST_EMBEDDING_DIM];
-    vec_a[0] = 1.0;
-
-    let mut vec_b = vec![0.0f32; TEST_EMBEDDING_DIM];
-    vec_b[0] = 0.88;
-    vec_b[1] = 0.4750; // sqrt(1 - 0.88^2) ≈ 0.4750
-    let norm_b: f32 = vec_b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    for v in vec_b.iter_mut() {
-        *v /= norm_b;
-    }
-
-    let embedder = Arc::new(
-        FixedEmbedder::new(TEST_EMBEDDING_DIM)
-            .on_text("Food Pantry Hours Alpha info", vec_a)
-            .on_text("Pantry Schedule Info Beta info", vec_b),
-    );
-
-    let store = Arc::new(MockSignalReader::new());
-
-    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
-
-    let source_a = page_source("https://alpha.org/page");
-    let source_b = page_source("https://beta.org/page");
-    let sources: Vec<&SourceNode> = vec![&source_a, &source_b];
-    let mut ctx = PipelineState::from_sources(&[source_a.clone(), source_b.clone()]);
-
-    let output = super::activities::web_scrape::scrape_web_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts).await;
-    scrape_and_dispatch_with(output, &mut ctx, &store, Some(embedder)).await;
-
-    assert_eq!(
-        ctx.stats.signals_stored, 2,
-        "both signals should be created (similarity below cross-source threshold)"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3675,8 +3352,6 @@ async fn topic_discovery_collects_mentions_only_from_signal_producing_authors() 
         );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let mut ctx = PipelineState::from_sources(&[]);
@@ -3756,7 +3431,6 @@ async fn resolve_web_urls_collects_search_result_urls() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
@@ -3780,7 +3454,6 @@ async fn resolve_web_urls_records_api_errors() {
     // MockFetcher with no search configured → returns Err
     let fetcher = MockFetcher::new();
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
@@ -3802,7 +3475,6 @@ async fn resolve_web_urls_records_api_errors() {
 async fn resolve_web_urls_includes_page_source_urls() {
     let fetcher = MockFetcher::new();
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
@@ -3847,8 +3519,6 @@ async fn fetch_and_extract_produces_signals_and_stats() {
     );
 
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
-
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
 
     let source = page_source(url);
@@ -3876,7 +3546,6 @@ async fn fetch_and_extract_produces_signals_and_stats() {
 async fn fetch_and_extract_with_empty_urls_returns_empty() {
     let fetcher = MockFetcher::new();
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
@@ -3904,7 +3573,6 @@ async fn fetch_and_extract_counts_failed_urls() {
     // MockFetcher with no page configured → returns Err
     let fetcher = MockFetcher::new();
     let store = Arc::new(MockSignalReader::new());
-    let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
     let extractor = MockExtractor::new();
 
     let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));

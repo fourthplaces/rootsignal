@@ -160,6 +160,104 @@ async fn empty_batch_produces_empty_result() {
     assert!(result.created.is_empty());
 }
 
+#[tokio::test]
+async fn citation_nodes_in_batch_are_skipped() {
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let citation = rootsignal_common::Node::Citation(rootsignal_common::CitationNode {
+        id: Uuid::new_v4(),
+        source_url: "https://example.com".to_string(),
+        retrieved_at: chrono::Utc::now(),
+        content_hash: "abc".to_string(),
+        snippet: None,
+        relevance: None,
+        confidence: None,
+        channel_type: None,
+    });
+
+    let result = run_dedup(
+        "https://example.org/events",
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![
+                citation,
+                tension_at("Real Signal", 44.95, -93.27),
+            ],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert_eq!(count_created(&result), 1);
+    assert_eq!(result.created[0].node.title(), "Real Signal");
+}
+
+#[tokio::test]
+async fn signal_without_url_falls_back_to_batch_url_for_matching() {
+    let batch_url = "https://example.org/events";
+    let store = Arc::new(MockSignalReader::new());
+    store.insert_signal("Old Signal", NodeType::Concern, batch_url);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let result = run_dedup(
+        batch_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![tension_at("Different Title", 44.95, -93.27)],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert_eq!(count_refreshed(&result), 1, "node with no URL should match via batch URL");
+    assert!(result.created.is_empty());
+}
+
+#[tokio::test]
+async fn all_signals_matching_produces_no_creates() {
+    let store = Arc::new(MockSignalReader::new());
+    let source_url = "https://www.instagram.com/local_org";
+    let source_ck = rootsignal_common::canonical_value(source_url);
+    store.insert_signal_from_source("A", NodeType::Concern, "https://www.instagram.com/p/AAA", &source_ck);
+    store.insert_signal_from_source("B", NodeType::Concern, "https://www.instagram.com/p/BBB", &source_ck);
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let result = run_dedup(
+        source_url,
+        ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![
+                tension_with_url("A updated", 44.93, -93.26, "https://www.instagram.com/p/AAA"),
+                tension_with_url("B updated", 44.95, -93.27, "https://www.instagram.com/p/BBB"),
+            ],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert_eq!(count_refreshed(&result), 2);
+    assert!(result.created.is_empty(), "no new signals should be created");
+}
+
 // ---------------------------------------------------------------------------
 // Actor race condition: same author in batch
 // ---------------------------------------------------------------------------

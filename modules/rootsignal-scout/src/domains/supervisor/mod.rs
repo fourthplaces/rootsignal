@@ -27,7 +27,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let mut out = events![SupervisorEvent::SupervisionCompleted];
         activities::supervise(&deps, state.run_scope.region(), &mut out).await;
         Ok(out)

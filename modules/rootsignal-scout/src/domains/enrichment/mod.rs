@@ -3,6 +3,8 @@ pub mod events;
 
 #[cfg(test)]
 mod completion_tests;
+#[cfg(test)]
+mod source_claim_integration_tests;
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -22,7 +24,7 @@ use crate::domains::signals::events::SignalEvent;
 // ── Filters ──
 
 fn enrichment_gate_ready(ctx: &Context<ScoutEngineDeps>) -> bool {
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     state.review_complete() && state.response_scrape_done() && !state.enrichment_ready
 }
 
@@ -88,7 +90,7 @@ pub mod handlers {
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let mut all_events = Events::new();
 
         // Mark consumed pins from source plan
@@ -101,34 +103,36 @@ pub mod handlers {
             all_events.push(SystemEvent::PinsConsumed { pin_ids: consumed_pin_ids });
         }
 
-        // Score signal diversity
+        // Score signal diversity + compute per-actor signal counts
         if let Some(graph) = deps.graph.as_deref() {
-            let metrics = activities::diversity::compute_diversity_scores(graph, &[]).await;
+            let (metrics, stats) = tokio::join!(
+                activities::diversity::compute_diversity_scores(graph, &[]),
+                activities::actor_stats::compute_actor_stats(graph),
+            );
             if !metrics.is_empty() {
                 all_events.push(SystemEvent::SignalDiversityComputed { metrics });
             }
-        }
-
-        // Compute per-actor signal counts
-        if let Some(graph) = deps.graph.as_deref() {
-            let stats = activities::actor_stats::compute_actor_stats(graph).await;
             if !stats.is_empty() {
                 all_events.push(SystemEvent::ActorStatsComputed { stats });
             }
         }
 
-        // Triangulate actor locations from signal evidence
+        // Triangulate actor locations + fetch profiles concurrently
         if let Ok(actors) = deps.store.list_all_actors().await {
             if !actors.is_empty() {
-                for update in activities::actor_location::triangulate_all_actors(&*deps.store, &actors).await {
+                let location_fut = activities::actor_location::triangulate_all_actors(&*deps.store, &actors);
+                let profile_fut = async {
+                    match deps.fetcher.as_deref() {
+                        Some(fetcher) => activities::profile_enrichment::enrich_actor_profiles(fetcher, &actors).await,
+                        None => vec![],
+                    }
+                };
+                let (location_updates, profile_events) = tokio::join!(location_fut, profile_fut);
+                for update in location_updates {
                     all_events.push(actor_location_event(update));
                 }
-
-                // Fetch profiles for actors with social sources but no bio
-                if let Some(fetcher) = deps.fetcher.as_deref() {
-                    for event in activities::profile_enrichment::enrich_actor_profiles(fetcher, &actors).await {
-                        all_events.push(event);
-                    }
+                for event in profile_events {
+                    all_events.push(event);
                 }
             }
         }
@@ -153,7 +157,7 @@ pub mod handlers {
             None => return Ok(Events::new()),
         };
         let region = {
-            let (_, state) = ctx.singleton::<PipelineState>();
+            let state = ctx.aggregate::<PipelineState>().curr;
             state.run_scope.region().cloned()
         };
 

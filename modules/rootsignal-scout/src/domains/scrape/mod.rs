@@ -28,7 +28,7 @@ fn has_tension_web_sources(e: &LifecycleEvent, ctx: &Context<ScoutEngineDeps>) -
     if !matches!(e, LifecycleEvent::SourcesPrepared { .. }) {
         return false;
     }
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     state.source_plan.as_ref().is_some_and(|p| p.has_tension_web_sources())
 }
 
@@ -36,7 +36,7 @@ fn has_tension_social_sources(e: &LifecycleEvent, ctx: &Context<ScoutEngineDeps>
     if !matches!(e, LifecycleEvent::SourcesPrepared { .. }) {
         return false;
     }
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     state.source_plan.as_ref().is_some_and(|p| p.has_tension_social_sources())
 }
 
@@ -44,7 +44,7 @@ fn has_response_social_sources(e: &ScrapeEvent, ctx: &Context<ScoutEngineDeps>) 
     if !matches!(e, ScrapeEvent::SourcesResolved { is_response_phase: true, .. }) {
         return false;
     }
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     state.source_plan.as_ref().is_some_and(|p| p.has_response_social_sources())
 }
 
@@ -60,7 +60,7 @@ fn is_response_sources_resolved(e: &ScrapeEvent, _ctx: &Context<ScoutEngineDeps>
 }
 
 fn describe_resolve_new_source_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
-    let (_, state) = ctx.singleton::<PipelineState>();
+    let state = ctx.aggregate::<PipelineState>().curr;
     vec![
         Block::Status {
             label: "Source expansion".into(),
@@ -118,7 +118,7 @@ pub mod handlers {
         }
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let fetch_result = activities::web_scrape::fetch_and_extract(
             deps,
@@ -160,7 +160,7 @@ pub mod handlers {
         info!("Fetching social media posts");
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let plan = state.source_plan.as_ref().expect("source plan stashed");
 
         let social_sources: Vec<&rootsignal_common::SourceNode> = plan.selected_sources
@@ -249,7 +249,7 @@ pub mod handlers {
         }
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let fetch_result = activities::web_scrape::fetch_and_extract(
             deps,
@@ -291,7 +291,7 @@ pub mod handlers {
         info!("Fetching response social media posts");
 
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
         let plan = state.source_plan.as_ref().expect("source plan stashed");
 
         let social_sources: Vec<&rootsignal_common::SourceNode> = plan.selected_sources
@@ -361,7 +361,7 @@ pub mod handlers {
 
         let deps = ctx.deps();
 
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let mut all_social_topics = state.social_topics.clone();
         all_social_topics.extend(state.social_expansion_topics.iter().cloned());
@@ -412,7 +412,7 @@ pub mod handlers {
     ) -> Result<Events> {
         info!("=== Phase B: Find Responses ===");
         let deps = ctx.deps();
-        let (_, state) = ctx.singleton::<PipelineState>();
+        let state = ctx.aggregate::<PipelineState>().curr;
 
         let (region, graph) = match (state.run_scope.region(), deps.graph.as_ref()) {
             (Some(r), Some(g)) => (r, g),

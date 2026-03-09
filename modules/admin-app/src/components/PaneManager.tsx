@@ -126,20 +126,20 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
             title="Add pane"
             onClick={(e) => {
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              setPickerTabsetId((prev) => {
-                if (prev === node.getId()) {
-                  return null;
-                }
+              if (pickerTabsetId === node.getId()) {
+                setPickerTabsetId(null);
+                setPickerAnchor(null);
+              } else {
+                setPickerTabsetId(node.getId());
                 setPickerAnchor(rect);
-                return node.getId();
-              });
+              }
             }}
           >
             <Plus size={12} />
           </button>,
         );
       },
-      [],
+      [pickerTabsetId],
     );
 
     const addPane = useCallback(
