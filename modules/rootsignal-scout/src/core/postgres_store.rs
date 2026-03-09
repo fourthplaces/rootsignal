@@ -52,6 +52,14 @@ impl PostgresStore {
 
 #[async_trait]
 impl EventLog for PostgresStore {
+    async fn latest_position(&self) -> Result<u64> {
+        let (seq,): (i64,) =
+            sqlx::query_as("SELECT COALESCE(MAX(seq), 0) FROM events")
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(seq as u64)
+    }
+
     async fn append(&self, event: NewEvent) -> Result<AppendResult> {
         let run_id = event
             .metadata

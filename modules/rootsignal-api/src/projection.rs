@@ -1,7 +1,11 @@
 //! Projection lifecycle — unified live + replay behind `seesaw_replay::ProjectionStream`.
 //!
-//! `REPLAY=1 server` creates a fresh Neo4j database, replays all events, health checks, promotes, exits.
-//! Normal `server` catches up from the pointer, then tails via PG NOTIFY.
+//! `REPLAY=1 server` replays all events into a versioned Neo4j database,
+//! health checks, promotes, exits.
+//! Normal `server` catches up from the promoted pointer, then tails via PG NOTIFY.
+//!
+//! The position IS the version. `neo4j.v48050` means "built from the first
+//! 48050 events in the log." `stream.version()` handles both modes.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -13,7 +17,7 @@ use tracing::{error, info, warn};
 use rootsignal_common::{EmbeddingLookup, TextEmbedder};
 use rootsignal_graph::{connect_graph, embedding_store::EmbeddingStore, query, GraphClient, GraphProjector};
 use rootsignal_scout::core::postgres_store::PostgresStore;
-use seesaw_replay::{Mode, PgNotifyTailSource, PgPointerStore, ProjectionStream};
+use seesaw_replay::{PgNotifyTailSource, PgPointerStore, PointerStore, ProjectionStream};
 use uuid::Uuid;
 
 struct NoOpEmbedder;
@@ -25,30 +29,6 @@ impl TextEmbedder for NoOpEmbedder {
     }
     async fn embed_batch(&self, _texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         Ok(vec![])
-    }
-}
-
-/// Resolve which Neo4j database to use based on mode.
-///
-/// Replay: create a fresh database with a timestamp name.
-/// Live: use NEO4J_DB env var or default to "neo4j".
-pub async fn resolve_neo4j_db(config: &rootsignal_common::Config) -> Result<String> {
-    if Mode::from_env() == Mode::Replay {
-        let db_name = format!(
-            "projection_{}",
-            chrono::Utc::now().format("%Y%m%d_%H%M%S")
-        );
-        let system = connect_graph(
-            &config.neo4j_uri,
-            &config.neo4j_user,
-            &config.neo4j_password,
-            "system",
-        )
-        .await?;
-        ensure_neo4j_db(&system, &db_name).await?;
-        Ok(db_name)
-    } else {
-        Ok(std::env::var("NEO4J_DB").unwrap_or_else(|_| "neo4j".into()))
     }
 }
 
@@ -150,9 +130,45 @@ async fn health_check(graph: &GraphClient) -> Result<bool> {
 
 /// Run the full projection lifecycle (blocking).
 ///
-/// In replay mode: creates fresh Neo4j DB, replays all events, health checks, promotes, exits.
-/// In live mode: catches up from pointer, then tails indefinitely.
-pub async fn run(pool: PgPool, graph: GraphClient) -> Result<()> {
+/// Builds the stream, derives the DB version, creates/connects Neo4j,
+/// then runs. Same code path for replay and live — `stream.version()`
+/// handles the mode difference.
+pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<GraphClient> {
+    let log = PostgresStore::new(pool.clone(), Uuid::nil());
+    let pointer = PgPointerStore::new(pool.clone()).await?;
+    let tail = PgNotifyTailSource::new(&pool, "events").await?;
+
+    let stream = ProjectionStream::new(&log, &pointer)
+        .tail(Box::new(tail));
+
+    let version = stream.version().await?;
+    let neo4j_db = match std::env::var("NEO4J_DB") {
+        Ok(db) => db,
+        Err(_) => format!("neo4j.v{version}"),
+    };
+    info!(db = neo4j_db.as_str(), version, "Projection target");
+
+    let system = connect_graph(
+        &config.neo4j_uri,
+        &config.neo4j_user,
+        &config.neo4j_password,
+        "system",
+    )
+    .await?;
+    ensure_neo4j_db(&system, &neo4j_db).await?;
+
+    let graph = connect_graph(
+        &config.neo4j_uri,
+        &config.neo4j_user,
+        &config.neo4j_password,
+        &neo4j_db,
+    )
+    .await?;
+
+    rootsignal_graph::migrate::migrate(&graph)
+        .await
+        .map_err(|e| anyhow::anyhow!("Neo4j migration failed: {e}"))?;
+
     let embedding_store: Arc<dyn EmbeddingLookup> = Arc::new(EmbeddingStore::new(
         pool.clone(),
         Arc::new(NoOpEmbedder),
@@ -162,13 +178,8 @@ pub async fn run(pool: PgPool, graph: GraphClient) -> Result<()> {
         GraphProjector::new(graph.clone()).with_embedding_store(embedding_store),
     );
 
-    let log = PostgresStore::new(pool.clone(), Uuid::nil());
-    let pointer = PgPointerStore::new(pool.clone()).await?;
-    let tail = PgNotifyTailSource::new(&pool, "events").await?;
-
     let graph_for_gate = graph.clone();
-    ProjectionStream::new(&log, &pointer)
-        .tail(Box::new(tail))
+    stream
         .promote_if(move || {
             let g = graph_for_gate.clone();
             async move { health_check(&g).await }
@@ -181,14 +192,86 @@ pub async fn run(pool: PgPool, graph: GraphClient) -> Result<()> {
                 Ok(())
             }
         })
-        .await
+        .await?;
+
+    Ok(graph)
 }
 
 /// Spawn projection stream as a background task (non-blocking).
-pub fn spawn(pool: PgPool, graph: GraphClient) {
+/// Returns the GraphClient connected to the versioned DB.
+pub async fn start(pool: PgPool, config: &rootsignal_common::Config) -> Result<GraphClient> {
+    let pointer = PgPointerStore::new(pool.clone()).await?;
+    let version = pointer.version().await?.unwrap_or(0);
+    let neo4j_db = match std::env::var("NEO4J_DB") {
+        Ok(db) => db,
+        Err(_) => format!("neo4j.v{version}"),
+    };
+    info!(db = neo4j_db.as_str(), version, "Projection target");
+
+    let system = connect_graph(
+        &config.neo4j_uri,
+        &config.neo4j_user,
+        &config.neo4j_password,
+        "system",
+    )
+    .await?;
+    ensure_neo4j_db(&system, &neo4j_db).await?;
+
+    let graph = connect_graph(
+        &config.neo4j_uri,
+        &config.neo4j_user,
+        &config.neo4j_password,
+        &neo4j_db,
+    )
+    .await?;
+
+    rootsignal_graph::migrate::migrate(&graph)
+        .await
+        .map_err(|e| anyhow::anyhow!("Neo4j migration failed: {e}"))?;
+
+    let embedding_store: Arc<dyn EmbeddingLookup> = Arc::new(EmbeddingStore::new(
+        pool.clone(),
+        Arc::new(NoOpEmbedder),
+        "voyage-3-large".to_string(),
+    ));
+    let projector = Arc::new(
+        GraphProjector::new(graph.clone()).with_embedding_store(embedding_store),
+    );
+
+    let graph_ret = graph.clone();
+    let graph_for_gate = graph.clone();
     tokio::spawn(async move {
-        if let Err(e) = run(pool, graph).await {
+        let log = PostgresStore::new(pool.clone(), Uuid::nil());
+        let tail = match PgNotifyTailSource::new(&pool, "events").await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to create tail source");
+                return;
+            }
+        };
+
+        let stream = ProjectionStream::new(&log, &pointer)
+            .tail(Box::new(tail));
+
+        let result = stream
+            .promote_if(move || {
+                let g = graph_for_gate.clone();
+                async move { health_check(&g).await }
+            })
+            .run(|event| {
+                let p = projector.clone();
+                let event = event.clone();
+                async move {
+                    p.project(&event).await?;
+                    Ok(())
+                }
+            })
+            .await;
+
+        if let Err(e) = result {
             tracing::error!(error = %e, "ProjectionStream exited with error");
         }
     });
+
+    Ok(graph_ret)
 }

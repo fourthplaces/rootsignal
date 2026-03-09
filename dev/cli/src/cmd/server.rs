@@ -30,7 +30,7 @@ fn run_server(ctx: &AppContext, replay: bool) -> Result<()> {
     println!();
 
     let mut cmd = std::process::Command::new("cargo");
-    cmd.args(["run", "--bin", "rootsignal-api"]);
+    cmd.args(["run", "--bin", "api"]);
     cmd.current_dir(&ctx.repo);
 
     if replay {

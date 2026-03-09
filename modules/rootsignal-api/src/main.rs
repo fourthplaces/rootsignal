@@ -174,28 +174,32 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Resolve which Neo4j database to target.
-    let neo4j_db = projection::resolve_neo4j_db(&config).await?;
-    info!(db = neo4j_db.as_str(), "Connecting to Neo4j");
-
-    let client = connect_graph(
-        &config.neo4j_uri,
-        &config.neo4j_user,
-        &config.neo4j_password,
-        &neo4j_db,
-    )
-    .await?;
-
-    rootsignal_graph::migrate::migrate(&client)
-        .await
-        .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
-
     // REPLAY mode: run full projection, health check, promote, exit.
     if std::env::var("REPLAY").is_ok() {
         let pool = pg_pool.expect("REPLAY requires DATABASE_URL");
-        projection::run(pool, client).await?;
+        projection::run(pool, &config).await?;
         return Ok(());
     }
+
+    // Live mode: start projection stream in background, get the graph client.
+    let client = match &pg_pool {
+        Some(pool) => projection::start(pool.clone(), &config).await?,
+        None => {
+            let neo4j_db = std::env::var("NEO4J_DB").unwrap_or_else(|_| "neo4j".into());
+            info!(db = neo4j_db.as_str(), "Connecting to Neo4j (no Postgres)");
+            let c = connect_graph(
+                &config.neo4j_uri,
+                &config.neo4j_user,
+                &config.neo4j_password,
+                &neo4j_db,
+            )
+            .await?;
+            rootsignal_graph::migrate::migrate(&c)
+                .await
+                .map_err(|e| anyhow::anyhow!("Neo4j migration failed: {e}"))?;
+            c
+        }
+    };
 
     // Build the in-memory cache. Block until loaded — no HTTP traffic until ready.
     info!("Loading signal cache from Neo4j…");
@@ -240,11 +244,6 @@ async fn main() -> Result<()> {
     let event_broadcast = pg_pool
         .as_ref()
         .map(|pool| event_broadcast::EventBroadcast::spawn(pool.clone()));
-
-    // Spawn projection stream — catches up from pointer, then tails via PG NOTIFY.
-    if let Some(ref pool) = pg_pool {
-        projection::spawn(pool.clone(), client.clone());
-    }
 
     // Hydrate in-memory event cache (most recent 500K events)
     let event_cache = if let Some(ref pool) = pg_pool {
