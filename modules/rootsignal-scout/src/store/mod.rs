@@ -68,8 +68,7 @@ impl EngineFactory {
                 deps.graph = Some(Arc::new(GraphReader::new(graph_client.clone())) as Arc<dyn GraphQueries>);
                 deps.graph_client = Some(graph_client.clone());
                 deps.pg_pool = Some(pg_pool.clone());
-                let store = Arc::new(crate::core::postgres_store::PostgresStore::new(pg_pool.clone(), run_id))
-                    as Arc<dyn seesaw_core::Store>;
+                let store = Arc::new(crate::core::postgres_store::PostgresStore::new(pg_pool.clone(), run_id));
                 build_engine(deps, Some(store))
             }),
         }

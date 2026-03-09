@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+#[seesaw_core::event(prefix = "pipeline")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PipelineEvent {
@@ -24,11 +25,4 @@ impl PipelineEvent {
         matches!(self, Self::HandlerFailed { .. })
     }
 
-    pub fn event_type_str(&self) -> String {
-        "pipeline:handler_failed".to_string()
-    }
-
-    pub fn to_persist_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("PipelineEvent serialization should never fail")
-    }
 }

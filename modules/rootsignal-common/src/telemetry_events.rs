@@ -7,9 +7,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rootsignal_world::Eventlike;
-
 /// An operational telemetry event — infrastructure observations and housekeeping.
+#[seesaw_core_macros::event(prefix = "telemetry")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TelemetryEvent {
@@ -94,31 +93,6 @@ pub enum TelemetryEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<serde_json::Value>,
     },
-}
-
-impl Eventlike for TelemetryEvent {
-    fn event_type(&self) -> &'static str {
-        match self {
-            TelemetryEvent::UrlScraped { .. } => "url_scraped",
-            TelemetryEvent::FeedScraped { .. } => "feed_scraped",
-            TelemetryEvent::SocialScraped { .. } => "social_scraped",
-            TelemetryEvent::SocialTopicsSearched { .. } => "social_topics_searched",
-            TelemetryEvent::SearchPerformed { .. } => "search_performed",
-            TelemetryEvent::LlmExtractionCompleted { .. } => "llm_extraction_completed",
-            TelemetryEvent::BudgetCheckpoint { .. } => "budget_checkpoint",
-            TelemetryEvent::BootstrapCompleted { .. } => "bootstrap_completed",
-            TelemetryEvent::AgentWebSearched { .. } => "agent_web_searched",
-            TelemetryEvent::AgentPageRead { .. } => "agent_page_read",
-            TelemetryEvent::AgentFutureQuery { .. } => "agent_future_query",
-            TelemetryEvent::PinsRemoved { .. } => "pins_removed",
-            TelemetryEvent::DemandAggregated { .. } => "demand_aggregated",
-            TelemetryEvent::SystemLog { .. } => "system_log",
-        }
-    }
-
-    fn to_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("TelemetryEvent serialization should never fail")
-    }
 }
 
 impl TelemetryEvent {

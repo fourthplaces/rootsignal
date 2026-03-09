@@ -5,12 +5,12 @@ use neo4rs::{ConfigBuilder, Graph};
 pub type GraphClient = Graph;
 
 /// Connect to the graph database (Neo4j) with the given credentials.
-pub async fn connect_graph(uri: &str, user: &str, password: &str) -> Result<Graph, neo4rs::Error> {
+pub async fn connect_graph(uri: &str, user: &str, password: &str, db: &str) -> Result<Graph, neo4rs::Error> {
     let config = ConfigBuilder::default()
         .uri(uri)
         .user(user)
         .password(password)
-        .db("neo4j")
+        .db(db)
         .fetch_size(500)
         .max_connections(10)
         .build()

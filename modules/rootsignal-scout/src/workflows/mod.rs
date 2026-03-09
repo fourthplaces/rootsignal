@@ -208,8 +208,8 @@ impl ScoutDeps {
     // -----------------------------------------------------------------
 
     /// Create a PostgresStore scoped to a run_id (used as correlation_id).
-    fn make_store(&self, run_id: Uuid) -> Option<Arc<dyn seesaw_core::Store>> {
-        Some(Arc::new(PostgresStore::new(self.pg_pool.clone(), run_id)) as Arc<dyn seesaw_core::Store>)
+    fn make_store(&self, run_id: Uuid) -> Option<Arc<PostgresStore>> {
+        Some(Arc::new(PostgresStore::new(self.pg_pool.clone(), run_id)))
     }
 
     /// Convenience constructor from Config — keeps API-side construction clean.

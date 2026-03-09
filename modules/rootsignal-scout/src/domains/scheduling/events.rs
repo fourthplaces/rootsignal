@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[seesaw_core::event(prefix = "scheduling")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SchedulingEvent {
@@ -23,15 +24,3 @@ pub enum ScheduledScope {
     Region { region: String },
 }
 
-impl SchedulingEvent {
-    pub fn event_type_str(&self) -> String {
-        let variant = match self {
-            Self::ScrapeScheduled { .. } => "scrape_scheduled",
-        };
-        format!("scheduling:{variant}")
-    }
-
-    pub fn to_persist_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("SchedulingEvent serialization should never fail")
-    }
-}

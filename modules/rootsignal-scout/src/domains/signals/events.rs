@@ -104,6 +104,7 @@ pub enum DedupOutcome {
     },
 }
 
+#[seesaw_core::event(prefix = "signal")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SignalEvent {
@@ -115,16 +116,3 @@ pub enum SignalEvent {
     NoNewSignals,
 }
 
-impl SignalEvent {
-    pub fn event_type_str(&self) -> String {
-        let variant = match self {
-            Self::DedupCompleted { .. } => "dedup_completed",
-            Self::NoNewSignals => "no_new_signals",
-        };
-        format!("signal:{variant}")
-    }
-
-    pub fn to_persist_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("SignalEvent serialization should never fail")
-    }
-}

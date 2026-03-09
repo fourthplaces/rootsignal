@@ -28,112 +28,112 @@ use rootsignal_common::events::{Location, Schedule};
 /// Events that the reducer should act on (produce graph mutations).
 const GRAPH_MUTATING_TYPES: &[&str] = &[
     // World: Signal types (6)
-    "gathering_announced",
-    "resource_offered",
-    "help_requested",
-    "announcement_shared",
-    "concern_raised",
-    "condition_observed",
-    // World: Corroboration fact
-    "observation_corroborated",
+    "world:gathering_announced",
+    "world:resource_offered",
+    "world:help_requested",
+    "world:announcement_shared",
+    "world:concern_raised",
+    "world:condition_observed",
+    // System: Corroboration fact
+    "system:observation_corroborated",
     // World: Citations
-    "citation_published",
-    // World: Actors
-    "actor_identified",
-    "actor_linked_to_signal",
-    "actor_location_identified",
-    // World: Relationship edges
-    "resource_linked",
-    "response_linked",
-    "concern_linked",
-    // World: Lifecycle
-    "gathering_cancelled",
-    "resource_depleted",
-    "announcement_retracted",
-    "citation_retracted",
-    "details_changed",
-    // World: Resource identification
-    "resource_identified",
-    // System: Observation lifecycle
-    "freshness_confirmed",
-    "confidence_scored",
-    "corroboration_scored",
-    "signals_expired",
-    "entity_purged",
-    "review_verdict_reached",
-    "implied_queries_consumed",
-    // System: Classifications
-    "sensitivity_classified",
-    "tone_classified",
-    "severity_classified",
-    "urgency_classified",
-    "category_classified",
-    "implied_queries_extracted",
-    // System: Corrections (5 typed)
-    "gathering_corrected",
-    "resource_corrected",
-    "help_request_corrected",
-    "announcement_corrected",
-    "concern_corrected",
+    "world:citation_published",
     // System: Actors
-    "duplicate_actors_merged",
-    "orphaned_actors_cleaned",
+    "system:actor_identified",
+    "system:actor_linked_to_signal",
+    "system:actor_location_identified",
+    // World: Relationship edges
+    "world:resource_linked",
+    "system:response_linked",
+    "system:concern_linked",
+    // World: Lifecycle
+    "world:gathering_cancelled",
+    "world:resource_depleted",
+    "world:announcement_retracted",
+    "world:citation_retracted",
+    "world:details_changed",
+    // World: Resource identification
+    "world:resource_identified",
+    // System: Observation lifecycle
+    "system:freshness_confirmed",
+    "system:confidence_scored",
+    "system:corroboration_scored",
+    "system:signals_expired",
+    "system:entity_purged",
+    "system:review_verdict_reached",
+    "system:implied_queries_consumed",
+    // System: Classifications
+    "system:sensitivity_classified",
+    "system:tone_classified",
+    "system:severity_classified",
+    "system:urgency_classified",
+    "system:category_classified",
+    "system:implied_queries_extracted",
+    // System: Corrections (5 typed)
+    "system:gathering_corrected",
+    "system:resource_corrected",
+    "system:help_request_corrected",
+    "system:announcement_corrected",
+    "system:concern_corrected",
+    // System: Actors
+    "system:duplicate_actors_merged",
+    "system:orphaned_actors_cleaned",
     // System: Situations
-    "situation_identified",
-    "situation_changed",
-    "situation_promoted",
+    "system:situation_identified",
+    "system:situation_changed",
+    "system:situation_promoted",
     // System: Tags
-    "tag_suppressed",
-    "tags_merged",
+    "system:tag_suppressed",
+    "system:tags_merged",
     // System: Quality / lint
-    "empty_entities_cleaned",
-    "fake_coordinates_nulled",
-    "orphaned_citations_cleaned",
+    "system:empty_entities_cleaned",
+    "system:fake_coordinates_nulled",
+    "system:orphaned_citations_cleaned",
     // System: Source editorial
-    "source_system_changed",
+    "system:source_system_changed",
     // System: Source registry
-    "sources_registered",
-    "source_changed",
-    "source_deactivated",
-    // System: Actor-source links
-    "actor_linked_to_source",
+    "system:sources_registered",
+    "system:source_changed",
+    "system:source_deactivated",
+    // World: Actor-source links
+    "world:actor_linked_to_source",
     // World: Signal-source links
-    "signal_linked_to_source",
+    "world:signal_linked_to_source",
     // System: Tags
-    "signal_tagged",
+    "system:signal_tagged",
     // System: App user actions
-    "pin_created",
-    "demand_received",
-    "submission_received",
+    "system:pin_created",
+    "system:demand_received",
+    "system:submission_received",
     // System: Source scrape telemetry
-    "pins_consumed",
-    "source_scraped",
+    "system:pins_consumed",
+    "system:source_scraped",
 ];
 
 /// Events that the reducer should ignore (telemetry / informational / no-ops).
 const OBSERVABILITY_TYPES: &[&str] = &[
     // Telemetry
-    "url_scraped",
-    "feed_scraped",
-    "social_scraped",
-    "social_topics_searched",
-    "search_performed",
-    "llm_extraction_completed",
-    "budget_checkpoint",
-    "bootstrap_completed",
-    "agent_web_searched",
-    "agent_page_read",
-    "agent_future_query",
-    "pins_removed",
-    "demand_aggregated",
+    "telemetry:url_scraped",
+    "telemetry:feed_scraped",
+    "telemetry:social_scraped",
+    "telemetry:social_topics_searched",
+    "telemetry:search_performed",
+    "telemetry:llm_extraction_completed",
+    "telemetry:budget_checkpoint",
+    "telemetry:bootstrap_completed",
+    "telemetry:agent_web_searched",
+    "telemetry:agent_page_read",
+    "telemetry:agent_future_query",
+    "telemetry:pins_removed",
+    "telemetry:demand_aggregated",
     // System informational — no graph mutation
-    "expansion_query_collected",
-    "source_link_discovered",
+    "system:expansion_query_collected",
+    "world:source_link_discovered",
     // System informational — no graph mutation
-    "observation_rejected",
-    "extraction_dropped_no_date",
-    "duplicate_detected",
-    "dispatch_created",
+    "system:observation_rejected",
+    "system:extraction_dropped_no_date",
+    "system:duplicate_detected",
+    "system:dispatch_created",
 ];
 
 #[test]
@@ -175,16 +175,17 @@ fn no_duplicate_event_types() {
 // =========================================================================
 
 #[test]
-fn event_type_method_matches_serde_tag_for_all_variants() {
+fn durable_name_variant_matches_serde_tag_for_all_variants() {
     let all_events = build_all_events();
     for event in &all_events {
-        let method_type = event.event_type();
+        let durable = event.event_type();
         let payload = event.to_payload();
         let serde_type = payload["type"].as_str().unwrap_or("<missing>");
+        let variant = durable.split_once(':').map(|(_, v)| v).unwrap_or(durable);
         assert_eq!(
-            method_type, serde_type,
-            "event_type() = '{}' but serde tag = '{}' for event '{}'",
-            method_type, serde_type, method_type
+            variant, serde_type,
+            "durable_name variant = '{}' but serde tag = '{}' for event '{}'",
+            variant, serde_type, durable
         );
     }
 }
@@ -276,7 +277,7 @@ fn extra_fields_in_payload_are_ignored() {
     });
 
     let event = Event::from_payload(&future_payload).unwrap();
-    assert_eq!(event.event_type(), "url_scraped");
+    assert_eq!(event.event_type(), "telemetry:url_scraped");
 }
 
 // =========================================================================
@@ -466,7 +467,7 @@ fn batched_signals_expired_carries_all_stale_signals() {
         signals: signals.clone(),
     });
 
-    assert_eq!(event.event_type(), "signals_expired");
+    assert_eq!(event.event_type(), "system:signals_expired");
     match &event {
         Event::System(SystemEvent::SignalsExpired { signals }) => {
             assert_eq!(signals.len(), 5);

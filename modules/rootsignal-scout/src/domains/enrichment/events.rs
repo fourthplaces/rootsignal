@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+#[seesaw_core::event(prefix = "enrichment")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EnrichmentEvent {
@@ -9,11 +10,3 @@ pub enum EnrichmentEvent {
     EnrichmentReady,
 }
 
-impl EnrichmentEvent {
-    pub fn event_type_str(&self) -> String {
-        match self {
-            Self::EnrichmentReady => "enrichment_ready",
-        }
-        .to_string()
-    }
-}

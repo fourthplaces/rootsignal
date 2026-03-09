@@ -16,5 +16,7 @@ regex = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 rootsignal-world = { workspace = true }
+seesaw_core = { workspace = true }
+seesaw_core_macros = { workspace = true }
 rrule = { workspace = true }
 url = "2"

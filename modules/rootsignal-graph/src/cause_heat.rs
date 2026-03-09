@@ -656,7 +656,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn cause_heat_live() {
-        let client = crate::connect_graph("bolt://localhost:7687", "neo4j", "rootsignal")
+        let client = crate::connect_graph("bolt://localhost:7687", "neo4j", "rootsignal", "neo4j")
             .await
             .expect("Failed to connect to Neo4j");
 

@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+#[seesaw_core::event(prefix = "supervisor", ephemeral)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SupervisorEvent {
@@ -11,16 +12,3 @@ pub enum SupervisorEvent {
     NothingToSupervise { reason: String },
 }
 
-impl SupervisorEvent {
-    pub fn event_type_str(&self) -> String {
-        let variant = match self {
-            Self::SupervisionCompleted => "supervision_completed",
-            Self::NothingToSupervise { .. } => "nothing_to_supervise",
-        };
-        format!("supervisor:{variant}")
-    }
-
-    pub fn to_persist_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("SupervisorEvent serialization should never fail")
-    }
-}

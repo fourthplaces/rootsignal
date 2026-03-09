@@ -8,8 +8,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use rootsignal_world::Eventlike;
-
 use crate::events::{
     ActorStatScore, AnnouncementCorrection, CauseHeatScore, ConditionCorrection, ConcernCorrection,
     GatheringCorrection, HelpRequestCorrection, ResourceCorrection, SignalDiversityScore,
@@ -30,6 +28,7 @@ pub struct StaleSignal {
 }
 
 /// A system event — an editorial judgment Root Signal made about world facts.
+#[seesaw_core_macros::event(prefix = "system")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SystemEvent {
@@ -577,92 +576,6 @@ pub enum SystemEvent {
     ValidationIssueDismissed {
         issue_id: String,
     },
-}
-
-impl Eventlike for SystemEvent {
-    fn event_type(&self) -> &'static str {
-        match self {
-            SystemEvent::FreshnessConfirmed { .. } => "freshness_confirmed",
-            SystemEvent::ConfidenceScored { .. } => "confidence_scored",
-            SystemEvent::CorroborationScored { .. } => "corroboration_scored",
-            SystemEvent::ObservationRejected { .. } => "observation_rejected",
-            SystemEvent::SignalsExpired { .. } => "signals_expired",
-            SystemEvent::EntityPurged { .. } => "entity_purged",
-            SystemEvent::DuplicateDetected { .. } => "duplicate_detected",
-            SystemEvent::ExtractionDroppedNoDate { .. } => "extraction_dropped_no_date",
-            SystemEvent::ReviewVerdictReached { .. } => "review_verdict_reached",
-            SystemEvent::ImpliedQueriesConsumed { .. } => "implied_queries_consumed",
-            SystemEvent::SensitivityClassified { .. } => "sensitivity_classified",
-            SystemEvent::ToneClassified { .. } => "tone_classified",
-            SystemEvent::SeverityClassified { .. } => "severity_classified",
-            SystemEvent::UrgencyClassified { .. } => "urgency_classified",
-            SystemEvent::CategoryClassified { .. } => "category_classified",
-            SystemEvent::ImpliedQueriesExtracted { .. } => "implied_queries_extracted",
-            SystemEvent::ObservationCorroborated { .. } => "observation_corroborated",
-            SystemEvent::ActorIdentified { .. } => "actor_identified",
-            SystemEvent::ActorLinkedToSignal { .. } => "actor_linked_to_signal",
-            SystemEvent::ActorLocationIdentified { .. } => "actor_location_identified",
-            SystemEvent::ActorProfileEnriched { .. } => "actor_profile_enriched",
-            SystemEvent::ResponseLinked { .. } => "response_linked",
-            SystemEvent::ConcernLinked { .. } => "concern_linked",
-            SystemEvent::GatheringCorrected { .. } => "gathering_corrected",
-            SystemEvent::ResourceCorrected { .. } => "resource_corrected",
-            SystemEvent::HelpRequestCorrected { .. } => "help_request_corrected",
-            SystemEvent::AnnouncementCorrected { .. } => "announcement_corrected",
-            SystemEvent::ConcernCorrected { .. } => "concern_corrected",
-            SystemEvent::ConditionCorrected { .. } => "condition_corrected",
-            SystemEvent::DuplicateActorsMerged { .. } => "duplicate_actors_merged",
-            SystemEvent::OrphanedActorsCleaned { .. } => "orphaned_actors_cleaned",
-            SystemEvent::SituationIdentified { .. } => "situation_identified",
-            SystemEvent::SituationChanged { .. } => "situation_changed",
-            SystemEvent::SituationPromoted { .. } => "situation_promoted",
-            SystemEvent::DispatchCreated { .. } => "dispatch_created",
-            SystemEvent::SignalAssignedToSituation { .. } => "signal_assigned_to_situation",
-            SystemEvent::SituationTagsAggregated { .. } => "situation_tags_aggregated",
-            SystemEvent::DispatchFlaggedForReview { .. } => "dispatch_flagged_for_review",
-            SystemEvent::SignalsPendingWeaving { .. } => "signals_pending_weaving",
-            SystemEvent::SignalTagged { .. } => "signal_tagged",
-            SystemEvent::TagSuppressed { .. } => "tag_suppressed",
-            SystemEvent::TagsMerged { .. } => "tags_merged",
-            SystemEvent::EmptyEntitiesCleaned { .. } => "empty_entities_cleaned",
-            SystemEvent::FakeCoordinatesNulled { .. } => "fake_coordinates_nulled",
-            SystemEvent::OrphanedCitationsCleaned { .. } => "orphaned_citations_cleaned",
-            SystemEvent::SourceSystemChanged { .. } => "source_system_changed",
-            SystemEvent::SourcesRegistered { .. } => "sources_registered",
-            SystemEvent::SourceChanged { .. } => "source_changed",
-            SystemEvent::SourceDeactivated { .. } => "source_deactivated",
-            SystemEvent::SourceSignalsCleared { .. } => "source_signals_cleared",
-            SystemEvent::SourceDeleted { .. } => "source_deleted",
-            SystemEvent::PinCreated { .. } => "pin_created",
-            SystemEvent::PinsConsumed { .. } => "pins_consumed",
-            SystemEvent::DemandReceived { .. } => "demand_received",
-            SystemEvent::SubmissionReceived { .. } => "submission_received",
-            SystemEvent::ResponseScouted { .. } => "response_scouted",
-            SystemEvent::QueryEmbeddingStored { .. } => "query_embedding_stored",
-            SystemEvent::CuriosityTriggered { .. } => "curiosity_triggered",
-            SystemEvent::ExpansionQueryCollected { .. } => "expansion_query_collected",
-            SystemEvent::SourceScraped { .. } => "source_scraped",
-            SystemEvent::SourceDiscoveryCredit { .. } => "source_discovery_credit",
-            SystemEvent::SignalInvestigated { .. } => "signal_investigated",
-            SystemEvent::ExhaustedRetriesPromoted { .. } => "exhausted_retries_promoted",
-            SystemEvent::ConcernLinkerOutcomeRecorded { .. } => "concern_linker_outcome_recorded",
-            SystemEvent::GatheringScouted { .. } => "gathering_scouted",
-            SystemEvent::PlaceDiscovered { .. } => "place_discovered",
-            SystemEvent::GathersAtPlaceLinked { .. } => "gathers_at_place_linked",
-            SystemEvent::DuplicateConcernMerged { .. } => "duplicate_concern_merged",
-            SystemEvent::SourcesBoostedForSituation { .. } => "sources_boosted_for_situation",
-            SystemEvent::EchoScored { .. } => "echo_scored",
-            SystemEvent::CauseHeatComputed { .. } => "cause_heat_computed",
-            SystemEvent::SignalDiversityComputed { .. } => "signal_diversity_computed",
-            SystemEvent::ActorStatsComputed { .. } => "actor_stats_computed",
-            SystemEvent::SimilarityEdgesRebuilt { .. } => "similarity_edges_rebuilt",
-            SystemEvent::ValidationIssueDismissed { .. } => "validation_issue_dismissed",
-        }
-    }
-
-    fn to_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("SystemEvent serialization should never fail")
-    }
 }
 
 impl SystemEvent {

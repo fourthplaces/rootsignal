@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use rootsignal_graph::{query, GraphClient, GraphProjector};
+use rootsignal_graph::GraphProjector;
 use seesaw_core::{events, on_any, project, AnyEvent, Context, Events, Handler, Projection};
 use tracing::info;
 
@@ -28,7 +28,7 @@ use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scheduling::events::{ScheduledScope, SchedulingEvent};
 use crate::domains::scrape::events::ScrapeEvent;
-use crate::domains::signals::events::{DedupOutcome, SignalEvent};
+use crate::domains::signals::events::SignalEvent;
 use crate::domains::situation_weaving::events::SituationWeavingEvent;
 use crate::domains::supervisor::events::SupervisorEvent;
 use crate::domains::synthesis::events::SynthesisEvent;
@@ -59,12 +59,7 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                     EventDomain::Fact => {}
                     EventDomain::Discovery | EventDomain::Pipeline => {}
                     EventDomain::Scrape => return Ok(events![]),
-                    EventDomain::Signal => {
-                        if let Some(SignalEvent::DedupCompleted { ref verdicts, .. }) = event.downcast_ref::<SignalEvent>() {
-                            project_dedup_verdicts(projector.client(), verdicts).await?;
-                        }
-                        return Ok(events![]);
-                    }
+                    EventDomain::Signal => return Ok(events![]),
                     EventDomain::Lifecycle => return Ok(events![]),
                     EventDomain::Enrichment => return Ok(events![]),
                     EventDomain::Expansion => return Ok(events![]),
@@ -347,177 +342,3 @@ pub fn capture_handler(
         })
 }
 
-/// Project DedupCompleted verdicts to Neo4j.
-///
-/// Created: wire edges (source, resources, tags, actor).
-/// Refreshed: set last_confirmed_active.
-///
-/// World/System events (NodeCreated, CitationPublished, ActorIdentified, etc.)
-/// are projected by the existing project_world/project_system arms — this
-/// function only handles the wiring data packed into DedupOutcome.
-async fn project_dedup_verdicts(
-    client: &GraphClient,
-    verdicts: &[DedupOutcome],
-) -> anyhow::Result<()> {
-    use crate::core::extractor::ResourceRole;
-
-    for verdict in verdicts {
-        match verdict {
-            DedupOutcome::Created {
-                node_id,
-                source_id,
-                resource_tags,
-                signal_tags,
-                actor,
-                ..
-            } => {
-                // PRODUCED_BY edge
-                if let Some(sid) = source_id {
-                    let q = query(
-                        "MATCH (n)
-                         WHERE n.id = $signal_id
-                           AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-                         MATCH (s:Source {id: $source_id})
-                         MERGE (n)-[:PRODUCED_BY]->(s)",
-                    )
-                    .param("signal_id", node_id.to_string())
-                    .param("source_id", sid.to_string());
-                    client.run(q).await?;
-                }
-
-                // Resource nodes + role edges
-                for tag in resource_tags.iter().filter(|t| t.confidence >= 0.3) {
-                    let slug = rootsignal_common::slugify(&tag.slug);
-                    let rq = query(
-                        "MERGE (r:Resource {slug: $slug})
-                         ON CREATE SET
-                             r.id = $id,
-                             r.name = $name,
-                             r.description = $description,
-                             r.sensitivity = 'general',
-                             r.confidence = 1.0,
-                             r.signal_count = 1,
-                             r.created_at = datetime(),
-                             r.last_seen = datetime()
-                         ON MATCH SET
-                             r.signal_count = r.signal_count + 1,
-                             r.last_seen = datetime()",
-                    )
-                    .param("slug", slug.as_str())
-                    .param("id", uuid::Uuid::new_v4().to_string())
-                    .param("name", tag.slug.as_str())
-                    .param("description", tag.context.as_deref().unwrap_or(""));
-                    client.run(rq).await?;
-
-                    let (quantity, capacity) = match tag.role {
-                        ResourceRole::Requires => (tag.context.clone(), None),
-                        ResourceRole::Prefers => (None, None),
-                        ResourceRole::Offers => (None, tag.context.clone()),
-                    };
-                    let role_str = tag.role.to_string();
-                    let edge_q = match role_str.as_str() {
-                        "requires" => {
-                            query(
-                                "MATCH (s) WHERE s.id = $sid AND (s:HelpRequest OR s:Gathering)
-                                 MATCH (r:Resource {slug: $slug})
-                                 MERGE (s)-[e:REQUIRES]->(r)
-                                 ON CREATE SET e.confidence = $confidence, e.quantity = $quantity, e.notes = ''
-                                 ON MATCH SET e.confidence = $confidence, e.quantity = $quantity"
-                            )
-                            .param("sid", node_id.to_string())
-                            .param("slug", slug.as_str())
-                            .param("confidence", tag.confidence.clamp(0.0, 1.0))
-                            .param("quantity", quantity.unwrap_or_default())
-                        }
-                        "prefers" => {
-                            query(
-                                "MATCH (s) WHERE s.id = $sid AND (s:HelpRequest OR s:Gathering)
-                                 MATCH (r:Resource {slug: $slug})
-                                 MERGE (s)-[e:PREFERS]->(r)
-                                 ON CREATE SET e.confidence = $confidence
-                                 ON MATCH SET e.confidence = $confidence"
-                            )
-                            .param("sid", node_id.to_string())
-                            .param("slug", slug.as_str())
-                            .param("confidence", tag.confidence.clamp(0.0, 1.0))
-                        }
-                        "offers" => {
-                            query(
-                                "MATCH (s:Resource {id: $sid})
-                                 MATCH (r:Resource {slug: $slug})
-                                 MERGE (s)-[e:OFFERS]->(r)
-                                 ON CREATE SET e.confidence = $confidence, e.capacity = $capacity
-                                 ON MATCH SET e.confidence = $confidence, e.capacity = $capacity"
-                            )
-                            .param("sid", node_id.to_string())
-                            .param("slug", slug.as_str())
-                            .param("confidence", tag.confidence.clamp(0.0, 1.0))
-                            .param("capacity", capacity.unwrap_or_default())
-                        }
-                        _ => continue,
-                    };
-                    client.run(edge_q).await?;
-                }
-
-                // Tag nodes + TAGGED edges
-                for slug in signal_tags {
-                    let name = slug.replace('-', " ");
-                    let tq = query(
-                        "MATCH (s)
-                         WHERE s.id = $signal_id
-                           AND (s:Gathering OR s:Resource OR s:HelpRequest OR s:Announcement OR s:Concern OR s:Condition)
-                         MERGE (t:Tag {slug: $slug})
-                         ON CREATE SET t.name = $name
-                         MERGE (s)-[r:TAGGED]->(t)
-                         SET r.weight = 1.0",
-                    )
-                    .param("signal_id", node_id.to_string())
-                    .param("slug", slug.as_str())
-                    .param("name", name.as_str());
-                    client.run(tq).await?;
-                }
-
-                // Actor → Source edge (ActorIdentified + ActorLinkedToSignal are
-                // emitted as SystemEvents and projected via project_system)
-                if let Some(ref resolved) = actor {
-                    if resolved.is_new {
-                        if let Some(sid) = resolved.source_id {
-                            let aq = query(
-                                "MATCH (a:Actor {id: $actor_id})
-                                 MATCH (s:Source {id: $source_id})
-                                 MERGE (a)-[:HAS_SOURCE]->(s)",
-                            )
-                            .param("actor_id", resolved.actor_id.to_string())
-                            .param("source_id", sid.to_string());
-                            client.run(aq).await?;
-                        }
-                    }
-                }
-            }
-
-            DedupOutcome::Refreshed { existing_id, node_type, .. }
-            | DedupOutcome::ContentChanged { existing_id, node_type, .. } => {
-                let label = node_type_label(*node_type);
-                let q = query(&format!(
-                    "MATCH (n:{label} {{id: $id}})
-                     SET n.last_confirmed_active = datetime()"
-                ))
-                .param("id", existing_id.to_string());
-                client.run(q).await?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn node_type_label(node_type: rootsignal_common::types::NodeType) -> &'static str {
-    match node_type {
-        rootsignal_common::types::NodeType::Gathering => "Gathering",
-        rootsignal_common::types::NodeType::Resource => "Resource",
-        rootsignal_common::types::NodeType::HelpRequest => "HelpRequest",
-        rootsignal_common::types::NodeType::Announcement => "Announcement",
-        rootsignal_common::types::NodeType::Concern => "Concern",
-        rootsignal_common::types::NodeType::Condition => "Condition",
-        rootsignal_common::types::NodeType::Citation => "Citation",
-    }
-}

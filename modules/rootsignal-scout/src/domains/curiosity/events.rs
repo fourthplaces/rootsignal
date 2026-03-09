@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::core::extractor::ResourceTag;
 
+#[seesaw_core::event(prefix = "curiosity")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CuriosityEvent {

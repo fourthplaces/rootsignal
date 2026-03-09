@@ -10,3 +10,5 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+seesaw_core = { workspace = true }
+seesaw_core_macros = { workspace = true }

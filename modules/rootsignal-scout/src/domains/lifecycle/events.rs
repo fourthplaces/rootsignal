@@ -11,6 +11,7 @@ use crate::core::aggregate::SourcePlan;
 use crate::core::run_scope::RunScope;
 use rootsignal_common::types::ActorContext;
 
+#[seesaw_core::event(prefix = "lifecycle")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LifecycleEvent {
@@ -34,17 +35,3 @@ pub enum LifecycleEvent {
     NewsScanRequested,
 }
 
-impl LifecycleEvent {
-    pub fn event_type_str(&self) -> String {
-        let variant = match self {
-            Self::ScoutRunRequested { .. } => "scout_run_requested",
-            Self::SourcesPrepared { .. } => "sources_prepared",
-            Self::NewsScanRequested => "news_scan_requested",
-        };
-        format!("lifecycle:{variant}")
-    }
-
-    pub fn to_persist_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("LifecycleEvent serialization should never fail")
-    }
-}

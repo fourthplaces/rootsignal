@@ -495,34 +495,35 @@ pub(crate) fn json_f64(v: &serde_json::Value, key: &str) -> Option<f64> {
     v.get(key).and_then(|v| v.as_f64())
 }
 
-/// Classify by the codec name stored in event_type (e.g. "WorldEvent", "ScrapeEvent").
+/// Classify an event's layer from its durable name prefix (e.g. "world:gathering_announced" → "world").
 pub(crate) fn event_layer(event_type: &str) -> &'static str {
-    match event_type {
-        "WorldEvent" => "world",
-        "SystemEvent" | "EnrichmentEvent" | "SignalEvent"
-        | "SynthesisEvent" | "DiscoveryEvent" => "system",
+    let prefix = event_type.split_once(':').map(|(p, _)| p).unwrap_or(event_type);
+    match prefix {
+        "world" => "world",
+        "system" | "enrichment" | "signal" | "synthesis" | "discovery" => "system",
         _ => "telemetry",
     }
 }
 
-/// Domain prefix for event names, derived from the codec name.
-/// Prevents collisions when different event enums have identically-named variants
-/// (e.g. SystemEvent::ActorStatsComputed vs EnrichmentEvent::ActorStatsComputed).
+/// Domain prefix extracted from the durable event name (e.g. "signal:dedup_completed" → "signal").
 pub(crate) fn event_domain_prefix(event_type: &str) -> &'static str {
-    match event_type {
-        "WorldEvent" => "world",
-        "SystemEvent" => "system",
-        "TelemetryEvent" => "telemetry",
-        "EnrichmentEvent" => "enrichment",
-        "ExpansionEvent" => "expansion",
-        "SynthesisEvent" => "synthesis",
-        "SignalEvent" => "signal",
-        "DiscoveryEvent" => "discovery",
-        "LifecycleEvent" => "lifecycle",
-        "ScrapeEvent" => "scrape",
-        "PipelineEvent" => "pipeline",
-        "SupervisorEvent" => "supervisor",
-        "SituationWeavingEvent" => "situation_weaving",
+    let prefix = event_type.split_once(':').map(|(p, _)| p).unwrap_or("");
+    match prefix {
+        "world" => "world",
+        "system" => "system",
+        "telemetry" => "telemetry",
+        "enrichment" => "enrichment",
+        "expansion" => "expansion",
+        "synthesis" => "synthesis",
+        "signal" => "signal",
+        "discovery" => "discovery",
+        "lifecycle" => "lifecycle",
+        "scrape" => "scrape",
+        "pipeline" => "pipeline",
+        "supervisor" => "supervisor",
+        "situation_weaving" => "situation_weaving",
+        "scheduling" => "scheduling",
+        "curiosity" => "curiosity",
         _ => "unknown",
     }
 }

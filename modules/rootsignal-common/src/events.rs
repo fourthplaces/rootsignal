@@ -12,7 +12,6 @@ use uuid::Uuid;
 // ---------------------------------------------------------------------------
 
 pub use rootsignal_world::values::{Location, Schedule};
-pub use rootsignal_world::Eventlike;
 
 // ---------------------------------------------------------------------------
 // Re-exports — the three event layers
@@ -387,22 +386,19 @@ pub enum Event {
 }
 
 impl Event {
-    /// The snake_case event type string for this variant.
-    pub fn event_type(&self) -> &'static str {
+    /// The durable event name — `"prefix:variant"` format (e.g. `"world:gathering_announced"`).
+    pub fn event_type(&self) -> &str {
+        use seesaw_core::event::Event as _;
         match self {
-            Event::World(w) => w.event_type(),
-            Event::System(s) => s.event_type(),
-            Event::Telemetry(t) => t.event_type(),
+            Event::World(w) => w.durable_name(),
+            Event::System(s) => s.durable_name(),
+            Event::Telemetry(t) => t.durable_name(),
         }
     }
 
     /// Serialize this event to a JSON Value for the EventStore payload.
     pub fn to_payload(&self) -> serde_json::Value {
-        match self {
-            Event::World(w) => w.to_payload(),
-            Event::System(s) => s.to_payload(),
-            Event::Telemetry(t) => t.to_payload(),
-        }
+        serde_json::to_value(self).expect("Event serialization should never fail")
     }
 
     /// Deserialize an event from a JSON payload.
@@ -461,6 +457,7 @@ impl EventDomain {
     pub fn from_event_type(event_type: &str) -> Option<Self> {
         match event_type.split_once(':') {
             Some((prefix, _)) => match prefix {
+                "world" | "system" | "telemetry" => Some(Self::Fact),
                 "discovery" => Some(Self::Discovery),
                 "scrape" => Some(Self::Scrape),
                 "signal" => Some(Self::Signal),
@@ -469,11 +466,12 @@ impl EventDomain {
                 "expansion" => Some(Self::Expansion),
                 "pipeline" => Some(Self::Pipeline),
                 "synthesis" => Some(Self::Synthesis),
+                "situation_weaving" => Some(Self::SituationWeaving),
+                "supervisor" => Some(Self::Supervisor),
                 "scheduling" => Some(Self::Scheduling),
                 _ => None,
             },
-            // No colon → unprefixed fact event (World/System/Telemetry)
-            None => Some(Self::Fact),
+            None => None,
         }
     }
 }
@@ -551,7 +549,7 @@ mod tests {
         assert_eq!(payload["type"].as_str().unwrap(), "gathering_announced");
 
         let roundtripped = Event::from_payload(&payload).unwrap();
-        assert_eq!(roundtripped.event_type(), "gathering_announced");
+        assert_eq!(roundtripped.event_type(), "world:gathering_announced");
 
         match roundtripped {
             Event::World(WorldEvent::GatheringAnnounced {
@@ -601,7 +599,7 @@ mod tests {
         assert_eq!(payload["type"].as_str().unwrap(), "url_scraped");
 
         let roundtripped = Event::from_payload(&payload).unwrap();
-        assert_eq!(roundtripped.event_type(), "url_scraped");
+        assert_eq!(roundtripped.event_type(), "telemetry:url_scraped");
     }
 
     #[test]
@@ -711,7 +709,7 @@ mod tests {
             summary: None,
         }
         .into();
-        assert_eq!(w.event_type(), "observation_corroborated");
+        assert_eq!(w.event_type(), "system:observation_corroborated");
 
         let s: Event = SystemEvent::SignalsExpired {
             signals: vec![crate::system_events::StaleSignal {
@@ -721,14 +719,14 @@ mod tests {
             }],
         }
         .into();
-        assert_eq!(s.event_type(), "signals_expired");
+        assert_eq!(s.event_type(), "system:signals_expired");
 
         let t: Event = TelemetryEvent::BudgetCheckpoint {
             spent_cents: 100,
             remaining_cents: 900,
         }
         .into();
-        assert_eq!(t.event_type(), "budget_checkpoint");
+        assert_eq!(t.event_type(), "telemetry:budget_checkpoint");
     }
 
     #[test]

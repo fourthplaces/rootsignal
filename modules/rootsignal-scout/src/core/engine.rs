@@ -105,7 +105,7 @@ pub type ScoutEngine = SeesawEngine;
 ///
 /// When `seesaw_store` is provided, it replaces the default in-memory store
 /// for durable crash recovery. Pass `None` for tests.
-pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
+pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
@@ -176,7 +176,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
 /// supervisor.
 ///
 /// Terminal events: SupervisionCompleted or NothingToSupervise.
-pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
+pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
@@ -255,7 +255,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
 /// NOTE: Weave engine is non-functional until a proper weave kickoff event
 /// is designed (separate PR). The old `start_weave` trampoline that emitted
 /// fake ExpansionCompleted has been deleted.
-pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
+pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
@@ -325,8 +325,7 @@ pub fn build_infra_only_engine(
 ) -> SeesawEngine {
     let run_id = run_id.unwrap_or_else(Uuid::new_v4);
 
-    let store = Arc::new(PostgresStore::new(pg_pool.clone(), run_id))
-        as Arc<dyn seesaw_core::Store>;
+    let store = Arc::new(PostgresStore::new(pg_pool.clone(), run_id));
 
     let projector = GraphProjector::new(graph_client.clone());
 
@@ -351,7 +350,7 @@ pub fn build_infra_only_engine(
 /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
 ///
 /// Minimal handler set — only news scanning domain + infrastructure.
-pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_core::Store>>) -> SeesawEngine {
+pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> SeesawEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {

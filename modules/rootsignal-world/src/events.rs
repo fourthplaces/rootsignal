@@ -8,12 +8,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::eventlike::Eventlike;
 use crate::types::{ChannelType, Entity, NodeType, Reference};
 use crate::values::{Location, Schedule};
 
 /// A world fact — something observed in reality, independent of Root Signal's
 /// editorial decisions or operational metrics.
+#[seesaw_core_macros::event(prefix = "world")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorldEvent {
@@ -308,34 +308,6 @@ pub enum WorldEvent {
         child_id: Uuid,
         parent_canonical_key: String,
     },
-}
-
-impl Eventlike for WorldEvent {
-    fn event_type(&self) -> &'static str {
-        match self {
-            WorldEvent::GatheringAnnounced { .. } => "gathering_announced",
-            WorldEvent::ResourceOffered { .. } => "resource_offered",
-            WorldEvent::HelpRequested { .. } => "help_requested",
-            WorldEvent::AnnouncementShared { .. } => "announcement_shared",
-            WorldEvent::ConcernRaised { .. } => "concern_raised",
-            WorldEvent::ConditionObserved { .. } => "condition_observed",
-            WorldEvent::CitationPublished { .. } => "citation_published",
-            WorldEvent::ResourceLinked { .. } => "resource_linked",
-            WorldEvent::GatheringCancelled { .. } => "gathering_cancelled",
-            WorldEvent::ResourceDepleted { .. } => "resource_depleted",
-            WorldEvent::AnnouncementRetracted { .. } => "announcement_retracted",
-            WorldEvent::CitationRetracted { .. } => "citation_retracted",
-            WorldEvent::DetailsChanged { .. } => "details_changed",
-            WorldEvent::ResourceIdentified { .. } => "resource_identified",
-            WorldEvent::ActorLinkedToSource { .. } => "actor_linked_to_source",
-            WorldEvent::SignalLinkedToSource { .. } => "signal_linked_to_source",
-            WorldEvent::SourceLinkDiscovered { .. } => "source_link_discovered",
-        }
-    }
-
-    fn to_payload(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("WorldEvent serialization should never fail")
-    }
 }
 
 impl WorldEvent {

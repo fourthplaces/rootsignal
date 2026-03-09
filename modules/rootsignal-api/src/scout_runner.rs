@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use rootsignal_scout::core::engine;
 use rootsignal_scout::core::postgres_store::PostgresStore;
 use rootsignal_scout::core::run_scope::RunScope;
-use seesaw_core::store::Store;
+use seesaw_core::handler_queue::HandlerQueue;
 use rootsignal_scout::domains::lifecycle::events::LifecycleEvent;
 use rootsignal_scout::workflows::ScoutDeps;
 
@@ -310,7 +310,7 @@ impl ScoutRunner {
                 }
             };
 
-            let store_arc = Arc::new(store) as Arc<dyn seesaw_core::Store>;
+            let store_arc = Arc::new(store);
             let deps = self.deps.clone();
 
             info!(%run_id, "Resuming incomplete run");

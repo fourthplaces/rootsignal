@@ -57,6 +57,18 @@ enum Commands {
     /// Docker service management
     #[command(subcommand)]
     Docker(cmd::docker::DockerCommand),
+
+    /// Run the API server locally (outside Docker)
+    #[command(subcommand)]
+    Server(cmd::server::ServerCommand),
+
+    /// Run database migrations
+    #[command(subcommand)]
+    Migrate(cmd::migrate::MigrateCommand),
+
+    /// Run frontend Node.js apps
+    #[command(subcommand)]
+    Node(cmd::node::NodeCommand),
 }
 
 fn main() -> ExitCode {
@@ -81,6 +93,9 @@ fn run() -> Result<()> {
         Some(Commands::Doctor) => cmd_doctor(&ctx),
         Some(Commands::Test(cmd)) => cmd::test::run(&ctx, cmd),
         Some(Commands::Docker(cmd)) => cmd::docker::run(&ctx, cmd),
+        Some(Commands::Server(cmd)) => cmd::server::run(&ctx, cmd),
+        Some(Commands::Migrate(cmd)) => cmd::migrate::run(&ctx, cmd),
+        Some(Commands::Node(cmd)) => cmd::node::run(&ctx, cmd),
         None => interactive_menu(&ctx),
     }
 }
@@ -154,6 +169,9 @@ fn cmd_doctor(ctx: &AppContext) -> Result<()> {
 fn interactive_menu(ctx: &AppContext) -> Result<()> {
 
     let items = vec![
+        "🚀 Server (run API locally)",
+        "🗃️  Migrate (database migrations)",
+        "📦 Node (frontend apps) →",
         "🐳 Docker →",
         "🧪 Test →",
         "📊 Status",
@@ -170,15 +188,60 @@ fn interactive_menu(ctx: &AppContext) -> Result<()> {
             .interact()?;
 
         match choice {
-            0 => docker_submenu(ctx)?,
-            1 => cmd::test::interactive_menu(ctx)?,
-            2 => cmd_status(ctx)?,
-            3 => cmd_doctor(ctx)?,
+            0 => server_submenu(ctx)?,
+            1 => migrate_submenu(ctx)?,
+            2 => cmd::node::interactive_menu(ctx)?,
+            3 => docker_submenu(ctx)?,
+            4 => cmd::test::interactive_menu(ctx)?,
+            5 => cmd_status(ctx)?,
+            6 => cmd_doctor(ctx)?,
             _ => break,
         }
     }
 
     Ok(())
+}
+
+fn server_submenu(ctx: &AppContext) -> Result<()> {
+    let items = vec![
+        "Run API server",
+        "Run API server (REPLAY mode)",
+        "← Back",
+    ];
+
+    let choice = Select::with_theme(&ctx.theme())
+        .with_prompt("Server")
+        .items(&items)
+        .default(0)
+        .interact()?;
+
+    match choice {
+        0 => cmd::server::run(ctx, cmd::server::ServerCommand::Run { replay: false }),
+        1 => cmd::server::run(ctx, cmd::server::ServerCommand::Run { replay: true }),
+        _ => Ok(()),
+    }
+}
+
+fn migrate_submenu(ctx: &AppContext) -> Result<()> {
+    let items = vec![
+        "Status (dry run — show pending)",
+        "Commit (apply pending migrations)",
+        "Check (lint SQL for risky patterns)",
+        "← Back",
+    ];
+
+    let choice = Select::with_theme(&ctx.theme())
+        .with_prompt("Migrate")
+        .items(&items)
+        .default(0)
+        .interact()?;
+
+    match choice {
+        0 => cmd::migrate::run(ctx, cmd::migrate::MigrateCommand::Status),
+        1 => cmd::migrate::run(ctx, cmd::migrate::MigrateCommand::Commit),
+        2 => cmd::migrate::run(ctx, cmd::migrate::MigrateCommand::Check),
+        _ => Ok(()),
+    }
 }
 
 fn docker_submenu(ctx: &AppContext) -> Result<()> {

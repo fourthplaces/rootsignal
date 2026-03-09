@@ -19,7 +19,7 @@ use crate::testing::*;
 use chrono::Utc;
 use uuid::Uuid;
 use rootsignal_common::canonical_value;
-use rootsignal_common::events::{Eventlike, SystemEvent, WorldEvent};
+use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
 use seesaw_core::AnyEvent;
 
@@ -35,25 +35,26 @@ async fn complete_response_roles(engine: &seesaw_core::Engine<crate::core::engin
     engine.emit(empty_topic_discovery()).settled().await.unwrap();
 }
 
-/// Helper: collect event variant names from captured events.
+/// Helper: collect durable event names from captured events.
 fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
+    use seesaw_core::event::Event as _;
     captured
         .lock()
         .unwrap()
         .iter()
         .filter_map(|e| {
             if let Some(le) = e.downcast_ref::<LifecycleEvent>() {
-                Some(le.event_type_str())
+                Some(le.durable_name().to_string())
             } else if let Some(se) = e.downcast_ref::<SignalEvent>() {
-                Some(se.event_type_str())
+                Some(se.durable_name().to_string())
             } else if let Some(de) = e.downcast_ref::<DiscoveryEvent>() {
-                Some(de.event_type_str())
+                Some(de.durable_name().to_string())
             } else if let Some(ee) = e.downcast_ref::<EnrichmentEvent>() {
-                Some(ee.event_type_str())
+                Some(ee.durable_name().to_string())
             } else if let Some(we) = e.downcast_ref::<WorldEvent>() {
-                Some(we.event_type().to_string())
+                Some(we.durable_name().to_string())
             } else if let Some(se) = e.downcast_ref::<SystemEvent>() {
-                Some(se.event_type().to_string())
+                Some(se.durable_name().to_string())
             } else {
                 Some("unknown".to_string())
             }
@@ -145,12 +146,12 @@ async fn new_signal_dispatches_full_event_chain() {
 
     // Actor events emitted directly by dedup handler
     assert!(
-        names.iter().any(|n| n == "actor_identified"),
+        names.iter().any(|n| n == "system:actor_identified"),
         "expected ActorIdentified event, got: {names:?}"
     );
 
     assert!(
-        names.iter().any(|n| n == "actor_linked_to_signal"),
+        names.iter().any(|n| n == "system:actor_linked_to_signal"),
         "expected ActorLinkedToSignal event, got: {names:?}"
     );
 
@@ -838,7 +839,7 @@ async fn actor_location_emits_events_on_response_complete() {
 
     // ActorLocationIdentified event emitted
     assert!(
-        names.contains(&"actor_location_identified".to_string()),
+        names.contains(&"system:actor_location_identified".to_string()),
         "expected ActorLocationIdentified, got: {names:?}"
     );
 

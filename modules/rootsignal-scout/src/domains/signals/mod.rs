@@ -9,7 +9,7 @@ use rootsignal_common::events::{SystemEvent, WorldEvent};
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::signals::activities::dedup;
-use crate::domains::signals::events::{ActorAction, NewCitation, SignalEvent};
+use crate::domains::signals::events::{ActorAction, DedupOutcome, NewCitation, SignalEvent};
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::store::event_sourced::{node_system_events, node_to_world_event};
 
@@ -122,6 +122,86 @@ pub mod handlers {
                             role: "authored".to_string(),
                         });
                     }
+                }
+            }
+
+            // Wiring events: emit projectable facts for data that was
+            // previously written directly to Neo4j by project_dedup_verdicts().
+            // These flow through the projector's existing arms on replay.
+            let mut refreshed_ids: Vec<(uuid::Uuid, rootsignal_common::types::NodeType)> = Vec::new();
+            for verdict in &result.verdicts {
+                match verdict {
+                    DedupOutcome::Created {
+                        node_id,
+                        source_id,
+                        resource_tags,
+                        signal_tags,
+                        ..
+                    } => {
+                        if let Some(sid) = source_id {
+                            all_events.push(WorldEvent::SignalLinkedToSource {
+                                signal_id: *node_id,
+                                source_id: *sid,
+                            });
+                        }
+
+                        for tag in resource_tags.iter().filter(|t| t.confidence >= 0.3) {
+                            let slug = rootsignal_common::slugify(&tag.slug);
+                            all_events.push(WorldEvent::ResourceIdentified {
+                                resource_id: uuid::Uuid::new_v4(),
+                                name: tag.slug.clone(),
+                                slug: slug.clone(),
+                                description: tag.context.clone().unwrap_or_default(),
+                            });
+                            let (quantity, capacity) = match tag.role {
+                                crate::core::extractor::ResourceRole::Requires => {
+                                    (tag.context.clone(), None)
+                                }
+                                crate::core::extractor::ResourceRole::Prefers => (None, None),
+                                crate::core::extractor::ResourceRole::Offers => {
+                                    (None, tag.context.clone())
+                                }
+                            };
+                            all_events.push(WorldEvent::ResourceLinked {
+                                signal_id: *node_id,
+                                resource_slug: slug,
+                                role: tag.role.to_string(),
+                                confidence: tag.confidence.clamp(0.0, 1.0) as f32,
+                                quantity,
+                                notes: None,
+                                capacity,
+                            });
+                        }
+
+                        if !signal_tags.is_empty() {
+                            all_events.push(SystemEvent::SignalTagged {
+                                signal_id: *node_id,
+                                tag_slugs: signal_tags.clone(),
+                            });
+                        }
+                    }
+                    DedupOutcome::Refreshed { existing_id, node_type, .. }
+                    | DedupOutcome::ContentChanged { existing_id, node_type, .. } => {
+                        refreshed_ids.push((*existing_id, *node_type));
+                    }
+                }
+            }
+
+            // Group refreshed signals by node_type for FreshnessConfirmed batches
+            if !refreshed_ids.is_empty() {
+                use std::collections::HashMap;
+                let mut by_type: HashMap<rootsignal_common::types::NodeType, Vec<uuid::Uuid>> =
+                    HashMap::new();
+                for (id, nt) in refreshed_ids {
+                    by_type.entry(nt).or_default().push(id);
+                }
+                let now = chrono::Utc::now();
+                for (node_type, signal_ids) in by_type {
+                    all_events.push(SystemEvent::FreshnessConfirmed {
+                        signal_ids,
+                        node_type,
+                        confirmed_at: now,
+                    });
                 }
             }
 

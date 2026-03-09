@@ -10,7 +10,8 @@ async fn cloud_connect() {
     let user = std::env::var("NEO4J_USER").expect("NEO4J_USER required");
     let password = std::env::var("NEO4J_PASSWORD").expect("NEO4J_PASSWORD required");
 
-    let client = connect_graph(&uri, &user, &password)
+    let db = std::env::var("NEO4J_DB").unwrap_or_else(|_| "neo4j".to_string());
+    let client = connect_graph(&uri, &user, &password, &db)
         .await
         .expect("Failed to connect");
 
