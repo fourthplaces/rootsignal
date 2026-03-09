@@ -40,12 +40,58 @@ fn meta_to_locations(meta: &rootsignal_common::types::NodeMeta) -> Vec<Location>
     meta.locations.clone()
 }
 
-fn meta_to_mentioned_entities(meta: &rootsignal_common::types::NodeMeta) -> Vec<Entity> {
-    meta.mentioned_entities.clone()
+/// Build mentioned_entities for a world event, synthesizing from per-type fields
+/// when they aren't already present in the extracted entities.
+fn mentioned_entities_for(node: &Node) -> Vec<Entity> {
+    let meta = node.meta().expect("signal nodes always have meta");
+    let mut entities = meta.mentioned_entities.clone();
+
+    // Synthesize entities from per-type fields if not already present by name
+    let has_name = |name: &str| entities.iter().any(|e| e.name == name);
+
+    match node {
+        Node::Gathering(n) => {
+            if let Some(ref org) = n.organizer {
+                if !org.is_empty() && !has_name(org) {
+                    entities.push(Entity {
+                        name: org.clone(),
+                        entity_type: EntityType::Organization,
+                        role: Some("organizer".to_string()),
+                    });
+                }
+            }
+        }
+        Node::Announcement(n) => {
+            if let Some(ref auth) = n.source_authority {
+                if !auth.is_empty() && !has_name(auth) {
+                    entities.push(Entity {
+                        name: auth.clone(),
+                        entity_type: EntityType::Organization,
+                        role: Some("source_authority".to_string()),
+                    });
+                }
+            }
+        }
+        Node::Condition(n) => {
+            if let Some(ref obs) = n.observed_by {
+                if !obs.is_empty() && !has_name(obs) {
+                    entities.push(Entity {
+                        name: obs.clone(),
+                        entity_type: EntityType::Organization,
+                        role: Some("observer".to_string()),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    entities
 }
 
 /// Build the world-fact event for a discovery — no sensitivity or implied_queries.
 pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
+    let entities = mentioned_entities_for(node);
     match node {
         Node::Gathering(n) => WorldEvent::GatheringAnnounced {
             id: n.meta.id,
@@ -55,7 +101,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
-            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            mentioned_entities: entities.clone(),
             references: vec![],
             schedule: schedule_from_gathering(n),
             action_url: if n.action_url.is_empty() {
@@ -72,7 +118,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
-            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            mentioned_entities: entities.clone(),
             references: vec![],
             schedule: None,
             action_url: if n.action_url.is_empty() {
@@ -91,7 +137,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
-            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            mentioned_entities: entities.clone(),
             references: vec![],
             schedule: None,
             what_needed: n.what_needed.clone(),
@@ -105,7 +151,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
-            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            mentioned_entities: entities.clone(),
             references: vec![],
             schedule: None,
             subject: n.subject.clone(),
@@ -119,7 +165,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
-            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            mentioned_entities: entities.clone(),
             references: vec![],
             schedule: None,
             subject: n.subject.clone(),
@@ -133,7 +179,7 @@ pub(crate) fn node_to_world_event(node: &Node) -> WorldEvent {
             published_at: n.meta.published_at,
             extraction_id: None,
             locations: meta_to_locations(&n.meta),
-            mentioned_entities: meta_to_mentioned_entities(&n.meta),
+            mentioned_entities: entities.clone(),
             references: vec![],
             schedule: None,
             subject: n.subject.clone(),
@@ -757,6 +803,55 @@ mod tests {
                 assert_eq!(mentioned_entities[0].entity_type, EntityType::Organization);
             }
             _ => panic!("Expected HelpRequested"),
+        }
+    }
+
+    #[test]
+    fn organizer_synthesized_as_entity_when_not_already_present() {
+        let meta = test_meta("Block Party");
+        let node = Node::Gathering(rootsignal_common::GatheringNode {
+            meta,
+            starts_at: Some(Utc::now()),
+            ends_at: None,
+            action_url: "https://example.com".to_string(),
+            organizer: Some("Lake Street Council".to_string()),
+            is_recurring: false,
+        });
+
+        let world = node_to_world_event(&node);
+        match world {
+            WorldEvent::GatheringAnnounced { mentioned_entities, .. } => {
+                assert_eq!(mentioned_entities.len(), 1);
+                assert_eq!(mentioned_entities[0].name, "Lake Street Council");
+                assert_eq!(mentioned_entities[0].role.as_deref(), Some("organizer"));
+            }
+            _ => panic!("Expected GatheringAnnounced"),
+        }
+    }
+
+    #[test]
+    fn organizer_not_duplicated_when_already_in_entities() {
+        let mut meta = test_meta("Block Party");
+        meta.mentioned_entities = vec![Entity {
+            name: "Lake Street Council".to_string(),
+            entity_type: EntityType::Organization,
+            role: Some("organizer".to_string()),
+        }];
+        let node = Node::Gathering(rootsignal_common::GatheringNode {
+            meta,
+            starts_at: Some(Utc::now()),
+            ends_at: None,
+            action_url: "https://example.com".to_string(),
+            organizer: Some("Lake Street Council".to_string()),
+            is_recurring: false,
+        });
+
+        let world = node_to_world_event(&node);
+        match world {
+            WorldEvent::GatheringAnnounced { mentioned_entities, .. } => {
+                assert_eq!(mentioned_entities.len(), 1, "organizer should not be duplicated");
+            }
+            _ => panic!("Expected GatheringAnnounced"),
         }
     }
 }

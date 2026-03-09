@@ -445,11 +445,16 @@ impl Extractor {
                 locations: {
                     let mut locs = Vec::new();
                     if location.is_some() || signal.location_name.is_some() {
+                        let role = match signal.signal_type.as_str() {
+                            "gathering" => Some("venue".to_string()),
+                            "condition" => Some("affected_area".to_string()),
+                            _ => None,
+                        };
                         locs.push(Location {
                             point: location,
                             name: signal.location_name.clone(),
                             address: None,
-                            role: None,
+                            role,
                         });
                     }
                     locs
