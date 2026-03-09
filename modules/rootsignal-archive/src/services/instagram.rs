@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use apify_client::ApifyClient;
+use rootsignal_common::ProfileSnapshot;
 use tracing::info;
 use uuid::Uuid;
 
@@ -207,6 +208,37 @@ impl InstagramService {
         info!("instagram: reels not yet supported by Apify");
         Ok(Vec::new())
     }
+
+    /// Fetch profile metadata (bio, external URL) via Apify profile scraper.
+    pub(crate) async fn fetch_profile(
+        &self,
+        identifier: &str,
+    ) -> Result<Option<ProfileSnapshot>> {
+        let username = extract_username(identifier);
+        info!(username, "instagram: fetching profile");
+
+        let profile = self.client.scrape_instagram_profile(&username).await?;
+        Ok(profile.map(|p| ProfileSnapshot {
+            bio: p.biography.filter(|b| !b.is_empty()),
+            external_url: p.external_url.filter(|u| !u.is_empty()),
+            display_name: p.full_name.filter(|n| !n.is_empty()),
+            follower_count: p.followers_count,
+        }))
+    }
+}
+
+/// Extract a bare username from a URL or identifier string.
+fn extract_username(identifier: &str) -> String {
+    if identifier.contains("instagram.com") {
+        identifier
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(identifier)
+            .to_string()
+    } else {
+        identifier.trim_start_matches('@').to_string()
+    }
 }
 
 /// Convert multi-word topic strings into valid Instagram hashtags (camelCase,
@@ -274,5 +306,17 @@ mod tests {
     fn sanitize_filters_empty() {
         let result = sanitize_topics_to_hashtags(&["", "   ", "valid topic"]);
         assert_eq!(result, vec!["validTopic"]);
+    }
+
+    #[test]
+    fn extract_username_from_url() {
+        assert_eq!(extract_username("https://www.instagram.com/sanctuarysupply/"), "sanctuarysupply");
+        assert_eq!(extract_username("https://instagram.com/cafe_latte"), "cafe_latte");
+    }
+
+    #[test]
+    fn extract_username_from_bare_handle() {
+        assert_eq!(extract_username("@sanctuarysupply"), "sanctuarysupply");
+        assert_eq!(extract_username("sanctuarysupply"), "sanctuarysupply");
     }
 }

@@ -17,7 +17,7 @@ use rootsignal_common::types::{ActorNode, Entity, EntityType, GeoPoint, Node, No
 use rootsignal_common::{
     FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
-use rootsignal_graph::{DuplicateMatch, GraphStore};
+use rootsignal_graph::GraphStore;
 use crate::traits::SignalReader;
 
 
@@ -221,36 +221,6 @@ fn schedule_from_gathering(n: &rootsignal_common::types::GatheringNode) -> Optio
 
 #[async_trait]
 impl SignalReader for EventSourcedReader {
-    // --- Corroboration reads ---
-
-    async fn read_corroboration_count(&self, id: Uuid, node_type: NodeType) -> Result<u32> {
-        let label = match node_type {
-            NodeType::Gathering => "Gathering",
-            NodeType::Resource => "Resource",
-            NodeType::HelpRequest => "HelpRequest",
-            NodeType::Announcement => "Announcement",
-            NodeType::Concern => "Concern",
-            NodeType::Condition => "Condition",
-            NodeType::Citation => "Evidence",
-        };
-        let q = rootsignal_graph::query(&format!(
-            "MATCH (n:{label} {{id: $id}}) RETURN n.corroboration_count AS count"
-        ))
-        .param("id", id.to_string());
-
-        let neo4j = self.graph.client();
-        let mut stream = match neo4j.execute(q).await {
-            Ok(s) => s,
-            Err(_) => return Ok(0),
-        };
-        if let Some(row) = stream.next().await? {
-            let count: i64 = row.get("count").unwrap_or(0);
-            Ok(count as u32)
-        } else {
-            Ok(0)
-        }
-    }
-
     // --- URL/content guards (read-only, delegate to graph) ---
 
     async fn blocked_urls(&self, urls: &[String]) -> Result<HashSet<String>> {
@@ -289,46 +259,11 @@ impl SignalReader for EventSourcedReader {
 
     // --- Dedup queries (read-only, delegate to graph) ---
 
-    async fn existing_titles_for_url(&self, url: &str) -> Result<Vec<String>> {
-        Ok(self.graph.existing_titles_for_url(url).await?)
-    }
-
-    async fn find_by_titles_and_types(
-        &self,
-        pairs: &[(String, NodeType)],
-    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
-        Ok(self.graph.find_by_titles_and_types(pairs).await?)
-    }
-
     async fn find_by_fingerprints(
         &self,
         pairs: &[(String, NodeType)],
     ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
         Ok(self.graph.find_by_fingerprints(pairs).await?)
-    }
-
-    async fn find_duplicate(
-        &self,
-        embedding: &[f32],
-        primary_type: NodeType,
-        threshold: f64,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-    ) -> Result<Option<DuplicateMatch>> {
-        Ok(self
-            .graph
-            .find_duplicate(
-                embedding,
-                primary_type,
-                threshold,
-                min_lat,
-                max_lat,
-                min_lng,
-                max_lng,
-            )
-            .await?)
     }
 
     // --- Actor graph (append event → project to graph) ---
@@ -344,6 +279,20 @@ impl SignalReader for EventSourcedReader {
 
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> {
         Ok(self.graph.get_active_sources().await?)
+    }
+
+    async fn find_source_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
+        let q = rootsignal_graph::query(
+            "MATCH (s:Source {canonical_key: $ck, active: true}) RETURN s.id AS id LIMIT 1",
+        )
+        .param("ck", canonical_key);
+
+        let mut stream = self.graph.client().execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            return Ok(uuid::Uuid::parse_str(&id_str).ok());
+        }
+        Ok(None)
     }
 
     async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> {

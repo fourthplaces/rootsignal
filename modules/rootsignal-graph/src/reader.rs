@@ -2147,6 +2147,7 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
     let typical_roles: Vec<String> = n.get("typical_roles").unwrap_or_default();
 
     let bio: Option<String> = n.get("bio").ok();
+    let external_url: Option<String> = n.get("external_url").ok().filter(|u: &String| !u.is_empty());
     let location_lat: Option<f64> = n.get("location_lat").ok();
     let location_lng: Option<f64> = n.get("location_lng").ok();
     let location_name_entity: Option<String> = n.get("location_name").ok();
@@ -2164,6 +2165,7 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         last_active,
         typical_roles,
         bio,
+        external_url,
         location_lat,
         location_lng,
         location_name: location_name_entity,

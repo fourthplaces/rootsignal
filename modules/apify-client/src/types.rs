@@ -290,6 +290,31 @@ pub struct RedditPost {
     pub data_type: Option<String>,
 }
 
+/// Input for the apify/instagram-profile-scraper actor.
+#[derive(Debug, Clone, Serialize)]
+pub struct InstagramProfileInput {
+    pub usernames: Vec<String>,
+}
+
+/// A single Instagram profile from the Apify dataset.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstagramProfile {
+    pub username: Option<String>,
+    #[serde(rename = "fullName")]
+    pub full_name: Option<String>,
+    pub biography: Option<String>,
+    #[serde(rename = "externalUrl")]
+    pub external_url: Option<String>,
+    #[serde(rename = "followersCount")]
+    pub followers_count: Option<u64>,
+    #[serde(rename = "followsCount")]
+    pub follows_count: Option<u64>,
+    #[serde(rename = "profilePicUrl")]
+    pub profile_pic_url: Option<String>,
+    #[serde(rename = "isVerified")]
+    pub is_verified: Option<bool>,
+}
+
 /// Apify actor run metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RunData {

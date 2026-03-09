@@ -26,6 +26,7 @@ use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::SignalEvent;
 use crate::domains::situation_weaving::events::SituationWeavingEvent;
 use crate::domains::supervisor::events::SupervisorEvent;
+use rootsignal_common::telemetry_events::TelemetryEvent;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::infra::util::sanitize_url;
 use crate::core::extractor::ResourceTag;
@@ -339,7 +340,7 @@ impl PipelineState {
                             self.stats.signals_stored += 1;
                             *self.stats.by_type.entry(*node_type).or_default() += 1;
                         }
-                        DedupOutcome::Corroborated { .. } | DedupOutcome::Refreshed { .. } => {
+                        DedupOutcome::Refreshed { .. } => {
                             deduped += 1;
                         }
                     }
@@ -482,6 +483,13 @@ impl PipelineState {
         self.stats.discovery_accounts_found += output.stats_delta.discovery_accounts_found;
     }
 
+    /// Apply a telemetry event (budget checkpoints update spend tracking).
+    pub fn apply_telemetry(&mut self, event: &TelemetryEvent) {
+        if let TelemetryEvent::BudgetCheckpoint { spent_cents, .. } = event {
+            self.stats.spent_cents = *spent_cents;
+        }
+    }
+
     /// Apply a pipeline event to aggregate state.
     pub fn apply_pipeline(&mut self, event: &PipelineEvent) {
         match event {
@@ -544,6 +552,10 @@ pub mod pipeline_aggregators {
 
     fn on_system(state: &mut PipelineState, event: SystemEvent) {
         state.apply_system(&event);
+    }
+
+    fn on_telemetry(state: &mut PipelineState, event: TelemetryEvent) {
+        state.apply_telemetry(&event);
     }
 
     fn on_situation_weaving(_state: &mut PipelineState, _event: SituationWeavingEvent) {}

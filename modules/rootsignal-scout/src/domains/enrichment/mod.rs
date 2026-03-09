@@ -123,6 +123,13 @@ pub mod handlers {
                 for update in activities::actor_location::triangulate_all_actors(&*deps.store, &actors).await {
                     all_events.push(actor_location_event(update));
                 }
+
+                // Fetch profiles for actors with social sources but no bio
+                if let Some(fetcher) = deps.fetcher.as_deref() {
+                    for event in activities::profile_enrichment::enrich_actor_profiles(fetcher, &actors).await {
+                        all_events.push(event);
+                    }
+                }
             }
         }
 

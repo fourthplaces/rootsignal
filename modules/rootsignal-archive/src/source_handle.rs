@@ -11,7 +11,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use rootsignal_common::types::{
     ArchivedFeed, ArchivedPage, ArchivedSearchResults, Channels, FeedItem, LongVideo, Post,
-    SearchResult, ShortVideo, Source, Story,
+    ProfileSnapshot, SearchResult, ShortVideo, SocialPlatform, Source, Story,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -113,6 +113,20 @@ impl SourceHandle {
             platform: self.platform,
             identifier: self.identifier.clone(),
             limit,
+        }
+    }
+
+    pub async fn profile(&self, platform: SocialPlatform) -> Result<Option<ProfileSnapshot>> {
+        match platform {
+            SocialPlatform::Instagram => {
+                let svc = self.inner.instagram.as_ref().ok_or_else(|| {
+                    ArchiveError::Unsupported("Instagram service not configured".into())
+                })?;
+                svc.fetch_profile(&self.identifier)
+                    .await
+                    .map_err(ArchiveError::Other)
+            }
+            _ => Ok(None),
         }
     }
 

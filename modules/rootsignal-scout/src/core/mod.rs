@@ -1,5 +1,4 @@
 pub mod aggregate;
-pub mod embedding_cache;
 pub mod engine;
 pub mod events;
 pub mod extractor;

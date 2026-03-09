@@ -1366,6 +1366,24 @@ impl GraphProjector {
                 Ok(ApplyResult::Applied)
             }
 
+            SystemEvent::ActorProfileEnriched {
+                actor_id,
+                bio,
+                external_url,
+            } => {
+                let q = query(
+                    "MATCH (a:Actor {id: $id})
+                     SET a.bio = $bio,
+                         a.external_url = $url",
+                )
+                .param("id", actor_id.to_string())
+                .param("bio", bio.unwrap_or_default())
+                .param("url", external_url.unwrap_or_default());
+
+                self.client.run(q).await?;
+                Ok(ApplyResult::Applied)
+            }
+
             // ---------------------------------------------------------
             // Actor decisions
             // ---------------------------------------------------------

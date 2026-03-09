@@ -139,6 +139,8 @@ pub struct ActorNode {
     // --- Actor profile fields (populated when actor has linked social accounts) ---
     /// Actor bio / description for LLM context.
     pub bio: Option<String>,
+    /// External URL from the actor's social profile (e.g. linktree, website).
+    pub external_url: Option<String>,
     /// Pinned location latitude.
     pub location_lat: Option<f64>,
     /// Pinned location longitude.
@@ -160,6 +162,15 @@ pub struct ActorContext {
     pub location_lat: Option<f64>,
     pub location_lng: Option<f64>,
     pub discovery_depth: u32,
+}
+
+/// Platform-agnostic profile metadata fetched from a social source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileSnapshot {
+    pub bio: Option<String>,
+    pub external_url: Option<String>,
+    pub display_name: Option<String>,
+    pub follower_count: Option<u64>,
 }
 
 /// A social account mentioned in a post from a known actor.

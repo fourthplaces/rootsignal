@@ -185,6 +185,14 @@ pub enum SystemEvent {
         location_name: Option<String>,
     },
 
+    ActorProfileEnriched {
+        actor_id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bio: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        external_url: Option<String>,
+    },
+
     // -----------------------------------------------------------------------
     // Relationship linking — system judgments about signal relationships
     // -----------------------------------------------------------------------
@@ -588,6 +596,7 @@ impl Eventlike for SystemEvent {
             SystemEvent::ActorIdentified { .. } => "actor_identified",
             SystemEvent::ActorLinkedToSignal { .. } => "actor_linked_to_signal",
             SystemEvent::ActorLocationIdentified { .. } => "actor_location_identified",
+            SystemEvent::ActorProfileEnriched { .. } => "actor_profile_enriched",
             SystemEvent::ResponseLinked { .. } => "response_linked",
             SystemEvent::ConcernLinked { .. } => "concern_linked",
             SystemEvent::GatheringCorrected { .. } => "gathering_corrected",

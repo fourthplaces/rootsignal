@@ -56,10 +56,12 @@ impl ScoutDeps {
     ///
     /// Returns `(deps, ai)` — callers add the scope-specific parts
     /// (extractor) on top.
+    /// `budget_cents` is the effective budget for this run (already computed by caller).
     fn build_base_deps(
         &self,
         run_id: Uuid,
         spent_cents: u64,
+        budget_cents: Option<u64>,
     ) -> (ScoutEngineDeps, Arc<dyn ai_client::Agent>) {
         let store: Arc<dyn SignalReader> = Arc::new(self.build_store());
         let embedder: Arc<dyn TextEmbedder> =
@@ -69,9 +71,10 @@ impl ScoutDeps {
             Arc::new(Claude::new(&self.anthropic_api_key, ai_client::models::SONNET_4_6)),
         ]));
         let archive = create_archive(self);
+        let limit = budget_cents.unwrap_or(self.daily_budget_cents);
         let budget = Arc::new(
             crate::domains::scheduling::activities::budget::BudgetTracker::new_with_spent(
-                self.daily_budget_cents,
+                limit,
                 spent_cents,
             ),
         );
@@ -111,8 +114,9 @@ impl ScoutDeps {
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
         spent_cents: u64,
+        budget_cents: Option<u64>,
     ) -> ScoutEngineDeps {
-        let (mut deps, ai) = self.build_base_deps(run_id, spent_cents);
+        let (mut deps, ai) = self.build_base_deps(run_id, spent_cents, budget_cents);
         deps.extractor = Some(Self::make_extractor(&ai, Some(scope)));
         deps
     }
@@ -125,8 +129,9 @@ impl ScoutDeps {
         &self,
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
+        budget_cents: Option<u64>,
     ) -> ScoutEngine {
-        let deps = self.build_region_deps(scope, run_id, 0);
+        let deps = self.build_region_deps(scope, run_id, 0, budget_cents);
         engine::build_engine(deps, self.make_store(run_id))
     }
 
@@ -140,8 +145,9 @@ impl ScoutDeps {
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
         spent_cents: u64,
+        budget_cents: Option<u64>,
     ) -> ScoutEngine {
-        let deps = self.build_region_deps(scope, run_id, spent_cents);
+        let deps = self.build_region_deps(scope, run_id, spent_cents, budget_cents);
         engine::build_full_engine(deps, self.make_store(run_id))
     }
 
@@ -152,8 +158,9 @@ impl ScoutDeps {
         &self,
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
+        budget_cents: Option<u64>,
     ) -> ScoutEngine {
-        let deps = self.build_region_deps(scope, run_id, 0);
+        let deps = self.build_region_deps(scope, run_id, 0, budget_cents);
         engine::build_weave_engine(deps, self.make_store(run_id))
     }
 
@@ -163,7 +170,7 @@ impl ScoutDeps {
         scope: &rootsignal_common::ScoutScope,
         run_id: Uuid,
     ) -> ScoutEngineDeps {
-        self.build_region_deps(scope, run_id, 0)
+        self.build_region_deps(scope, run_id, 0, None)
     }
 
     // -----------------------------------------------------------------
@@ -178,9 +185,10 @@ impl ScoutDeps {
         &self,
         region: Option<&rootsignal_common::RegionNode>,
         run_id: Uuid,
+        budget_cents: Option<u64>,
     ) -> ScoutEngine {
         let scope = region.map(rootsignal_common::ScoutScope::from);
-        let (mut deps, ai) = self.build_base_deps(run_id, 0);
+        let (mut deps, ai) = self.build_base_deps(run_id, 0, budget_cents);
         deps.extractor = Some(Self::make_extractor(&ai, scope.as_ref()));
         engine::build_engine(deps, self.make_store(run_id))
     }
@@ -190,8 +198,8 @@ impl ScoutDeps {
     // -----------------------------------------------------------------
 
     /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
-    pub fn build_news_engine(&self, run_id: Uuid) -> ScoutEngine {
-        let (deps, _ai) = self.build_base_deps(run_id, 0);
+    pub fn build_news_engine(&self, run_id: Uuid, budget_cents: Option<u64>) -> ScoutEngine {
+        let (deps, _ai) = self.build_base_deps(run_id, 0, budget_cents);
         engine::build_news_engine(deps, self.make_store(run_id))
     }
 

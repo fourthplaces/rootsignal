@@ -27,6 +27,7 @@ pub struct ScoutStats {
     pub sources_discovered: u32,
     pub link_failures: u32,
     pub handler_failures: u32,
+    pub spent_cents: u64,
 }
 
 impl ScoutStats {
@@ -55,6 +56,7 @@ impl ScoutStats {
             sources_discovered,
             link_failures,
             handler_failures,
+            spent_cents,
         } = *other;
 
         self.urls_scraped += urls_scraped;
@@ -79,6 +81,7 @@ impl ScoutStats {
         self.sources_discovered += sources_discovered;
         self.link_failures += link_failures;
         self.handler_failures += handler_failures;
+        self.spent_cents += spent_cents;
     }
 }
 
@@ -106,6 +109,7 @@ impl std::fmt::Display for ScoutStats {
             sources_discovered,
             link_failures,
             handler_failures,
+            spent_cents,
         } = *self;
 
         writeln!(f, "\n=== Scout Run Complete ===")?;
@@ -160,6 +164,9 @@ impl std::fmt::Display for ScoutStats {
             if expansion_social_topics_queued > 0 {
                 writeln!(f, "  Social topics:     {expansion_social_topics_queued}")?;
             }
+        }
+        if spent_cents > 0 {
+            writeln!(f, "Budget spent:       {spent_cents} cents")?;
         }
         Ok(())
     }

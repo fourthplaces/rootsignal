@@ -3,6 +3,7 @@ pub mod actor_stats;
 pub mod diversity;
 pub mod domain_filter;
 pub mod link_promoter;
+pub mod profile_enrichment;
 pub mod quality;
 pub mod signal_reviewer;
 pub mod universe_check;

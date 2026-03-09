@@ -19,8 +19,9 @@ use uuid::Uuid;
 use rootsignal_common::canonical_value;
 use rootsignal_common::safety::SensitivityLevel;
 use rootsignal_common::types::{
-    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node, NodeMeta,
-    NodeType, Post, ReviewStatus, ScoutScope, ShortVideo, SourceNode, Story,
+    ActorNode, ArchiveFile, ArchivedFeed, ArchivedPage, ArchivedSearchResults, CitationNode, Node,
+    NodeMeta, NodeType, Post, ProfileSnapshot, ReviewStatus, ScoutScope, ShortVideo,
+    SocialPlatform, SourceNode, Story,
 };
 use rootsignal_common::events::{CauseHeatScore, SimilarityEdge, SystemEvent};
 use rootsignal_graph::{
@@ -62,6 +63,7 @@ pub struct MockFetcher {
     site_searches: HashMap<String, ArchivedSearchResults>,
     stories: HashMap<String, Vec<Story>>,
     short_videos: HashMap<String, Vec<ShortVideo>>,
+    profiles: HashMap<String, ProfileSnapshot>,
 }
 
 impl MockFetcher {
@@ -75,6 +77,7 @@ impl MockFetcher {
             site_searches: HashMap::new(),
             stories: HashMap::new(),
             short_videos: HashMap::new(),
+            profiles: HashMap::new(),
         }
     }
 
@@ -119,6 +122,12 @@ impl MockFetcher {
     #[allow(dead_code)]
     pub fn on_short_videos(mut self, identifier: &str, videos: Vec<ShortVideo>) -> Self {
         self.short_videos.insert(identifier.to_string(), videos);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn on_profile(mut self, identifier: &str, profile: ProfileSnapshot) -> Self {
+        self.profiles.insert(identifier.to_string(), profile);
         self
     }
 }
@@ -187,6 +196,10 @@ impl ContentFetcher for MockFetcher {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("MockFetcher: no short videos registered for {identifier}"))
     }
+
+    async fn profile(&self, identifier: &str, _platform: SocialPlatform) -> Result<Option<ProfileSnapshot>> {
+        Ok(self.profiles.get(identifier).cloned())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,10 +235,6 @@ pub struct ActorLink {
 /// Inner mutable state for MockSignalReader.
 struct MockSignalReaderInner {
     signals: HashMap<Uuid, StoredSignal>,
-    /// (normalized_title, node_type) → signal_id for dedup lookups
-    title_index: HashMap<(String, NodeType), Uuid>,
-    /// source_url → vec of signal titles
-    url_titles: HashMap<String, Vec<String>>,
     evidence: Vec<(Uuid, CitationNode)>,
     actors: HashMap<Uuid, ActorNode>,
     actor_by_name: HashMap<String, Uuid>,
@@ -246,7 +255,7 @@ struct MockSignalReaderInner {
 }
 
 /// Stateful in-memory graph mock. Thread-safe via interior Mutex.
-/// `create_node` inserts, `find_by_titles_and_types` queries, `corroborate` increments.
+/// `create_node` inserts, `find_by_fingerprints` queries by (url, node_type).
 pub struct MockSignalReader {
     inner: Mutex<MockSignalReaderInner>,
 }
@@ -256,8 +265,6 @@ impl MockSignalReader {
         Self {
             inner: Mutex::new(MockSignalReaderInner {
                 signals: HashMap::new(),
-                title_index: HashMap::new(),
-                url_titles: HashMap::new(),
                 evidence: Vec::new(),
                 actors: HashMap::new(),
                 actor_by_name: HashMap::new(),
@@ -447,8 +454,6 @@ impl MockSignalReader {
             .meta()
             .map(|m| m.url.clone())
             .unwrap_or_default();
-        let normalized = title.trim().to_lowercase();
-
         let meta = node.meta();
         let stored = StoredSignal {
             id,
@@ -466,29 +471,16 @@ impl MockSignalReader {
             extracted_at: meta.map(|m| m.extracted_at).unwrap_or_else(Utc::now),
         };
         inner.signals.insert(id, stored);
-        inner.title_index.insert((normalized, node_type), id);
-        inner.url_titles.entry(source_url).or_default().push(title);
         Ok(id)
     }
 
     // --- Setup helpers (for dedup tests) ---
 
-    /// Pre-populate URL→titles mapping for URL-based title dedup (Layer 2).
-    pub fn add_url_titles(&self, url: &str, titles: Vec<String>) {
-        let mut inner = self.inner.lock().unwrap();
-        inner
-            .url_titles
-            .entry(url.to_string())
-            .or_default()
-            .extend(titles);
-    }
-
-    /// Insert a signal directly into the mock store so `find_by_titles_and_types`
+    /// Insert a signal directly into the mock store so `find_by_fingerprints`
     /// will find it. Returns the generated signal ID.
     pub fn insert_signal(&self, title: &str, node_type: NodeType, source_url: &str) -> Uuid {
         let mut inner = self.inner.lock().unwrap();
         let id = Uuid::new_v4();
-        let normalized = title.trim().to_lowercase();
         inner.signals.insert(
             id,
             StoredSignal {
@@ -507,7 +499,6 @@ impl MockSignalReader {
                 extracted_at: Utc::now(),
             },
         );
-        inner.title_index.insert((normalized, node_type), id);
         id
     }
 
@@ -522,7 +513,6 @@ impl MockSignalReader {
     ) -> Uuid {
         let mut inner = self.inner.lock().unwrap();
         let id = Uuid::new_v4();
-        let normalized = title.trim().to_lowercase();
         inner.signals.insert(
             id,
             StoredSignal {
@@ -541,7 +531,6 @@ impl MockSignalReader {
                 extracted_at: Utc::now(),
             },
         );
-        inner.title_index.insert((normalized, node_type), id);
         id
     }
 
@@ -741,37 +730,6 @@ impl SignalReader for MockSignalReader {
         Ok(Vec::new())
     }
 
-    async fn read_corroboration_count(&self, id: Uuid, _node_type: NodeType) -> Result<u32> {
-        let inner = self.inner.lock().unwrap();
-        Ok(inner
-            .signals
-            .get(&id)
-            .map(|s| s.corroboration_count)
-            .unwrap_or(0))
-    }
-
-    async fn existing_titles_for_url(&self, url: &str) -> Result<Vec<String>> {
-        let inner = self.inner.lock().unwrap();
-        Ok(inner.url_titles.get(url).cloned().unwrap_or_default())
-    }
-
-    async fn find_by_titles_and_types(
-        &self,
-        pairs: &[(String, NodeType)],
-    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>> {
-        let inner = self.inner.lock().unwrap();
-        let mut results = HashMap::new();
-        for (title, nt) in pairs {
-            let normalized = title.trim().to_lowercase();
-            if let Some(id) = inner.title_index.get(&(normalized.clone(), *nt)) {
-                if let Some(signal) = inner.signals.get(id) {
-                    results.insert((normalized, *nt), (*id, signal.canonical_key.clone()));
-                }
-            }
-        }
-        Ok(results)
-    }
-
     async fn find_by_fingerprints(
         &self,
         pairs: &[(String, NodeType)],
@@ -789,22 +747,6 @@ impl SignalReader for MockSignalReader {
         Ok(results)
     }
 
-    async fn find_duplicate(
-        &self,
-        _embedding: &[f32],
-        _primary_type: NodeType,
-        _threshold: f64,
-        _min_lat: f64,
-        _max_lat: f64,
-        _min_lng: f64,
-        _max_lng: f64,
-    ) -> Result<Option<DuplicateMatch>> {
-        // MockSignalReader doesn't do vector similarity by default.
-        // Chain tests that need dedup behavior should pre-populate via create_node
-        // and rely on title-based dedup (find_by_titles_and_types).
-        Ok(None)
-    }
-
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
         let inner = self.inner.lock().unwrap();
         Ok(inner.actor_by_canonical_key.get(canonical_key).copied())
@@ -813,6 +755,13 @@ impl SignalReader for MockSignalReader {
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> {
         let inner = self.inner.lock().unwrap();
         Ok(inner.sources.values().cloned().collect())
+    }
+
+    async fn find_source_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
+        let inner = self.inner.lock().unwrap();
+        Ok(inner.sources.values()
+            .find(|s| s.canonical_key == canonical_key)
+            .map(|s| s.id))
     }
 
     async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> {
@@ -1636,6 +1585,58 @@ pub fn test_short_video(text: &str) -> ShortVideo {
     }
 }
 
+/// Story with a media attachment that has NOT been enriched (text is None).
+pub fn test_story_with_unenriched_media(text: &str) -> Story {
+    Story {
+        id: Uuid::new_v4(),
+        source_id: Uuid::new_v4(),
+        fetched_at: Utc::now(),
+        content_hash: String::new(),
+        text: Some(text.to_string()),
+        location: None,
+        expires_at: None,
+        permalink: None,
+        attachments: vec![ArchiveFile {
+            id: Uuid::new_v4(),
+            url: "https://cdn.example.com/story_image.jpg".to_string(),
+            content_hash: "abc123".to_string(),
+            fetched_at: Utc::now(),
+            title: None,
+            mime_type: "image/jpeg".to_string(),
+            duration: None,
+            page_count: None,
+            text: None,
+            text_language: None,
+        }],
+    }
+}
+
+/// Story with a media attachment that HAS been enriched (text is Some).
+pub fn test_story_with_enriched_media(text: &str) -> Story {
+    Story {
+        id: Uuid::new_v4(),
+        source_id: Uuid::new_v4(),
+        fetched_at: Utc::now(),
+        content_hash: String::new(),
+        text: Some(text.to_string()),
+        location: None,
+        expires_at: None,
+        permalink: None,
+        attachments: vec![ArchiveFile {
+            id: Uuid::new_v4(),
+            url: "https://cdn.example.com/story_image.jpg".to_string(),
+            content_hash: "abc123".to_string(),
+            fetched_at: Utc::now(),
+            title: None,
+            mime_type: "image/jpeg".to_string(),
+            duration: None,
+            page_count: None,
+            text: Some("OCR'd text from the image".to_string()),
+            text_language: Some("en".to_string()),
+        }],
+    }
+}
+
 /// Create a default NodeMeta for testing.
 pub fn test_meta(source_url: &str) -> NodeMeta {
     NodeMeta {
@@ -2006,7 +2007,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_then_find_returns_created_signal() {
+    async fn create_then_find_by_fingerprint() {
         let store = MockSignalReader::new();
         let node = tension_with_url("Housing Crisis Downtown", "https://example.com");
         let id = store
@@ -2015,25 +2016,23 @@ mod tests {
             .unwrap();
 
         assert!(store.has_signal_titled("Housing Crisis Downtown"));
-        assert!(store.has_signal_titled("housing crisis downtown")); // case-insensitive
 
         let results = store
-            .find_by_titles_and_types(&[("housing crisis downtown".to_string(), NodeType::Concern)])
+            .find_by_fingerprints(&[("https://example.com".to_string(), NodeType::Concern)])
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        let (found_id, found_url) = results
-            .get(&("housing crisis downtown".to_string(), NodeType::Concern))
+        let (found_id, _found_ck) = results
+            .get(&("https://example.com".to_string(), NodeType::Concern))
             .unwrap();
         assert_eq!(*found_id, id);
-        assert_eq!(found_url, "https://example.com");
     }
 
     #[tokio::test]
-    async fn find_by_titles_returns_empty_for_unknown() {
+    async fn find_by_fingerprint_returns_empty_for_unknown() {
         let store = MockSignalReader::new();
         let results = store
-            .find_by_titles_and_types(&[("nonexistent signal".to_string(), NodeType::Concern)])
+            .find_by_fingerprints(&[("https://unknown.com".to_string(), NodeType::Concern)])
             .await
             .unwrap();
         assert!(results.is_empty());
@@ -2065,6 +2064,7 @@ mod tests {
             last_active: Utc::now(),
             typical_roles: vec![],
             bio: None,
+            external_url: None,
             location_lat: None,
             location_lng: None,
             location_name: None,

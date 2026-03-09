@@ -23,7 +23,6 @@ use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector, GraphQueries
 use sqlx::PgPool;
 
 use crate::core::aggregate::pipeline_aggregators;
-use crate::core::embedding_cache::EmbeddingCache;
 use crate::core::pipeline_events::PipelineEvent;
 use crate::core::postgres_store::PostgresStore;
 use crate::core::projection;
@@ -50,8 +49,6 @@ pub struct ScoutEngineDeps {
     /// Raw graph client for Neo4j projector — None in tests, Some in production.
     pub graph_client: Option<GraphClient>,
     pub extractor: Option<Arc<dyn SignalExtractor>>,
-    /// In-memory embedding cache for cross-batch dedup (layer 1 of 4).
-    pub embed_cache: EmbeddingCache,
     // --- Engine infrastructure ---
     /// Current run ID for event tagging.
     pub run_id: Uuid,
@@ -84,7 +81,6 @@ impl ScoutEngineDeps {
             graph: None,
             graph_client: None,
             extractor: None,
-            embed_cache: EmbeddingCache::new(),
             run_id,
             captured_events: None,
             budget: None,

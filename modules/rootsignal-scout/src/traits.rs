@@ -15,10 +15,10 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use rootsignal_common::types::{
-    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, NodeType, Post, ShortVideo,
-    SourceNode, Story,
+    ActorNode, ArchivedFeed, ArchivedPage, ArchivedSearchResults, NodeType, Post, ProfileSnapshot,
+    ShortVideo, SocialPlatform, SourceNode, Story,
 };
-use rootsignal_graph::DuplicateMatch;
+
 
 #[async_trait]
 pub trait ContentFetcher: Send + Sync {
@@ -52,6 +52,9 @@ pub trait ContentFetcher: Send + Sync {
 
     /// Fetch short-form videos (reels, TikToks) for an account.
     async fn short_videos(&self, identifier: &str, limit: u32) -> Result<Vec<ShortVideo>>;
+
+    /// Fetch profile metadata (bio, external URL) for a social account.
+    async fn profile(&self, identifier: &str, platform: SocialPlatform) -> Result<Option<ProfileSnapshot>>;
 }
 
 #[async_trait]
@@ -96,6 +99,11 @@ impl ContentFetcher for rootsignal_archive::Archive {
         let handle = self.source(identifier).await?;
         Ok(handle.short_videos(limit).await?)
     }
+
+    async fn profile(&self, identifier: &str, platform: SocialPlatform) -> Result<Option<ProfileSnapshot>> {
+        let handle = self.source(identifier).await?;
+        Ok(handle.profile(platform).await?)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -117,20 +125,7 @@ pub trait SignalReader: Send + Sync {
     /// Return signal IDs grouped by type for a given source URL.
     async fn signal_ids_for_url(&self, url: &str) -> Result<Vec<(Uuid, NodeType)>>;
 
-    /// Read the current corroboration count for a signal.
-    async fn read_corroboration_count(&self, id: Uuid, node_type: NodeType) -> Result<u32>;
-
     // --- Dedup queries ---
-
-    /// Return titles of existing signals from a given source URL.
-    async fn existing_titles_for_url(&self, url: &str) -> Result<Vec<String>>;
-
-    /// Batch-find existing signals by exact title+type. Returns map of
-    /// (lowercase_title, type) → (node_id, canonical_key).
-    async fn find_by_titles_and_types(
-        &self,
-        pairs: &[(String, NodeType)],
-    ) -> Result<HashMap<(String, NodeType), (Uuid, String)>>;
 
     /// Batch-find existing signals by exact (url, node_type) fingerprint.
     /// Returns map of (url, node_type) → (node_id, canonical_key).
@@ -138,18 +133,6 @@ pub trait SignalReader: Send + Sync {
         &self,
         pairs: &[(String, NodeType)],
     ) -> Result<HashMap<(String, NodeType), (Uuid, String)>>;
-
-    /// Find a duplicate signal by vector similarity within a geographic bounding box.
-    async fn find_duplicate(
-        &self,
-        embedding: &[f32],
-        primary_type: NodeType,
-        threshold: f64,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-    ) -> Result<Option<DuplicateMatch>>;
 
     // --- Actor graph ---
 
@@ -160,6 +143,9 @@ pub trait SignalReader: Send + Sync {
 
     /// Get all active source nodes.
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>>;
+
+    /// Find a source by its canonical_key.
+    async fn find_source_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>>;
 
     // --- Signal reaping ---
 
@@ -188,13 +174,10 @@ impl SignalReader for NoOpSignalReader {
     async fn blocked_urls(&self, _: &[String]) -> Result<HashSet<String>> { Ok(HashSet::new()) }
     async fn content_already_processed(&self, _: &str, _: &str) -> Result<bool> { Ok(false) }
     async fn signal_ids_for_url(&self, _: &str) -> Result<Vec<(Uuid, NodeType)>> { Ok(vec![]) }
-    async fn read_corroboration_count(&self, _: Uuid, _: NodeType) -> Result<u32> { Ok(0) }
-    async fn existing_titles_for_url(&self, _: &str) -> Result<Vec<String>> { Ok(vec![]) }
-    async fn find_by_titles_and_types(&self, _: &[(String, NodeType)]) -> Result<HashMap<(String, NodeType), (Uuid, String)>> { Ok(HashMap::new()) }
     async fn find_by_fingerprints(&self, _: &[(String, NodeType)]) -> Result<HashMap<(String, NodeType), (Uuid, String)>> { Ok(HashMap::new()) }
-    async fn find_duplicate(&self, _: &[f32], _: NodeType, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Option<DuplicateMatch>> { Ok(None) }
     async fn find_actor_by_canonical_key(&self, _: &str) -> Result<Option<Uuid>> { Ok(None) }
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> { Ok(vec![]) }
+    async fn find_source_by_canonical_key(&self, _: &str) -> Result<Option<Uuid>> { Ok(None) }
     async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> { Ok(vec![]) }
     async fn get_signals_for_actor(&self, _: Uuid) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>> { Ok(vec![]) }
     async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>> { Ok(vec![]) }

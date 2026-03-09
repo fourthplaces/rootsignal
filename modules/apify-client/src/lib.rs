@@ -4,9 +4,9 @@ pub mod types;
 pub use error::{ApifyError, Result};
 pub use types::{
     DiscoveredPost, FacebookPost, FacebookScraperInput, InstagramHashtagInput, InstagramPost,
-    InstagramScraperInput, InstagramStoryItem, RedditPost, RedditScraperInput, RunData, StartUrl,
-    TikTokPost, TikTokScraperInput, TikTokSearchInput, Tweet, TweetAuthor, TweetScraperInput,
-    TweetSearchInput,
+    InstagramProfile, InstagramScraperInput, InstagramStoryItem, RedditPost, RedditScraperInput,
+    RunData, StartUrl, TikTokPost, TikTokScraperInput, TikTokSearchInput, Tweet, TweetAuthor,
+    TweetScraperInput, TweetSearchInput,
 };
 use serde::de::DeserializeOwned;
 use types::ApiResponse;
@@ -31,6 +31,9 @@ const TIKTOK_SCRAPER: &str = "GdWCkxBtKWOsKjdch";
 
 /// Actor ID for trudax/reddit-scraper.
 const REDDIT_SCRAPER: &str = "FgJtjDwJCLhRH9saM";
+
+/// Actor slug for apify/instagram-profile-scraper.
+const INSTAGRAM_PROFILE_SCRAPER: &str = "apify~instagram-profile-scraper";
 
 pub struct ApifyClient {
     client: reqwest::Client,
@@ -260,6 +263,48 @@ impl ApifyClient {
 
         tracing::info!(count = discovered.len(), "Fetched Instagram hashtag posts");
         Ok(discovered)
+    }
+
+    /// Scrape an Instagram profile for bio, external URL, and metadata.
+    pub async fn scrape_instagram_profile(
+        &self,
+        username: &str,
+    ) -> Result<Option<InstagramProfile>> {
+        tracing::info!(username, "Starting Instagram profile scrape");
+
+        let input = types::InstagramProfileInput {
+            usernames: vec![username.to_string()],
+        };
+
+        let url = format!("{}/acts/{}/runs", BASE_URL, INSTAGRAM_PROFILE_SCRAPER);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&input)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApifyError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let api_resp: ApiResponse<RunData> = resp.json().await?;
+        let run = api_resp.data;
+        tracing::info!(run_id = %run.id, "Profile scrape started, polling for completion");
+
+        let completed = self.wait_for_run(&run.id).await?;
+        let profiles: Vec<InstagramProfile> = self
+            .get_dataset_items(&completed.default_dataset_id)
+            .await?;
+        tracing::info!(count = profiles.len(), "Fetched Instagram profile(s)");
+
+        Ok(profiles.into_iter().next())
     }
 
     /// Scrape Facebook page posts end-to-end: start run, poll, fetch results.

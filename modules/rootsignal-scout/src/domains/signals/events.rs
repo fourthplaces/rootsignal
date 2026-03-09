@@ -14,7 +14,6 @@ use crate::core::extractor::ResourceTag;
 /// Result of deduplicating an extracted batch.
 pub struct DedupBatchResult {
     pub created: Vec<CreatedSignal>,
-    pub corroborations: Vec<Corroboration>,
     pub actor_actions: Vec<ActorAction>,
     pub verdicts: Vec<DedupOutcome>,
 }
@@ -22,16 +21,6 @@ pub struct DedupBatchResult {
 /// A newly created signal with its associated citation.
 pub struct CreatedSignal {
     pub node: Node,
-    pub citation: NewCitation,
-}
-
-/// A cross-source corroboration of an existing signal.
-pub struct Corroboration {
-    pub signal_id: Uuid,
-    pub node_type: NodeType,
-    pub url: String,
-    pub similarity: f64,
-    pub new_corroboration_count: u32,
     pub citation: NewCitation,
 }
 
@@ -91,14 +80,6 @@ pub enum DedupOutcome {
         signal_tags: Vec<String>,
         source_id: Option<Uuid>,
         actor: Option<ResolvedActor>,
-    },
-    Corroborated {
-        existing_id: Uuid,
-        node_type: NodeType,
-        similarity: f64,
-        #[serde(alias = "source_url")]
-        url: String,
-        new_corroboration_count: u32,
     },
     Refreshed {
         existing_id: Uuid,

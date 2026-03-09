@@ -46,149 +46,12 @@ fn count_created(result: &DedupBatchResult) -> usize {
     result.verdicts.iter().filter(|v| matches!(v, DedupOutcome::Created { .. })).count()
 }
 
-fn count_corroborated(result: &DedupBatchResult) -> usize {
-    result.verdicts.iter().filter(|v| matches!(v, DedupOutcome::Corroborated { .. })).count()
-}
-
 fn count_refreshed(result: &DedupBatchResult) -> usize {
     result.verdicts.iter().filter(|v| matches!(v, DedupOutcome::Refreshed { .. })).count()
 }
 
 // ---------------------------------------------------------------------------
-// Layer 2: URL-based title dedup
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn url_title_dedup_filters_existing_titles() {
-    let store = Arc::new(MockSignalReader::new());
-    store.add_url_titles(
-        "https://example.org/events",
-        vec!["Free Legal Clinic".to_string()],
-    );
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let result = run_dedup(
-        "https://example.org/events",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![
-                tension_at("Free Legal Clinic", 44.93, -93.26),
-                tension_at("Community Dinner", 44.95, -93.27),
-            ],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &state,
-        &deps,
-    )
-    .await;
-
-    assert_eq!(count_created(&result), 1, "only 'Community Dinner' should pass");
-    assert_eq!(result.created.len(), 1, "one created signal");
-}
-
-#[tokio::test]
-async fn all_titles_deduped_produces_empty_result() {
-    let store = Arc::new(MockSignalReader::new());
-    store.add_url_titles(
-        "https://example.org/events",
-        vec!["Free Legal Clinic".to_string()],
-    );
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let result = run_dedup(
-        "https://example.org/events",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![tension_at("Free Legal Clinic", 44.93, -93.26)],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &state,
-        &deps,
-    )
-    .await;
-
-    assert!(result.verdicts.is_empty());
-    assert!(result.created.is_empty());
-    assert!(result.corroborations.is_empty());
-}
-
-// ---------------------------------------------------------------------------
-// Layer 2.5: Global title+type match
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn same_source_title_match_refreshes_without_creating() {
-    let store = Arc::new(MockSignalReader::new());
-    store.insert_signal(
-        "Community Dinner",
-        NodeType::Concern,
-        "https://example.org/events",
-    );
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let result = run_dedup(
-        "https://example.org/events",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![tension_at("Community Dinner", 44.95, -93.27)],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &state,
-        &deps,
-    )
-    .await;
-
-    assert!(result.created.is_empty(), "refresh should not create signals");
-    assert!(result.corroborations.is_empty(), "refresh should not corroborate");
-    assert_eq!(count_refreshed(&result), 1);
-}
-
-#[tokio::test]
-async fn global_title_match_different_source_corroborates() {
-    let store = Arc::new(MockSignalReader::new());
-    let existing_id = store.insert_signal(
-        "Community Dinner",
-        NodeType::Concern,
-        "https://other-source.org/events",
-    );
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let result = run_dedup(
-        "https://example.org/events",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![tension_at("Community Dinner", 44.95, -93.27)],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &state,
-        &deps,
-    )
-    .await;
-
-    assert_eq!(result.corroborations.len(), 1);
-    assert_eq!(result.corroborations[0].signal_id, existing_id);
-    assert_eq!(result.corroborations[0].citation.signal_id, existing_id);
-    assert_eq!(count_corroborated(&result), 1);
-}
-
-// ---------------------------------------------------------------------------
-// Layer 4: No match → create signal
+// No match → create signal
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -269,43 +132,8 @@ async fn create_carries_tags_and_source_on_verdict() {
 }
 
 // ---------------------------------------------------------------------------
-// Mixed batch + edge cases
+// Edge cases
 // ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn mixed_batch_produces_corroboration_and_creation() {
-    let store = Arc::new(MockSignalReader::new());
-    let _existing_id = store.insert_signal(
-        "Existing Event",
-        NodeType::Concern,
-        "https://other-source.org",
-    );
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let result = run_dedup(
-        "https://example.org/events",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![
-                tension_at("Existing Event", 44.93, -93.26),
-                tension_at("Brand New Event", 44.95, -93.27),
-            ],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &state,
-        &deps,
-    )
-    .await;
-
-    assert_eq!(count_corroborated(&result), 1);
-    assert_eq!(count_created(&result), 1);
-    assert_eq!(result.corroborations.len(), 1);
-    assert_eq!(result.created.len(), 1);
-}
 
 #[tokio::test]
 async fn empty_batch_produces_empty_result() {
@@ -330,7 +158,6 @@ async fn empty_batch_produces_empty_result() {
 
     assert!(result.verdicts.is_empty());
     assert!(result.created.is_empty());
-    assert!(result.corroborations.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -451,11 +278,11 @@ async fn same_author_across_post_urls_creates_one_actor() {
 }
 
 // ---------------------------------------------------------------------------
-// Layer 2.75: Fingerprint dedup (url, node_type)
+// Fingerprint dedup (url, node_type)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn fingerprint_same_source_refreshes() {
+async fn reencountered_signal_refreshes() {
     let store = Arc::new(MockSignalReader::new());
     let post_url = "https://www.instagram.com/p/ABC123";
     let source_url = "https://www.instagram.com/local_org";
@@ -480,16 +307,15 @@ async fn fingerprint_same_source_refreshes() {
     .await;
 
     assert!(result.created.is_empty());
-    assert!(result.corroborations.is_empty());
     assert_eq!(count_refreshed(&result), 1);
 }
 
 #[tokio::test]
-async fn fingerprint_different_source_corroborates() {
+async fn same_url_from_different_source_still_refreshes() {
     let store = Arc::new(MockSignalReader::new());
     let post_url = "https://www.instagram.com/p/ABC123";
     let original_source_ck = rootsignal_common::canonical_value("https://www.instagram.com/original_org");
-    let existing_id = store.insert_signal_from_source("Community Dinner", NodeType::Concern, post_url, &original_source_ck);
+    store.insert_signal_from_source("Community Dinner", NodeType::Concern, post_url, &original_source_ck);
     let deps = test_deps(store);
     let state = PipelineState::new(HashMap::new());
 
@@ -508,14 +334,12 @@ async fn fingerprint_different_source_corroborates() {
     )
     .await;
 
-    assert_eq!(result.corroborations.len(), 1);
-    assert_eq!(result.corroborations[0].signal_id, existing_id);
-    assert_eq!(result.corroborations[0].citation.signal_id, existing_id);
-    assert_eq!(count_corroborated(&result), 1);
+    assert!(result.created.is_empty());
+    assert_eq!(count_refreshed(&result), 1, "same (url, type) from any source is a refresh");
 }
 
 #[tokio::test]
-async fn no_fingerprint_match_falls_through_to_create() {
+async fn no_fingerprint_match_creates_signal() {
     let store = Arc::new(MockSignalReader::new());
     let deps = test_deps(store);
     let state = PipelineState::new(HashMap::new());
@@ -540,7 +364,7 @@ async fn no_fingerprint_match_falls_through_to_create() {
 }
 
 #[tokio::test]
-async fn empty_url_signals_skip_fingerprint_layer() {
+async fn signal_without_url_uses_batch_url_for_fingerprint() {
     let store = Arc::new(MockSignalReader::new());
     store.insert_signal("Community Dinner", NodeType::Concern, "https://www.instagram.com/p/ABC123");
     let deps = test_deps(store);
@@ -561,7 +385,7 @@ async fn empty_url_signals_skip_fingerprint_layer() {
     )
     .await;
 
-    assert_eq!(count_created(&result), 1, "empty URL should skip fingerprint and create");
+    assert_eq!(count_created(&result), 1, "no fingerprint match on batch URL should create");
 }
 
 #[tokio::test]
@@ -594,11 +418,10 @@ async fn mixed_batch_fingerprint_hit_and_miss() {
 
     assert_eq!(count_refreshed(&result), 1, "expected 1 Refreshed from fingerprint hit");
     assert_eq!(count_created(&result), 1, "expected 1 Created for new URL");
-    assert!(result.corroborations.is_empty(), "same-source fingerprint should not corroborate");
 }
 
 #[tokio::test]
-async fn fingerprint_same_url_different_type_does_not_match() {
+async fn same_url_different_type_creates_new_signal() {
     let store = Arc::new(MockSignalReader::new());
     let post_url = "https://www.instagram.com/p/ABC123";
     let source_ck = rootsignal_common::canonical_value("https://www.instagram.com/local_org");
@@ -625,67 +448,7 @@ async fn fingerprint_same_url_different_type_does_not_match() {
 }
 
 #[tokio::test]
-async fn fingerprint_takes_priority_over_vector_dedup() {
-    let store = Arc::new(MockSignalReader::new());
-    let post_url = "https://www.instagram.com/p/ABC123";
-    let source_ck = rootsignal_common::canonical_value("https://www.instagram.com/local_org");
-    store.insert_signal_from_source("Community Dinner", NodeType::Concern, post_url, &source_ck);
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let result = run_dedup(
-        "https://www.instagram.com/local_org",
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![tension_with_url("Community Dinner", 44.95, -93.27, post_url)],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &state,
-        &deps,
-    )
-    .await;
-
-    assert!(result.created.is_empty(), "fingerprint refresh should not create");
-    assert!(result.corroborations.is_empty(), "fingerprint refresh should not corroborate");
-    assert_eq!(count_refreshed(&result), 1);
-}
-
-#[tokio::test]
-async fn fingerprint_with_title_dedup_interaction() {
-    let store = Arc::new(MockSignalReader::new());
-    let post_url = "https://www.instagram.com/p/ABC123";
-    let source_url = "https://www.instagram.com/local_org";
-    let source_ck = rootsignal_common::canonical_value(source_url);
-
-    store.add_url_titles(source_url, vec!["Community Dinner".to_string()]);
-    store.insert_signal_from_source("Community Dinner", NodeType::Concern, post_url, &source_ck);
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let result = run_dedup(
-        source_url,
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![tension_with_url("Community Dinner", 44.95, -93.27, post_url)],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &state,
-        &deps,
-    )
-    .await;
-
-    // Title dedup (Layer 2) catches it first — no verdicts at all
-    assert!(result.verdicts.is_empty(), "title dedup should catch before fingerprint layer");
-}
-
-#[tokio::test]
-async fn fingerprint_batch_with_duplicate_urls_deduplicates() {
+async fn duplicate_urls_in_batch_both_refresh() {
     let store = Arc::new(MockSignalReader::new());
     let post_url = "https://www.instagram.com/p/ABC123";
     let source_url = "https://www.instagram.com/local_org";
@@ -981,45 +744,4 @@ async fn created_citation_uses_per_signal_url_not_batch_url() {
         }
         _ => panic!("expected a Created verdict"),
     }
-}
-
-#[tokio::test]
-async fn corroborated_citation_uses_per_signal_url_not_batch_url() {
-    let store = Arc::new(MockSignalReader::new());
-    let existing_id = store.insert_signal(
-        "Volunteer Call",
-        NodeType::Concern,
-        "https://other-source.org/page",
-    );
-    let deps = test_deps(store);
-    let state = PipelineState::new(HashMap::new());
-
-    let account_url = "https://instagram.com/sanctuarysupplydepot";
-    let post_url = "https://instagram.com/p/POST456";
-
-    let result = run_dedup(
-        account_url,
-        ExtractedBatch {
-            content: "page content".to_string(),
-            nodes: vec![tension_with_url("Volunteer Call", 44.95, -93.27, post_url)],
-            resource_tags: HashMap::new(),
-            signal_tags: HashMap::new(),
-            author_actors: HashMap::new(),
-            source_id: None,
-        },
-        &state,
-        &deps,
-    )
-    .await;
-
-    assert_eq!(result.corroborations.len(), 1);
-    assert_eq!(result.corroborations[0].signal_id, existing_id);
-    assert_eq!(
-        result.corroborations[0].url, post_url,
-        "corroboration should use the per-signal post URL, not the batch account URL"
-    );
-    assert_eq!(
-        result.corroborations[0].citation.url, post_url,
-        "corroboration citation should use the per-signal post URL, not the batch account URL"
-    );
 }

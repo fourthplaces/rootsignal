@@ -1164,6 +1164,7 @@ impl GraphReader {
             };
             let canonical_key: String = actor_node.get("canonical_key").unwrap_or_default();
             let bio: Option<String> = actor_node.get("bio").ok();
+            let external_url: Option<String> = actor_node.get("external_url").ok().filter(|u: &String| !u.is_empty());
             let location_lat: Option<f64> = actor_node.get("location_lat").ok();
             let location_lng: Option<f64> = actor_node.get("location_lng").ok();
             let location_name: Option<String> = actor_node.get("location_name").ok();
@@ -1181,6 +1182,7 @@ impl GraphReader {
                 last_active: chrono::Utc::now(),
                 typical_roles: actor_node.get("typical_roles").unwrap_or_default(),
                 bio,
+                external_url,
                 location_lat,
                 location_lng,
                 location_name,

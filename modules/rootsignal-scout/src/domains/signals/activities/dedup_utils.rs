@@ -1,13 +1,12 @@
 //! Dedup utility functions for signal processing.
 //!
 //! Pure functions for title normalization, batch dedup, source ownership
-//! checks, signal quality scoring, and multi-layer dedup verdicts.
+//! checks, and signal quality scoring.
 
 use std::collections::HashSet;
 
 use rootsignal_common::types::NodeType;
 use rootsignal_common::{ActorContext, Node, ScrapingStrategy};
-use uuid::Uuid;
 
 use crate::domains::enrichment::activities::quality;
 
@@ -55,118 +54,6 @@ pub(crate) fn score_and_filter(
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// DedupVerdict — pure decision function for multi-layer deduplication
-// ---------------------------------------------------------------------------
-
-/// Threshold for cross-source corroboration via vector similarity.
-/// Same-source matches always refresh regardless of similarity (as long as
-/// they passed the 0.85 entry threshold from the caller).
-const CROSS_SOURCE_SIM_THRESHOLD: f64 = 0.92;
-
-/// The outcome of the multi-layer deduplication check for a single signal node.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum DedupVerdict {
-    /// No existing match — create a new signal node.
-    Create,
-    /// Cross-source match — corroborate the existing signal.
-    Corroborate {
-        existing_id: Uuid,
-        existing_type: NodeType,
-        similarity: f64,
-    },
-    /// Same-source match — refresh (re-confirm) the existing signal.
-    Refresh {
-        existing_id: Uuid,
-        existing_type: NodeType,
-        similarity: f64,
-    },
-}
-
-impl DedupVerdict {
-    /// Returns the existing signal ID if the verdict is not Create.
-    #[cfg(test)]
-    fn existing_id(&self) -> Option<Uuid> {
-        match self {
-            DedupVerdict::Create => None,
-            DedupVerdict::Corroborate { existing_id, .. } => Some(*existing_id),
-            DedupVerdict::Refresh { existing_id, .. } => Some(*existing_id),
-        }
-    }
-}
-
-/// Pure decision function for the multi-layer dedup pipeline.
-///
-/// Layers are checked in priority order:
-/// 1. Global exact title+type match (similarity = 1.0)
-/// 2. In-memory embed cache match (≥0.85 entry, ≥0.92 cross-source)
-/// 3. Graph vector index match (≥0.85 entry, ≥0.92 cross-source)
-/// 4. No match → Create
-///
-/// Within each layer, same-source → Refresh, cross-source above threshold → Corroborate.
-/// Source ownership is determined by canonical_key comparison.
-pub(crate) fn dedup_verdict(
-    current_canonical_key: &str,
-    node_type: NodeType,
-    global_match: Option<(Uuid, &str)>,
-    cache_match: Option<(Uuid, NodeType, &str, f64)>,
-    graph_match: Option<(Uuid, NodeType, &str, f64)>,
-) -> DedupVerdict {
-    // Layer 2.5: Global exact title+type match — always acts (no threshold)
-    if let Some((existing_id, existing_ck)) = global_match {
-        return if existing_ck != current_canonical_key {
-            DedupVerdict::Corroborate {
-                existing_id,
-                existing_type: node_type,
-                similarity: 1.0,
-            }
-        } else {
-            DedupVerdict::Refresh {
-                existing_id,
-                existing_type: node_type,
-                similarity: 1.0,
-            }
-        };
-    }
-
-    // Layer 3a: In-memory embed cache
-    if let Some((cached_id, cached_type, cached_ck, sim)) = cache_match {
-        if cached_ck == current_canonical_key {
-            return DedupVerdict::Refresh {
-                existing_id: cached_id,
-                existing_type: cached_type,
-                similarity: sim,
-            };
-        } else if sim >= CROSS_SOURCE_SIM_THRESHOLD {
-            return DedupVerdict::Corroborate {
-                existing_id: cached_id,
-                existing_type: cached_type,
-                similarity: sim,
-            };
-        }
-    }
-
-    // Layer 3b: Graph vector index
-    if let Some((dup_id, dup_type, dup_ck, sim)) = graph_match {
-        if dup_ck == current_canonical_key {
-            return DedupVerdict::Refresh {
-                existing_id: dup_id,
-                existing_type: dup_type,
-                similarity: sim,
-            };
-        } else if sim >= CROSS_SOURCE_SIM_THRESHOLD {
-            return DedupVerdict::Corroborate {
-                existing_id: dup_id,
-                existing_type: dup_type,
-                similarity: sim,
-            };
-        }
-    }
-
-    // Layer 4: No match
-    DedupVerdict::Create
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +61,7 @@ mod tests {
     use rootsignal_common::safety::SensitivityLevel;
     use rootsignal_common::types::{GeoPoint, HelpRequestNode, NodeMeta, Severity, ConcernNode, Urgency};
     use rootsignal_common::{CitationNode, GeoPrecision, ReviewStatus, ScrapingStrategy, SocialPlatform};
+    use uuid::Uuid;
 
     fn tension(title: &str) -> Node {
         Node::Concern(ConcernNode {
@@ -312,129 +200,6 @@ mod tests {
         let nodes = vec![tension("Housing Crisis"), tension("Bus Route Cut"), need("Food Distribution")];
         let deduped = batch_title_dedup(nodes);
         assert_eq!(deduped.len(), 3);
-    }
-
-    // --- dedup_verdict tests ---
-
-    const CK_A: &str = "example.com";
-    const CK_B: &str = "other.com";
-
-    fn id1() -> Uuid { Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap() }
-    fn id2() -> Uuid { Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap() }
-    fn id3() -> Uuid { Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap() }
-
-    #[test]
-    fn global_match_cross_source_corroborates() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, Some((id1(), CK_B)), None, None);
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id1(), existing_type: NodeType::Concern, similarity: 1.0 });
-    }
-
-    #[test]
-    fn global_match_same_source_refreshes() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, Some((id1(), CK_A)), None, None);
-        assert_eq!(v, DedupVerdict::Refresh { existing_id: id1(), existing_type: NodeType::Concern, similarity: 1.0 });
-    }
-
-    #[test]
-    fn global_match_uses_new_node_type() {
-        let v = dedup_verdict(CK_A, NodeType::Resource, Some((id1(), CK_B)), None, None);
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id1(), existing_type: NodeType::Resource, similarity: 1.0 });
-    }
-
-    #[test]
-    fn global_match_takes_priority_over_cache() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, Some((id1(), CK_B)), Some((id2(), NodeType::Concern, CK_A, 0.99)), None);
-        assert_eq!(v.existing_id(), Some(id1()), "global match should win over cache");
-    }
-
-    #[test]
-    fn global_match_takes_priority_over_graph() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, Some((id1(), CK_A)), None, Some((id3(), NodeType::Concern, CK_B, 0.95)));
-        assert_eq!(v.existing_id(), Some(id1()), "global match should win over graph");
-    }
-
-    #[test]
-    fn cache_same_source_refreshes() {
-        let v = dedup_verdict(CK_A, NodeType::HelpRequest, None, Some((id2(), NodeType::HelpRequest, CK_A, 0.88)), None);
-        assert_eq!(v, DedupVerdict::Refresh { existing_id: id2(), existing_type: NodeType::HelpRequest, similarity: 0.88 });
-    }
-
-    #[test]
-    fn cache_cross_source_above_threshold_corroborates() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.95)), None);
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id2(), existing_type: NodeType::Concern, similarity: 0.95 });
-    }
-
-    #[test]
-    fn cache_cross_source_at_threshold_corroborates() {
-        let v = dedup_verdict(CK_A, NodeType::Resource, None, Some((id2(), NodeType::Resource, CK_B, 0.92)), None);
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id2(), existing_type: NodeType::Resource, similarity: 0.92 });
-    }
-
-    #[test]
-    fn cache_cross_source_below_threshold_falls_through() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.91)), None);
-        assert_eq!(v, DedupVerdict::Create, "0.91 cross-source should fall through to Create");
-    }
-
-    #[test]
-    fn cache_cross_source_at_entry_threshold_falls_through() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.85)), None);
-        assert_eq!(v, DedupVerdict::Create, "0.85 cross-source should fall through");
-    }
-
-    #[test]
-    fn cache_takes_priority_over_graph() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_A, 0.90)), Some((id3(), NodeType::Concern, CK_B, 0.95)));
-        assert_eq!(v.existing_id(), Some(id2()), "cache should win over graph");
-    }
-
-    #[test]
-    fn graph_same_source_refreshes() {
-        let v = dedup_verdict(CK_A, NodeType::Announcement, None, None, Some((id3(), NodeType::Announcement, CK_A, 0.87)));
-        assert_eq!(v, DedupVerdict::Refresh { existing_id: id3(), existing_type: NodeType::Announcement, similarity: 0.87 });
-    }
-
-    #[test]
-    fn graph_cross_source_above_threshold_corroborates() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, None, Some((id3(), NodeType::Concern, CK_B, 0.95)));
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.95 });
-    }
-
-    #[test]
-    fn graph_cross_source_at_threshold_corroborates() {
-        let v = dedup_verdict(CK_A, NodeType::Gathering, None, None, Some((id3(), NodeType::Gathering, CK_B, 0.92)));
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Gathering, similarity: 0.92 });
-    }
-
-    #[test]
-    fn graph_cross_source_below_threshold_creates() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, None, Some((id3(), NodeType::Concern, CK_B, 0.91)));
-        assert_eq!(v, DedupVerdict::Create);
-    }
-
-    #[test]
-    fn no_matches_creates() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, None, None);
-        assert_eq!(v, DedupVerdict::Create);
-    }
-
-    #[test]
-    fn both_below_threshold_creates() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.87)), Some((id3(), NodeType::Concern, CK_B, 0.89)));
-        assert_eq!(v, DedupVerdict::Create);
-    }
-
-    #[test]
-    fn cache_below_threshold_falls_to_graph_refresh() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.87)), Some((id3(), NodeType::Concern, CK_A, 0.90)));
-        assert_eq!(v, DedupVerdict::Refresh { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.90 });
-    }
-
-    #[test]
-    fn cache_below_threshold_falls_to_graph_corroborate() {
-        let v = dedup_verdict(CK_A, NodeType::Concern, None, Some((id2(), NodeType::Concern, CK_B, 0.88)), Some((id3(), NodeType::Concern, CK_B, 0.93)));
-        assert_eq!(v, DedupVerdict::Corroborate { existing_id: id3(), existing_type: NodeType::Concern, similarity: 0.93 });
     }
 
     // --- score_and_filter tests ---

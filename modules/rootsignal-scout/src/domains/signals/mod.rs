@@ -34,7 +34,7 @@ fn citation_published(c: NewCitation) -> WorldEvent {
 pub mod handlers {
     use super::*;
 
-    /// Scrape completed → run 4-layer dedup on all extracted batches.
+    /// Scrape completed → run dedup on all extracted batches.
     #[handle(on = ScrapeEvent, id = "signals:dedup_signals", filter = is_scrape_completed)]
     async fn dedup_signals(
         event: ScrapeEvent,
@@ -52,7 +52,6 @@ pub mod handlers {
         let mut all_events = Events::new();
         let mut has_created = false;
         let mut total_created = 0u32;
-        let mut total_corroborated = 0u32;
         let mut total_refreshed = 0u32;
 
         for extraction in &extracted_batches {
@@ -65,7 +64,6 @@ pub mod handlers {
             ).await?;
 
             total_created += result.created.len() as u32;
-            total_corroborated += result.corroborations.len() as u32;
             total_refreshed += result.verdicts.iter()
                 .filter(|v| matches!(v, crate::domains::signals::events::DedupOutcome::Refreshed { .. }))
                 .count() as u32;
@@ -78,22 +76,6 @@ pub mod handlers {
                     all_events.push(sys);
                 }
                 all_events.push(citation_published(signal.citation));
-            }
-
-            // Corroborations: citation + observation + score
-            for corr in result.corroborations {
-                all_events.push(citation_published(corr.citation));
-                all_events.push(SystemEvent::ObservationCorroborated {
-                    signal_id: corr.signal_id,
-                    node_type: corr.node_type,
-                    new_url: corr.url,
-                    summary: None,
-                });
-                all_events.push(SystemEvent::CorroborationScored {
-                    signal_id: corr.signal_id,
-                    similarity: corr.similarity,
-                    new_corroboration_count: corr.new_corroboration_count,
-                });
             }
 
             // Actor actions from inline resolution
@@ -138,8 +120,8 @@ pub mod handlers {
         }
 
         ctx.logger.info(&format!(
-            "Dedup: {} created, {} corroborated, {} refreshed from {} batches",
-            total_created, total_corroborated, total_refreshed, extracted_batches.len(),
+            "Dedup: {} created, {} refreshed from {} batches",
+            total_created, total_refreshed, extracted_batches.len(),
         ));
 
         if !has_created {

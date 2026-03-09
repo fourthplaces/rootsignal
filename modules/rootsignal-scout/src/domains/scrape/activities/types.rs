@@ -12,10 +12,8 @@ use rootsignal_common::{Node, SourceNode};
 use rootsignal_common::telemetry_events::TelemetryEvent;
 use seesaw_core::Events;
 
-pub(crate) use crate::core::embedding_cache::EmbeddingCache;
 pub(crate) use crate::domains::signals::activities::dedup_utils::{
-    batch_title_dedup, dedup_verdict, is_owned_source, normalize_title, score_and_filter,
-    DedupVerdict,
+    batch_title_dedup, is_owned_source, normalize_title, score_and_filter,
 };
 
 /// Per-URL extraction result carried on scrape completion events.

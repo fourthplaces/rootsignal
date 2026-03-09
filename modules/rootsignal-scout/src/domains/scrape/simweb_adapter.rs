@@ -7,7 +7,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use rootsignal_common::types::{
-    ArchivedFeed, ArchivedPage, ArchivedSearchResults, Post, SearchResult, ShortVideo, Story,
+    ArchivedFeed, ArchivedPage, ArchivedSearchResults, Post, ProfileSnapshot, SearchResult,
+    ShortVideo, SocialPlatform, Story,
 };
 use simweb::SimulatedWeb;
 use crate::traits::ContentFetcher;
@@ -117,6 +118,10 @@ impl ContentFetcher for SimulatedWeb {
 
     async fn short_videos(&self, _identifier: &str, _limit: u32) -> Result<Vec<ShortVideo>> {
         Ok(Vec::new())
+    }
+
+    async fn profile(&self, _identifier: &str, _platform: SocialPlatform) -> Result<Option<ProfileSnapshot>> {
+        Ok(None)
     }
 }
 
