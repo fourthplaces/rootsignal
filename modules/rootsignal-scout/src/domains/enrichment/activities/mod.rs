@@ -1,4 +1,3 @@
-pub mod actor_extractor;
 pub mod actor_location;
 pub mod actor_stats;
 pub mod diversity;

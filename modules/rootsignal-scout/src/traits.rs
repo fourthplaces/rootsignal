@@ -153,9 +153,6 @@ pub trait SignalReader: Send + Sync {
 
     // --- Actor graph ---
 
-    /// Find an actor by name (case-insensitive). Returns actor UUID if found.
-    async fn find_actor_by_name(&self, name: &str) -> Result<Option<Uuid>>;
-
     /// Find an actor by canonical_key (URL-based identity).
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>>;
 
@@ -196,7 +193,6 @@ impl SignalReader for NoOpSignalReader {
     async fn find_by_titles_and_types(&self, _: &[(String, NodeType)]) -> Result<HashMap<(String, NodeType), (Uuid, String)>> { Ok(HashMap::new()) }
     async fn find_by_fingerprints(&self, _: &[(String, NodeType)]) -> Result<HashMap<(String, NodeType), (Uuid, String)>> { Ok(HashMap::new()) }
     async fn find_duplicate(&self, _: &[f32], _: NodeType, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Option<DuplicateMatch>> { Ok(None) }
-    async fn find_actor_by_name(&self, _: &str) -> Result<Option<Uuid>> { Ok(None) }
     async fn find_actor_by_canonical_key(&self, _: &str) -> Result<Option<Uuid>> { Ok(None) }
     async fn get_active_sources(&self) -> Result<Vec<SourceNode>> { Ok(vec![]) }
     async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> { Ok(vec![]) }

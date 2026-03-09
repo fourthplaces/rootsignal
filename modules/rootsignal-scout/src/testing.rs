@@ -24,7 +24,7 @@ use rootsignal_common::types::{
 };
 use rootsignal_common::events::{CauseHeatScore, SimilarityEdge, SystemEvent};
 use rootsignal_graph::{
-    DuplicateMatch, GraphQueries, UnlinkedSignal,
+    DuplicateMatch, GraphQueries,
 };
 use rootsignal_graph::situation_temperature::TemperatureComponents;
 use rootsignal_graph::writer::{
@@ -803,11 +803,6 @@ impl SignalReader for MockSignalReader {
         // Chain tests that need dedup behavior should pre-populate via create_node
         // and rely on title-based dedup (find_by_titles_and_types).
         Ok(None)
-    }
-
-    async fn find_actor_by_name(&self, name: &str) -> Result<Option<Uuid>> {
-        let inner = self.inner.lock().unwrap();
-        Ok(inner.actor_by_name.get(&name.to_lowercase()).copied())
     }
 
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
@@ -2172,7 +2167,6 @@ impl GraphQueries for MockGraphQueries {
     async fn get_tension_response_shape(&self, _: u32) -> Result<Vec<ConcernResponseShape>> { Ok(vec![]) }
     async fn find_duplicate_tension_pairs(&self, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<(Uuid, Uuid)>> { Ok(vec![]) }
     async fn compute_similarity_edges(&self) -> Result<Vec<SimilarityEdge>> { Ok(vec![]) }
-    async fn find_signals_without_actors(&self, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<UnlinkedSignal>> { Ok(vec![]) }
     async fn compute_situation_temperature(&self, _: &Uuid) -> Result<(TemperatureComponents, Vec<SystemEvent>)> {
         Ok((TemperatureComponents {
             tension_heat_agg: 0.0,

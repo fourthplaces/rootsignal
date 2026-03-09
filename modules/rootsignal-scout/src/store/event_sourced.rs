@@ -333,10 +333,6 @@ impl SignalReader for EventSourcedReader {
 
     // --- Actor graph (append event → project to graph) ---
 
-    async fn find_actor_by_name(&self, name: &str) -> Result<Option<Uuid>> {
-        Ok(self.graph.find_actor_by_name(name).await?)
-    }
-
     async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
         Ok(self
             .graph

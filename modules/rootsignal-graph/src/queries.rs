@@ -19,14 +19,6 @@ use crate::writer::{
     SourceBrief, SourceStats, UnmetTension, WeaveCandidate, WeaveSignal,
 };
 
-/// Signal info for actor extraction (wraps the raw Cypher result from actor_extractor).
-#[derive(Debug, Clone)]
-pub struct UnlinkedSignal {
-    pub id: Uuid,
-    pub title: String,
-    pub summary: String,
-}
-
 #[async_trait]
 pub trait GraphQueries: Send + Sync {
     // --- Source management ---
@@ -224,15 +216,6 @@ pub trait GraphQueries: Send + Sync {
 
     /// Compute similarity edges across all signals. Wraps `similarity::compute_edges`.
     async fn compute_similarity_edges(&self) -> Result<Vec<SimilarityEdge>>;
-
-    /// Find signals without actor links in a bounding box. Wraps raw Cypher in actor_extractor.
-    async fn find_signals_without_actors(
-        &self,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-    ) -> Result<Vec<UnlinkedSignal>>;
 
     /// Compute situation temperature from graph mechanics. Wraps `situation_temperature::compute_temperature_events`.
     async fn compute_situation_temperature(
@@ -529,48 +512,6 @@ impl GraphQueries for crate::writer::GraphReader {
 
     async fn compute_similarity_edges(&self) -> Result<Vec<SimilarityEdge>> {
         Ok(crate::similarity::compute_edges(self.client()).await?)
-    }
-
-    async fn find_signals_without_actors(
-        &self,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-    ) -> Result<Vec<UnlinkedSignal>> {
-        use neo4rs::query;
-
-        let q = query(
-            "MATCH (n)
-             WHERE (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-               AND NOT (n)<-[:ACTED_IN]-(:Actor)
-               AND n.lat >= $min_lat AND n.lat <= $max_lat
-               AND n.lng >= $min_lng AND n.lng <= $max_lng
-             RETURN n.id AS id, n.title AS title, n.summary AS summary
-             ORDER BY n.extracted_at DESC
-             LIMIT 200",
-        )
-        .param("min_lat", min_lat)
-        .param("max_lat", max_lat)
-        .param("min_lng", min_lng)
-        .param("max_lng", max_lng);
-
-        let mut stream = self.client().execute(q).await?;
-        let mut signals = Vec::new();
-        while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("id").unwrap_or_default();
-            let id = match Uuid::parse_str(&id_str) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-            let title: String = row.get("title").unwrap_or_default();
-            let summary: String = row.get("summary").unwrap_or_default();
-            if title.is_empty() && summary.is_empty() {
-                continue;
-            }
-            signals.push(UnlinkedSignal { id, title, summary });
-        }
-        Ok(signals)
     }
 
     async fn compute_situation_temperature(

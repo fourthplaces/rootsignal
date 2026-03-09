@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 use seesaw_core::{events, handle, handlers, AnyEvent, Context, Events};
-use tracing::info;
 use uuid::Uuid;
 
 use rootsignal_common::events::{SystemEvent, WorldEvent};
@@ -36,30 +35,6 @@ fn is_signal_world_event(e: &WorldEvent, _ctx: &Context<ScoutEngineDeps>) -> boo
 }
 
 // ── Event constructors: map activity domain types → system events ──
-
-fn actor_identified_event(actor: activities::actor_extractor::NewActor) -> SystemEvent {
-    SystemEvent::ActorIdentified {
-        actor_id: actor.actor_id,
-        name: actor.name,
-        actor_type: actor.actor_type,
-        canonical_key: actor.canonical_key,
-        domains: vec![],
-        social_urls: vec![],
-        description: String::new(),
-        bio: None,
-        location_lat: actor.location_lat,
-        location_lng: actor.location_lng,
-        location_name: None,
-    }
-}
-
-fn actor_linked_event(link: activities::actor_extractor::ActorLink) -> SystemEvent {
-    SystemEvent::ActorLinkedToSignal {
-        actor_id: link.actor_id,
-        signal_id: link.signal_id,
-        role: link.role,
-    }
-}
 
 fn actor_location_event(update: activities::actor_location::ActorLocationUpdate) -> SystemEvent {
     SystemEvent::ActorLocationIdentified {
@@ -124,24 +99,6 @@ pub mod handlers {
             .unwrap_or_default();
         if !consumed_pin_ids.is_empty() {
             all_events.push(SystemEvent::PinsConsumed { pin_ids: consumed_pin_ids });
-        }
-
-        // Extract actors from unlinked signals
-        if let (Some(region), Some(graph)) = (state.run_scope.region(), deps.graph.as_deref()) {
-            let (min_lat, max_lat, min_lng, max_lng) = region.bounding_box();
-            let ai = deps.ai.as_ref().expect("guarded by enrichment trigger");
-            let result = activities::actor_extractor::run_actor_extraction(
-                &*deps.store, graph, ai.as_ref(),
-                min_lat, max_lat, min_lng, max_lng,
-            ).await;
-            info!("{}", result.stats);
-
-            for actor in result.new_actors {
-                all_events.push(actor_identified_event(actor));
-            }
-            for link in result.actor_links {
-                all_events.push(actor_linked_event(link));
-            }
         }
 
         // Score signal diversity
