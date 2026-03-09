@@ -1,4 +1,5 @@
 pub mod actor_location;
+pub mod actor_serp_expansion;
 pub mod actor_stats;
 pub mod diversity;
 pub mod domain_filter;
@@ -9,6 +10,8 @@ pub mod signal_reviewer;
 pub mod source_claimer;
 pub mod universe_check;
 
+#[cfg(test)]
+mod actor_serp_expansion_tests;
 #[cfg(test)]
 mod source_claimer_tests;
 

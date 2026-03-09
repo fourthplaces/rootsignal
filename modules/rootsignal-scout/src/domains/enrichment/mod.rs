@@ -147,6 +147,16 @@ pub mod handlers {
                         discovered_by: "profile_link".into(),
                     });
                 }
+
+                // SERP expansion for actors with thin source coverage
+                let region_name = state.run_scope.region().map(|r| r.name.as_str());
+                let serp_sources = activities::actor_serp_expansion::expand_actors_via_serp(&actors, region_name);
+                if !serp_sources.is_empty() {
+                    all_events.push(DiscoveryEvent::SourcesDiscovered {
+                        sources: serp_sources,
+                        discovered_by: "actor_serp_expansion".into(),
+                    });
+                }
             }
         }
 
