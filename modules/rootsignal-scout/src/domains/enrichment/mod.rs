@@ -18,6 +18,7 @@ use rootsignal_scout_supervisor::checks::batch_review::{self, SignalForReview};
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
+use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::signals::events::SignalEvent;
 
@@ -133,6 +134,18 @@ pub mod handlers {
                 }
                 for event in profile_events {
                     all_events.push(event);
+                }
+
+                // Claim sources from actor profile external_urls
+                let claim = activities::source_claimer::claim_profile_sources(&*deps.store, &actors).await?;
+                for event in claim.link_events {
+                    all_events.push(event);
+                }
+                if !claim.new_sources.is_empty() {
+                    all_events.push(DiscoveryEvent::SourcesDiscovered {
+                        sources: claim.new_sources,
+                        discovered_by: "profile_link".into(),
+                    });
                 }
             }
         }
