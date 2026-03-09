@@ -277,6 +277,7 @@ impl GraphProjector {
 
                 self.client.run(q).await?;
                 self.project_entities(&id, "Gathering", &mentioned_entities).await?;
+                self.project_locations(&id, "Gathering", &locations).await?;
                 self.set_embedding("Gathering", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -296,7 +297,6 @@ impl GraphProjector {
                 availability,
                 eligibility,
             } => {
-                // locations passed directly to build_discovery_query
                 let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Resource",
@@ -331,6 +331,7 @@ impl GraphProjector {
 
                 self.client.run(q).await?;
                 self.project_entities(&id, "Resource", &mentioned_entities).await?;
+                self.project_locations(&id, "Resource", &locations).await?;
                 self.set_embedding("Resource", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -349,7 +350,6 @@ impl GraphProjector {
                 what_needed,
                 stated_goal,
             } => {
-                // locations passed directly to build_discovery_query
                 let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "HelpRequest",
@@ -383,6 +383,7 @@ impl GraphProjector {
 
                 self.client.run(q).await?;
                 self.project_entities(&id, "HelpRequest", &mentioned_entities).await?;
+                self.project_locations(&id, "HelpRequest", &locations).await?;
                 self.set_embedding("HelpRequest", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -401,7 +402,6 @@ impl GraphProjector {
                 subject,
                 effective_date,
             } => {
-                // locations passed directly to build_discovery_query
                 let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Announcement",
@@ -429,6 +429,7 @@ impl GraphProjector {
 
                 self.client.run(q).await?;
                 self.project_entities(&id, "Announcement", &mentioned_entities).await?;
+                self.project_locations(&id, "Announcement", &locations).await?;
                 self.set_embedding("Announcement", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -447,7 +448,6 @@ impl GraphProjector {
                 subject,
                 opposing,
             } => {
-                // locations passed directly to build_discovery_query
                 let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Concern",
@@ -481,6 +481,7 @@ impl GraphProjector {
 
                 self.client.run(q).await?;
                 self.project_entities(&id, "Concern", &mentioned_entities).await?;
+                self.project_locations(&id, "Concern", &locations).await?;
                 self.set_embedding("Concern", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -501,7 +502,6 @@ impl GraphProjector {
                 measurement,
                 affected_scope,
             } => {
-                // locations passed directly to build_discovery_query
                 let sp = extract_schedule(&schedule);
                 let q = build_discovery_query(
                     "Condition",
@@ -531,6 +531,7 @@ impl GraphProjector {
 
                 self.client.run(q).await?;
                 self.project_entities(&id, "Condition", &mentioned_entities).await?;
+                self.project_locations(&id, "Condition", &locations).await?;
                 self.set_embedding("Condition", &id, &title, &summary).await;
                 Ok(ApplyResult::Applied)
             }
@@ -1138,7 +1139,7 @@ impl GraphProjector {
                             .await?
                     }
                     GatheringCorrection::Location { new, .. } => {
-                        self.set_location("Gathering", signal_id, &new).await?
+                        self.update_location("Gathering", signal_id, &new).await?
                     }
                     GatheringCorrection::Schedule { new, .. } => {
                         self.set_schedule("Gathering", signal_id, &new).await?
@@ -1186,7 +1187,7 @@ impl GraphProjector {
                             .await?
                     }
                     ResourceCorrection::Location { new, .. } => {
-                        self.set_location("Resource", signal_id, &new).await?
+                        self.update_location("Resource", signal_id, &new).await?
                     }
                     ResourceCorrection::ActionUrl { new, .. } => {
                         self.set_str("Resource", signal_id, "action_url", new.as_deref().unwrap_or(""))
@@ -1230,7 +1231,7 @@ impl GraphProjector {
                             .await?
                     }
                     HelpRequestCorrection::Location { new, .. } => {
-                        self.set_location("HelpRequest", signal_id, &new).await?
+                        self.update_location("HelpRequest", signal_id, &new).await?
                     }
                     HelpRequestCorrection::Urgency { new, .. } => {
                         self.set_str(
@@ -1279,7 +1280,7 @@ impl GraphProjector {
                             .await?
                     }
                     AnnouncementCorrection::Location { new, .. } => {
-                        self.set_location("Announcement", signal_id, &new).await?
+                        self.update_location("Announcement", signal_id, &new).await?
                     }
                     AnnouncementCorrection::Category { new, .. } => {
                         self.set_str(
@@ -1322,7 +1323,7 @@ impl GraphProjector {
                             .await?
                     }
                     ConcernCorrection::Location { new, .. } => {
-                        self.set_location("Concern", signal_id, &new).await?
+                        self.update_location("Concern", signal_id, &new).await?
                     }
                     ConcernCorrection::Opposing { new, .. } => {
                         self.set_str(
@@ -1358,7 +1359,7 @@ impl GraphProjector {
                             .await?
                     }
                     ConditionCorrection::Location { new, .. } => {
-                        self.set_location("Condition", signal_id, &new).await?
+                        self.update_location("Condition", signal_id, &new).await?
                     }
                     ConditionCorrection::Subject { new, .. } => {
                         self.set_str(
@@ -2915,26 +2916,6 @@ impl GraphProjector {
         Ok(())
     }
 
-    async fn set_location(
-        &self,
-        label: &str,
-        id: uuid::Uuid,
-        loc: &Option<Location>,
-    ) -> Result<()> {
-        let (lat, lng) = location_lat_lng(loc);
-        let name = location_name_str(loc);
-        let address = location_address_str(loc);
-        let q = query(&format!(
-            "MATCH (n:{label} {{id: $id}}) SET n.lat = $lat, n.lng = $lng, n.location_name = $name, n.address = $address"
-        ))
-        .param("id", id.to_string())
-        .param("lat", lat)
-        .param("lng", lng)
-        .param("name", name)
-        .param("address", address);
-        self.client.run(q).await?;
-        Ok(())
-    }
 
     async fn set_schedule(
         &self,
@@ -3023,6 +3004,112 @@ impl GraphProjector {
         Ok(())
     }
 
+    /// Project locations as `:Location` nodes with typed edges to the signal.
+    /// MERGE key: normalized_name + lat/lng bucket (3-decimal truncation ≈ 111m grid).
+    /// Edge type depends on signal label and location role.
+    async fn project_locations(
+        &self,
+        signal_id: &Uuid,
+        signal_label: &str,
+        locations: &[Location],
+    ) -> Result<()> {
+        if locations.is_empty() {
+            return Ok(());
+        }
+
+        let signal_id_str = signal_id.to_string();
+
+        for loc in locations {
+            let name = match loc.name.as_deref() {
+                Some(n) if !n.is_empty() => n,
+                _ => continue,
+            };
+
+            let (lat, lng) = match loc.point.as_ref() {
+                Some(p) => (p.lat, p.lng),
+                None => continue,
+            };
+
+            // 3-decimal truncation ≈ 111m grid for MERGE bucketing
+            let lat_bucket = (lat * 1000.0).trunc() / 1000.0;
+            let lng_bucket = (lng * 1000.0).trunc() / 1000.0;
+            let normalized_name = name.trim().to_lowercase();
+
+            let precision_str = loc.point.as_ref().map(|p| match p.precision {
+                rootsignal_world::types::GeoPrecision::Exact => "exact",
+                rootsignal_world::types::GeoPrecision::Neighborhood => "neighborhood",
+                rootsignal_world::types::GeoPrecision::Approximate => "approximate",
+                rootsignal_world::types::GeoPrecision::Region => "region",
+            }).unwrap_or("exact");
+
+            let edge_type = location_edge_type(signal_label, loc.role.as_deref());
+
+            let q = query(&format!(
+                "MATCH (s:{signal_label} {{id: $signal_id}})
+                 MERGE (l:Location {{normalized_name: $normalized_name, lat_bucket: $lat_bucket, lng_bucket: $lng_bucket}})
+                 ON CREATE SET l.name = $name, l.lat = $lat, l.lng = $lng,
+                               l.address = $address, l.precision = $precision
+                 ON MATCH SET l.lat = $lat, l.lng = $lng,
+                              l.address = CASE WHEN $address <> '' THEN $address ELSE l.address END
+                 MERGE (s)-[:{edge_type}]->(l)"
+            ))
+            .param("signal_id", signal_id_str.clone())
+            .param("normalized_name", normalized_name)
+            .param("lat_bucket", lat_bucket)
+            .param("lng_bucket", lng_bucket)
+            .param("name", name)
+            .param("lat", lat)
+            .param("lng", lng)
+            .param("address", loc.address.as_deref().unwrap_or(""))
+            .param("precision", precision_str);
+
+            self.client.run(q).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Replace a signal's primary location edge. Only deletes the default edge type
+    /// for this signal label (e.g. HELD_AT for Gathering), preserving secondary edges
+    /// like AFFECTS that were projected from other roles in the original locations vec.
+    async fn update_location(
+        &self,
+        label: &str,
+        id: Uuid,
+        loc: &Option<Location>,
+    ) -> Result<()> {
+        let default_edge = location_edge_type(label, None);
+        let delete_q = query(&format!(
+            "MATCH (n:{label} {{id: $id}})-[r:{default_edge}]->(l:Location)
+             DELETE r"
+        ))
+        .param("id", id.to_string());
+        self.client.run(delete_q).await?;
+
+        // Update flat properties for reader compat until Phase 2
+        let (lat, lng) = loc.as_ref()
+            .and_then(|l| l.point.as_ref())
+            .map(|p| (p.lat, p.lng))
+            .unwrap_or((0.0, 0.0));
+        let name = loc.as_ref().and_then(|l| l.name.clone()).unwrap_or_default();
+        let address = loc.as_ref().and_then(|l| l.address.clone()).unwrap_or_default();
+        let flat_q = query(&format!(
+            "MATCH (n:{label} {{id: $id}}) SET n.lat = $lat, n.lng = $lng, n.location_name = $name, n.address = $address"
+        ))
+        .param("id", id.to_string())
+        .param("lat", lat)
+        .param("lng", lng)
+        .param("name", name)
+        .param("address", address);
+        self.client.run(flat_q).await?;
+
+        if let Some(loc) = loc {
+            self.project_locations(&id, label, std::slice::from_ref(loc)).await?;
+        }
+
+        Ok(())
+    }
+
     /// Replay events from seq_start in order. Returns the last seq applied.
     pub async fn replay_from(
         &self,
@@ -3090,6 +3177,23 @@ fn format_dt_from_stored(event: &StoredEvent) -> String {
     format_dt(&event.ts)
 }
 
+/// Map signal label + location role to a typed Neo4j edge.
+fn location_edge_type(signal_label: &str, role: Option<&str>) -> &'static str {
+    match role {
+        Some("affected_area") | Some("epicenter") => "AFFECTS",
+        Some("origin") | Some("destination") => "REFERENCES_LOCATION",
+        _ => match signal_label {
+            "Gathering" => "HELD_AT",
+            "Resource" => "AVAILABLE_AT",
+            "HelpRequest" => "NEEDED_AT",
+            "Announcement" => "RELEVANT_TO",
+            "Concern" => "AFFECTS",
+            "Condition" => "OBSERVED_AT",
+            _ => "REFERENCES_LOCATION",
+        },
+    }
+}
+
 fn location_lat_lng(loc: &Option<Location>) -> (f64, f64) {
     loc.as_ref()
         .and_then(|l| l.point.as_ref())
@@ -3103,11 +3207,6 @@ fn location_name_str(loc: &Option<Location>) -> String {
         .unwrap_or_default()
 }
 
-fn location_address_str(loc: &Option<Location>) -> String {
-    loc.as_ref()
-        .and_then(|l| l.address.clone())
-        .unwrap_or_default()
-}
 
 struct ScheduleProps {
     starts_at: String,
@@ -3145,8 +3244,10 @@ fn extract_schedule(schedule: &Option<Schedule>) -> ScheduleProps {
     }
 }
 
-/// Build the common MERGE/ON CREATE SET query for all 5 discovery event types.
-/// No sensitivity or implied_queries — those come from separate SystemEvent events.
+/// Build the common MERGE/ON CREATE SET query for all 6 discovery event types.
+/// Location data is projected as :Location nodes via `project_locations`.
+/// Flat lat/lng/location_name/address properties are kept temporarily for reader compat
+/// and will be removed once readers are migrated to traverse Location edges.
 fn build_discovery_query(
     label: &str,
     type_specific_set: &str,
@@ -3160,11 +3261,14 @@ fn build_discovery_query(
     locations: &[Location],
     event: &StoredEvent,
 ) -> neo4rs::Query {
-    let primary = locations.first().cloned();
-    let primary_opt = primary.as_ref().map(|l| Some(l.clone())).unwrap_or(None);
-    let (lat, lng) = location_lat_lng(&primary_opt);
-    let loc_name = location_name_str(&primary_opt);
-    let loc_address = location_address_str(&primary_opt);
+    // Flat location properties kept for reader compat until Phase 2 migration
+    let primary = locations.first();
+    let (lat, lng) = primary
+        .and_then(|l| l.point.as_ref())
+        .map(|p| (p.lat, p.lng))
+        .unwrap_or((0.0, 0.0));
+    let loc_name = primary.and_then(|l| l.name.clone()).unwrap_or_default();
+    let loc_address = primary.and_then(|l| l.address.clone()).unwrap_or_default();
     let locations_json = if locations.is_empty() {
         String::new()
     } else {
