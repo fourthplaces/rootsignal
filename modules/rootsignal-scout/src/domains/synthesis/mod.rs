@@ -27,7 +27,7 @@ fn is_expansion_completed(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -
 fn similarity_and_mapping_done(e: &SynthesisEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
     if matches!(e, SynthesisEvent::SeverityInferred) { return false; }
     let state = ctx.aggregate::<PipelineState>().curr;
-    state.similarity_computed && state.responses_mapped
+    state.similarity_computed && state.responses_mapped && !state.severity_inferred
 }
 
 fn describe_synthesis_progress(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {

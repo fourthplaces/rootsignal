@@ -19,6 +19,13 @@ fn has_severity_inferred(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> boo
     })
 }
 
+fn count_severity_inferred(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> usize {
+    captured.lock().unwrap().iter().filter(|e| {
+        e.downcast_ref::<SynthesisEvent>()
+            .is_some_and(|se| matches!(se, SynthesisEvent::SeverityInferred))
+    }).count()
+}
+
 #[tokio::test]
 async fn one_of_two_synthesis_facts_does_not_trigger_severity() {
     let store = Arc::new(MockSignalReader::new());
@@ -89,5 +96,27 @@ async fn missing_deps_emits_all_synthesis_facts() {
     assert!(
         has_severity_inferred(&captured),
         "SeverityInferred should fire exactly once"
+    );
+}
+
+#[tokio::test]
+async fn late_synthesis_event_does_not_re_trigger_severity() {
+    let store = Arc::new(MockSignalReader::new());
+    let (engine, captured, _scope) = test_engine_with_capture_for_store(
+        store as Arc<dyn crate::traits::SignalReader>,
+        Some(mpls_region()),
+    );
+
+    // Complete synthesis normally
+    engine.emit(SynthesisEvent::SimilarityComputed).settled().await.unwrap();
+    engine.emit(SynthesisEvent::ResponsesMapped).settled().await.unwrap();
+    assert!(has_severity_inferred(&captured));
+
+    // A late SynthesisEvent arrives (e.g. from topic-discovery second wave)
+    engine.emit(SynthesisEvent::SimilarityComputed).settled().await.unwrap();
+
+    assert_eq!(
+        count_severity_inferred(&captured), 1,
+        "SeverityInferred must fire exactly once, not on every late SynthesisEvent"
     );
 }
