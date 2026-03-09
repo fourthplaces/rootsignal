@@ -23,7 +23,7 @@ use chrono::Utc;
 use rootsignal_common::ActorType;
 use uuid::Uuid;
 use rootsignal_common::events::SystemEvent;
-use seesaw_core::AnyEvent;
+
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -4110,6 +4110,122 @@ async fn media_fetch_failure_does_not_block_feed() {
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1, "media failure → feed signals still extracted");
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled scrapes — unenriched media triggers deferred re-scrape
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn unenriched_story_media_emits_scrape_scheduled() {
+    let ig_url = "https://www.instagram.com/unenriched_test";
+
+    let fetcher = MockFetcher::new()
+        .on_stories(ig_url, vec![test_story_with_unenriched_media("Story with image")]);
+
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
+            nodes: vec![tension_at("Image Story Signal", 44.95, -93.27)],
+            ..Default::default()
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
+
+    let mut source = social_source(ig_url);
+    source.channel_weights.feed = 0.0;
+    source.channel_weights.media = 1.0;
+    let sources: Vec<&_> = vec![&source];
+    let ctx = PipelineState::from_sources(&[source.clone()]);
+
+    let mut output = super::activities::social_scrape::scrape_social_sources(
+        &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
+        &seesaw_core::Logger::new(),
+    ).await;
+
+    let events = output.take_events();
+    let has_scheduled = events.into_outputs().into_iter().any(|out| {
+        out.event_type.contains("SchedulingEvent")
+    });
+
+    assert!(has_scheduled, "unenriched media attachment → ScrapeScheduled event emitted");
+}
+
+#[tokio::test]
+async fn enriched_story_media_does_not_emit_scrape_scheduled() {
+    let ig_url = "https://www.instagram.com/enriched_test";
+
+    let fetcher = MockFetcher::new()
+        .on_stories(ig_url, vec![test_story_with_enriched_media("Story with OCR text")]);
+
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
+            nodes: vec![tension_at("Enriched Story Signal", 44.95, -93.27)],
+            ..Default::default()
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
+
+    let mut source = social_source(ig_url);
+    source.channel_weights.feed = 0.0;
+    source.channel_weights.media = 1.0;
+    let sources: Vec<&_> = vec![&source];
+    let ctx = PipelineState::from_sources(&[source.clone()]);
+
+    let mut output = super::activities::social_scrape::scrape_social_sources(
+        &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
+        &seesaw_core::Logger::new(),
+    ).await;
+
+    let events = output.take_events();
+    let has_scheduled = events.into_outputs().into_iter().any(|out| {
+        out.event_type.contains("SchedulingEvent")
+    });
+
+    assert!(!has_scheduled, "fully enriched media → no ScrapeScheduled event");
+}
+
+#[tokio::test]
+async fn media_channel_off_does_not_emit_scrape_scheduled() {
+    let ig_url = "https://www.instagram.com/no_media_test";
+
+    let fetcher = MockFetcher::new()
+        .on_posts(ig_url, vec![test_post("Regular post")])
+        .on_stories(ig_url, vec![test_story_with_unenriched_media("Should not be fetched")]);
+
+    let extractor = MockExtractor::new().on_url(
+        ig_url,
+        ExtractionResult {
+            nodes: vec![tension_at("Post Signal", 44.95, -93.27)],
+            ..Default::default()
+        },
+    );
+
+    let store = Arc::new(MockSignalReader::new());
+    let deps = test_scrape_deps(store.clone(), Arc::new(extractor), Arc::new(fetcher));
+
+    let mut source = social_source(ig_url);
+    source.channel_weights.feed = 1.0;
+    source.channel_weights.media = 0.0;
+    let sources: Vec<&_> = vec![&source];
+    let ctx = PipelineState::from_sources(&[source.clone()]);
+
+    let mut output = super::activities::social_scrape::scrape_social_sources(
+        &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
+        &seesaw_core::Logger::new(),
+    ).await;
+
+    let events = output.take_events();
+    let has_scheduled = events.into_outputs().into_iter().any(|out| {
+        out.event_type.contains("SchedulingEvent")
+    });
+
+    assert!(!has_scheduled, "media channel off → no ScrapeScheduled even with unenriched stories");
 }
 
 // ---------------------------------------------------------------------------

@@ -225,20 +225,26 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
             if is_terminal_event(&event, &ctx) {
                 let deps = ctx.deps();
 
-                if let Some(ref budget) = deps.budget {
+                let spent_cents = if let Some(ref budget) = deps.budget {
                     budget.log_status();
-                }
+                    budget.total_spent()
+                } else {
+                    0
+                };
 
                 let (_, state) = ctx.singleton::<PipelineState>();
-                info!("{}", state.stats);
+                let mut final_stats = state.stats.clone();
+                final_stats.spent_cents = spent_cents;
+                info!("{}", final_stats);
 
                 if let Some(pool) = &deps.pg_pool {
-                    let stats_json = serde_json::to_value(&state.stats)?;
+                    let stats_json = serde_json::to_value(&final_stats)?;
                     sqlx::query(
-                        "UPDATE scout_runs SET stats = $2 WHERE run_id = $1",
+                        "UPDATE scout_runs SET stats = $2, spent_cents = $3 WHERE run_id = $1",
                     )
                     .bind(deps.run_id.to_string())
                     .bind(stats_json)
+                    .bind(spent_cents as i64)
                     .execute(pool)
                     .await?;
                 }
@@ -341,7 +347,6 @@ pub fn capture_handler(
 /// Project DedupCompleted verdicts to Neo4j.
 ///
 /// Created: wire edges (source, resources, tags, actor).
-/// Corroborated: set corroboration_count + last_confirmed_active.
 /// Refreshed: set last_confirmed_active.
 ///
 /// World/System events (NodeCreated, CitationPublished, ActorIdentified, etc.)
@@ -485,23 +490,6 @@ async fn project_dedup_verdicts(
                         }
                     }
                 }
-            }
-
-            DedupOutcome::Corroborated {
-                existing_id,
-                node_type,
-                new_corroboration_count,
-                ..
-            } => {
-                let label = node_type_label(*node_type);
-                let q = query(&format!(
-                    "MATCH (n:{label} {{id: $id}})
-                     SET n.corroboration_count = $count,
-                         n.last_confirmed_active = datetime()"
-                ))
-                .param("id", existing_id.to_string())
-                .param("count", *new_corroboration_count as i64);
-                client.run(q).await?;
             }
 
             DedupOutcome::Refreshed {

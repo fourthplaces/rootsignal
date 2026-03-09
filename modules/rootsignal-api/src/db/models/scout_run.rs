@@ -19,6 +19,7 @@ pub struct StatsJson {
     pub expansion_queries_collected: Option<u32>,
     pub expansion_sources_created: Option<u32>,
     pub handler_failures: Option<u32>,
+    pub spent_cents: Option<u64>,
 }
 
 /// Row from the `events` table (unified event store).

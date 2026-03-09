@@ -6,6 +6,7 @@ import {
   SUPERVISOR_FINDINGS,
   SUPERVISOR_SUMMARY,
   ADMIN_SCOUT_RUNS,
+  ADMIN_SCHEDULED_SCRAPES,
 } from "@/graphql/queries";
 import { useRegion } from "@/contexts/RegionContext";
 import {
@@ -21,12 +22,13 @@ import { SourcesPage } from "@/pages/SourcesPage";
 import { PromptDialog } from "@/components/PromptDialog";
 import { DataTable, type Column } from "@/components/DataTable";
 
-type Tab = "runs" | "regions" | "sources" | "findings";
+type Tab = "runs" | "regions" | "sources" | "findings" | "scheduled";
 const TABS: { key: Tab; label: string }[] = [
   { key: "runs", label: "Runs" },
   { key: "regions", label: "Regions" },
   { key: "sources", label: "Sources" },
   { key: "findings", label: "Findings" },
+  { key: "scheduled", label: "Scheduled" },
 ];
 
 type Region = {
@@ -61,6 +63,16 @@ type ScoutRun = {
   sources: { id: string; label: string }[];
   startedAt: string;
   finishedAt: string | null;
+};
+
+type ScheduledScrape = {
+  id: string;
+  scopeType: string;
+  scopeData: string;
+  runAfter: string;
+  reason: string;
+  createdAt: string;
+  completedAt: string | null;
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -246,6 +258,36 @@ export function ScoutPage() {
     return true;
   });
 
+  // --- Scheduled ---
+  const { data: scheduledData, loading: scheduledLoading } = useQuery(
+    ADMIN_SCHEDULED_SCRAPES,
+    { variables: { limit: 50 }, skip: tab !== "scheduled" },
+  );
+  const scheduled: ScheduledScrape[] = scheduledData?.adminScheduledScrapes ?? [];
+
+  const scheduledColumns: Column<ScheduledScrape>[] = [
+    { key: "scopeType", label: "Scope", render: (s) => (
+      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{s.scopeType}</span>
+    )},
+    { key: "scopeData", label: "Target", render: (s) => {
+      try {
+        const data = JSON.parse(s.scopeData);
+        if (Array.isArray(data)) return <span className="font-mono text-xs">{data.map((id: string) => id.slice(0, 8)).join(", ")}</span>;
+        return <span className="text-xs">{String(data)}</span>;
+      } catch {
+        return <span className="text-xs text-muted-foreground">{s.scopeData}</span>;
+      }
+    }},
+    { key: "reason", label: "Reason", render: (s) => <span className="text-muted-foreground">{s.reason}</span> },
+    { key: "runAfter", label: "Run After", render: (s) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(s.runAfter)}</span> },
+    { key: "createdAt", label: "Created", render: (s) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(s.createdAt)}</span> },
+    { key: "status", label: "Status", render: (s) => (
+      <span className={`text-xs ${s.completedAt ? "text-green-400" : new Date(s.runAfter) <= new Date() ? "text-amber-400" : "text-muted-foreground"}`}>
+        {s.completedAt ? "Completed" : new Date(s.runAfter) <= new Date() ? "Due" : "Pending"}
+      </span>
+    )},
+  ];
+
   const findingsIssueTypes = [...new Set(findings.map((f) => f.issueType))].sort();
 
   const refetchAllFindings = () => {
@@ -374,6 +416,17 @@ export function ScoutPage() {
 
       {/* Sources tab */}
       {tab === "sources" && <SourcesPage />}
+
+      {/* Scheduled tab */}
+      {tab === "scheduled" && (
+        <DataTable<ScheduledScrape>
+          columns={scheduledColumns}
+          data={scheduled}
+          getRowKey={(s) => s.id}
+          loading={scheduledLoading}
+          emptyMessage="No scheduled scrapes."
+        />
+      )}
 
       {/* Findings tab */}
       {tab === "findings" && (

@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS scheduled_scrapes (
+CREATE TABLE IF NOT EXISTS deferred_scrapes (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     scope_type  TEXT NOT NULL,
     scope_data  JSONB NOT NULL,
@@ -8,11 +8,11 @@ CREATE TABLE IF NOT EXISTS scheduled_scrapes (
     completed_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_scheduled_scrapes_pending
-    ON scheduled_scrapes (run_after)
+CREATE INDEX IF NOT EXISTS idx_deferred_scrapes_pending
+    ON deferred_scrapes (run_after)
     WHERE completed_at IS NULL;
 
--- Prevent duplicate schedules for the same scope while one is still pending.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_scrapes_unique_pending
-    ON scheduled_scrapes (scope_type, scope_data)
+-- Prevent duplicate deferrals for the same scope while one is still pending.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_deferred_scrapes_unique_pending
+    ON deferred_scrapes (scope_type, scope_data)
     WHERE completed_at IS NULL;

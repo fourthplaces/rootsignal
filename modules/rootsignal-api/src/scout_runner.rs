@@ -36,11 +36,14 @@ impl ScoutRunner {
     pub async fn run_news_scan(&self) {
         let deps = self.deps.clone();
         let run_id = uuid::Uuid::new_v4();
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, None, deps.daily_budget_cents,
+        ).await;
 
         info!("Spawning news scan");
 
         tokio::spawn(async move {
-            let engine = deps.build_news_engine(run_id);
+            let engine = deps.build_news_engine(run_id, Some(budget));
 
             if let Err(e) = engine
                 .emit(LifecycleEvent::NewsScanRequested)
@@ -63,6 +66,9 @@ impl ScoutRunner {
         let region_id = region_id.to_string();
         let scope = scope.clone();
         let run_id = uuid::Uuid::new_v4();
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, Some(&region_id), deps.daily_budget_cents,
+        ).await;
 
         info!(region_id = region_id.as_str(), %run_id, "Spawning bootstrap flow");
 
@@ -70,7 +76,7 @@ impl ScoutRunner {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "bootstrap", None, &scope).await;
 
             let run_scope = RunScope::Region(scope.clone());
-            let engine = deps.build_scrape_engine(&scope, run_id);
+            let engine = deps.build_scrape_engine(&scope, run_id, Some(budget));
             let result = engine
                 .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
                 .correlation_id(run_id)
@@ -93,6 +99,9 @@ impl ScoutRunner {
         let region_id = region_id.to_string();
         let scope = scope.clone();
         let run_id = uuid::Uuid::new_v4();
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, Some(&region_id), deps.daily_budget_cents,
+        ).await;
 
         info!(region_id = region_id.as_str(), %run_id, "Spawning scrape flow");
 
@@ -100,7 +109,7 @@ impl ScoutRunner {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "scrape", None, &scope).await;
 
             let run_scope = RunScope::Region(scope.clone());
-            let engine = deps.build_scrape_engine(&scope, run_id);
+            let engine = deps.build_scrape_engine(&scope, run_id, Some(budget));
             let result = engine
                 .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
                 .correlation_id(run_id)
@@ -123,6 +132,9 @@ impl ScoutRunner {
         let region_id = region_id.to_string();
         let scope = scope.clone();
         let run_id = uuid::Uuid::new_v4();
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, Some(&region_id), deps.daily_budget_cents,
+        ).await;
 
         info!(region_id = region_id.as_str(), %run_id, "Spawning weave flow");
 
@@ -130,7 +142,7 @@ impl ScoutRunner {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "weave", None, &scope).await;
 
             let run_scope = RunScope::Region(scope.clone());
-            let engine = deps.build_weave_engine(&scope, run_id);
+            let engine = deps.build_weave_engine(&scope, run_id, Some(budget));
             let result = engine
                 .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
                 .correlation_id(run_id)
@@ -157,6 +169,10 @@ impl ScoutRunner {
         let deps = self.deps.clone();
         let source_ids_owned: Vec<String> = source_ids.to_vec();
         let run_id = uuid::Uuid::new_v4();
+        let region_id_str = region.as_ref().map(|r| r.id.to_string());
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, region_id_str.as_deref(), deps.daily_budget_cents,
+        ).await;
         let metadata_scope = region.as_ref()
             .map(ScoutScope::from)
             .unwrap_or(ScoutScope {
@@ -177,7 +193,7 @@ impl ScoutRunner {
                 sources: sources.clone(),
                 region: region.as_ref().map(ScoutScope::from),
             };
-            let engine = deps.build_source_engine(region.as_ref(), run_id);
+            let engine = deps.build_source_engine(region.as_ref(), run_id, Some(budget));
             let result = engine
                 .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
                 .correlation_id(run_id)
@@ -317,6 +333,140 @@ impl ScoutRunner {
             });
         }
     }
+
+    /// Poll `scheduled_scrapes` for due items and trigger runs.
+    pub async fn process_scheduled_scrapes(&self, graph: &rootsignal_graph::GraphStore) {
+        let rows = match sqlx::query_as::<_, ScheduledScrapeRow>(
+            "SELECT id, scope_type, scope_data \
+             FROM scheduled_scrapes \
+             WHERE completed_at IS NULL AND run_after <= now() \
+             ORDER BY run_after ASC \
+             LIMIT 10",
+        )
+        .fetch_all(&self.deps.pg_pool)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "Failed to query scheduled scrapes");
+                return;
+            }
+        };
+
+        if rows.is_empty() {
+            return;
+        }
+
+        info!(count = rows.len(), "Processing due scheduled scrapes");
+
+        for row in rows {
+            let triggered = match row.scope_type.as_str() {
+                "sources" => {
+                    self.trigger_source_scrape(&row.scope_data, graph).await
+                }
+                "region" => {
+                    let region_name = row.scope_data.as_str().unwrap_or_default();
+                    info!(region = region_name, "Region scheduled scrape — not yet implemented");
+                    true
+                }
+                other => {
+                    warn!(scope_type = other, "Unknown scheduled scrape scope type");
+                    true
+                }
+            };
+
+            if triggered {
+                if let Err(e) = sqlx::query(
+                    "UPDATE scheduled_scrapes SET completed_at = now() WHERE id = $1",
+                )
+                .bind(row.id)
+                .execute(&self.deps.pg_pool)
+                .await
+                {
+                    warn!(error = %e, "Failed to mark scheduled scrape completed");
+                }
+            }
+        }
+    }
+
+    async fn trigger_source_scrape(
+        &self,
+        scope_data: &serde_json::Value,
+        graph: &rootsignal_graph::GraphStore,
+    ) -> bool {
+        let source_id_strings: Vec<String> = match serde_json::from_value(scope_data.clone()) {
+            Ok(ids) => ids,
+            Err(e) => {
+                warn!(error = %e, "Failed to parse source IDs from scheduled scrape");
+                return true;
+            }
+        };
+
+        let uuids: Vec<uuid::Uuid> = source_id_strings
+            .iter()
+            .filter_map(|id| uuid::Uuid::parse_str(id).ok())
+            .collect();
+
+        let sources = match graph.get_sources_by_ids(&uuids).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "Failed to load sources for scheduled scrape");
+                return false;
+            }
+        };
+
+        if sources.is_empty() {
+            warn!("Scheduled scrape: no valid sources found, skipping");
+            return true;
+        }
+
+        for sid in &source_id_strings {
+            if crate::db::scout_run::is_source_busy(&self.deps.pg_pool, sid)
+                .await
+                .unwrap_or(false)
+            {
+                info!(source_id = sid.as_str(), "Scheduled scrape deferred — source busy");
+                return false;
+            }
+        }
+
+        let region = graph
+            .get_region_for_source(&source_id_strings[0])
+            .await
+            .unwrap_or(None);
+
+        info!(
+            source_count = sources.len(),
+            "Triggering scheduled source scrape"
+        );
+
+        self.run_scout_source(&source_id_strings, sources, region).await;
+        true
+    }
+
+    /// Start a background loop that checks for due scheduled scrapes.
+    pub fn start_scheduled_scrapes_loop(
+        self,
+        graph: rootsignal_graph::GraphStore,
+    ) {
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(15 * 60);
+            // Small initial delay so the server finishes starting up
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+            loop {
+                self.process_scheduled_scrapes(&graph).await;
+                tokio::time::sleep(interval).await;
+            }
+        });
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct ScheduledScrapeRow {
+    id: uuid::Uuid,
+    scope_type: String,
+    scope_data: serde_json::Value,
 }
 
 #[derive(sqlx::FromRow)]

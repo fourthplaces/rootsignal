@@ -1119,6 +1119,33 @@ pub struct FindingCount {
     pub count: i64,
 }
 
+// --- Scheduled scrapes ---
+
+#[derive(SimpleObject)]
+pub struct ScheduledScrape {
+    pub id: String,
+    pub scope_type: String,
+    pub scope_data: String,
+    pub run_after: DateTime<Utc>,
+    pub reason: String,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl From<crate::db::scheduled_scrapes::ScheduledScrapeRow> for ScheduledScrape {
+    fn from(row: crate::db::scheduled_scrapes::ScheduledScrapeRow) -> Self {
+        Self {
+            id: row.id,
+            scope_type: row.scope_type,
+            scope_data: row.scope_data.to_string(),
+            run_after: row.run_after,
+            reason: row.reason,
+            created_at: row.created_at,
+            completed_at: row.completed_at,
+        }
+    }
+}
+
 // --- Situation types ---
 
 #[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]

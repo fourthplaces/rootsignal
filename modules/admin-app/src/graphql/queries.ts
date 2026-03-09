@@ -531,6 +531,20 @@ export const SUPERVISOR_SUMMARY = gql`
   }
 `;
 
+export const ADMIN_SCHEDULED_SCRAPES = gql`
+  query AdminScheduledScrapes($pendingOnly: Boolean, $limit: Int) {
+    adminScheduledScrapes(pendingOnly: $pendingOnly, limit: $limit) {
+      id
+      scopeType
+      scopeData
+      runAfter
+      reason
+      createdAt
+      completedAt
+    }
+  }
+`;
+
 export const ADMIN_REGION_SOURCES_BY_REGION = gql`
   query AdminRegionSourcesByRegion($regionId: String!) {
     adminRegionSourcesByRegion(regionId: $regionId) {
@@ -1012,6 +1026,23 @@ export const EVENTS_SUBSCRIPTION = gql`
       handlerId
       summary
       payload
+    }
+  }
+`;
+
+export const BUDGET_STATUS = gql`
+  query BudgetStatus {
+    budgetStatus {
+      globalDailyLimitCents
+      globalSpentTodayCents
+      globalRemainingCents
+      runDefaultMaxCents
+      regions {
+        regionId
+        dailyLimitCents
+        spentTodayCents
+        remainingCents
+      }
     }
   }
 `;
