@@ -101,7 +101,7 @@ pub fn build_node_meta(
         was_corrected: false,
         corrections: None,
         rejection_reason: None,
-        mentioned_actors: Vec::new(),
+        mentioned_entities: vec![],
         category: None,
     }
 }

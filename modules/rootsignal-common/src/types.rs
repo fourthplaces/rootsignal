@@ -229,9 +229,9 @@ pub struct NodeMeta {
     pub corrections: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rejection_reason: Option<String>,
-    /// Actor names mentioned in the extracted signal content.
+    /// Typed entities mentioned in the extracted signal content.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mentioned_actors: Vec<String>,
+    pub mentioned_entities: Vec<Entity>,
     /// Thematic domain classification (housing, safety, health, etc.).
     /// Written by CategoryClassified system event, not set during extraction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -265,6 +265,14 @@ impl NodeMeta {
 
     pub fn from_point(&self) -> Option<&GeoPoint> {
         self.from_location().and_then(|l| l.point.as_ref())
+    }
+
+    /// Flat list of entity names — backward compat for callers that just need names.
+    pub fn mentioned_entity_names(&self) -> Vec<&str> {
+        self.mentioned_entities
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect()
     }
 }
 
@@ -1555,7 +1563,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
-            mentioned_actors: vec![],
+            mentioned_entities: vec![],
             category: None,
         }
     }

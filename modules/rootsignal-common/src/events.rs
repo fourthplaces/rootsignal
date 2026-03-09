@@ -499,6 +499,9 @@ mod tests {
                 all_day: false,
                 rrule: Some("FREQ=MONTHLY;BYDAY=1SA".into()),
                 timezone: Some("America/Chicago".into()),
+                schedule_text: None,
+                rdates: vec![],
+                exdates: vec![],
             }),
             action_url: Some("https://example.com/signup".into()),
         };

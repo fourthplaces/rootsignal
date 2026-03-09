@@ -197,18 +197,18 @@ async fn community_garden_post_yields_gathering_signal() {
     });
     assert!(has_eventbrite, "Should have an eventbrite action_url");
 
-    // mentioned_actors should include Cafe Racer or Briva Health
+    // mentioned_entities should include Cafe Racer or Briva Health
     let all_actors: Vec<String> = response
         .signals
         .iter()
-        .flat_map(|s| s.mentioned_actors.iter().flatten())
-        .map(|a| a.to_lowercase())
+        .flat_map(|s| s.mentioned_entities.iter().flatten())
+        .map(|e| e.name.to_lowercase())
         .collect();
     let has_cafe_racer = all_actors.iter().any(|a| a.contains("cafe racer"));
     let has_briva = all_actors.iter().any(|a| a.contains("briva"));
     assert!(
         has_cafe_racer || has_briva,
-        "mentioned_actors should include 'Cafe Racer' or 'Briva Health', got {:?}",
+        "mentioned_entities should include 'Cafe Racer' or 'Briva Health', got {:?}",
         all_actors
     );
 }
@@ -385,19 +385,19 @@ async fn urgent_community_issue_yields_tension_signal() {
         "Should extract legal support or safe spaces as Aid signals"
     );
 
-    // mentioned_actors across all signals should include MIRC or Minneapolis Immigrant Rights Coalition
+    // mentioned_entities across all signals should include MIRC or Minneapolis Immigrant Rights Coalition
     let all_actors: Vec<String> = response
         .signals
         .iter()
-        .flat_map(|s| s.mentioned_actors.iter().flatten())
-        .map(|a| a.to_lowercase())
+        .flat_map(|s| s.mentioned_entities.iter().flatten())
+        .map(|e| e.name.to_lowercase())
         .collect();
     let has_mirc = all_actors
         .iter()
         .any(|a| a.contains("mirc") || a.contains("immigrant rights coalition"));
     assert!(
         has_mirc,
-        "mentioned_actors should include MIRC or Minneapolis Immigrant Rights Coalition, got {:?}",
+        "mentioned_entities should include MIRC or Minneapolis Immigrant Rights Coalition, got {:?}",
         all_actors
     );
 }
@@ -759,12 +759,12 @@ async fn spanish_content_yields_signals_in_english() {
         "Spanish content should still produce Minneapolis-area locations"
     );
 
-    // Should detect MIRC as a mentioned actor
+    // Should detect MIRC as a mentioned entity
     let all_actors: Vec<String> = response
         .signals
         .iter()
-        .flat_map(|s| s.mentioned_actors.iter().flatten())
-        .map(|a| a.to_lowercase())
+        .flat_map(|s| s.mentioned_entities.iter().flatten())
+        .map(|e| e.name.to_lowercase())
         .collect();
     let has_mirc = all_actors.iter().any(|a| a.contains("mirc"));
     let has_volunteer_lawyers = all_actors

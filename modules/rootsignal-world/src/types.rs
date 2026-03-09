@@ -251,17 +251,22 @@ impl SourceRole {
 // --- Entity Types ---
 
 /// What kind of entity is referenced in a world event.
+///
+/// No `Person` variant — extracting individual names accumulates into de facto
+/// organizer profiles, violating the adversarial threat model's "no private
+/// individual actor nodes" rule. Public figures can be revisited later.
+///
+/// No `Place` variant — geographic entities are represented through the `Location`
+/// infrastructure (coordinates + name + role), not as separate Entity nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
-    /// Individual humans.
-    Person,
     /// Named, structured groups of people.
     Organization,
     /// Unnamed or loosely defined collections of people ("displaced families", "long-time renters").
     Group,
-    /// Geographic — natural or built.
-    Place,
+    /// Government agencies, councils, departments, courts.
+    GovernmentBody,
     /// Everything else — species, legislation, infrastructure, programs.
     Thing,
 }
@@ -269,10 +274,9 @@ pub enum EntityType {
 impl std::fmt::Display for EntityType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EntityType::Person => write!(f, "person"),
             EntityType::Organization => write!(f, "organization"),
             EntityType::Group => write!(f, "group"),
-            EntityType::Place => write!(f, "place"),
+            EntityType::GovernmentBody => write!(f, "government_body"),
             EntityType::Thing => write!(f, "thing"),
         }
     }

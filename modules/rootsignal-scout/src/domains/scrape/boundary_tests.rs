@@ -292,8 +292,8 @@ async fn same_title_extracted_twice_produces_one_signal() {
 
 // NOTE: Tests `mentioned_actors_are_linked_to_their_signal` and
 // `same_actor_in_two_signals_appears_once_linked_to_both` were removed.
-// Mentioned actors no longer create Actor nodes — see
-// `mentioned_actors_do_not_create_actor_nodes` below.
+// Mentioned entities no longer create Actor nodes — see
+// `mentioned_entities_do_not_create_actor_nodes` below.
 
 // ---------------------------------------------------------------------------
 // Location handoff boundary
@@ -2334,11 +2334,11 @@ async fn aggregator_source_author_does_not_create_actor_node() {
 }
 
 // ---------------------------------------------------------------------------
-// Group C: Mentioned actors no longer create nodes
+// Group C: Mentioned entities no longer create nodes
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn mentioned_actors_do_not_create_actor_nodes() {
+async fn mentioned_entities_do_not_create_actor_nodes() {
     let fetcher = MockFetcher::new().on_page(
         "https://example.com/mentions",
         archived_page("https://example.com/mentions", "# Article with mentions"),

@@ -577,7 +577,7 @@ async fn large_payload_roundtrips() {
         "about_location": {"lat": 44.9778, "lng": -93.265, "precision": "neighborhood"},
         "about_location_name": "Minneapolis",
         "implied_queries": (0..20).map(|i| format!("query {i}")).collect::<Vec<_>>(),
-        "mentioned_actors": (0..10).map(|i| format!("Actor {i}")).collect::<Vec<_>>(),
+        "mentioned_entities": (0..10).map(|i| format!("Actor {i}")).collect::<Vec<_>>(),
         "starts_at": "2026-03-01T10:00:00Z",
         "action_url": "https://example.com/signup",
         "organizer": "Community Council",

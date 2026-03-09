@@ -9,9 +9,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ResourceOfferNode, ConditionNode, GatheringNode, GeoPoint, GeoPrecision, HelpRequestNode,
-    Location, Node, NodeMeta, AnnouncementNode, ReviewStatus, ScheduleNode, SensitivityLevel,
-    Severity, ConcernNode, Urgency,
+    Entity, ResourceOfferNode, ConditionNode, GatheringNode, GeoPoint, GeoPrecision,
+    HelpRequestNode, Location, Node, NodeMeta, AnnouncementNode, ReviewStatus, ScheduleNode,
+    SensitivityLevel, Severity, ConcernNode, Urgency,
 };
 use rootsignal_common::telemetry_events::TelemetryEvent;
 use serde::de;
@@ -70,7 +70,7 @@ pub struct ExtractedSignal {
     /// Used for staleness filtering — signals older than 1 year are dropped.
     pub published_at: Option<String>,
     /// Organizations, groups, or individuals mentioned in the signal
-    pub mentioned_actors: Option<Vec<String>>,
+    pub mentioned_entities: Option<Vec<Entity>>,
     /// The specific source URL this signal was extracted from (e.g. a specific post URL).
     /// When extracting from multiple posts, return the URL of the post this signal came from.
     pub source_url: Option<String>,
@@ -466,7 +466,7 @@ impl Extractor {
                 was_corrected: false,
                 corrections: None,
                 rejection_reason: None,
-                mentioned_actors: signal.mentioned_actors.clone().unwrap_or_default(),
+                mentioned_entities: signal.mentioned_entities.clone().unwrap_or_default(),
                 category: None,
             };
 
@@ -929,11 +929,15 @@ Set author_actor to the person, organization, or account that authored/published
 - For news: the journalist or publication (e.g. "Star Tribune")
 - If unclear or anonymous, leave null.
 
-## Mentioned Actors
-Extract the names of organizations, groups, government bodies, or notable individuals mentioned in each signal. These become Actor nodes in the graph for "who's involved" queries.
-- Include: nonprofits, city departments, coalitions, community groups, churches, businesses offering help
+## Mentioned Entities
+Extract named entities mentioned in each signal as typed objects with name, entity_type, and optional role.
+- entity_type must be one of: "organization", "group", "government_body", "thing"
+- Do NOT extract individual people — no "person" type. People are tracked separately via author_actor.
+- Do NOT extract places — locations are captured through the location fields.
+- Include: nonprofits, city departments, coalitions, community groups, churches, businesses, legislation, programs
 - Exclude: generic references like "the city" or "local officials" unless a specific body is named
-- Do NOT include the author_actor in mentioned_actors — they are tracked separately
+- role: the entity's role in the signal context (e.g. "organizer", "decision_maker", "funder", "provider"). Null if no clear role.
+- Do NOT include the author_actor in mentioned_entities — they are tracked separately
 
 ## Contact Information
 Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs).
@@ -1079,7 +1083,7 @@ mod tests {
             effective_date: None,
             source_authority: None,
             published_at: None,
-            mentioned_actors: None,
+            mentioned_entities: None,
             opposing: Some("proposed rent increases".to_string()),
             observed_by: None,
             measurement: None,
@@ -1175,7 +1179,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
-            mentioned_actors: Vec::new(),
+            mentioned_entities: vec![],
             category: None,
         };
         let aid = ResourceOfferNode {
@@ -1211,7 +1215,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
-            mentioned_actors: Vec::new(),
+            mentioned_entities: vec![],
             category: None,
         };
         let need = HelpRequestNode {

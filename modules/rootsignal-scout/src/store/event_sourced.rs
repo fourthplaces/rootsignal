@@ -41,14 +41,7 @@ fn meta_to_locations(meta: &rootsignal_common::types::NodeMeta) -> Vec<Location>
 }
 
 fn meta_to_mentioned_entities(meta: &rootsignal_common::types::NodeMeta) -> Vec<Entity> {
-    meta.mentioned_actors
-        .iter()
-        .map(|name| Entity {
-            name: name.clone(),
-            entity_type: EntityType::Organization,
-            role: None,
-        })
-        .collect()
+    meta.mentioned_entities.clone()
 }
 
 /// Build the world-fact event for a discovery — no sensitivity or implied_queries.
@@ -179,6 +172,9 @@ fn schedule_from_gathering(n: &rootsignal_common::types::GatheringNode) -> Optio
         all_day: false,
         rrule: None,
         timezone: None,
+        schedule_text: None,
+        rdates: vec![],
+        exdates: vec![],
     })
 }
 
@@ -396,7 +392,7 @@ mod tests {
             was_corrected: false,
             corrections: None,
             rejection_reason: None,
-            mentioned_actors: Vec::new(),
+            mentioned_entities: vec![],
             category: None,
         }
     }
@@ -735,9 +731,12 @@ mod tests {
     }
 
     #[test]
-    fn mentioned_actors_flow_into_world_event() {
+    fn mentioned_entities_flow_into_world_event() {
         let mut meta = test_meta("Community Workshop");
-        meta.mentioned_actors = vec!["YMCA".to_string(), "Habitat for Humanity".to_string()];
+        meta.mentioned_entities = vec![
+            Entity { name: "YMCA".to_string(), entity_type: EntityType::Organization, role: None },
+            Entity { name: "Habitat for Humanity".to_string(), entity_type: EntityType::Organization, role: None },
+        ];
 
         let node = Node::HelpRequest(HelpRequestNode {
             meta,

@@ -407,6 +407,9 @@ fn scout_pipeline_event_chain_is_expressible() {
             all_day: false,
             rrule: Some("FREQ=YEARLY".into()),
             timezone: Some("America/Chicago".into()),
+            schedule_text: None,
+            rdates: vec![],
+            exdates: vec![],
         }),
         action_url: Some("https://lakestreetstories.com/events/block-party".into()),
     });
