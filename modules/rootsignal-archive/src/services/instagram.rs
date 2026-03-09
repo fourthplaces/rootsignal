@@ -146,15 +146,54 @@ impl InstagramService {
     }
 
     /// Fetch stories from an Instagram profile.
-    /// NOTE: Apify does not yet have a stories endpoint. This is a stub
-    /// that returns an empty vec. Will be wired when the Apify actor is available.
     pub(crate) async fn fetch_stories(
         &self,
-        _identifier: &str,
-        _source_id: Uuid,
+        identifier: &str,
+        source_id: Uuid,
     ) -> Result<Vec<FetchedStory>> {
-        info!("instagram: stories not yet supported by Apify");
-        Ok(Vec::new())
+        info!(identifier, "instagram: fetching stories");
+
+        let profile_url = if identifier.starts_with("http") {
+            identifier.to_string()
+        } else {
+            format!("https://www.instagram.com/{}/", identifier)
+        };
+
+        let raw = self.client.scrape_instagram_stories(&profile_url).await?;
+
+        let stories = raw
+            .into_iter()
+            .filter_map(|s| {
+                let media_url = s.media_url()?;
+                let content_hash =
+                    rootsignal_common::content_hash(media_url).to_string();
+
+                let files = vec![InsertFile {
+                    url: media_url.to_string(),
+                    content_hash: content_hash.clone(),
+                    title: None,
+                    mime_type: s.mime_type().to_string(),
+                    duration: None,
+                    page_count: None,
+                    text: None,
+                    text_language: None,
+                }];
+
+                Some(FetchedStory {
+                    story: InsertStory {
+                        source_id,
+                        content_hash,
+                        text: s.caption.filter(|c| !c.is_empty()),
+                        location: s.location_name,
+                        expires_at: s.expiring_at,
+                        permalink: s.url,
+                    },
+                    files,
+                })
+            })
+            .collect();
+
+        Ok(stories)
     }
 
     /// Fetch reels (short videos) from an Instagram profile.

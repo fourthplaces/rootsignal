@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use rootsignal_common::types::ArchiveFile;
 use rootsignal_common::{Node, NodeType, Post, ShortVideo, Story};
 
 /// Format a post for LLM extraction with optional permalink.
@@ -17,32 +18,46 @@ pub(crate) fn format_post(index: usize, post: &Post) -> String {
 }
 
 /// Format a story for LLM extraction.
+/// Includes transcribed/OCR'd text from media attachments alongside any caption.
 pub(crate) fn format_story(index: usize, story: &Story) -> String {
-    let text = story.text.as_deref().unwrap_or("");
-    let location = story.location.as_deref().unwrap_or("");
-    let loc_suffix = if location.is_empty() {
-        String::new()
-    } else {
-        format!(" [location: {}]", location)
-    };
+    let content = content_with_attachments(story.text.as_deref(), &story.attachments);
+    let loc_suffix = location_suffix(story.location.as_deref());
     match &story.permalink {
-        Some(url) => format!("--- Story {} ({}) ---\n{}{}", index + 1, url, text, loc_suffix),
-        None => format!("--- Story {} ---\n{}{}", index + 1, text, loc_suffix),
+        Some(url) => format!("--- Story {} ({}) ---\n{}{}", index + 1, url, content, loc_suffix),
+        None => format!("--- Story {} ---\n{}{}", index + 1, content, loc_suffix),
     }
 }
 
 /// Format a short video (reel/TikTok) for LLM extraction.
+/// Includes transcribed/OCR'd text from media attachments alongside any caption.
 pub(crate) fn format_short_video(index: usize, video: &ShortVideo) -> String {
-    let text = video.text.as_deref().unwrap_or("");
-    let location = video.location.as_deref().unwrap_or("");
-    let loc_suffix = if location.is_empty() {
-        String::new()
-    } else {
-        format!(" [location: {}]", location)
-    };
+    let content = content_with_attachments(video.text.as_deref(), &video.attachments);
+    let loc_suffix = location_suffix(video.location.as_deref());
     match &video.permalink {
-        Some(url) => format!("--- Video {} ({}) ---\n{}{}", index + 1, url, text, loc_suffix),
-        None => format!("--- Video {} ---\n{}{}", index + 1, text, loc_suffix),
+        Some(url) => format!("--- Video {} ({}) ---\n{}{}", index + 1, url, content, loc_suffix),
+        None => format!("--- Video {} ---\n{}{}", index + 1, content, loc_suffix),
+    }
+}
+
+fn content_with_attachments(caption: Option<&str>, attachments: &[ArchiveFile]) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if let Some(text) = caption.filter(|t| !t.is_empty()) {
+        parts.push(text);
+    }
+    for file in attachments {
+        if let Some(ref text) = file.text {
+            if !text.is_empty() {
+                parts.push(text);
+            }
+        }
+    }
+    parts.join("\n\n")
+}
+
+fn location_suffix(location: Option<&str>) -> String {
+    match location.filter(|l| !l.is_empty()) {
+        Some(loc) => format!(" [location: {}]", loc),
+        None => String::new(),
     }
 }
 

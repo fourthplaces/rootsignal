@@ -166,6 +166,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn seesaw_c
     // Infrastructure projections
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::scheduled_scrapes_projection());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -238,6 +239,7 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
     // Infrastructure projections
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::scheduled_scrapes_projection());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -306,6 +308,7 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn se
 
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::scheduled_scrapes_projection());
 
     if let Some(sink) = capture_sink {
         engine = engine.with_handler(projection::capture_handler(sink));
@@ -346,6 +349,7 @@ pub fn build_infra_only_engine(
         .with_handler(projection::neo4j_projection_handler(projector))
         .with_projection(projection::scout_runs_projection())
         .with_projection(projection::system_log_projection())
+        .with_projection(projection::scheduled_scrapes_projection())
 }
 
 /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
@@ -389,6 +393,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<dyn see
 
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::scheduled_scrapes_projection());
 
     if let Some(sink) = capture_sink {
         engine = engine.with_handler(projection::capture_handler(sink));

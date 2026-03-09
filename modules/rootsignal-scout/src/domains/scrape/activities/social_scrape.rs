@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use futures::stream::{self, StreamExt};
 use uuid::Uuid;
 
@@ -47,6 +47,7 @@ pub(crate) async fn scrape_social_sources(
             post_count: usize,
             mentions: Vec<String>,
             newest_published_at: Option<DateTime<Utc>>,
+            has_unenriched_media: bool,
         }
 
         // Build uniform list of (canonical_key, source_url, platform, fetch_identifier) from SourceNodes
@@ -202,6 +203,7 @@ pub(crate) async fn scrape_social_sources(
 
                 // --- Media channel: stories + short videos ---
                 let mut media_items: Vec<ContentItem> = Vec::new();
+                let mut has_unenriched_media = false;
                 if fetch_media {
                     let stories = fetcher.stories(&identifier).await.unwrap_or_default();
                     let videos = fetcher.short_videos(&identifier, 10).await.unwrap_or_default();
@@ -211,6 +213,12 @@ pub(crate) async fn scrape_social_sources(
                             stories.len(), videos.len(),
                         ));
                     }
+                    has_unenriched_media = stories.iter().any(|s| {
+                        s.attachments.iter().any(|a| a.text.is_none())
+                    }) || videos.iter().any(|v| {
+                        v.attachments.iter().any(|a| a.text.is_none())
+                    });
+
                     for (i, story) in stories.iter().enumerate() {
                         media_items.push(ContentItem {
                             text: super::shared::format_story(i, story),
@@ -291,6 +299,7 @@ pub(crate) async fn scrape_social_sources(
                     post_count,
                     mentions: source_mentions,
                     newest_published_at,
+                    has_unenriched_media,
                 })
             }));
         }
@@ -315,6 +324,7 @@ pub(crate) async fn scrape_social_sources(
                 post_count,
                 mentions,
                 newest_published_at,
+                has_unenriched_media,
             } = result;
 
             // Apply social published_at as fallback published_at when LLM didn't extract one
@@ -328,6 +338,23 @@ pub(crate) async fn scrape_social_sources(
                         url: mention_url,
                         discovered_on: source_url.clone(),
                     });
+                }
+            }
+
+            if has_unenriched_media {
+                if let Some(&source_id) = ck_to_source_id.get(&canonical_key) {
+                    logger.info(format!(
+                        "{source_url}: media attachments pending enrichment, scheduling re-scrape",
+                    ));
+                    output.events.push(
+                        crate::domains::scheduling::events::SchedulingEvent::ScrapeScheduled {
+                            scope: crate::domains::scheduling::events::ScheduledScope::Sources {
+                                source_ids: vec![source_id],
+                            },
+                            run_after: Utc::now() + Duration::hours(1),
+                            reason: "media enrichment pending (OCR/transcription)".into(),
+                        },
+                    );
                 }
             }
 

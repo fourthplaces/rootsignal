@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, memo } from "react";
+import { useMemo, useCallback, useEffect, useState, useRef, memo, type RefCallback } from "react";
 import { ReactFlow, Background, Controls, useReactFlow, Handle, MarkerType, type Node, type Edge, type NodeChange, type NodeProps, Position } from "@xyflow/react";
 import { useQuery } from "@apollo/client";
 import dagre from "@dagrejs/dagre";
@@ -6,6 +6,7 @@ import "@xyflow/react/dist/style.css";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
 import { eventBg, eventBorder } from "../eventColor";
 import { ADMIN_HANDLER_DESCRIPTIONS, ADMIN_HANDLER_OUTCOMES, ADMIN_SCOUT_RUN } from "../../../graphql/queries";
+import { Popover } from "../../../components/Popover";
 
 // ---------------------------------------------------------------------------
 // Block DSL types (mirrors rootsignal-common::describe)
@@ -160,7 +161,31 @@ const HandlerNode = memo(({ data }: NodeProps) => {
   );
 });
 
-const nodeTypes = { handler: HandlerNode };
+const EventNode = memo(({ data }: NodeProps) => {
+  const d = data as FlowNodeData & { nodeKind: "event-type" };
+  return (
+    <div style={{
+      background: eventBg(d.eventName),
+      border: `1px solid ${eventBorder(d.eventName)}`,
+      borderRadius: 6,
+      fontSize: 11,
+      padding: "6px 10px",
+      width: NODE_WIDTH,
+      color: "#e4e4e7",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      direction: "rtl",
+      textAlign: "left",
+    }}>
+      <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
+      {d.label}
+      <Handle type="source" position={Position.Bottom} style={{ visibility: "hidden" }} />
+    </div>
+  );
+});
+
+const nodeTypes = { handler: HandlerNode, event: EventNode };
 
 // ---------------------------------------------------------------------------
 // Graph building
@@ -168,7 +193,7 @@ const nodeTypes = { handler: HandlerNode };
 
 type FlowGraph = { nodes: Node[]; edges: Edge[] };
 
-function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]>, outcomes?: Map<string, HandlerOutcome>): FlowGraph {
+function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]>, outcomes?: Map<string, HandlerOutcome>, hiddenHandlers?: Set<string>): FlowGraph {
   // Group events by (handlerId, name) for event-type nodes
   // and create handler nodes from unique handlerIds
   const eventGroups = new Map<string, { name: string; layer: string; count: number; events: AdminEvent[] }>();
@@ -219,11 +244,13 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
   const edges: Edge[] = [];
   const edgeSet = new Set<string>(); // dedup edges
 
-  // Create event-type nodes
+  // Create event-type nodes (skip events emitted by hidden handlers)
   for (const [groupKey, group] of eventGroups) {
+    const emittingHandler = group.events[0]?.handlerId;
+    if (emittingHandler && hiddenHandlers?.has(emittingHandler)) continue;
     nodes.push({
       id: `evt:${groupKey}`,
-      type: "default",
+      type: "event",
       position: { x: 0, y: 0 },
       data: {
         label: `${group.name} (${group.count})`,
@@ -231,27 +258,14 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
         handlerId: group.events[0]?.handlerId ?? null,
         eventName: group.name,
       },
-      style: {
-        background: eventBg(group.name),
-        border: `1px solid ${eventBorder(group.name)}`,
-        borderRadius: 6,
-        fontSize: 11,
-        padding: "6px 10px",
-        width: NODE_WIDTH,
-        color: "#e4e4e7",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        direction: "rtl",
-        textAlign: "left",
-      },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
     });
   }
 
-  // Create handler nodes
+  // Create handler nodes (skip hidden)
   for (const handlerId of handlerIds) {
+    if (hiddenHandlers?.has(handlerId)) continue;
     const blocks = descriptions?.get(handlerId);
     const outcome = outcomes?.get(handlerId);
     nodes.push({
@@ -271,6 +285,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
     const sourceGroupKey = eventIdToGroup.get(parentId);
     if (!sourceGroupKey) continue;
     for (const handlerId of handlers) {
+      if (hiddenHandlers?.has(handlerId)) continue;
       const edgeKey = `evt:${sourceGroupKey}->hdl:${handlerId}`;
       if (!edgeSet.has(edgeKey)) {
         edgeSet.add(edgeKey);
@@ -288,6 +303,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
 
   // Edges: handler -> child event groups (with count labels)
   for (const [handlerId, childGroupKeys] of handlerToChildren) {
+    if (hiddenHandlers?.has(handlerId)) continue;
     for (const groupKey of childGroupKeys) {
       const edgeKey = `hdl:${handlerId}->evt:${groupKey}`;
       if (!edgeSet.has(edgeKey)) {
@@ -314,6 +330,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
       const handlers = parentToHandler.get(evt.id);
       if (!handlers) continue;
       for (const handlerId of handlers) {
+        if (hiddenHandlers?.has(handlerId)) continue;
         const edgeKey = `evt:${groupKey}->hdl:${handlerId}`;
         if (!edgeSet.has(edgeKey)) {
           edgeSet.add(edgeKey);
@@ -333,6 +350,7 @@ function buildFlowGraph(events: AdminEvent[], descriptions?: Map<string, Block[]
   if (outcomes) {
     for (const [handlerId, outcome] of outcomes) {
       if (handlerIds.has(handlerId)) continue;
+      if (hiddenHandlers?.has(handlerId)) continue;
 
       const blocks = descriptions?.get(handlerId);
       nodes.push({
@@ -455,11 +473,83 @@ function FocusOnSelection({ nodes, flowData }: { nodes: Node[]; flowData: AdminE
 }
 
 // ---------------------------------------------------------------------------
+// Handler visibility filter dropdown
+// ---------------------------------------------------------------------------
+
+function HandlerFilter({ allHandlerIds, hiddenHandlers, setHiddenHandlers }: {
+  allHandlerIds: string[];
+  hiddenHandlers: Set<string>;
+  setHiddenHandlers: (s: Set<string>) => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const toggle = (id: string) => {
+    const next = new Set(hiddenHandlers);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setHiddenHandlers(next);
+  };
+
+  const filtered = filter
+    ? allHandlerIds.filter(id => id.toLowerCase().includes(filter.toLowerCase()))
+    : allHandlerIds;
+
+  const hiddenCount = hiddenHandlers.size;
+
+  return (
+    <Popover
+      placement="bottom-start"
+      content={() => (
+        <div className="min-w-[240px]">
+          <div className="px-2 py-1.5 border-b border-border">
+            <input
+              ref={inputRef}
+              autoFocus
+              type="text"
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              placeholder="Search handlers…"
+              className="w-full text-xs bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto py-1">
+            {filtered.map(id => (
+              <label key={id} className="flex items-center gap-2 px-3 py-1 hover:bg-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!hiddenHandlers.has(id)}
+                  onChange={() => toggle(id)}
+                  className="rounded border-border"
+                />
+                <span className="text-xs font-mono text-foreground truncate">{id}</span>
+              </label>
+            ))}
+            {filtered.length === 0 && (
+              <div className="text-xs text-muted-foreground px-3 py-2">No matches</div>
+            )}
+          </div>
+        </div>
+      )}
+    >
+      {(ref: RefCallback<HTMLElement>, props: Record<string, unknown>) => (
+        <button
+          ref={ref as RefCallback<HTMLButtonElement>}
+          {...props}
+          className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded border border-border"
+        >
+          Filter{hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ""}
+        </button>
+      )}
+    </Popover>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CausalFlowPane
 // ---------------------------------------------------------------------------
 
 export function CausalFlowPane() {
-  const { flowRunId, closeFlow, flowData, flowLoading, flowSelection, setFlowSelection, selectSeq, setLogsFilter } = useEventsPaneContext();
+  const { flowRunId, flowData, flowLoading, flowSelection, setFlowSelection, selectSeq, setLogsFilter } = useEventsPaneContext();
 
   const { data: descData } = useQuery<{
     adminHandlerDescriptions: { handlerId: string; blocks: unknown }[];
@@ -513,10 +603,21 @@ export function CausalFlowPane() {
     return map;
   }, [outcomesData]);
 
-  const { nodes: rawNodes, edges } = useMemo(() => {
+  const DEFAULT_HIDDEN = new Set(["neo4j_projection"]);
+  const [hiddenHandlers, setHiddenHandlers] = useState<Set<string>>(DEFAULT_HIDDEN);
+
+  // All known handler IDs (from events + outcomes)
+  const allHandlerIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (flowData) for (const evt of flowData) { if (evt.handlerId) ids.add(evt.handlerId); }
+    if (outcomes) for (const id of outcomes.keys()) ids.add(id);
+    return [...ids].sort();
+  }, [flowData, outcomes]);
+
+  const { nodes: rawNodes, edges: rawEdges } = useMemo(() => {
     if (!flowData || flowData.length === 0) return { nodes: [], edges: [] };
-    return buildFlowGraph(flowData, descriptions, outcomes);
-  }, [flowData, descriptions, outcomes]);
+    return buildFlowGraph(flowData, descriptions, outcomes, hiddenHandlers);
+  }, [flowData, descriptions, outcomes, hiddenHandlers]);
 
   // Derive selected node ID from flowSelection
   const selectedNodeId = useMemo(() => {
@@ -526,13 +627,68 @@ export function CausalFlowPane() {
     return `evt:${handler}::${flowSelection.name}`;
   }, [flowSelection]);
 
-  // Apply selected state to matching node
+  // Walk the causal chain upstream + downstream from selected node
+  const causalNodeIds = useMemo(() => {
+    if (!selectedNodeId) return null;
+
+    const forward = new Map<string, string[]>();  // source -> targets
+    const backward = new Map<string, string[]>(); // target -> sources
+    for (const e of rawEdges) {
+      forward.set(e.source, [...(forward.get(e.source) ?? []), e.target]);
+      backward.set(e.target, [...(backward.get(e.target) ?? []), e.source]);
+    }
+
+    const visited = new Set<string>();
+    const walk = (id: string, adj: Map<string, string[]>) => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      for (const next of adj.get(id) ?? []) walk(next, adj);
+    };
+
+    walk(selectedNodeId, forward);  // downstream
+    walk(selectedNodeId, backward); // upstream
+
+    return visited;
+  }, [selectedNodeId, rawEdges]);
+
+  // Apply selection + causal highlighting to nodes and edges
   const nodes = useMemo(
-    () => rawNodes.map(n => ({ ...n, selected: n.id === selectedNodeId })),
-    [rawNodes, selectedNodeId],
+    () => rawNodes.map(n => {
+      const selected = n.id === selectedNodeId;
+      const dimmed = causalNodeIds != null && !causalNodeIds.has(n.id);
+      return {
+        ...n,
+        selected,
+        style: {
+          ...n.style,
+          ...(dimmed ? { opacity: 0.5 } : {}),
+        },
+      };
+    }),
+    [rawNodes, selectedNodeId, causalNodeIds],
   );
 
-  const handleClose = useCallback(() => closeFlow(), [closeFlow]);
+  const edges = useMemo(
+    () => rawEdges.map(e => {
+      const base = { ...e, zIndex: -1 };
+      if (!causalNodeIds) return base;
+      const onPath = causalNodeIds.has(e.source) && causalNodeIds.has(e.target);
+      return {
+        ...base,
+        style: {
+          ...e.style,
+          stroke: onPath ? "#e879f9" : "#52525b",
+          strokeWidth: onPath ? 2 : 1,
+          opacity: onPath ? 1 : 0.15,
+        },
+        markerEnd: onPath
+          ? { type: MarkerType.ArrowClosed, color: "#e879f9", width: 16, height: 16 }
+          : e.markerEnd,
+      };
+    }),
+    [rawEdges, causalNodeIds],
+  );
+
 
   // Find a representative event in flowData to load the right causal tree
   const syncTree = useCallback((d: FlowNodeData) => {
@@ -648,12 +804,11 @@ export function CausalFlowPane() {
             </span>
           );
         })()}
-        <button
-          onClick={handleClose}
-          className="ml-auto text-xs text-muted-foreground hover:text-foreground px-1"
-        >
-          Close
-        </button>
+        <HandlerFilter
+          allHandlerIds={allHandlerIds}
+          hiddenHandlers={hiddenHandlers}
+          setHiddenHandlers={setHiddenHandlers}
+        />
       </div>
       <div className="flex-1">
         <ReactFlow
@@ -664,9 +819,11 @@ export function CausalFlowPane() {
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
           fitView
+          minZoom={0.25}
           proOptions={{ hideAttribution: true }}
           nodesDraggable={false}
           nodesConnectable={false}
+          elevateNodesOnSelect={false}
           colorMode="dark"
         >
           <FocusOnSelection nodes={nodes} flowData={flowData} />

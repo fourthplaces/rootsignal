@@ -26,6 +26,7 @@ use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::scheduling::events::{ScheduledScope, SchedulingEvent};
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::domains::signals::events::{DedupOutcome, SignalEvent};
 use crate::domains::situation_weaving::events::SituationWeavingEvent;
@@ -70,6 +71,7 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                     EventDomain::Synthesis => return Ok(events![]),
                     EventDomain::SituationWeaving => return Ok(events![]),
                     EventDomain::Supervisor => return Ok(events![]),
+                    EventDomain::Scheduling => return Ok(events![]),
                 }
 
                 let (event_type, payload) = match (event_type, payload) {
@@ -159,6 +161,8 @@ fn classify_event(
         (EventDomain::SituationWeaving, None, None)
     } else if event.downcast_ref::<SupervisorEvent>().is_some() {
         (EventDomain::Supervisor, None, None)
+    } else if let Some(e) = event.downcast_ref::<SchedulingEvent>() {
+        (EventDomain::Scheduling, Some(e.event_type_str()), Some(e.to_persist_payload()))
     } else {
         // Genuinely unknown event type — log at debug, not warn.
         // If this fires frequently, a new event type needs adding above.
@@ -257,6 +261,62 @@ pub fn system_log_projection() -> Projection<ScoutEngineDeps> {
             Ok(())
         }
     })
+}
+
+/// Projection: persist `ScrapeScheduled` events to the `scheduled_scrapes` table.
+pub fn scheduled_scrapes_projection() -> Projection<ScoutEngineDeps> {
+    project("scheduled_scrapes_projection").then(
+        move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| async move {
+            let Some(SchedulingEvent::ScrapeScheduled {
+                scope,
+                run_after,
+                reason,
+            }) = event.downcast_ref::<SchedulingEvent>()
+            else {
+                return Ok(());
+            };
+
+            let deps = ctx.deps();
+            let Some(pool) = &deps.pg_pool else {
+                return Ok(());
+            };
+
+            let (scope_type, scope_data) = match scope {
+                ScheduledScope::Sources { source_ids } => (
+                    "sources",
+                    serde_json::to_value(source_ids)
+                        .expect("source_ids serialization should never fail"),
+                ),
+                ScheduledScope::Region { region } => (
+                    "region",
+                    serde_json::to_value(region)
+                        .expect("region serialization should never fail"),
+                ),
+            };
+
+            // ON CONFLICT DO NOTHING — unique index prevents duplicate pending schedules
+            sqlx::query(
+                "INSERT INTO scheduled_scrapes (scope_type, scope_data, run_after, reason) \
+                 VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(scope_type)
+            .bind(&scope_data)
+            .bind(run_after)
+            .bind(reason)
+            .execute(pool)
+            .await?;
+
+            info!(
+                scope_type,
+                reason,
+                run_after = %run_after,
+                "Deferred scrape scheduled"
+            );
+
+            Ok(())
+        },
+    )
 }
 
 /// Test-only handler: capture every event into a shared Vec for inspection.

@@ -122,3 +122,12 @@ body {
 .flexlayout__splitter_handle {
   background-color: #52525b;
 }
+
+/* Flow diagram: nodes above edge arrows — .react-flow__nodes lacks position by default, so z-index is ignored */
+.react-flow .react-flow__edges {
+  z-index: 0 !important;
+}
+.react-flow .react-flow__nodes {
+  position: relative;
+  z-index: 1 !important;
+}

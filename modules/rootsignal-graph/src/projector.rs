@@ -125,6 +125,7 @@ impl GraphProjector {
             EventDomain::Synthesis => Ok(ApplyResult::NoOp),
             EventDomain::SituationWeaving => Ok(ApplyResult::NoOp),
             EventDomain::Supervisor => Ok(ApplyResult::NoOp),
+            EventDomain::Scheduling => Ok(ApplyResult::NoOp),
         }
     }
 

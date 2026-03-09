@@ -33,6 +33,54 @@ pub struct InstagramScraperInput {
     pub results_limit: u32,
 }
 
+/// Input for the apidojo/instagram-scraper actor with resultsType=stories.
+#[derive(Debug, Clone, Serialize)]
+pub struct InstagramStoriesInput {
+    #[serde(rename = "directUrls")]
+    pub direct_urls: Vec<String>,
+    #[serde(rename = "resultsType")]
+    pub results_type: String,
+}
+
+/// A single Instagram story item from the Apify dataset.
+/// Fields are permissive (all Optional) since the exact schema varies by actor version.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstagramStoryItem {
+    #[serde(rename = "displayUrl", alias = "imageUrl")]
+    pub display_url: Option<String>,
+    #[serde(rename = "videoUrl")]
+    pub video_url: Option<String>,
+    #[serde(rename = "ownerUsername")]
+    pub owner_username: Option<String>,
+    pub url: Option<String>,
+    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(rename = "expiringAt")]
+    pub expiring_at: Option<DateTime<Utc>>,
+    #[serde(rename = "type")]
+    pub story_type: Option<String>,
+    #[serde(rename = "locationName")]
+    pub location_name: Option<String>,
+    pub caption: Option<String>,
+}
+
+impl InstagramStoryItem {
+    /// Best media URL: prefer video, fall back to image.
+    pub fn media_url(&self) -> Option<&str> {
+        self.video_url
+            .as_deref()
+            .or(self.display_url.as_deref())
+    }
+
+    /// Infer mime type from available URLs.
+    pub fn mime_type(&self) -> &str {
+        if self.video_url.is_some() {
+            "video/mp4"
+        } else {
+            "image/jpeg"
+        }
+    }
+}
+
 /// A single Instagram post from the Apify dataset.
 /// Also used as the output type for the hashtag scraper (same schema).
 #[derive(Debug, Clone, Deserialize)]

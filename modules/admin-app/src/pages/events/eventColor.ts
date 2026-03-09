@@ -5,7 +5,20 @@ export function eventHue(name: string): number {
 }
 
 export function eventBg(name: string): string {
-  return `hsla(${eventHue(name)}, 70%, 50%, 0.2)`;
+  const h = eventHue(name);
+  // Blend 20% of hsl color onto #09090b background for a solid result
+  const [r, g, b] = hslToRgb(h, 70, 50);
+  const br = 9, bg = 9, bb = 11; // #09090b
+  const a = 0.2;
+  return `rgb(${Math.round(br + (r - br) * a)}, ${Math.round(bg + (g - bg) * a)}, ${Math.round(bb + (b - bb) * a)})`;
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  s /= 100; l /= 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
 }
 
 export function eventBorder(name: string): string {

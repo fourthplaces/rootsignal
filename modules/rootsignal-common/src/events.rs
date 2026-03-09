@@ -409,6 +409,8 @@ pub enum EventDomain {
     SituationWeaving,
     /// `supervisor:*` — region supervision.
     Supervisor,
+    /// `scheduling:*` — deferred scrapes, re-run scheduling.
+    Scheduling,
 }
 
 impl EventDomain {
@@ -427,6 +429,7 @@ impl EventDomain {
                 "expansion" => Some(Self::Expansion),
                 "pipeline" => Some(Self::Pipeline),
                 "synthesis" => Some(Self::Synthesis),
+                "scheduling" => Some(Self::Scheduling),
                 _ => None,
             },
             // No colon → unprefixed fact event (World/System/Telemetry)

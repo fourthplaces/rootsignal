@@ -4,8 +4,9 @@ pub mod types;
 pub use error::{ApifyError, Result};
 pub use types::{
     DiscoveredPost, FacebookPost, FacebookScraperInput, InstagramHashtagInput, InstagramPost,
-    InstagramScraperInput, RedditPost, RedditScraperInput, RunData, StartUrl, TikTokPost,
-    TikTokScraperInput, TikTokSearchInput, Tweet, TweetAuthor, TweetScraperInput, TweetSearchInput,
+    InstagramScraperInput, InstagramStoryItem, RedditPost, RedditScraperInput, RunData, StartUrl,
+    TikTokPost, TikTokScraperInput, TikTokSearchInput, Tweet, TweetAuthor, TweetScraperInput,
+    TweetSearchInput,
 };
 use serde::de::DeserializeOwned;
 use types::ApiResponse;
@@ -154,6 +155,55 @@ impl ApifyClient {
         tracing::info!(count = posts.len(), "Fetched Instagram posts");
 
         Ok(posts)
+    }
+
+    /// Scrape Instagram stories for a profile: start run, poll, fetch results.
+    pub async fn scrape_instagram_stories(
+        &self,
+        profile_url: &str,
+    ) -> Result<Vec<InstagramStoryItem>> {
+        tracing::info!(profile_url, "Starting Instagram stories scrape");
+
+        let input = types::InstagramStoriesInput {
+            direct_urls: vec![profile_url.to_string()],
+            results_type: "stories".to_string(),
+        };
+
+        let url = format!("{}/acts/{}/runs", BASE_URL, INSTAGRAM_POST_SCRAPER);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&input)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApifyError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let api_resp: ApiResponse<RunData> = resp.json().await?;
+        let run = api_resp.data;
+        tracing::info!(run_id = %run.id, "Stories scrape started, polling for completion");
+
+        let completed = self.wait_for_run(&run.id).await?;
+        tracing::info!(
+            run_id = %completed.id,
+            dataset_id = %completed.default_dataset_id,
+            "Run completed, fetching results"
+        );
+
+        let stories: Vec<InstagramStoryItem> = self
+            .get_dataset_items(&completed.default_dataset_id)
+            .await?;
+        tracing::info!(count = stories.len(), "Fetched Instagram stories");
+
+        Ok(stories)
     }
 
     /// Search Instagram hashtags and return normalized DiscoveredPosts.

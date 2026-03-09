@@ -1,7 +1,8 @@
-import { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef } from "react";
+import { useRef, useState, useCallback, useImperativeHandle, forwardRef } from "react";
 import { Layout, Model, Actions, DockLocation } from "flexlayout-react";
 import type { TabNode, TabSetNode, ITabSetRenderValues, Action } from "flexlayout-react";
 import { Plus } from "lucide-react";
+import { VirtualPopover } from "./Popover";
 
 export type PaneType = {
   name: string;
@@ -36,7 +37,7 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
       return Model.fromJson(defaultLayout as any);
     });
     const [pickerTabsetId, setPickerTabsetId] = useState<string | null>(null);
-    const [pickerPos, setPickerPos] = useState<{ top: number; left: number } | null>(null);
+    const [pickerAnchor, setPickerAnchor] = useState<DOMRect | null>(null);
 
     // Find a tab by component name
     const findTab = useCallback(
@@ -56,7 +57,6 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
     const findActiveTabset = useCallback((): string | null => {
       const active = model.getActiveTabset();
       if (active) return active.getId();
-      // Fallback: find first tabset
       let firstTabset: string | null = null;
       model.visitNodes((node) => {
         if (!firstTabset && node.getType() === "tabset") {
@@ -127,8 +127,10 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
             onClick={(e) => {
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
               setPickerTabsetId((prev) => {
-                if (prev === node.getId()) return null;
-                setPickerPos({ top: rect.bottom + 4, left: rect.right });
+                if (prev === node.getId()) {
+                  return null;
+                }
+                setPickerAnchor(rect);
                 return node.getId();
               });
             }}
@@ -153,21 +155,10 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
           ),
         );
         setPickerTabsetId(null);
+        setPickerAnchor(null);
       },
       [model, pickerTabsetId],
     );
-
-    // Close picker on click outside
-    useEffect(() => {
-      if (!pickerTabsetId) return;
-      const handler = (e: MouseEvent) => {
-        const target = e.target as HTMLElement;
-        if (target.closest("[data-pane-picker]")) return;
-        setPickerTabsetId(null);
-      };
-      document.addEventListener("mousedown", handler);
-      return () => document.removeEventListener("mousedown", handler);
-    }, [pickerTabsetId]);
 
     return (
       <div className="h-full relative">
@@ -180,24 +171,22 @@ export const PaneManager = forwardRef<PaneManagerHandle, PaneManagerProps>(
             onRenderTabSet={handleRenderTabSet as any}
           />
 
-          {/* Pane picker dropdown */}
-          {pickerTabsetId && (
-            <div
-              data-pane-picker
-              className="fixed z-[1100] bg-popover border border-border rounded-md shadow-lg py-1 min-w-[140px]"
-              style={pickerPos ? { top: pickerPos.top, left: pickerPos.left, transform: "translateX(-100%)" } : { top: 60, right: 16 }}
-            >
-              {paneRegistry.map((pane) => (
-                <button
-                  key={pane.component}
-                  onClick={() => addPane(pane.component, pane.name)}
-                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
-                >
-                  {pane.name}
-                </button>
-              ))}
-            </div>
-          )}
+          <VirtualPopover
+            anchor={pickerAnchor}
+            open={!!pickerTabsetId}
+            onClose={() => { setPickerTabsetId(null); setPickerAnchor(null); }}
+            placement="bottom-start"
+          >
+            {paneRegistry.map((pane) => (
+              <button
+                key={pane.component}
+                onClick={() => addPane(pane.component, pane.name)}
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+              >
+                {pane.name}
+              </button>
+            ))}
+          </VirtualPopover>
       </div>
     );
   },
