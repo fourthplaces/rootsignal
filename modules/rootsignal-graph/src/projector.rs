@@ -819,7 +819,6 @@ impl GraphProjector {
                          r.created_at = datetime($ts),
                          r.last_seen = datetime($ts)
                      ON MATCH SET
-                         r.signal_count = r.signal_count + 1,
                          r.last_seen = datetime($ts)",
                 )
                 .param("slug", slug.as_str())
@@ -1019,9 +1018,13 @@ impl GraphProjector {
                 ..
             } => {
                 let label = node_type_label(node_type);
+                // Guard on a dedicated property so GatheringAnnounced's last_confirmed_active
+                // doesn't interfere. Replaying the same event (same timestamp) is a no-op.
                 let q = query(&format!(
                     "MATCH (n:{label} {{id: $id}})
-                     SET n.last_confirmed_active = datetime($ts),
+                     WHERE n.last_corroboration_ts IS NULL OR n.last_corroboration_ts < datetime($ts)
+                     SET n.last_corroboration_ts = datetime($ts),
+                         n.last_confirmed_active = datetime($ts),
                          n.corroboration_count = coalesce(n.corroboration_count, 0) + 1"
                 ))
                 .param("id", signal_id.to_string())
@@ -1857,7 +1860,9 @@ impl GraphProjector {
 
                 let q = query(
                     "MATCH (s:Situation {id: $sid})
-                     SET s.dispatch_count = coalesce(s.dispatch_count, 0) + 1",
+                     OPTIONAL MATCH (d:Dispatch)-[:BELONGS_TO]->(s)
+                     WITH s, count(d) AS dc
+                     SET s.dispatch_count = dc",
                 )
                 .param("sid", situation_id.to_string());
                 ops.push(Op::Run(q));
@@ -1880,11 +1885,11 @@ impl GraphProjector {
                      ON CREATE SET e.confidence = $confidence, e.reasoning = $reasoning, e.label = $label
                      ON MATCH SET e.confidence = $confidence, e.reasoning = $reasoning
                      WITH s
-                     SET s.signal_count = coalesce(s.signal_count, 0) + 1
-                     WITH s
+                     OPTIONAL MATCH (any)-[:PART_OF]->(s)
+                     WITH s, count(any) AS sc
                      OPTIONAL MATCH (t:Concern)-[:PART_OF]->(s)
-                     WITH s, count(t) AS tc
-                     SET s.tension_count = tc",
+                     WITH s, sc, count(t) AS tc
+                     SET s.signal_count = sc, s.tension_count = tc",
                 )
                 .param("signal_id", signal_id.to_string())
                 .param("situation_id", situation_id.to_string())
@@ -2461,8 +2466,10 @@ impl GraphProjector {
                 let cypher = if increment_retry {
                     format!(
                         "MATCH (n:{label} {{id: $id}})
+                         WHERE n.last_retry_ts IS NULL OR n.last_retry_ts < datetime($ts)
                          SET n.curiosity_investigated = $outcome,
-                             n.curiosity_retry_count = coalesce(n.curiosity_retry_count, 0) + 1"
+                             n.curiosity_retry_count = coalesce(n.curiosity_retry_count, 0) + 1,
+                             n.last_retry_ts = datetime($ts)"
                     )
                 } else {
                     format!(
@@ -2472,7 +2479,8 @@ impl GraphProjector {
                 };
                 let q = query(&cypher)
                     .param("id", signal_id.to_string())
-                    .param("outcome", outcome.as_str());
+                    .param("outcome", outcome.as_str())
+                    .param("ts", format_dt_from_event(event));
                 Plan::single(Op::Run(q))
             }
 
@@ -2483,6 +2491,7 @@ impl GraphProjector {
             } => {
                 let q = query(
                     "MATCH (t:Concern {id: $id})
+                     WHERE t.gravity_scouted_at IS NULL OR t.gravity_scouted_at < datetime($ts)
                      SET t.gravity_scouted_at = datetime($ts),
                          t.gravity_scout_miss_count = CASE
                              WHEN $found THEN 0
@@ -2584,10 +2593,14 @@ impl GraphProjector {
                 .param("dup_id", did.as_str())
                 .param("survivor_id", sid.as_str());
 
+                // Only increment if the duplicate still exists (first run).
+                // On replay the dup was already deleted by q5, so MATCH finds nothing.
                 let q4 = query(
-                    "MATCH (t:Concern {id: $survivor_id})
+                    "MATCH (dup:Concern {id: $dup_id})
+                     MATCH (t:Concern {id: $survivor_id})
                      SET t.corroboration_count = coalesce(t.corroboration_count, 0) + 1",
                 )
+                .param("dup_id", did.as_str())
                 .param("survivor_id", sid.as_str());
 
                 let q5 = query("MATCH (t:Concern {id: $dup_id}) DETACH DELETE t")
@@ -2612,9 +2625,12 @@ impl GraphProjector {
                 scraped_at,
             } => {
                 let now = format_dt(&scraped_at);
+                // Guard: skip if this scrape timestamp was already applied (replay idempotency).
+                // The WHERE clause ensures additive counters only fire once per distinct scrape.
                 let q = if signals_produced > 0 {
                     query(
                         "MATCH (s:Source {canonical_key: $key})
+                         WHERE s.last_scraped IS NULL OR s.last_scraped < datetime($now)
                          SET s.last_scraped = datetime($now),
                              s.last_produced_signal = datetime($now),
                              s.signals_produced = s.signals_produced + $count,
@@ -2627,6 +2643,7 @@ impl GraphProjector {
                 } else {
                     query(
                         "MATCH (s:Source {canonical_key: $key})
+                         WHERE s.last_scraped IS NULL OR s.last_scraped < datetime($now)
                          SET s.last_scraped = datetime($now),
                              s.consecutive_empty_runs = s.consecutive_empty_runs + 1,
                              s.scrape_count = coalesce(s.scrape_count, 0) + 1",
@@ -2646,10 +2663,13 @@ impl GraphProjector {
             } => {
                 let q = query(
                     "MATCH (s:Source {canonical_key: $key})
-                     SET s.sources_discovered = coalesce(s.sources_discovered, 0) + $count",
+                     WHERE s.last_discovery_credit_ts IS NULL OR s.last_discovery_credit_ts < datetime($ts)
+                     SET s.sources_discovered = coalesce(s.sources_discovered, 0) + $count,
+                         s.last_discovery_credit_ts = datetime($ts)",
                 )
                 .param("key", canonical_key.as_str())
-                .param("count", sources_discovered as i64);
+                .param("count", sources_discovered as i64)
+                .param("ts", format_dt_from_event(event));
                 Plan::single(Op::Run(q))
             }
 
@@ -2666,10 +2686,13 @@ impl GraphProjector {
                      UNWIND urls AS url
                      MATCH (src:Source {active: true})
                      WHERE src.url = url AND src.weight IS NOT NULL
-                     SET src.weight = CASE WHEN src.weight * $factor > 5.0 THEN 5.0 ELSE src.weight * $factor END",
+                       AND (src.last_boost_ts IS NULL OR src.last_boost_ts < datetime($ts))
+                     SET src.weight = CASE WHEN src.weight * $factor > 5.0 THEN 5.0 ELSE src.weight * $factor END,
+                         src.last_boost_ts = datetime($ts)",
                 )
                 .param("headline", headline.as_str())
-                .param("factor", factor);
+                .param("factor", factor)
+                .param("ts", format_dt_from_event(event));
                 Plan::single(Op::Run(q))
             }
 
@@ -2911,9 +2934,10 @@ impl GraphProjector {
     }
 
     fn plan_update_location(&self, label: &str, id: Uuid, loc: &Option<Location>) -> Vec<Op> {
-        let default_edge = location_edge_type(label, None);
+        // Delete ALL location edge types, not just the default — the original
+        // edge may have used a role override (e.g. affected_area → AFFECTS).
         let delete_q = query(&format!(
-            "MATCH (n:{label} {{id: $id}})-[r:{default_edge}]->(l:Location)
+            "MATCH (n:{label} {{id: $id}})-[r:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
              DELETE r"
         ))
         .param("id", id.to_string());

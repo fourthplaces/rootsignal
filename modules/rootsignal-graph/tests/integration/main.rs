@@ -9,8 +9,12 @@
 //! Run with: cargo test -p rootsignal-graph --features test-utils --test integration
 
 mod enrich;
+mod helpers;
 mod litmus;
 mod pipeline;
+mod projection_edges;
+mod projection_lifecycle;
+mod projection_sources;
 mod source_region;
 
 use rootsignal_graph::{query, GraphClient};
