@@ -14,13 +14,13 @@ use crate::infra::embedder::TextEmbedder;
 use crate::core::engine::ScoutEngineDeps;
 use self::expansion::{Expansion, ExpansionOutput};
 use crate::domains::scrape::activities::ScrapeOutput;
-use crate::domains::scheduling::activities::budget::BudgetTracker;
 
 /// Output from the full expansion + end-of-run discovery activity.
 pub struct ExpansionActivityOutput {
     pub expansion: ExpansionOutput,
     pub discovery_sources: Vec<SourceNode>,
     pub discovery_query_embeddings: Vec<QueryEmbedding>,
+    pub discovery_llm_calls: u32,
     pub topic_scrape: Option<ScrapeOutput>,
 }
 
@@ -34,7 +34,7 @@ pub async fn expand_and_discover(
     graph: &dyn GraphQueries,
     region_name: Option<&str>,
     ai: Option<&dyn Agent>,
-    budget: &BudgetTracker,
+    budget_exhausted: bool,
     embedder: &dyn TextEmbedder,
 ) -> ExpansionActivityOutput {
     // Signal expansion — create sources from implied queries
@@ -46,10 +46,11 @@ pub async fn expand_and_discover(
         graph,
         region_name,
         ai,
-        budget,
+        budget_exhausted,
     )
     .with_embedder(embedder);
     let (end_stats, end_social_topics, end_sources, discovery_query_embeddings) = end_discoverer.run().await;
+    let discovery_llm_calls = end_discoverer.discovery_llm_calls();
     if end_stats.actor_sources + end_stats.gap_sources > 0 {
         info!("{end_stats}");
     }
@@ -80,6 +81,7 @@ pub async fn expand_and_discover(
         expansion: expansion_output,
         discovery_sources: end_sources,
         discovery_query_embeddings,
+        discovery_llm_calls,
         topic_scrape,
     }
 }

@@ -9,16 +9,14 @@ use rootsignal_graph::GraphStore;
 use crate::core::engine::ScoutEngineDeps;
 
 /// Scan news feeds for signals.
-pub async fn scan_news(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events) {
-    let (archive, ai, gr, budget) = match (
+pub async fn scan_news(deps: &ScoutEngineDeps, daily_budget_cents: u64, events: &mut seesaw_core::Events) {
+    let (archive, ai) = match (
         deps.archive.as_ref(),
         deps.ai.as_ref(),
-        deps.graph.as_ref(),
-        deps.budget.as_ref(),
     ) {
-        (Some(a), Some(k), Some(g), Some(b)) => (a, k, g, b),
+        (Some(a), Some(k)) => (a, k),
         _ => {
-            tracing::debug!("News scan skipped: missing archive, ai, graph, or budget");
+            tracing::debug!("News scan skipped: missing archive or ai");
             return;
         }
     };
@@ -35,7 +33,7 @@ pub async fn scan_news(deps: &ScoutEngineDeps, events: &mut seesaw_core::Events)
         Arc::clone(archive),
         Arc::clone(ai),
         graph,
-        budget.daily_limit(),
+        daily_budget_cents,
     );
 
     match scanner.scan().await {

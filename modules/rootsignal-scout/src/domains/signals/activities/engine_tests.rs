@@ -952,6 +952,7 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
         .emit(LifecycleEvent::ScoutRunRequested {
             run_id: Uuid::new_v4(),
             scope,
+            budget_cents: 0,
         })
         .settled()
         .await

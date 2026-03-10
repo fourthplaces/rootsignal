@@ -19,6 +19,8 @@ pub enum LifecycleEvent {
         run_id: Uuid,
         #[serde(default)]
         scope: RunScope,
+        #[serde(default)]
+        budget_cents: u64,
     },
     SourcesPrepared {
         tension_count: u32,

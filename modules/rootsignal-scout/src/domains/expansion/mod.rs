@@ -10,9 +10,11 @@ use rootsignal_common::events::SystemEvent;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::expansion::activities::expansion::Expansion;
 use crate::domains::expansion::events::ExpansionEvent;
+use crate::domains::scheduling::activities::budget::OperationCost;
 use crate::domains::scrape::events::ScrapeEvent;
 
 fn is_expansion_ready(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -32,9 +34,9 @@ pub mod handlers {
         let deps = ctx.deps();
         let state = ctx.aggregate::<PipelineState>().curr;
 
-        let (graph, budget) = match (deps.graph.as_deref(), deps.budget.as_ref()) {
-            (Some(g), Some(b)) => (g, b),
-            _ => {
+        let graph = match deps.graph.as_deref() {
+            Some(g) => g,
+            None => {
                 return Ok(events![ExpansionEvent::ExpansionCompleted {
                     social_expansion_topics: Vec::new(),
                     expansion_deferred_expanded: 0,
@@ -67,13 +69,10 @@ pub mod handlers {
             Events::new()
         };
 
-        if let Some(ref budget) = deps.budget {
-            budget.log_status();
-        }
-
         // Signal expansion + end-of-run discovery
         let region_name = state.run_scope.region().map(|r| r.name.as_str());
         let expansion = Expansion::new(graph, &*deps.embedder);
+        let budget_exhausted = !state.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY);
 
         let state = ctx.aggregate::<PipelineState>().curr;
         let output = activities::expand_and_discover(
@@ -83,10 +82,15 @@ pub mod handlers {
             graph,
             region_name,
             deps.ai.as_deref(),
-            budget,
+            budget_exhausted,
             &*deps.embedder,
         )
         .await;
+
+        if output.discovery_llm_calls > 0 {
+            let cents = output.discovery_llm_calls as u64 * OperationCost::CLAUDE_HAIKU_DISCOVERY;
+            all_events.push(PipelineEvent::BudgetSpent { cents });
+        }
 
         // Consumed signal IDs from deferred expansion
         if !output.expansion.consumed_signal_ids.is_empty() {

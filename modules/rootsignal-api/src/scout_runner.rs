@@ -36,14 +36,11 @@ impl ScoutRunner {
     pub async fn run_news_scan(&self) {
         let deps = self.deps.clone();
         let run_id = uuid::Uuid::new_v4();
-        let budget = crate::db::models::budget::effective_budget(
-            &deps.pg_pool, deps.daily_budget_cents,
-        ).await;
 
         info!("Spawning news scan");
 
         tokio::spawn(async move {
-            let engine = deps.build_news_engine(run_id, Some(budget));
+            let engine = deps.build_news_engine(run_id);
 
             if let Err(e) = engine
                 .emit(LifecycleEvent::NewsScanRequested)
@@ -76,9 +73,9 @@ impl ScoutRunner {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "bootstrap", None, &scope).await;
 
             let run_scope = RunScope::Region(scope.clone());
-            let engine = deps.build_scrape_engine(&scope, run_id, Some(budget));
+            let engine = deps.build_scrape_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope, budget_cents: budget })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -109,9 +106,9 @@ impl ScoutRunner {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "scrape", None, &scope).await;
 
             let run_scope = RunScope::Region(scope.clone());
-            let engine = deps.build_scrape_engine(&scope, run_id, Some(budget));
+            let engine = deps.build_scrape_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope, budget_cents: budget })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -142,9 +139,9 @@ impl ScoutRunner {
             early_insert_flow_run(&deps, run_id, Some(&region_id), "weave", None, &scope).await;
 
             let run_scope = RunScope::Region(scope.clone());
-            let engine = deps.build_weave_engine(&scope, run_id, Some(budget));
+            let engine = deps.build_weave_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope, budget_cents: budget })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -192,9 +189,9 @@ impl ScoutRunner {
                 sources: sources.clone(),
                 region: region.as_ref().map(ScoutScope::from),
             };
-            let engine = deps.build_source_engine(region.as_ref(), run_id, Some(budget));
+            let engine = deps.build_source_engine(region.as_ref(), run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope })
+                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope, budget_cents: budget })
                 .correlation_id(run_id)
                 .settled()
                 .await;

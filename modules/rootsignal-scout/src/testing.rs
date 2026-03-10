@@ -2367,6 +2367,7 @@ impl ScoutRunTest {
             .emit(LifecycleEvent::ScoutRunRequested {
                 run_id: self.run_id,
                 scope: self.scope.clone(),
+                budget_cents: 0,
             })
             .settled()
             .await

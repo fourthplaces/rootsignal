@@ -24,7 +24,7 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
         let mut out = events![];
-        activities::scan_news(&deps, &mut out).await;
+        activities::scan_news(&deps, deps.daily_budget_cents, &mut out).await;
         Ok(out)
     }
 }

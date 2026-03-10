@@ -196,7 +196,7 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
     project("scout_runs_projection").then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
         async move {
             // INSERT on ScoutRunRequested
-            if let Some(LifecycleEvent::ScoutRunRequested { run_id, scope }) = event.downcast_ref::<LifecycleEvent>() {
+            if let Some(LifecycleEvent::ScoutRunRequested { run_id, scope, .. }) = event.downcast_ref::<LifecycleEvent>() {
                 let deps = ctx.deps();
                 if let Some(pool) = &deps.pg_pool {
                     let region = scope
@@ -224,16 +224,8 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
             if is_terminal_event(&event, &ctx) {
                 let deps = ctx.deps();
 
-                let spent_cents = if let Some(ref budget) = deps.budget {
-                    budget.log_status();
-                    budget.total_spent()
-                } else {
-                    0
-                };
-
                 let state = ctx.aggregate::<PipelineState>().curr;
-                let mut final_stats = state.stats.clone();
-                final_stats.spent_cents = spent_cents;
+                let final_stats = state.stats.clone();
                 info!("{}", final_stats);
 
                 if let Some(pool) = &deps.pg_pool {
@@ -243,7 +235,7 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                     )
                     .bind(deps.run_id.to_string())
                     .bind(stats_json)
-                    .bind(spent_cents as i64)
+                    .bind(final_stats.spent_cents as i64)
                     .execute(pool)
                     .await?;
                 }

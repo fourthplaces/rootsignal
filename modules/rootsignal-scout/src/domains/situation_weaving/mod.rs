@@ -10,6 +10,7 @@ use rootsignal_common::{Block, ChecklistItem};
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
+use crate::domains::scheduling::activities::budget::OperationCost;
 use crate::domains::situation_weaving::events::SituationWeavingEvent;
 use crate::domains::synthesis::events::SynthesisEvent;
 
@@ -43,7 +44,8 @@ pub mod handlers {
     ) -> Result<Events> {
         let deps = ctx.deps();
         let state = ctx.aggregate::<PipelineState>().curr;
-        let mut all_events = activities::weave_situations(&deps, state.run_scope.region()).await;
+        let has_budget = state.has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
+        let mut all_events = activities::weave_situations(&deps, state.run_scope.region(), has_budget).await;
         all_events.push(SituationWeavingEvent::SituationsWeaved);
         Ok(all_events)
     }

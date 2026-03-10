@@ -55,14 +55,14 @@ pub struct ScoutEngineDeps {
     /// Test-only: capture all dispatched events for inspection.
     /// None in production, Some in tests that need event inspection.
     pub captured_events: Option<Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>>,
-    /// Budget tracker for LLM/API cost tracking.
-    pub budget: Option<Arc<crate::domains::scheduling::activities::budget::BudgetTracker>>,
     /// Postgres connection pool — used by projections to save run stats.
     pub pg_pool: Option<PgPool>,
     /// Archive for web search/page reading in synthesis finders.
     pub archive: Option<Arc<rootsignal_archive::Archive>>,
     /// Batcher for grouping items across handler invocations (e.g. signal review).
     pub batcher: Batcher,
+    /// Config-level daily budget — used by NewsScanner which manages its own budget.
+    pub daily_budget_cents: u64,
 }
 
 impl ScoutEngineDeps {
@@ -83,10 +83,10 @@ impl ScoutEngineDeps {
             extractor: None,
             run_id,
             captured_events: None,
-            budget: None,
             pg_pool: None,
             archive: None,
             batcher: Batcher::new(),
+            daily_budget_cents: 0,
         }
     }
 }

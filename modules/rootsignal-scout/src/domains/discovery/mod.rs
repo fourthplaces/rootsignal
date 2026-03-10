@@ -12,11 +12,13 @@ use rootsignal_common::events::SystemEvent;
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
+use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::activities::link_promotion;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::activities::link_promoter::PromotionConfig;
 use crate::domains::discovery::activities::{bootstrap, discover_expansion_sources};
 use crate::domains::lifecycle::events::LifecycleEvent;
+use crate::domains::scheduling::activities::budget::OperationCost;
 use crate::domains::scrape::events::ScrapeEvent;
 
 fn is_scout_run_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
@@ -219,26 +221,32 @@ pub mod handlers {
         let deps = ctx.deps();
         let state = ctx.aggregate::<PipelineState>().curr;
 
-        let (graph, budget) = match (deps.graph.as_deref(), deps.budget.as_ref()) {
-            (Some(g), Some(b)) => (g, b),
-            _ => {
+        let graph = match deps.graph.as_deref() {
+            Some(g) => g,
+            None => {
                 return Ok(events![DiscoveryEvent::SourceExpansionSkipped {
-                    reason: "missing graph or budget".into(),
+                    reason: "missing graph".into(),
                 }]);
             }
         };
         let region_name = state.run_scope.region().map(|r| r.name.as_str());
+        let budget_exhausted = !state.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY);
 
         let output = discover_expansion_sources(
             graph,
             region_name,
             &*deps.embedder,
             deps.ai.as_deref(),
-            budget,
+            budget_exhausted,
         )
         .await;
 
         let mut all_events = Events::new();
+
+        if output.discovery_llm_calls > 0 {
+            let cents = output.discovery_llm_calls as u64 * OperationCost::CLAUDE_HAIKU_DISCOVERY;
+            all_events.push(PipelineEvent::BudgetSpent { cents });
+        }
 
         // Register discovered sources
         if !output.sources.is_empty() {

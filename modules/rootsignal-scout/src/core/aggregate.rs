@@ -142,6 +142,10 @@ pub struct PipelineState {
     #[serde(default)]
     pub signals_review_completed: u32,
 
+    /// Budget limit for this run in cents. 0 = unlimited.
+    #[serde(default)]
+    pub budget_limit_cents: u64,
+
     /// Whether source expansion has completed (guards against re-triggering).
     #[serde(default)]
     pub source_expansion_completed: bool,
@@ -190,6 +194,7 @@ impl PipelineState {
             similarity_computed: false,
             responses_mapped: false,
             severity_inferred: false,
+            budget_limit_cents: 0,
             signals_awaiting_review: 0,
             signals_review_completed: 0,
             source_expansion_completed: false,
@@ -445,11 +450,18 @@ impl PipelineState {
         self.signals_awaiting_review == self.signals_review_completed
     }
 
+    /// Check if there's budget remaining for an operation.
+    /// 0 = unlimited (always returns true).
+    pub fn has_budget(&self, cost: u64) -> bool {
+        self.budget_limit_cents == 0 || self.stats.spent_cents + cost <= self.budget_limit_cents
+    }
+
     /// Apply a lifecycle domain event.
     pub fn apply_lifecycle(&mut self, event: &LifecycleEvent) {
         match event {
-            LifecycleEvent::ScoutRunRequested { scope, .. } => {
+            LifecycleEvent::ScoutRunRequested { scope, budget_cents, .. } => {
                 self.run_scope = scope.clone();
+                self.budget_limit_cents = *budget_cents;
             }
             LifecycleEvent::SourcesPrepared {
                 source_plan,
@@ -493,6 +505,9 @@ impl PipelineState {
         match event {
             PipelineEvent::HandlerFailed { .. } => {
                 self.stats.handler_failures += 1;
+            }
+            PipelineEvent::BudgetSpent { cents } => {
+                self.stats.spent_cents += cents;
             }
         }
     }
@@ -604,6 +619,36 @@ mod tests {
         });
 
         assert_eq!(state.stats.handler_failures, 1);
+    }
+
+    #[test]
+    fn budget_spent_accumulates_on_state() {
+        let mut state = PipelineState::default();
+        state.budget_limit_cents = 100;
+        assert!(state.has_budget(50));
+
+        state.apply_pipeline(&PipelineEvent::BudgetSpent { cents: 80 });
+        assert_eq!(state.stats.spent_cents, 80);
+        assert!(!state.has_budget(30));
+    }
+
+    #[test]
+    fn unlimited_budget_always_has_budget() {
+        let state = PipelineState::default();
+        assert!(state.has_budget(1_000_000));
+    }
+
+    #[test]
+    fn budget_limit_set_from_scout_run_requested() {
+        let mut state = PipelineState::default();
+        state.apply_lifecycle(&LifecycleEvent::ScoutRunRequested {
+            run_id: Uuid::new_v4(),
+            scope: RunScope::default(),
+            budget_cents: 500,
+        });
+        assert_eq!(state.budget_limit_cents, 500);
+        assert!(state.has_budget(500));
+        assert!(!state.has_budget(501));
     }
 
 }

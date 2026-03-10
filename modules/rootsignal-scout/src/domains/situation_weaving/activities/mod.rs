@@ -9,19 +9,17 @@ use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
 use crate::core::engine::ScoutEngineDeps;
-use crate::domains::scheduling::activities::budget::OperationCost;
 
 /// Run situation weaving: discover signals, weave via LLM, emit events.
-pub async fn weave_situations(deps: &ScoutEngineDeps, region: Option<&rootsignal_common::ScoutScope>) -> seesaw_core::Events {
+pub async fn weave_situations(deps: &ScoutEngineDeps, region: Option<&rootsignal_common::ScoutScope>, has_budget: bool) -> seesaw_core::Events {
     let mut events = seesaw_core::Events::new();
 
-    let (graph, ai, region, budget) = match (
+    let (graph, ai, region) = match (
         deps.graph.as_deref(),
         deps.ai.as_deref(),
         region,
-        deps.budget.as_ref(),
     ) {
-        (Some(g), Some(k), Some(r), Some(b)) => (g, k, r, b),
+        (Some(g), Some(k), Some(r)) => (g, k, r),
         _ => return events,
     };
     let run_id = deps.run_id.to_string();
@@ -43,9 +41,7 @@ pub async fn weave_situations(deps: &ScoutEngineDeps, region: Option<&rootsignal
     }
     info!(count = signals_discovered, "SituationWeaver: discovered unassigned signals");
 
-    // No budget → mark pending and return
-    let has_situation_budget = budget.has_budget(OperationCost::CLAUDE_HAIKU_STORY_WEAVE);
-    if !has_situation_budget {
+    if !has_budget {
         warn!("SituationWeaver: no LLM budget, marking signals as pending");
         let signal_ids: Vec<_> = signals.iter().map(|s| s.id).collect();
         let pending_events = weave::mark_pending(signal_ids, &run_id);

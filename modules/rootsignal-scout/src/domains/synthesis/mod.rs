@@ -106,19 +106,18 @@ pub mod handlers {
         let deps = ctx.deps();
         let state = ctx.aggregate::<PipelineState>().curr;
 
-        let (region, graph, budget) = match (
+        let (region, graph) = match (
             state.run_scope.region(),
             deps.graph.as_deref(),
-            deps.budget.as_ref(),
         ) {
-            (Some(r), Some(g), Some(b)) => (r, g, b),
+            (Some(r), Some(g)) => (r, g),
             _ => {
                 return Ok(events![SynthesisEvent::ResponsesMapped]);
             }
         };
 
         let mut out = Events::new();
-        if !budget.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
+        if !state.has_budget(OperationCost::CLAUDE_HAIKU_SYNTHESIS * 10) {
             ctx.logger.debug("Skipped response mapping: insufficient budget");
             out.push(SynthesisEvent::ResponsesMapped);
             return Ok(out);

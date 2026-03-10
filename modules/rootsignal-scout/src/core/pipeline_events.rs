@@ -18,6 +18,10 @@ pub enum PipelineEvent {
         error: String,
         attempts: i32,
     },
+    /// Budget consumed by an operation (e.g. LLM call, search query).
+    BudgetSpent {
+        cents: u64,
+    },
 }
 
 impl PipelineEvent {

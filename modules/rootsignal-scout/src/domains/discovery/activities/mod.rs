@@ -10,7 +10,6 @@ use tracing::info;
 
 use ai_client::Agent;
 use rootsignal_common::SourceNode;
-use crate::domains::scheduling::activities::budget::BudgetTracker;
 use crate::infra::embedder::TextEmbedder;
 use rootsignal_graph::GraphQueries;
 
@@ -21,24 +20,25 @@ pub struct SourceExpansionOutput {
     pub sources: Vec<SourceNode>,
     pub social_topics: Vec<String>,
     pub query_embeddings: Vec<QueryEmbedding>,
+    pub discovery_llm_calls: u32,
 }
 
 /// Run source expansion: discover new sources based on scrape findings.
 ///
 /// Pure: no state mutation. Returns discovered sources, social topics,
-/// and query embeddings for the caller to map into events.
+/// query embeddings, and LLM call count for the caller to emit as BudgetSpent.
 pub async fn discover_expansion_sources(
     graph: &dyn GraphQueries,
     region_name: Option<&str>,
     embedder: &dyn TextEmbedder,
     ai: Option<&dyn Agent>,
-    budget: &BudgetTracker,
+    budget_exhausted: bool,
 ) -> SourceExpansionOutput {
     let discoverer = source_finder::SourceFinder::new(
         graph,
         region_name,
         ai,
-        budget,
+        budget_exhausted,
     )
     .with_embedder(embedder);
 
@@ -51,5 +51,6 @@ pub async fn discover_expansion_sources(
         sources,
         social_topics,
         query_embeddings,
+        discovery_llm_calls: discoverer.discovery_llm_calls(),
     }
 }

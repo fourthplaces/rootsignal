@@ -115,20 +115,19 @@ pub mod handlers {
         let deps = ctx.deps();
         let state = ctx.aggregate::<PipelineState>().curr;
 
-        let (region, graph, budget, archive) = match (
+        let (region, graph, archive) = match (
             state.run_scope.region(),
             deps.graph.as_deref(),
-            deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
-            (Some(r), Some(g), Some(b), Some(a)) => (r, g, b, a.clone()),
+            (Some(r), Some(g), Some(a)) => (r, g, a.clone()),
             _ => {
                 out.push(CuriosityEvent::SignalInvestigated { signal_id });
                 return Ok(out);
             }
         };
 
-        if !budget.has_budget(
+        if !state.has_budget(
             OperationCost::CLAUDE_HAIKU_INVESTIGATION + OperationCost::SEARCH_INVESTIGATION,
         ) {
             ctx.logger.debug("Skipped investigation: insufficient budget");
@@ -201,20 +200,19 @@ pub mod handlers {
         let deps = ctx.deps();
         let state = ctx.aggregate::<PipelineState>().curr;
 
-        let (region, graph, budget, archive) = match (
+        let (region, graph, archive) = match (
             state.run_scope.region(),
             deps.graph.as_deref(),
-            deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
-            (Some(r), Some(g), Some(b), Some(a)) => (r, g, b, a.clone()),
+            (Some(r), Some(g), Some(a)) => (r, g, a.clone()),
             _ => {
                 out.push(CuriosityEvent::SignalConcernLinked { signal_id });
                 return Ok(out);
             }
         };
 
-        if !budget.has_budget(
+        if !state.has_budget(
             OperationCost::CLAUDE_HAIKU_TENSION_LINKER + OperationCost::SEARCH_TENSION_LINKER,
         ) {
             ctx.logger
@@ -398,20 +396,19 @@ pub mod handlers {
         let deps = ctx.deps();
         let state = ctx.aggregate::<PipelineState>().curr;
 
-        let (region, graph, budget, archive) = match (
+        let (region, graph, archive) = match (
             state.run_scope.region(),
             deps.graph.as_deref(),
-            deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
-            (Some(r), Some(g), Some(b), Some(a)) => (r, g, b, a.clone()),
+            (Some(r), Some(g), Some(a)) => (r, g, a.clone()),
             _ => {
                 out.push(CuriosityEvent::ConcernResponsesScouted { concern_id });
                 return Ok(out);
             }
         };
 
-        if !budget.has_budget(
+        if !state.has_budget(
             OperationCost::CLAUDE_HAIKU_RESPONSE_FINDER + OperationCost::SEARCH_RESPONSE_FINDER,
         ) {
             ctx.logger
@@ -587,20 +584,19 @@ pub mod handlers {
         let deps = ctx.deps();
         let state = ctx.aggregate::<PipelineState>().curr;
 
-        let (region, graph, budget, archive) = match (
+        let (region, graph, archive) = match (
             state.run_scope.region(),
             deps.graph.as_deref(),
-            deps.budget.as_ref(),
             deps.archive.as_ref(),
         ) {
-            (Some(r), Some(g), Some(b), Some(a)) => (r, g, b, a.clone()),
+            (Some(r), Some(g), Some(a)) => (r, g, a.clone()),
             _ => {
                 out.push(CuriosityEvent::ConcernGatheringsScouted { concern_id });
                 return Ok(out);
             }
         };
 
-        if !budget.has_budget(
+        if !state.has_budget(
             OperationCost::CLAUDE_HAIKU_GATHERING_FINDER
                 + OperationCost::SEARCH_GATHERING_FINDER,
         ) {

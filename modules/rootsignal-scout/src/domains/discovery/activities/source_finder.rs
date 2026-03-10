@@ -9,7 +9,7 @@ use rootsignal_graph::{
 use schemars::JsonSchema;
 use serde::{de, Deserialize};
 use tracing::{info, warn};
-use crate::domains::scheduling::activities::budget::{BudgetTracker, OperationCost};
+use crate::domains::scheduling::activities::budget::OperationCost;
 use crate::infra::embedder::TextEmbedder;
 const MAX_CURIOSITY_QUERIES: usize = 12;
 
@@ -437,8 +437,9 @@ pub struct SourceFinder<'a> {
     region_slug: Option<String>,
     region_name: Option<String>,
     ai: Option<&'a dyn Agent>,
-    budget: &'a BudgetTracker,
+    budget_exhausted: bool,
     embedder: Option<&'a dyn TextEmbedder>,
+    discovery_llm_calls: std::sync::atomic::AtomicU32,
 }
 
 /// Cosine similarity threshold for embedding-based query dedup.
@@ -451,16 +452,22 @@ impl<'a> SourceFinder<'a> {
         graph: &'a dyn GraphQueries,
         region_name: Option<&str>,
         ai: Option<&'a dyn Agent>,
-        budget: &'a BudgetTracker,
+        budget_exhausted: bool,
     ) -> Self {
         Self {
             graph,
             region_slug: region_name.map(|n| n.to_string()),
             region_name: region_name.map(|n| n.to_string()),
             ai,
-            budget,
+            budget_exhausted,
             embedder: None,
+            discovery_llm_calls: std::sync::atomic::AtomicU32::new(0),
         }
+    }
+
+    /// Number of LLM discovery calls made during this run.
+    pub fn discovery_llm_calls(&self) -> u32 {
+        self.discovery_llm_calls.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Set an embedder for semantic query deduplication.
@@ -626,12 +633,7 @@ impl<'a> SourceFinder<'a> {
             }
         };
 
-        // Guard: no budget → mechanical fallback
-        if self.budget.is_active()
-            && !self
-                .budget
-                .has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY)
-        {
+        if self.budget_exhausted {
             info!("Skipping LLM discovery (budget exhausted), falling back to mechanical");
             self.discover_from_gaps_mechanical(stats, social_topics, sources)
                 .await;
@@ -673,8 +675,7 @@ impl<'a> SourceFinder<'a> {
             }
         };
 
-        // Record budget spend after successful response
-        self.budget.spend(OperationCost::CLAUDE_HAIKU_DISCOVERY);
+        self.discovery_llm_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Extract social topics from plan (for topic discovery pipeline)
         const MAX_SOCIAL_TOPICS: usize = 8;
@@ -1705,6 +1706,7 @@ mod tests {
 
     #[test]
     fn exhausted_budget_blocks_discovery() {
+        use crate::domains::scheduling::activities::budget::BudgetTracker;
         let tracker = BudgetTracker::new(1);
         tracker.spend(1);
         assert!(!tracker.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY));
@@ -1712,6 +1714,7 @@ mod tests {
 
     #[test]
     fn unlimited_budget_allows_discovery() {
+        use crate::domains::scheduling::activities::budget::BudgetTracker;
         let tracker = BudgetTracker::new(0);
         assert!(tracker.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY));
     }
