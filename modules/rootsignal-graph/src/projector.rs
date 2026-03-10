@@ -136,6 +136,7 @@ impl GraphProjector {
             EventDomain::SituationWeaving => Ok(ApplyResult::NoOp),
             EventDomain::Supervisor => Ok(ApplyResult::NoOp),
             EventDomain::Scheduling => Ok(ApplyResult::NoOp),
+            EventDomain::Curiosity => Ok(ApplyResult::NoOp),
         }
     }
 

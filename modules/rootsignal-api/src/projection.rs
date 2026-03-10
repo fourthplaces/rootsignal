@@ -178,8 +178,19 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
         GraphProjector::new(graph.clone()).with_embedding_store(embedding_store),
     );
 
+    let pb = indicatif::ProgressBar::new(version)
+        .with_style(
+            indicatif::ProgressStyle::with_template(
+                "{bar:40.cyan/blue} {pos}/{len} events ({percent}%) [{elapsed_precise}]",
+            )
+            .unwrap(),
+        );
+
     let graph_for_gate = graph.clone();
     stream
+        .on_progress(move |p| {
+            pb.set_position(p.position);
+        })
         .promote_if(move || {
             let g = graph_for_gate.clone();
             async move { health_check(&g).await }

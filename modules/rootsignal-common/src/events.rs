@@ -447,6 +447,8 @@ pub enum EventDomain {
     Supervisor,
     /// `scheduling:*` — deferred scrapes, re-run scheduling.
     Scheduling,
+    /// `curiosity:*` — investigation bookkeeping, concern linking, tension discovery.
+    Curiosity,
 }
 
 impl EventDomain {
@@ -469,6 +471,7 @@ impl EventDomain {
                 "situation_weaving" => Some(Self::SituationWeaving),
                 "supervisor" => Some(Self::Supervisor),
                 "scheduling" => Some(Self::Scheduling),
+                "curiosity" => Some(Self::Curiosity),
                 _ => None,
             },
             None => None,

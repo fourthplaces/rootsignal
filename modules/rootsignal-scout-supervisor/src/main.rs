@@ -14,7 +14,11 @@ use rootsignal_scout_supervisor::{
 async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("rootsignal=info".parse()?))
+        .with_env_filter(
+            EnvFilter::from_default_env()
+                .add_directive("rootsignal=info".parse()?)
+                .add_directive("seesaw_replay=info".parse()?),
+        )
         .init();
 
     info!("Root Signal Scout Supervisor starting...");

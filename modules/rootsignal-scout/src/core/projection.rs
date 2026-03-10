@@ -67,6 +67,7 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                     EventDomain::SituationWeaving => return Ok(events![]),
                     EventDomain::Supervisor => return Ok(events![]),
                     EventDomain::Scheduling => return Ok(events![]),
+                    EventDomain::Curiosity => return Ok(events![]),
                 }
 
                 let (event_type, payload) = match (event_type, payload) {
