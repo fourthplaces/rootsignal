@@ -407,6 +407,7 @@ impl Extractor {
                     let precision = match signal.geo_precision.as_deref() {
                         Some("exact") => GeoPrecision::Exact,
                         Some("neighborhood") => GeoPrecision::Neighborhood,
+                        Some("region") => GeoPrecision::Region,
                         _ => GeoPrecision::Approximate,
                     };
                     Some(GeoPoint {
@@ -455,6 +456,7 @@ impl Extractor {
                             name: signal.location_name.clone(),
                             address: None,
                             role,
+                            timezone: None,
                         });
                     }
                     locs
@@ -844,9 +846,9 @@ Do NOT classify news reportage as a HelpRequest based on the urgency of the topi
 - If you can identify a SPECIFIC place (building, park, intersection, venue), provide exact lat/lng
 - If the content mentions a NEIGHBORHOOD or well-known area within {city_name} (e.g. "Phillips", "Uptown", "Cedar-Riverside"), provide approximate lat/lng for that area's center with geo_precision "neighborhood"
 - If the content is GEOGRAPHICALLY NEUTRAL — no place is mentioned or implied (e.g. general thoughts, abstract policy discussion, personal reflections) — omit lat/lng AND location_name entirely. Do NOT guess a location.
-- If the signal is region-wide (affects the whole area, not a specific place), omit lat/lng but provide location_name if mentioned (e.g. "Minneapolis" or "Twin Cities")
+- If the signal is region-wide (affects the whole area, not a specific place), provide approximate lat/lng for the region's center with geo_precision "region" and set location_name (e.g. "Minneapolis" or "Twin Cities")
 - location_name: the place name as text (e.g. "YWCA Midtown", "Uptown", "City Hall")
-- geo_precision: "exact" for addresses/buildings, "neighborhood" for area-level
+- geo_precision: "exact" for addresses/buildings, "neighborhood" for area-level, "region" for city/metro-wide
 
 ## Timing
 - ISO 8601 datetime strings for start/end times (e.g. "2026-03-15T14:00:00Z")

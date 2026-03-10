@@ -37,6 +37,12 @@ fn is_signal_world_event(e: &WorldEvent, _ctx: &Context<ScoutEngineDeps>) -> boo
     e.is_signal()
 }
 
+fn has_locations_needing_geocoding(e: &WorldEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    e.locations().iter().any(|loc| {
+        loc.name.as_ref().is_some_and(|n| !n.trim().is_empty())
+    })
+}
+
 // ── Event constructors: map activity domain types → system events ──
 
 fn actor_location_event(update: activities::actor_location::ActorLocationUpdate) -> SystemEvent {
@@ -222,5 +228,63 @@ pub mod handlers {
             .await?;
 
         Ok(events![result])
+    }
+
+    // ---------------------------------------------------------------
+    // Geocode locations: reactive, fires on every signal with locations
+    // ---------------------------------------------------------------
+
+    #[handle(on = WorldEvent, id = "enrichment:geocode_locations", filter = has_locations_needing_geocoding)]
+    async fn geocode_locations(
+        event: WorldEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let deps = ctx.deps();
+        let geocoder = match deps.geocoder.as_deref() {
+            Some(g) => g,
+            None => return Ok(Events::new()),
+        };
+
+        let signal_id = match event.signal_id() {
+            Some(id) => id,
+            None => return Ok(Events::new()),
+        };
+
+        let mut out = Events::new();
+
+        for loc in event.locations() {
+            let name = match loc.name.as_deref() {
+                Some(n) if !n.trim().is_empty() => n.trim(),
+                _ => continue,
+            };
+
+            // Bias toward LLM-provided coords if present (helps disambiguate)
+            let (bias_lat, bias_lng) = match loc.point.as_ref() {
+                Some(p) => (Some(p.lat), Some(p.lng)),
+                None => (None, None),
+            };
+
+            match geocoder.geocode(name, bias_lat, bias_lng).await {
+                Ok(Some(result)) => {
+                    out.push(SystemEvent::LocationGeocoded {
+                        signal_id,
+                        location_name: name.to_string(),
+                        lat: result.lat,
+                        lng: result.lng,
+                        address: result.address,
+                        precision: result.precision,
+                        timezone: result.timezone,
+                    });
+                }
+                Ok(None) => {
+                    tracing::debug!(name = name, "No geocoding result for location");
+                }
+                Err(e) => {
+                    tracing::warn!(name = name, error = %e, "Geocoding failed");
+                }
+            }
+        }
+
+        Ok(out)
     }
 }

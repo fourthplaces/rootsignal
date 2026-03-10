@@ -1,4 +1,5 @@
 pub mod checks;
+pub mod data_migrations;
 pub mod registry;
 pub mod runner;
 

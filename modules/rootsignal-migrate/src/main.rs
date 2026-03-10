@@ -3,6 +3,8 @@ use clap::Parser;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
+use std::sync::Arc;
+
 use rootsignal_migrate::{runner, checks, MigrateContext};
 use rootsignal_migrate::registry::migrations;
 
@@ -45,12 +47,14 @@ async fn main() -> Result<()> {
         .connect(&cli.database_url)
         .await?;
 
-    let ctx = MigrateContext::new(pool);
+    let mut ctx = MigrateContext::new(pool);
 
-    // Register additional backends here as they're added:
-    // if let Ok(url) = std::env::var("NEO4J_URL") {
-    //     ctx.insert(GraphClient::new(&url).await?);
-    // }
+    // Register geocoder for data migrations that need it
+    if let Ok(token) = std::env::var("MAPBOX_TOKEN") {
+        if !token.is_empty() {
+            ctx.insert(Arc::new(rootsignal_graph::geocoder::MapboxGeocoder::new(token)));
+        }
+    }
 
     if cli.check {
         let warnings = checks::check(&all);

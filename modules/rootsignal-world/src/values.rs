@@ -56,4 +56,7 @@ pub struct Location {
     /// Role this location plays: "venue", "origin", "destination", "affected_area", "epicenter"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// IANA timezone (e.g. "America/Chicago") — filled by geocoder from coordinates
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
 }

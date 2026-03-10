@@ -31,4 +31,7 @@ geohash = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 seesaw_core = { workspace = true }
+reqwest = { workspace = true }
+urlencoding = "2"
+tz-search = "0.1"
 testcontainers = { workspace = true, optional = true }

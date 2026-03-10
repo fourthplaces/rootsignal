@@ -514,6 +514,21 @@ pub enum SystemEvent {
     },
 
     // -----------------------------------------------------------------------
+    // Location geocoding — deterministic coordinates from Mapbox
+    // -----------------------------------------------------------------------
+    LocationGeocoded {
+        signal_id: Uuid,
+        location_name: String,
+        lat: f64,
+        lng: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        address: Option<String>,
+        precision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timezone: Option<String>,
+    },
+
+    // -----------------------------------------------------------------------
     // Place & gathering geography
     // -----------------------------------------------------------------------
     PlaceDiscovered {

@@ -179,6 +179,8 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "system:similarity_edges_rebuilt",
     // System: Admin actions
     "system:validation_issue_dismissed",
+    // System: Location geocoding
+    "system:location_geocoded",
 ];
 
 #[test]
@@ -990,6 +992,16 @@ fn build_all_events() -> Vec<Event> {
         // Admin actions
         Event::System(SystemEvent::ValidationIssueDismissed {
             issue_id: "".into(),
+        }),
+        // Location geocoding
+        Event::System(SystemEvent::LocationGeocoded {
+            signal_id: id,
+            location_name: "Minneapolis".into(),
+            lat: 44.9778,
+            lng: -93.2650,
+            address: Some("Minneapolis, Minnesota, United States".into()),
+            precision: "approximate".into(),
+            timezone: Some("America/Chicago".into()),
         }),
     ]
 }

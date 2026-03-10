@@ -1,7 +1,7 @@
 //! Scout pipeline configuration and engine builders.
 //!
 //! `ScoutDeps` holds shared deps. Engine builder methods construct seesaw
-//! engines for each pipeline variant (scrape, full, news).
+//! engines for each pipeline variant (scrape, weave, news).
 
 use std::sync::Arc;
 
@@ -79,6 +79,14 @@ impl ScoutDeps {
         deps.pg_pool = Some(self.pg_pool.clone());
         deps.daily_budget_cents = self.daily_budget_cents;
 
+        if let Ok(token) = std::env::var("MAPBOX_TOKEN") {
+            if !token.is_empty() {
+                deps.geocoder = Some(Arc::new(
+                    rootsignal_graph::geocoder::MapboxGeocoder::new(token),
+                ));
+            }
+        }
+
         (deps, ai)
     }
 
@@ -123,23 +131,10 @@ impl ScoutDeps {
         engine::build_engine(deps, self.make_store(run_id))
     }
 
-    /// Build a full-chain engine: extends the scrape chain with
-    /// situation_weaving → supervisor before finalize.
+    /// Build a weave engine: situation weaving as an independent workflow.
     ///
-    /// Budget is set via `ScoutRunRequested { budget_cents }`, not here.
-    /// Spend carry-forward is automatic — events replay into aggregate state.
-    pub fn build_full_engine(
-        &self,
-        scope: &rootsignal_common::ScoutScope,
-        run_id: Uuid,
-    ) -> ScoutEngine {
-        let deps = self.build_region_deps(scope, run_id);
-        engine::build_full_engine(deps, self.make_store(run_id))
-    }
-
-    /// Build a weave-only engine: cross-signal synthesis at any region level.
-    ///
-    /// Includes synthesis, situation_weaving, supervisor — excludes scrape/discovery/enrichment/expansion.
+    /// Kicked off by `GenerateSituationsRequested { region }`.
+    /// Includes situation_weaving + supervisor only.
     pub fn build_weave_engine(
         &self,
         scope: &rootsignal_common::ScoutScope,

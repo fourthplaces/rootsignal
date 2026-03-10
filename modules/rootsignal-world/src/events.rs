@@ -387,6 +387,18 @@ impl WorldEvent {
         }
     }
 
+    pub fn locations(&self) -> &[Location] {
+        match self {
+            Self::GatheringAnnounced { locations, .. }
+            | Self::ResourceOffered { locations, .. }
+            | Self::HelpRequested { locations, .. }
+            | Self::AnnouncementShared { locations, .. }
+            | Self::ConcernRaised { locations, .. }
+            | Self::ConditionObserved { locations, .. } => locations,
+            _ => &[],
+        }
+    }
+
     /// Label for the signal variant (e.g. "Concern", "Resource").
     pub fn node_type_label(&self) -> Option<&'static str> {
         match self {

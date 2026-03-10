@@ -162,6 +162,7 @@ impl PublicGraphReader {
                                 name: None,
                                 address: None,
                                 role: Some("origin".to_string()),
+                                timezone: None,
                             });
                         }
                     }
@@ -1696,6 +1697,7 @@ pub(crate) fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
                 name: None,
                 address: None,
                 role: Some("origin".to_string()),
+                timezone: None,
             });
         }
     }

@@ -302,6 +302,7 @@ fn build_meta(
             name: Some(r.name.clone()),
             address: None,
             role: None,
+            timezone: None,
         }]).unwrap_or_default(),
         url: source_url.to_string(),
         extracted_at: now,

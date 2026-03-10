@@ -88,6 +88,7 @@ pub fn build_node_meta(
             name: Some(region.name.clone()),
             address: None,
             role: None,
+            timezone: None,
         }],
         url: source_url,
         extracted_at: now,

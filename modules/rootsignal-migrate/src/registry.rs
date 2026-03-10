@@ -1,4 +1,5 @@
-use crate::{sql, Migration};
+use crate::{sql, data, Migration};
+use crate::data_migrations::backfill_location_geocoded;
 
 pub fn migrations() -> Vec<Migration> {
     vec![
@@ -38,5 +39,7 @@ pub fn migrations() -> Vec<Migration> {
         sql("034_simplify_budget",               include_str!("../migrations/034_simplify_budget.sql")),
         sql("035_seesaw_026_schema",             include_str!("../migrations/035_seesaw_026_schema.sql")),
         sql("036_backfill_sources_discovered",  include_str!("../migrations/036_backfill_sources_discovered.sql")),
+        sql("037_events_correlation_seq_index", include_str!("../migrations/037_events_correlation_seq_index.sql")),
+        data("038_backfill_location_geocoded", backfill_location_geocoded::plan, backfill_location_geocoded::run),
     ]
 }

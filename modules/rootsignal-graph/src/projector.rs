@@ -2876,6 +2876,89 @@ impl GraphProjector {
                 Plan::single(Op::Run(q))
             }
 
+            // ---------------------------------------------------------
+            // Location geocoding — MERGE canonical Location by Mapbox address,
+            // then merge any stub (created by WorldEvent projection) into it.
+            // ---------------------------------------------------------
+            SystemEvent::LocationGeocoded {
+                signal_id,
+                location_name,
+                lat,
+                lng,
+                address,
+                precision,
+                timezone,
+            } => {
+                let canonical_address = address.as_deref().unwrap_or("").to_string();
+                let normalized_name = location_name.trim().to_lowercase();
+                let lat_bucket = (lat * 1000.0).round() / 1000.0;
+                let lng_bucket = (lng * 1000.0).round() / 1000.0;
+
+                // Step 1: MERGE canonical Location by address, SET geocoded properties
+                let merge_q = query(
+                    "MERGE (canonical:Location {canonical_address: $canonical_address})
+                     ON CREATE SET canonical.lat = $lat, canonical.lng = $lng,
+                                   canonical.lat_bucket = $lat_bucket, canonical.lng_bucket = $lng_bucket,
+                                   canonical.name = $location_name,
+                                   canonical.normalized_name = $normalized_name,
+                                   canonical.precision = $precision,
+                                   canonical.timezone = $timezone,
+                                   canonical.geocoded = true
+                     ON MATCH SET canonical.lat = $lat, canonical.lng = $lng,
+                                  canonical.lat_bucket = $lat_bucket, canonical.lng_bucket = $lng_bucket,
+                                  canonical.precision = $precision,
+                                  canonical.timezone = $timezone,
+                                  canonical.geocoded = true",
+                )
+                .param("canonical_address", canonical_address.as_str())
+                .param("lat", lat)
+                .param("lng", lng)
+                .param("lat_bucket", lat_bucket)
+                .param("lng_bucket", lng_bucket)
+                .param("location_name", location_name.as_str())
+                .param("normalized_name", normalized_name.as_str())
+                .param("precision", precision.as_str())
+                .param("timezone", timezone.as_deref().unwrap_or(""));
+
+                // Step 2: Find un-geocoded stub by normalized_name and merge into canonical.
+                // Only targets stubs (no canonical_address yet) to avoid merging
+                // two already-geocoded canonical nodes that share a normalized_name.
+                let merge_stub_q = query(
+                    "MATCH (stub:Location {normalized_name: $normalized_name})
+                     WHERE stub.canonical_address IS NULL
+                     MATCH (canonical:Location {canonical_address: $canonical_address})
+                     WHERE stub <> canonical
+                     CALL apoc.refactor.mergeNodes([canonical, stub], {
+                       properties: 'discard',
+                       mergeRels: true
+                     }) YIELD node
+                     RETURN node",
+                )
+                .param("normalized_name", normalized_name.as_str())
+                .param("canonical_address", canonical_address.as_str());
+
+                // Step 3: If a signal was already connected to a wrong canonical
+                // (e.g. two signals shared a stub, first geocode merged it into
+                // canonical A, now this geocode resolves to canonical B), redirect
+                // only the edge that was for this location name.
+                let redirect_q = query(
+                    "MATCH (s {id: $signal_id})-[old_r]->(wrong:Location)
+                     WHERE wrong.canonical_address IS NOT NULL
+                       AND wrong.canonical_address <> $canonical_address
+                       AND wrong.normalized_name = $normalized_name
+                     MATCH (canonical:Location {canonical_address: $canonical_address})
+                     CALL apoc.refactor.to(old_r, canonical)
+                     YIELD input, output
+                     RETURN input, output",
+                )
+                .param("signal_id", signal_id.to_string())
+                .param("canonical_address", canonical_address.as_str())
+                .param("normalized_name", normalized_name.as_str());
+
+                debug!(signal_id = %signal_id, location = location_name, "LocationGeocoded projected");
+                Plan::applied(vec![Op::Run(merge_q), Op::Run(merge_stub_q), Op::Run(redirect_q)])
+            }
+
         }
     }
 
@@ -3023,42 +3106,22 @@ impl GraphProjector {
                 _ => continue,
             };
 
-            let (lat, lng) = match loc.point.as_ref() {
-                Some(p) => (p.lat, p.lng),
-                None => continue,
-            };
-
-            let lat_bucket = (lat * 1000.0).trunc() / 1000.0;
-            let lng_bucket = (lng * 1000.0).trunc() / 1000.0;
             let normalized_name = name.trim().to_lowercase();
-
-            let precision_str = loc.point.as_ref().map(|p| match p.precision {
-                rootsignal_world::types::GeoPrecision::Exact => "exact",
-                rootsignal_world::types::GeoPrecision::Neighborhood => "neighborhood",
-                rootsignal_world::types::GeoPrecision::Approximate => "approximate",
-                rootsignal_world::types::GeoPrecision::Region => "region",
-            }).unwrap_or("exact");
-
             let edge_type = location_edge_type(signal_label, loc.role.as_deref());
 
+            // Create a stub Location by normalized_name only.
+            // LocationGeocoded (from the geocoder handler) fills in
+            // deterministic coordinates and merges duplicates via canonical_address.
             let q = query(&format!(
                 "MATCH (s:{signal_label} {{id: $signal_id}})
-                 MERGE (l:Location {{normalized_name: $normalized_name, lat_bucket: $lat_bucket, lng_bucket: $lng_bucket}})
-                 ON CREATE SET l.name = $name, l.lat = $lat, l.lng = $lng,
-                               l.address = $address, l.precision = $precision
-                 ON MATCH SET l.lat = $lat, l.lng = $lng,
-                              l.address = CASE WHEN $address <> '' THEN $address ELSE l.address END
+                 MERGE (l:Location {{normalized_name: $normalized_name}})
+                 ON CREATE SET l.name = $name, l.address = $address
                  MERGE (s)-[:{edge_type}]->(l)"
             ))
             .param("signal_id", signal_id_str.clone())
             .param("normalized_name", normalized_name)
-            .param("lat_bucket", lat_bucket)
-            .param("lng_bucket", lng_bucket)
             .param("name", name)
-            .param("lat", lat)
-            .param("lng", lng)
-            .param("address", loc.address.as_deref().unwrap_or(""))
-            .param("precision", precision_str);
+            .param("address", loc.address.as_deref().unwrap_or(""));
 
             ops.push(Op::Run(q));
         }

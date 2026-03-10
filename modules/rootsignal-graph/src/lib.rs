@@ -4,6 +4,7 @@ pub mod cause_heat;
 pub mod client;
 pub mod embedding_store;
 pub mod enrich;
+pub mod geocoder;
 pub mod migrate;
 pub mod pipeline;
 pub mod reader;
