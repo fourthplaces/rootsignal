@@ -172,9 +172,9 @@ fn classify_event(
 
 /// Detect terminal events that mean a run is finished.
 ///
-/// Terminal events are domain facts — the projection observes them
-/// and writes stats to the scout_runs table.
-fn is_terminal_event(event: &AnyEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
+/// Terminal events are domain facts — the causal chain always reaches one.
+/// `NothingToWeave` / `NothingToSupervise` ensure every engine variant terminates.
+fn is_terminal_event(event: &AnyEvent) -> bool {
     if event.downcast_ref::<SynthesisEvent>()
         .is_some_and(|e| matches!(e, SynthesisEvent::SeverityInferred))
     {
@@ -188,42 +188,22 @@ fn is_terminal_event(event: &AnyEvent, ctx: &Context<ScoutEngineDeps>) -> bool {
     false
 }
 
-/// Projection: maintain the `scout_runs` lookup table.
+/// Priority-3 handler: observe terminal events, write stats, emit ScoutRunCompleted.
 ///
-/// On `ScoutRunRequested`: INSERT a new row.
-/// On terminal events: UPDATE with stats JSONB (finished_at handled by post_settle_cleanup).
-pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
-    project("scout_runs_projection").then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
-        async move {
-            // INSERT on ScoutRunRequested
-            if let Some(LifecycleEvent::ScoutRunRequested { run_id, scope, .. }) = event.downcast_ref::<LifecycleEvent>() {
-                let deps = ctx.deps();
-                if let Some(pool) = &deps.pg_pool {
-                    let region = scope
-                        .region()
-                        .map(|r| r.name.as_str())
-                        .unwrap_or("unknown");
-                    let scope_json = scope
-                        .region()
-                        .and_then(|r| serde_json::to_value(r).ok());
-                    sqlx::query(
-                        "INSERT INTO scout_runs (run_id, region, scope, started_at) \
-                         VALUES ($1, $2, $3, now()) \
-                         ON CONFLICT (run_id) DO NOTHING",
-                    )
-                    .bind(run_id.to_string())
-                    .bind(region)
-                    .bind(&scope_json)
-                    .execute(pool)
-                    .await?;
+/// Lives inside the causal chain — ScoutRunCompleted is caused by the terminal
+/// domain event, not injected from outside. The projection reacts to
+/// ScoutRunCompleted to write `finished_at`.
+pub fn run_completion_handler() -> Handler<ScoutEngineDeps> {
+    on_any()
+        .id("run_completion")
+        .priority(3)
+        .then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
+            async move {
+                if !is_terminal_event(&event) {
+                    return Ok(events![]);
                 }
-                return Ok(());
-            }
 
-            // UPDATE stats on terminal events
-            if is_terminal_event(&event, &ctx) {
                 let deps = ctx.deps();
-
                 let state = ctx.aggregate::<PipelineState>().curr;
                 let final_stats = state.stats.clone();
                 info!("{}", final_stats);
@@ -238,6 +218,72 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                     .bind(final_stats.spent_cents as i64)
                     .execute(pool)
                     .await?;
+                }
+
+                Ok(events![LifecycleEvent::ScoutRunCompleted {
+                    run_id: deps.run_id,
+                    finished_at: Utc::now(),
+                }])
+            }
+        })
+}
+
+/// Projection: maintain the `scout_runs` lookup table.
+///
+/// On `ScoutRunRequested`: INSERT a new row with flow metadata.
+/// On `ScoutRunCompleted`: UPDATE `finished_at` from the event timestamp.
+pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
+    project("scout_runs_projection").then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
+        async move {
+            if let Some(lifecycle) = event.downcast_ref::<LifecycleEvent>() {
+                match lifecycle {
+                    LifecycleEvent::ScoutRunRequested {
+                        run_id, scope, region_id, flow_type, source_ids, task_id, ..
+                    } => {
+                        let deps = ctx.deps();
+                        if let Some(pool) = &deps.pg_pool {
+                            let region = scope
+                                .region()
+                                .map(|r| r.name.as_str())
+                                .unwrap_or("unknown");
+                            let scope_json = scope
+                                .region()
+                                .and_then(|r| serde_json::to_value(r).ok());
+                            let source_ids_json = source_ids.as_ref()
+                                .and_then(|ids| serde_json::to_value(ids).ok());
+                            sqlx::query(
+                                "INSERT INTO scout_runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7, now()) \
+                                 ON CONFLICT (run_id) DO UPDATE SET \
+                                   region_id = COALESCE(EXCLUDED.region_id, scout_runs.region_id), \
+                                   flow_type = COALESCE(EXCLUDED.flow_type, scout_runs.flow_type), \
+                                   source_ids = COALESCE(EXCLUDED.source_ids, scout_runs.source_ids), \
+                                   task_id = COALESCE(EXCLUDED.task_id, scout_runs.task_id)",
+                            )
+                            .bind(run_id.to_string())
+                            .bind(region)
+                            .bind(region_id.as_deref())
+                            .bind(flow_type.as_str())
+                            .bind(&source_ids_json)
+                            .bind(&scope_json)
+                            .bind(task_id.as_deref())
+                            .execute(pool)
+                            .await?;
+                        }
+                    }
+                    LifecycleEvent::ScoutRunCompleted { run_id, finished_at } => {
+                        let deps = ctx.deps();
+                        if let Some(pool) = &deps.pg_pool {
+                            sqlx::query(
+                                "UPDATE scout_runs SET finished_at = $2 WHERE run_id = $1 AND finished_at IS NULL",
+                            )
+                            .bind(run_id.to_string())
+                            .bind(finished_at)
+                            .execute(pool)
+                            .await?;
+                        }
+                    }
+                    _ => {}
                 }
             }
 

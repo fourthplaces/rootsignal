@@ -2368,6 +2368,10 @@ impl ScoutRunTest {
                 run_id: self.run_id,
                 scope: self.scope.clone(),
                 budget_cents: 0,
+                region_id: None,
+                flow_type: String::new(),
+                source_ids: None,
+                task_id: None,
             })
             .settled()
             .await

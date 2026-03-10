@@ -159,6 +159,9 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStor
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
+    // Run completion — inside the causal chain
+    engine = engine.with_handler(projection::run_completion_handler());
+
     // Infrastructure projections
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
@@ -232,6 +235,9 @@ pub fn build_full_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgre
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
 
+    // Run completion — inside the causal chain
+    engine = engine.with_handler(projection::run_completion_handler());
+
     // Infrastructure projections
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
@@ -301,6 +307,9 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgr
     if let Some(projector) = graph_projector {
         engine = engine.with_handler(projection::neo4j_projection_handler(projector));
     }
+
+    // Run completion — inside the causal chain
+    engine = engine.with_handler(projection::run_completion_handler());
 
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());

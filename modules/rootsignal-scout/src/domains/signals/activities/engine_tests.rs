@@ -953,6 +953,10 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
             run_id: Uuid::new_v4(),
             scope,
             budget_cents: 0,
+            region_id: None,
+            flow_type: String::new(),
+            source_ids: None,
+            task_id: None,
         })
         .settled()
         .await

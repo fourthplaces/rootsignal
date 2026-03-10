@@ -70,12 +70,18 @@ impl ScoutRunner {
         info!(region_id = region_id.as_str(), %run_id, "Spawning bootstrap flow");
 
         tokio::spawn(async move {
-            early_insert_flow_run(&deps, run_id, Some(&region_id), "bootstrap", None, &scope).await;
-
             let run_scope = RunScope::Region(scope.clone());
             let engine = deps.build_scrape_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope, budget_cents: budget })
+                .emit(LifecycleEvent::ScoutRunRequested {
+                    run_id,
+                    scope: run_scope,
+                    budget_cents: budget,
+                    region_id: Some(region_id.clone()),
+                    flow_type: "bootstrap".into(),
+                    source_ids: None,
+                    task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -85,8 +91,6 @@ impl ScoutRunner {
             } else {
                 info!(region_id = region_id.as_str(), "Bootstrap flow completed");
             }
-
-            post_settle_cleanup(&deps, run_id).await;
         });
     }
 
@@ -103,12 +107,18 @@ impl ScoutRunner {
         info!(region_id = region_id.as_str(), %run_id, "Spawning scrape flow");
 
         tokio::spawn(async move {
-            early_insert_flow_run(&deps, run_id, Some(&region_id), "scrape", None, &scope).await;
-
             let run_scope = RunScope::Region(scope.clone());
             let engine = deps.build_scrape_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope, budget_cents: budget })
+                .emit(LifecycleEvent::ScoutRunRequested {
+                    run_id,
+                    scope: run_scope,
+                    budget_cents: budget,
+                    region_id: Some(region_id.clone()),
+                    flow_type: "scrape".into(),
+                    source_ids: None,
+                    task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -118,8 +128,6 @@ impl ScoutRunner {
             } else {
                 info!(region_id = region_id.as_str(), "Scrape flow completed");
             }
-
-            post_settle_cleanup(&deps, run_id).await;
         });
     }
 
@@ -136,12 +144,18 @@ impl ScoutRunner {
         info!(region_id = region_id.as_str(), %run_id, "Spawning weave flow");
 
         tokio::spawn(async move {
-            early_insert_flow_run(&deps, run_id, Some(&region_id), "weave", None, &scope).await;
-
             let run_scope = RunScope::Region(scope.clone());
             let engine = deps.build_weave_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope, budget_cents: budget })
+                .emit(LifecycleEvent::ScoutRunRequested {
+                    run_id,
+                    scope: run_scope,
+                    budget_cents: budget,
+                    region_id: Some(region_id.clone()),
+                    flow_type: "weave".into(),
+                    source_ids: None,
+                    task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -151,8 +165,6 @@ impl ScoutRunner {
             } else {
                 info!(region_id = region_id.as_str(), "Weave flow completed");
             }
-
-            post_settle_cleanup(&deps, run_id).await;
         });
     }
 
@@ -169,29 +181,24 @@ impl ScoutRunner {
         let budget = crate::db::models::budget::effective_budget(
             &deps.pg_pool, deps.daily_budget_cents,
         ).await;
-        let metadata_scope = region.as_ref()
-            .map(ScoutScope::from)
-            .unwrap_or(ScoutScope {
-                name: format!("sources:{}", source_ids.len()),
-                center_lat: 0.0,
-                center_lng: 0.0,
-                radius_km: 0.0,
-            });
-
         info!(source_count = source_ids_owned.len(), %run_id, "Spawning scout-source flow");
 
         tokio::spawn(async move {
-            let source_ids_json = serde_json::to_value(&source_ids_owned).ok();
-
-            early_insert_flow_run(&deps, run_id, None, "scout_source", source_ids_json.as_ref(), &metadata_scope).await;
-
             let run_scope = RunScope::Sources {
                 sources: sources.clone(),
                 region: region.as_ref().map(ScoutScope::from),
             };
             let engine = deps.build_source_engine(region.as_ref(), run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested { run_id, scope: run_scope, budget_cents: budget })
+                .emit(LifecycleEvent::ScoutRunRequested {
+                    run_id,
+                    scope: run_scope,
+                    budget_cents: budget,
+                    region_id: None,
+                    flow_type: "scout_source".into(),
+                    source_ids: Some(source_ids_owned.clone()),
+                    task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                })
                 .correlation_id(run_id)
                 .settled()
                 .await;
@@ -201,8 +208,6 @@ impl ScoutRunner {
             } else {
                 info!("Scout-source flow completed");
             }
-
-            post_settle_cleanup(&deps, run_id).await;
         });
     }
 
@@ -324,8 +329,6 @@ impl ScoutRunner {
                 } else {
                     info!(%run_id, "Resumed run completed");
                 }
-
-                post_settle_cleanup(&deps, run_id).await;
             });
         }
     }
@@ -469,49 +472,6 @@ struct ScheduledScrapeRow {
 struct IncompleteRun {
     run_id: String,
     scope: Option<serde_json::Value>,
-}
-
-/// INSERT scout_runs row with flow metadata before settle.
-async fn early_insert_flow_run(
-    deps: &ScoutDeps,
-    run_id: uuid::Uuid,
-    region_id: Option<&str>,
-    flow_type: &str,
-    source_ids: Option<&serde_json::Value>,
-    scope: &ScoutScope,
-) {
-    let scope_json = serde_json::to_value(scope).ok();
-    let task_id = std::env::var("FLY_MACHINE_ID").ok();
-    if let Err(e) = sqlx::query(
-        "INSERT INTO scout_runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now()) \
-         ON CONFLICT (run_id) DO NOTHING",
-    )
-    .bind(run_id.to_string())
-    .bind(&scope.name)
-    .bind(region_id)
-    .bind(flow_type)
-    .bind(source_ids)
-    .bind(&scope_json)
-    .bind(task_id.as_deref())
-    .execute(&deps.pg_pool)
-    .await
-    {
-        warn!(%run_id, error = %e, "Failed to early-insert scout_runs row");
-    }
-}
-
-/// Post-settle cleanup: mark scout_runs.finished_at.
-async fn post_settle_cleanup(deps: &ScoutDeps, run_id: uuid::Uuid) {
-    if let Err(e) = sqlx::query(
-        "UPDATE scout_runs SET finished_at = now() WHERE run_id = $1 AND finished_at IS NULL",
-    )
-    .bind(run_id.to_string())
-    .execute(&deps.pg_pool)
-    .await
-    {
-        warn!(%run_id, error = %e, "Failed to mark scout_run finished");
-    }
 }
 
 /// Remove cancellation rows older than 7 days. Called on startup during resume.

@@ -188,6 +188,7 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
 
     let graph_for_gate = graph.clone();
     stream
+        .batch_size(5000)
         .on_progress(move |p| {
             pb.set_position(p.position);
         })

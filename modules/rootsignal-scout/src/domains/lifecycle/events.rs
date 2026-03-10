@@ -21,6 +21,18 @@ pub enum LifecycleEvent {
         scope: RunScope,
         #[serde(default)]
         budget_cents: u64,
+        #[serde(default)]
+        region_id: Option<String>,
+        #[serde(default)]
+        flow_type: String,
+        #[serde(default)]
+        source_ids: Option<Vec<String>>,
+        #[serde(default)]
+        task_id: Option<String>,
+    },
+    ScoutRunCompleted {
+        run_id: Uuid,
+        finished_at: DateTime<Utc>,
     },
     SourcesPrepared {
         tension_count: u32,

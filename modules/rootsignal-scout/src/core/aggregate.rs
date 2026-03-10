@@ -477,6 +477,7 @@ impl PipelineState {
                 self.query_api_errors.extend(query_api_errors.clone());
                 self.source_plan = Some(source_plan.clone());
             }
+            LifecycleEvent::ScoutRunCompleted { .. } => {}
             _ => {}
         }
     }
@@ -645,6 +646,10 @@ mod tests {
             run_id: Uuid::new_v4(),
             scope: RunScope::default(),
             budget_cents: 500,
+            region_id: None,
+            flow_type: String::new(),
+            source_ids: None,
+            task_id: None,
         });
         assert_eq!(state.budget_limit_cents, 500);
         assert!(state.has_budget(500));
