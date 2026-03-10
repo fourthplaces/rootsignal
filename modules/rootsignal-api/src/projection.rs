@@ -20,6 +20,8 @@ use rootsignal_scout::core::postgres_store::PostgresStore;
 use seesaw_replay::{PgNotifyTailSource, PgPointerStore, PointerStore, ProjectionStream};
 use uuid::Uuid;
 
+use crate::pg_projector;
+
 struct NoOpEmbedder;
 
 #[async_trait::async_trait]
@@ -178,6 +180,10 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
         GraphProjector::new(graph.clone()).with_embedding_store(embedding_store),
     );
 
+    // Postgres read-model projection: separate DB, created automatically.
+    let pg_proj = Arc::new(pg_projector::connect().await?);
+    pg_proj.prepare().await?;
+
     let pb = indicatif::ProgressBar::new(version)
         .with_style(
             indicatif::ProgressStyle::with_template(
@@ -198,8 +204,12 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
         })
         .run_batch(|events| {
             let p = projector.clone();
+            let pg = pg_proj.clone();
             let owned = events.to_vec();
-            async move { p.project_batch(&owned).await }
+            async move {
+                p.project_batch(&owned).await?;
+                pg.project_batch(&owned).await
+            }
         })
         .await?;
 

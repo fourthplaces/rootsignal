@@ -36,6 +36,7 @@ mod investigate;
 mod investigate_tools;
 mod jwt;
 mod link_preview;
+mod pg_projector;
 mod projection;
 mod scout_runner;
 

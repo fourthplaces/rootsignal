@@ -37,20 +37,20 @@ This is the same pattern fixed for budget tracking (commit `c8218726`): runtime 
 
 ## Acceptance Criteria
 
-- [ ] `ScoutRunRequested` carries `region_id: Option<String>`, `flow_type: String`, `source_ids: Option<Vec<String>>`, `task_id: Option<String>`
-- [ ] `LifecycleEvent::ScoutRunCompleted { run_id: Uuid, finished_at: DateTime<Utc> }` exists
-- [ ] `run_completion_handler` emits `ScoutRunCompleted` on terminal events (inside the causal chain)
-- [ ] `scout_runs_projection` writes `region_id`, `flow_type`, `source_ids`, `task_id` from `ScoutRunRequested`
-- [ ] `scout_runs_projection` writes `finished_at` from `ScoutRunCompleted`
-- [ ] Terminal event stats writing moves from projection to `run_completion_handler`
-- [ ] All `ScoutRunRequested` emission sites pass flow metadata
-- [ ] `early_insert_flow_run` deleted
-- [ ] `post_settle_cleanup` deleted
-- [ ] `is_source_busy` query still works (reads `source_ids` + `finished_at IS NULL`)
-- [ ] `PipelineState` reducer handles `ScoutRunCompleted` (no-op)
-- [ ] `run_completion_handler` registered in all engine builders
-- [ ] All existing tests pass
-- [ ] `scout_runs` table can be rebuilt from events during replay
+- [x] `ScoutRunRequested` carries `region_id: Option<String>`, `flow_type: String`, `source_ids: Option<Vec<String>>`, `task_id: Option<String>`
+- [x] `LifecycleEvent::ScoutRunCompleted { run_id: Uuid, finished_at: DateTime<Utc> }` exists
+- [x] `run_completion_handler` emits `ScoutRunCompleted` on terminal events (inside the causal chain)
+- [x] `scout_runs_projection` writes `region_id`, `flow_type`, `source_ids`, `task_id` from `ScoutRunRequested`
+- [x] `scout_runs_projection` writes `finished_at` from `ScoutRunCompleted`
+- [x] Terminal event stats writing moves from projection to `run_completion_handler`
+- [x] All `ScoutRunRequested` emission sites pass flow metadata
+- [x] `early_insert_flow_run` deleted
+- [x] `post_settle_cleanup` deleted
+- [x] `is_source_busy` query still works (reads `source_ids` + `finished_at IS NULL`)
+- [x] `PipelineState` reducer handles `ScoutRunCompleted` (no-op)
+- [x] `run_completion_handler` registered in all engine builders
+- [x] All existing tests pass
+- [x] `scout_runs` table can be rebuilt from events during replay
 
 ## Implementation
 
