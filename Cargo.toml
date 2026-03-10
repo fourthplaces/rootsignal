@@ -89,7 +89,7 @@ testcontainers = "0.23"
 seesaw_core = "0.26.2"
 seesaw_core_macros = "0.26.2"
 seesaw_utils = "0.24.0"
-seesaw_replay = { version = "0.26.2", features = ["postgres"] }
+seesaw_replay = { version = "0.26.3", features = ["postgres"] }
 
 # Local crates
 ai-client = { path = "modules/ai-client" }

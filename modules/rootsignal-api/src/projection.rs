@@ -195,13 +195,10 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
             let g = graph_for_gate.clone();
             async move { health_check(&g).await }
         })
-        .run(|event| {
+        .run_batch(|events| {
             let p = projector.clone();
-            let event = event.clone();
-            async move {
-                p.project(&event).await?;
-                Ok(())
-            }
+            let owned = events.to_vec();
+            async move { p.project_batch(&owned).await }
         })
         .await?;
 

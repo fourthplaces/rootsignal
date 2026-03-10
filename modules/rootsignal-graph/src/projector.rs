@@ -1,12 +1,16 @@
 //! GraphProjector — projection of facts into Neo4j nodes and edges.
 //!
-//! Each event is either acted upon (MERGE/SET/DELETE) or ignored (no-op).
-//! Embeddings are computed at projection time via an optional EmbeddingStore
-//! (backed by a Postgres cache, so replay gets 100% cache hits).
+//! Architecture: plan/execute separation.
 //!
-//! Idempotency: all writes use MERGE or conditional SET with the event's seq as a guard.
+//! `plan()` is pure — it maps an event to a list of `Op`s (queries to run),
+//! without touching Neo4j. `execute()` runs the ops individually (live mode).
+//! `execute_batch()` groups `SetSignalProp` ops into UNWIND queries and wraps
+//! everything in a single transaction (replay mode).
+//!
+//! Idempotency: all writes use MERGE or conditional SET.
 //! Replaying the same event twice produces the same graph state.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -57,6 +61,51 @@ pub enum ApplyResult {
     DeserializeError(String),
 }
 
+/// A single planned graph operation. Pure data — no I/O.
+pub enum Op {
+    /// Run a single pre-built query.
+    Run(neo4rs::Query),
+    /// Run multiple queries in sequence (multi-query events).
+    RunAll(Vec<neo4rs::Query>),
+    /// SET a property on a signal node via multi-label coalesce.
+    /// The batch executor collapses these into UNWIND queries by property name.
+    SetSignalProp {
+        signal_id: String,
+        property: &'static str,
+        value: neo4rs::BoltType,
+        /// Include Condition in the coalesce lookup.
+        include_condition: bool,
+    },
+    /// Compute embedding then SET. Deferred — requires async I/O.
+    Embed {
+        label: &'static str,
+        id: Uuid,
+        title: String,
+        summary: String,
+    },
+}
+
+/// The result of planning a single event's projection.
+pub struct Plan {
+    pub ops: Vec<Op>,
+    pub result: ApplyResult,
+}
+
+impl Plan {
+    fn applied(ops: Vec<Op>) -> Self {
+        Plan { ops, result: ApplyResult::Applied }
+    }
+    fn single(op: Op) -> Self {
+        Plan { ops: vec![op], result: ApplyResult::Applied }
+    }
+    fn skip() -> Self {
+        Plan { ops: vec![], result: ApplyResult::NoOp }
+    }
+    fn error(msg: String) -> Self {
+        Plan { ops: vec![], result: ApplyResult::DeserializeError(msg) }
+    }
+}
+
 impl GraphProjector {
     pub fn new(client: GraphClient) -> Self {
         Self { client, embedding_store: None }
@@ -73,8 +122,8 @@ impl GraphProjector {
         self
     }
 
-    /// Compute and set embedding on a signal node. Skips silently on failure.
-    async fn set_embedding(&self, label: &str, id: &Uuid, title: &str, summary: &str) {
+    /// Execute an embedding write. Async I/O — called by the executor, not the planner.
+    async fn run_embedding(&self, label: &str, id: &Uuid, title: &str, summary: &str) {
         if let Some(ref store) = self.embedding_store {
             let text = format!("{title} {summary}");
             let text = if text.len() > 500 { &text[..500] } else { &text };
@@ -90,7 +139,7 @@ impl GraphProjector {
                         warn!(error = %e, %label, %id, "Failed to write embedding");
                     }
                 }
-                Ok(_) => {} // NoOp embedder returns empty
+                Ok(_) => {}
                 Err(e) => {
                     warn!(error = %e, %label, %id, "Embedding lookup failed, skipping");
                 }
@@ -98,11 +147,12 @@ impl GraphProjector {
         }
     }
 
-    /// Project a single fact to the graph. Idempotent.
-    ///
-    /// Routes by `EventDomain` — Rust forces exhaustive match arms, so adding
-    /// a new domain variant produces a compile error here until handled.
-    pub async fn project(&self, event: &PersistedEvent) -> Result<ApplyResult> {
+    // =================================================================
+    // Public API — plan/execute
+    // =================================================================
+
+    /// Plan operations for a single event. Pure — no I/O.
+    pub fn plan(&self, event: &PersistedEvent) -> Plan {
         use rootsignal_common::events::EventDomain;
 
         let domain = match EventDomain::from_event_type(&event.event_type) {
@@ -113,35 +163,131 @@ impl GraphProjector {
                     event_type = event.event_type,
                     "Unknown event domain — update EventDomain enum"
                 );
-                return Ok(ApplyResult::DeserializeError(format!(
-                    "unknown event domain: {}",
-                    event.event_type
-                )));
+                return Plan::error(format!("unknown event domain: {}", event.event_type));
             }
         };
 
-        // Exhaustive match — no wildcard. Adding a new EventDomain variant
-        // will fail to compile here until the projector handles it.
         match domain {
-            EventDomain::Fact => self.project_fact(event).await,
-            EventDomain::Discovery | EventDomain::Pipeline => {
-                self.project_pipeline(event).await
-            }
-            EventDomain::Scrape => Ok(ApplyResult::NoOp),
-            EventDomain::Signal => Ok(ApplyResult::NoOp),
-            EventDomain::Lifecycle => Ok(ApplyResult::NoOp),
-            EventDomain::Enrichment => Ok(ApplyResult::NoOp),
-            EventDomain::Expansion => Ok(ApplyResult::NoOp),
-            EventDomain::Synthesis => Ok(ApplyResult::NoOp),
-            EventDomain::SituationWeaving => Ok(ApplyResult::NoOp),
-            EventDomain::Supervisor => Ok(ApplyResult::NoOp),
-            EventDomain::Scheduling => Ok(ApplyResult::NoOp),
-            EventDomain::Curiosity => Ok(ApplyResult::NoOp),
+            EventDomain::Fact => self.plan_fact(event),
+            EventDomain::Discovery | EventDomain::Pipeline => self.plan_pipeline(event),
+            EventDomain::Scrape => Plan::skip(),
+            EventDomain::Signal => Plan::skip(),
+            EventDomain::Lifecycle => Plan::skip(),
+            EventDomain::Enrichment => Plan::skip(),
+            EventDomain::Expansion => Plan::skip(),
+            EventDomain::Synthesis => Plan::skip(),
+            EventDomain::SituationWeaving => Plan::skip(),
+            EventDomain::Supervisor => Plan::skip(),
+            EventDomain::Scheduling => Plan::skip(),
+            EventDomain::Curiosity => Plan::skip(),
         }
     }
 
-    /// Project a World/System/Telemetry fact event to the graph.
-    async fn project_fact(&self, event: &PersistedEvent) -> Result<ApplyResult> {
+    /// Execute a single event's plan. Used by live mode.
+    pub async fn execute(&self, plan: Plan) -> Result<ApplyResult> {
+        for op in plan.ops {
+            match op {
+                Op::Run(q) => { self.client.run(q).await?; }
+                Op::RunAll(qs) => {
+                    for q in qs {
+                        self.client.run(q).await?;
+                    }
+                }
+                Op::SetSignalProp { signal_id, property, value, include_condition } => {
+                    let q = build_signal_set_query(property, &signal_id, value, include_condition);
+                    self.client.run(q).await?;
+                }
+                Op::Embed { label, id, title, summary } => {
+                    self.run_embedding(label, &id, &title, &summary).await;
+                }
+            }
+        }
+        Ok(plan.result)
+    }
+
+    /// Execute a batch of plans with UNWIND optimization. Used by replay mode.
+    pub async fn execute_batch(&self, plans: Vec<Plan>) -> Result<()> {
+        let mut prop_batches: HashMap<&'static str, Vec<(String, neo4rs::BoltType, bool)>> = HashMap::new();
+        let mut sequential: Vec<Op> = Vec::new();
+        let mut embeds: Vec<(&'static str, Uuid, String, String)> = Vec::new();
+
+        for plan in plans {
+            for op in plan.ops {
+                match op {
+                    Op::SetSignalProp { signal_id, property, value, include_condition } => {
+                        prop_batches.entry(property)
+                            .or_default()
+                            .push((signal_id, value, include_condition));
+                    }
+                    Op::Embed { label, id, title, summary } => {
+                        embeds.push((label, id, title, summary));
+                    }
+                    other => sequential.push(other),
+                }
+            }
+        }
+
+        let mut txn = self.client.start_txn().await
+            .map_err(|e| anyhow::anyhow!("Failed to start Neo4j transaction: {e}"))?;
+
+        // UNWIND batched property SETs — one query per property name.
+        for (property, rows) in &prop_batches {
+            if rows.is_empty() { continue; }
+            let include_condition = rows.iter().any(|(_, _, ic)| *ic);
+            let params: Vec<neo4rs::BoltType> = rows.iter().map(|(id, val, _)| {
+                neo4rs::BoltType::Map(neo4rs::BoltMap::from_iter(vec![
+                    (neo4rs::BoltString::from("id"), neo4rs::BoltType::String(neo4rs::BoltString::from(id.as_str()))),
+                    (neo4rs::BoltString::from("val"), val.clone()),
+                ]))
+            }).collect();
+
+            let q = query(&build_signal_set_unwind_cypher(property, include_condition))
+                .param("rows", params);
+            txn.run(q).await
+                .map_err(|e| anyhow::anyhow!("UNWIND SET {property}: {e}"))?;
+        }
+
+        // Sequential ops within the same transaction.
+        for op in sequential {
+            match op {
+                Op::Run(q) => { txn.run(q).await.map_err(|e| anyhow::anyhow!("batch run: {e}"))?; }
+                Op::RunAll(qs) => {
+                    for q in qs {
+                        txn.run(q).await.map_err(|e| anyhow::anyhow!("batch run_all: {e}"))?;
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        txn.commit().await
+            .map_err(|e| anyhow::anyhow!("Failed to commit batch transaction: {e}"))?;
+
+        // Embeddings after txn commit — requires async I/O.
+        for (label, id, title, summary) in &embeds {
+            self.run_embedding(label, id, title, summary).await;
+        }
+
+        Ok(())
+    }
+
+    /// Project a single event. Plan + execute in one call (live mode).
+    pub async fn project(&self, event: &PersistedEvent) -> Result<ApplyResult> {
+        let plan = self.plan(event);
+        self.execute(plan).await
+    }
+
+    /// Project a batch of events with UNWIND optimization (replay mode).
+    pub async fn project_batch(&self, events: &[PersistedEvent]) -> Result<()> {
+        let plans: Vec<Plan> = events.iter().map(|e| self.plan(e)).collect();
+        self.execute_batch(plans).await
+    }
+
+    // =================================================================
+    // Planning — pure, no I/O
+    // =================================================================
+
+    fn plan_fact(&self, event: &PersistedEvent) -> Plan {
         let mut payload = event.payload.clone();
         rootsignal_events::upcast(&event.event_type, schema_v(event), &mut payload);
 
@@ -149,7 +295,7 @@ impl GraphProjector {
             Ok(e) => e,
             Err(e) => {
                 warn!(seq = event.position, error = %e, "Failed to deserialize fact event payload");
-                return Ok(ApplyResult::DeserializeError(e.to_string()));
+                return Plan::error(e.to_string());
             }
         };
 
@@ -160,10 +306,10 @@ impl GraphProjector {
                     event_type = event.event_type,
                     "No-op (telemetry)"
                 );
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
-            Event::World(world) => self.project_world(world, event).await,
-            Event::System(system) => self.project_system(system, event).await,
+            Event::World(world) => self.plan_world(world, event),
+            Event::System(system) => self.plan_system(system, event),
         }
     }
 
@@ -171,7 +317,7 @@ impl GraphProjector {
     // Pipeline events — only projectable variants
     // =================================================================
 
-    async fn project_pipeline(&self, event: &PersistedEvent) -> Result<ApplyResult> {
+    fn plan_pipeline(&self, event: &PersistedEvent) -> Plan {
         match event.event_type.as_str() {
             "pipeline:source_discovered" | "discovery:source_discovered" => {
                 #[derive(serde::Deserialize)]
@@ -180,8 +326,10 @@ impl GraphProjector {
                     #[allow(dead_code)]
                     discovered_by: String,
                 }
-                let payload: Payload = serde_json::from_value(event.payload.clone())
-                    .map_err(|e| anyhow::anyhow!("source_discovered deser: {e}"))?;
+                let payload: Payload = match serde_json::from_value(event.payload.clone()) {
+                    Ok(p) => p,
+                    Err(e) => return Plan::error(format!("source_discovered deser: {e}")),
+                };
                 let s = &payload.source;
 
                 let q = query(
@@ -227,15 +375,14 @@ impl GraphProjector {
                 .param("cw_discussion", s.channel_weights.discussion)
                 .param("cw_events", s.channel_weights.events);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
             "discovery:sources_discovered" => {
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
             _ => {
                 debug!(seq = event.position, event_type = %event.event_type, "No-op (pipeline)");
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
         }
     }
@@ -244,7 +391,7 @@ impl GraphProjector {
     // World events — observed facts
     // =================================================================
 
-    async fn project_world(&self, world: WorldEvent, event: &PersistedEvent) -> Result<ApplyResult> {
+    fn plan_world(&self, world: WorldEvent, event: &PersistedEvent) -> Plan {
         match world {
             // ---------------------------------------------------------
             // Discovery facts — 5 typed variants
@@ -286,11 +433,11 @@ impl GraphProjector {
                 .param("exdates", sp.exdates)
                 .param("action_url", action_url.as_deref().unwrap_or(""));
 
-                self.client.run(q).await?;
-                self.project_entities(&id, "Gathering", &mentioned_entities).await?;
-                self.project_locations(&id, "Gathering", &locations).await?;
-                self.set_embedding("Gathering", &id, &title, &summary).await;
-                Ok(ApplyResult::Applied)
+                let mut ops = vec![Op::Run(q)];
+                ops.extend(self.plan_entities(&id, "Gathering", &mentioned_entities));
+                ops.extend(self.plan_locations(&id, "Gathering", &locations));
+                ops.push(Op::Embed { label: "Gathering", id, title, summary });
+                Plan::applied(ops)
             }
 
             WorldEvent::ResourceOffered {
@@ -340,11 +487,11 @@ impl GraphProjector {
                 .param("rdates", sp.rdates)
                 .param("exdates", sp.exdates);
 
-                self.client.run(q).await?;
-                self.project_entities(&id, "Resource", &mentioned_entities).await?;
-                self.project_locations(&id, "Resource", &locations).await?;
-                self.set_embedding("Resource", &id, &title, &summary).await;
-                Ok(ApplyResult::Applied)
+                let mut ops = vec![Op::Run(q)];
+                ops.extend(self.plan_entities(&id, "Resource", &mentioned_entities));
+                ops.extend(self.plan_locations(&id, "Resource", &locations));
+                ops.push(Op::Embed { label: "Resource", id, title, summary });
+                Plan::applied(ops)
             }
 
             WorldEvent::HelpRequested {
@@ -392,11 +539,11 @@ impl GraphProjector {
                 .param("rdates", sp.rdates)
                 .param("exdates", sp.exdates);
 
-                self.client.run(q).await?;
-                self.project_entities(&id, "HelpRequest", &mentioned_entities).await?;
-                self.project_locations(&id, "HelpRequest", &locations).await?;
-                self.set_embedding("HelpRequest", &id, &title, &summary).await;
-                Ok(ApplyResult::Applied)
+                let mut ops = vec![Op::Run(q)];
+                ops.extend(self.plan_entities(&id, "HelpRequest", &mentioned_entities));
+                ops.extend(self.plan_locations(&id, "HelpRequest", &locations));
+                ops.push(Op::Embed { label: "HelpRequest", id, title, summary });
+                Plan::applied(ops)
             }
 
             WorldEvent::AnnouncementShared {
@@ -438,11 +585,11 @@ impl GraphProjector {
                 .param("rdates", sp.rdates)
                 .param("exdates", sp.exdates);
 
-                self.client.run(q).await?;
-                self.project_entities(&id, "Announcement", &mentioned_entities).await?;
-                self.project_locations(&id, "Announcement", &locations).await?;
-                self.set_embedding("Announcement", &id, &title, &summary).await;
-                Ok(ApplyResult::Applied)
+                let mut ops = vec![Op::Run(q)];
+                ops.extend(self.plan_entities(&id, "Announcement", &mentioned_entities));
+                ops.extend(self.plan_locations(&id, "Announcement", &locations));
+                ops.push(Op::Embed { label: "Announcement", id, title, summary });
+                Plan::applied(ops)
             }
 
             WorldEvent::ConcernRaised {
@@ -490,11 +637,11 @@ impl GraphProjector {
                 .param("rdates", sp.rdates)
                 .param("exdates", sp.exdates);
 
-                self.client.run(q).await?;
-                self.project_entities(&id, "Concern", &mentioned_entities).await?;
-                self.project_locations(&id, "Concern", &locations).await?;
-                self.set_embedding("Concern", &id, &title, &summary).await;
-                Ok(ApplyResult::Applied)
+                let mut ops = vec![Op::Run(q)];
+                ops.extend(self.plan_entities(&id, "Concern", &mentioned_entities));
+                ops.extend(self.plan_locations(&id, "Concern", &locations));
+                ops.push(Op::Embed { label: "Concern", id, title, summary });
+                Plan::applied(ops)
             }
 
             WorldEvent::ConditionObserved {
@@ -540,11 +687,11 @@ impl GraphProjector {
                 .param("rdates", sp.rdates)
                 .param("exdates", sp.exdates);
 
-                self.client.run(q).await?;
-                self.project_entities(&id, "Condition", &mentioned_entities).await?;
-                self.project_locations(&id, "Condition", &locations).await?;
-                self.set_embedding("Condition", &id, &title, &summary).await;
-                Ok(ApplyResult::Applied)
+                let mut ops = vec![Op::Run(q)];
+                ops.extend(self.plan_entities(&id, "Condition", &mentioned_entities));
+                ops.extend(self.plan_locations(&id, "Condition", &locations));
+                ops.push(Op::Embed { label: "Condition", id, title, summary });
+                Plan::applied(ops)
             }
 
             // ---------------------------------------------------------
@@ -552,19 +699,19 @@ impl GraphProjector {
             // ---------------------------------------------------------
             WorldEvent::GatheringCancelled { signal_id, reason, .. } => {
                 debug!(signal_id = %signal_id, reason = %reason, "GatheringCancelled (no-op placeholder)");
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
             WorldEvent::ResourceDepleted { signal_id, reason, .. } => {
                 debug!(signal_id = %signal_id, reason = %reason, "ResourceDepleted (no-op placeholder)");
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
             WorldEvent::AnnouncementRetracted { signal_id, reason, .. } => {
                 debug!(signal_id = %signal_id, reason = %reason, "AnnouncementRetracted (no-op placeholder)");
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
             WorldEvent::CitationRetracted { citation_id, reason, .. } => {
                 debug!(citation_id = %citation_id, reason = %reason, "CitationRetracted (no-op placeholder)");
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
             WorldEvent::DetailsChanged { signal_id, node_type, title, summary, .. } => {
                 let label = match node_type {
@@ -576,7 +723,7 @@ impl GraphProjector {
                     NodeType::Condition => "Condition",
                     NodeType::Citation => {
                         debug!(signal_id = %signal_id, "DetailsChanged on Citation — skipping");
-                        return Ok(ApplyResult::NoOp);
+                        return Plan::skip();
                     }
                 };
 
@@ -590,11 +737,11 @@ impl GraphProjector {
                 .param("summary", summary.as_str())
                 .param("ts", format_dt_from_event(event));
 
-                self.client.run(q).await?;
-                self.set_embedding(label, &signal_id, &title, &summary).await;
-
                 info!(signal_id = %signal_id, label = label, "DetailsChanged projected");
-                Ok(ApplyResult::Applied)
+                Plan::applied(vec![
+                    Op::Run(q),
+                    Op::Embed { label, id: signal_id, title, summary },
+                ])
             }
 
             // ---------------------------------------------------------
@@ -648,8 +795,7 @@ impl GraphProjector {
                     channel_type.map(|ct| ct.as_str()).unwrap_or("press"),
                 );
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -682,8 +828,7 @@ impl GraphProjector {
                 .param("description", description.as_str())
                 .param("ts", format_dt_from_event(event));
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -740,12 +885,11 @@ impl GraphProjector {
                     }
                     _ => {
                         warn!(role = role.as_str(), "Unknown resource edge role, skipping");
-                        return Ok(ApplyResult::NoOp);
+                        return Plan::skip();
                     }
                 };
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -753,7 +897,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             WorldEvent::SourceLinkDiscovered { .. } => {
                 debug!(seq = event.position, "No-op (source link — informational)");
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
 
             WorldEvent::ActorLinkedToSource {
@@ -768,8 +912,7 @@ impl GraphProjector {
                 .param("actor_id", actor_id.to_string())
                 .param("source_id", source_id.to_string());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             WorldEvent::SignalLinkedToSource {
@@ -786,8 +929,7 @@ impl GraphProjector {
                 .param("signal_id", signal_id.to_string())
                 .param("source_id", source_id.to_string());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
         }
@@ -797,100 +939,58 @@ impl GraphProjector {
     // System decisions — editorial judgments
     // =================================================================
 
-    async fn project_system(
+    fn plan_system(
         &self,
         system: SystemEvent,
         event: &PersistedEvent,
-    ) -> Result<ApplyResult> {
+    ) -> Plan {
         match system {
             // ---------------------------------------------------------
             // Sensitivity + implied queries (paired with discoveries)
             // ---------------------------------------------------------
             SystemEvent::SensitivityClassified { signal_id, level } => {
-                let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $id})
-                     OPTIONAL MATCH (a:Resource {id: $id})
-                     OPTIONAL MATCH (n:HelpRequest {id: $id})
-                     OPTIONAL MATCH (nc:Announcement {id: $id})
-                     OPTIONAL MATCH (t:Concern {id: $id})
-                     WITH coalesce(g, a, n, nc, t) AS node
-                     WHERE node IS NOT NULL
-                     SET node.sensitivity = $level",
-                )
-                .param("id", signal_id.to_string())
-                .param("level", level.as_str());
-
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::SetSignalProp {
+                    signal_id: signal_id.to_string(),
+                    property: "sensitivity",
+                    value: neo4rs::BoltType::String(neo4rs::BoltString::from(level.as_str())),
+                    include_condition: false,
+                })
             }
 
             SystemEvent::ToneClassified { signal_id, tone } => {
-                let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $id})
-                     OPTIONAL MATCH (a:Resource {id: $id})
-                     OPTIONAL MATCH (n:HelpRequest {id: $id})
-                     OPTIONAL MATCH (nc:Announcement {id: $id})
-                     OPTIONAL MATCH (t:Concern {id: $id})
-                     WITH coalesce(g, a, n, nc, t) AS node
-                     WHERE node IS NOT NULL
-                     SET node.tone = $value",
-                )
-                .param("id", signal_id.to_string())
-                .param("value", tone.to_string());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::SetSignalProp {
+                    signal_id: signal_id.to_string(),
+                    property: "tone",
+                    value: neo4rs::BoltType::String(neo4rs::BoltString::from(tone.to_string().as_str())),
+                    include_condition: false,
+                })
             }
 
             SystemEvent::SeverityClassified { signal_id, severity } => {
-                let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $id})
-                     OPTIONAL MATCH (a:Resource {id: $id})
-                     OPTIONAL MATCH (n:HelpRequest {id: $id})
-                     OPTIONAL MATCH (nc:Announcement {id: $id})
-                     OPTIONAL MATCH (t:Concern {id: $id})
-                     WITH coalesce(g, a, n, nc, t) AS node
-                     WHERE node IS NOT NULL
-                     SET node.severity = $value",
-                )
-                .param("id", signal_id.to_string())
-                .param("value", severity.to_string());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::SetSignalProp {
+                    signal_id: signal_id.to_string(),
+                    property: "severity",
+                    value: neo4rs::BoltType::String(neo4rs::BoltString::from(severity.to_string().as_str())),
+                    include_condition: false,
+                })
             }
 
             SystemEvent::UrgencyClassified { signal_id, urgency } => {
-                let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $id})
-                     OPTIONAL MATCH (a:Resource {id: $id})
-                     OPTIONAL MATCH (n:HelpRequest {id: $id})
-                     OPTIONAL MATCH (nc:Announcement {id: $id})
-                     OPTIONAL MATCH (t:Concern {id: $id})
-                     WITH coalesce(g, a, n, nc, t) AS node
-                     WHERE node IS NOT NULL
-                     SET node.urgency = $value",
-                )
-                .param("id", signal_id.to_string())
-                .param("value", urgency.to_string());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::SetSignalProp {
+                    signal_id: signal_id.to_string(),
+                    property: "urgency",
+                    value: neo4rs::BoltType::String(neo4rs::BoltString::from(urgency.to_string().as_str())),
+                    include_condition: false,
+                })
             }
 
             SystemEvent::CategoryClassified { signal_id, category } => {
-                let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $id})
-                     OPTIONAL MATCH (a:Resource {id: $id})
-                     OPTIONAL MATCH (n:HelpRequest {id: $id})
-                     OPTIONAL MATCH (nc:Announcement {id: $id})
-                     OPTIONAL MATCH (t:Concern {id: $id})
-                     OPTIONAL MATCH (cond:Condition {id: $id})
-                     WITH coalesce(g, a, n, nc, t, cond) AS node
-                     WHERE node IS NOT NULL
-                     SET node.category = $value",
-                )
-                .param("id", signal_id.to_string())
-                .param("value", category.as_str());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::SetSignalProp {
+                    signal_id: signal_id.to_string(),
+                    property: "category",
+                    value: neo4rs::BoltType::String(neo4rs::BoltString::from(category.as_str())),
+                    include_condition: true,
+                })
             }
 
             SystemEvent::ImpliedQueriesExtracted { signal_id, queries } => {
@@ -907,8 +1007,7 @@ impl GraphProjector {
                 .param("id", signal_id.to_string())
                 .param("queries", queries);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -928,8 +1027,7 @@ impl GraphProjector {
                 .param("id", signal_id.to_string())
                 .param("ts", format_dt_from_event(event));
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -940,22 +1038,12 @@ impl GraphProjector {
                 new_corroboration_count,
                 ..
             } => {
-                // Find entity across all signal types and set count
-                let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $id})
-                     OPTIONAL MATCH (a:Resource {id: $id})
-                     OPTIONAL MATCH (n:HelpRequest {id: $id})
-                     OPTIONAL MATCH (nc:Announcement {id: $id})
-                     OPTIONAL MATCH (t:Concern {id: $id})
-                     WITH coalesce(g, a, n, nc, t) AS node
-                     WHERE node IS NOT NULL
-                     SET node.corroboration_count = $count",
-                )
-                .param("id", signal_id.to_string())
-                .param("count", new_corroboration_count as i64);
-
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::SetSignalProp {
+                    signal_id: signal_id.to_string(),
+                    property: "corroboration_count",
+                    value: neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(new_corroboration_count as i64)),
+                    include_condition: false,
+                })
             }
 
             // ---------------------------------------------------------
@@ -976,8 +1064,7 @@ impl GraphProjector {
                 .param("ids", ids)
                 .param("ts", format_dt(&confirmed_at));
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::ConfidenceScored {
@@ -985,33 +1072,21 @@ impl GraphProjector {
                 new_confidence,
                 ..
             } => {
-                let q = query(
-                    "OPTIONAL MATCH (g:Gathering {id: $id})
-                     OPTIONAL MATCH (a:Resource {id: $id})
-                     OPTIONAL MATCH (n:HelpRequest {id: $id})
-                     OPTIONAL MATCH (nc:Announcement {id: $id})
-                     OPTIONAL MATCH (t:Concern {id: $id})
-                     WITH coalesce(g, a, n, nc, t) AS node
-                     WHERE node IS NOT NULL
-                     SET node.confidence = $confidence",
-                )
-                .param("id", signal_id.to_string())
-                .param("confidence", new_confidence as f64);
-
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::SetSignalProp {
+                    signal_id: signal_id.to_string(),
+                    property: "confidence",
+                    value: neo4rs::BoltType::Float(neo4rs::BoltFloat::new(new_confidence as f64)),
+                    include_condition: false,
+                })
             }
 
             SystemEvent::ObservationRejected { .. } => {
-                debug!(
-                    seq = event.position,
-                    "No-op (observation rejected — informational)"
-                );
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
 
             SystemEvent::SignalsExpired { signals } => {
                 let ts = format_dt_from_event(event);
+                let mut ops = Vec::new();
                 for s in signals.iter() {
                     let label = node_type_label(s.node_type);
                     let q = query(&format!(
@@ -1024,12 +1099,12 @@ impl GraphProjector {
                     .param("ts", ts.clone())
                     .param("reason", s.reason.as_str());
 
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
-                if signals.is_empty() {
-                    Ok(ApplyResult::NoOp)
+                if ops.is_empty() {
+                    Plan::skip()
                 } else {
-                    Ok(ApplyResult::Applied)
+                    Plan::applied(ops)
                 }
             }
 
@@ -1046,24 +1121,15 @@ impl GraphProjector {
                 ))
                 .param("id", signal_id.to_string());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::DuplicateDetected { .. } => {
-                debug!(
-                    seq = event.position,
-                    "No-op (duplicate detected — informational)"
-                );
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
 
             SystemEvent::ExtractionDroppedNoDate { .. } => {
-                debug!(
-                    seq = event.position,
-                    "No-op (extraction dropped — informational)"
-                );
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
 
             SystemEvent::ReviewVerdictReached {
@@ -1071,7 +1137,6 @@ impl GraphProjector {
                 new_status,
                 ..
             } => {
-                // Update the signal's review status
                 let q = query(
                     "OPTIONAL MATCH (g:Gathering {id: $id})
                      OPTIONAL MATCH (a:Resource {id: $id})
@@ -1086,10 +1151,8 @@ impl GraphProjector {
                 .param("id", signal_id.to_string())
                 .param("status", new_status.as_str());
 
-                self.client.run(q).await?;
+                let mut ops = vec![Op::Run(q)];
 
-                // Reactively promote situations: if all constituent signals
-                // are now 'accepted', promote the situation too.
                 if new_status == "accepted" {
                     let promote = query(
                         "OPTIONAL MATCH (g:Gathering {id: $id})
@@ -1110,10 +1173,10 @@ impl GraphProjector {
                     )
                     .param("id", signal_id.to_string());
 
-                    self.client.run(promote).await?;
+                    ops.push(Op::Run(promote));
                 }
 
-                Ok(ApplyResult::Applied)
+                Plan::applied(ops)
             }
 
             SystemEvent::ImpliedQueriesConsumed { signal_ids } => {
@@ -1125,8 +1188,7 @@ impl GraphProjector {
                 )
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -1137,48 +1199,43 @@ impl GraphProjector {
                 correction,
                 ..
             } => {
-                match correction {
+                let ops = match correction {
                     GatheringCorrection::Title { new, .. } => {
-                        self.set_str("Gathering", signal_id, "title", &new).await?
+                        vec![self.plan_set_str("Gathering", signal_id, "title", &new)]
                     }
                     GatheringCorrection::Summary { new, .. } => {
-                        self.set_str("Gathering", signal_id, "summary", &new)
-                            .await?
+                        vec![self.plan_set_str("Gathering", signal_id, "summary", &new)]
                     }
                     GatheringCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Gathering", signal_id, "sensitivity", new.as_str())
-                            .await?
+                        vec![self.plan_set_str("Gathering", signal_id, "sensitivity", new.as_str())]
                     }
                     GatheringCorrection::Location { new, .. } => {
-                        self.update_location("Gathering", signal_id, &new).await?
+                        self.plan_update_location("Gathering", signal_id, &new)
                     }
                     GatheringCorrection::Schedule { new, .. } => {
-                        self.set_schedule("Gathering", signal_id, &new).await?
+                        vec![self.plan_set_schedule("Gathering", signal_id, &new)]
                     }
                     GatheringCorrection::Organizer { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Gathering",
                             signal_id,
                             "organizer",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     GatheringCorrection::ActionUrl { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Gathering",
                             signal_id,
                             "action_url",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     GatheringCorrection::Unknown => {
-                        debug!("Ignoring unknown gathering correction field");
-                        return Ok(ApplyResult::NoOp);
+                        return Plan::skip();
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::applied(ops)
             }
 
             SystemEvent::ResourceCorrected {
@@ -1186,43 +1243,38 @@ impl GraphProjector {
                 correction,
                 ..
             } => {
-                match correction {
+                let ops = match correction {
                     ResourceCorrection::Title { new, .. } => {
-                        self.set_str("Resource", signal_id, "title", &new).await?
+                        vec![self.plan_set_str("Resource", signal_id, "title", &new)]
                     }
                     ResourceCorrection::Summary { new, .. } => {
-                        self.set_str("Resource", signal_id, "summary", &new).await?
+                        vec![self.plan_set_str("Resource", signal_id, "summary", &new)]
                     }
                     ResourceCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Resource", signal_id, "sensitivity", new.as_str())
-                            .await?
+                        vec![self.plan_set_str("Resource", signal_id, "sensitivity", new.as_str())]
                     }
                     ResourceCorrection::Location { new, .. } => {
-                        self.update_location("Resource", signal_id, &new).await?
+                        self.plan_update_location("Resource", signal_id, &new)
                     }
                     ResourceCorrection::ActionUrl { new, .. } => {
-                        self.set_str("Resource", signal_id, "action_url", new.as_deref().unwrap_or(""))
-                            .await?
+                        vec![self.plan_set_str("Resource", signal_id, "action_url", new.as_deref().unwrap_or(""))]
                     }
                     ResourceCorrection::Availability { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Resource",
                             signal_id,
                             "availability",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     ResourceCorrection::IsOngoing { new, .. } => {
-                        self.set_bool("Resource", signal_id, "is_ongoing", new.unwrap_or(false))
-                            .await?
+                        vec![self.plan_set_bool("Resource", signal_id, "is_ongoing", new.unwrap_or(false))]
                     }
                     ResourceCorrection::Unknown => {
-                        debug!("Ignoring unknown resource correction field");
-                        return Ok(ApplyResult::NoOp);
+                        return Plan::skip();
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::applied(ops)
             }
 
             SystemEvent::HelpRequestCorrected {
@@ -1230,48 +1282,43 @@ impl GraphProjector {
                 correction,
                 ..
             } => {
-                match correction {
+                let ops = match correction {
                     HelpRequestCorrection::Title { new, .. } => {
-                        self.set_str("HelpRequest", signal_id, "title", &new).await?
+                        vec![self.plan_set_str("HelpRequest", signal_id, "title", &new)]
                     }
                     HelpRequestCorrection::Summary { new, .. } => {
-                        self.set_str("HelpRequest", signal_id, "summary", &new).await?
+                        vec![self.plan_set_str("HelpRequest", signal_id, "summary", &new)]
                     }
                     HelpRequestCorrection::Sensitivity { new, .. } => {
-                        self.set_str("HelpRequest", signal_id, "sensitivity", new.as_str())
-                            .await?
+                        vec![self.plan_set_str("HelpRequest", signal_id, "sensitivity", new.as_str())]
                     }
                     HelpRequestCorrection::Location { new, .. } => {
-                        self.update_location("HelpRequest", signal_id, &new).await?
+                        self.plan_update_location("HelpRequest", signal_id, &new)
                     }
                     HelpRequestCorrection::Urgency { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "HelpRequest",
                             signal_id,
                             "urgency",
                             new.map(|u| urgency_str(u)).unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     HelpRequestCorrection::WhatNeeded { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "HelpRequest",
                             signal_id,
                             "what_needed",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     HelpRequestCorrection::StatedGoal { new, .. } => {
-                        self.set_str("HelpRequest", signal_id, "stated_goal", new.as_deref().unwrap_or(""))
-                            .await?
+                        vec![self.plan_set_str("HelpRequest", signal_id, "stated_goal", new.as_deref().unwrap_or(""))]
                     }
                     HelpRequestCorrection::Unknown => {
-                        debug!("Ignoring unknown help request correction field");
-                        return Ok(ApplyResult::NoOp);
+                        return Plan::skip();
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::applied(ops)
             }
 
             SystemEvent::AnnouncementCorrected {
@@ -1279,42 +1326,39 @@ impl GraphProjector {
                 correction,
                 ..
             } => {
-                match correction {
+                let ops = match correction {
                     AnnouncementCorrection::Title { new, .. } => {
-                        self.set_str("Announcement", signal_id, "title", &new).await?
+                        vec![self.plan_set_str("Announcement", signal_id, "title", &new)]
                     }
                     AnnouncementCorrection::Summary { new, .. } => {
-                        self.set_str("Announcement", signal_id, "summary", &new).await?
+                        vec![self.plan_set_str("Announcement", signal_id, "summary", &new)]
                     }
                     AnnouncementCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Announcement", signal_id, "sensitivity", new.as_str())
-                            .await?
+                        vec![self.plan_set_str("Announcement", signal_id, "sensitivity", new.as_str())]
                     }
                     AnnouncementCorrection::Location { new, .. } => {
-                        self.update_location("Announcement", signal_id, &new).await?
+                        self.plan_update_location("Announcement", signal_id, &new)
                     }
                     AnnouncementCorrection::Category { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Announcement",
                             signal_id,
                             "category",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     AnnouncementCorrection::EffectiveDate { new, .. } => {
                         let val = new.map(|dt| format_dt(&dt)).unwrap_or_default();
                         let q = query("MATCH (n:Announcement {id: $id}) SET n.effective_date = CASE WHEN $value = '' THEN null ELSE datetime($value) END")
                             .param("id", signal_id.to_string())
                             .param("value", val);
-                        self.client.run(q).await?;
+                        vec![Op::Run(q)]
                     }
                     AnnouncementCorrection::Unknown => {
-                        debug!("Ignoring unknown announcement correction field");
-                        return Ok(ApplyResult::NoOp);
+                        return Plan::skip();
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::applied(ops)
             }
 
             SystemEvent::ConcernCorrected {
@@ -1322,35 +1366,32 @@ impl GraphProjector {
                 correction,
                 ..
             } => {
-                match correction {
+                let ops = match correction {
                     ConcernCorrection::Title { new, .. } => {
-                        self.set_str("Concern", signal_id, "title", &new).await?
+                        vec![self.plan_set_str("Concern", signal_id, "title", &new)]
                     }
                     ConcernCorrection::Summary { new, .. } => {
-                        self.set_str("Concern", signal_id, "summary", &new).await?
+                        vec![self.plan_set_str("Concern", signal_id, "summary", &new)]
                     }
                     ConcernCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Concern", signal_id, "sensitivity", new.as_str())
-                            .await?
+                        vec![self.plan_set_str("Concern", signal_id, "sensitivity", new.as_str())]
                     }
                     ConcernCorrection::Location { new, .. } => {
-                        self.update_location("Concern", signal_id, &new).await?
+                        self.plan_update_location("Concern", signal_id, &new)
                     }
                     ConcernCorrection::Opposing { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Concern",
                             signal_id,
                             "opposing",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     ConcernCorrection::Unknown => {
-                        debug!("Ignoring unknown concern correction field");
-                        return Ok(ApplyResult::NoOp);
+                        return Plan::skip();
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::applied(ops)
             }
 
             SystemEvent::ConditionCorrected {
@@ -1358,62 +1399,56 @@ impl GraphProjector {
                 correction,
                 ..
             } => {
-                match correction {
+                let ops = match correction {
                     ConditionCorrection::Title { new, .. } => {
-                        self.set_str("Condition", signal_id, "title", &new).await?
+                        vec![self.plan_set_str("Condition", signal_id, "title", &new)]
                     }
                     ConditionCorrection::Summary { new, .. } => {
-                        self.set_str("Condition", signal_id, "summary", &new).await?
+                        vec![self.plan_set_str("Condition", signal_id, "summary", &new)]
                     }
                     ConditionCorrection::Sensitivity { new, .. } => {
-                        self.set_str("Condition", signal_id, "sensitivity", new.as_str())
-                            .await?
+                        vec![self.plan_set_str("Condition", signal_id, "sensitivity", new.as_str())]
                     }
                     ConditionCorrection::Location { new, .. } => {
-                        self.update_location("Condition", signal_id, &new).await?
+                        self.plan_update_location("Condition", signal_id, &new)
                     }
                     ConditionCorrection::Subject { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Condition",
                             signal_id,
                             "subject",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     ConditionCorrection::ObservedBy { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Condition",
                             signal_id,
                             "observed_by",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     ConditionCorrection::Measurement { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Condition",
                             signal_id,
                             "measurement",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     ConditionCorrection::AffectedScope { new, .. } => {
-                        self.set_str(
+                        vec![self.plan_set_str(
                             "Condition",
                             signal_id,
                             "affected_scope",
                             new.as_deref().unwrap_or(""),
-                        )
-                        .await?
+                        )]
                     }
                     ConditionCorrection::Unknown => {
-                        debug!("Ignoring unknown condition correction field");
-                        return Ok(ApplyResult::NoOp);
+                        return Plan::skip();
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::applied(ops)
             }
 
             // ---------------------------------------------------------
@@ -1465,8 +1500,7 @@ impl GraphProjector {
                 .param::<Option<String>>("location_name", location_name)
                 .param("ts", format_dt_from_event(event));
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::ActorLinkedToSignal {
@@ -1483,8 +1517,7 @@ impl GraphProjector {
                 .param("signal_id", signal_id.to_string())
                 .param("role", role.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::ActorLocationIdentified {
@@ -1504,8 +1537,7 @@ impl GraphProjector {
                 .param("lng", location_lng)
                 .param("name", location_name.unwrap_or_default());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::ActorProfileEnriched {
@@ -1522,8 +1554,7 @@ impl GraphProjector {
                 .param("bio", bio.unwrap_or_default())
                 .param("url", external_url.unwrap_or_default());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -1553,8 +1584,7 @@ impl GraphProjector {
                 .param("kept_id", kept_id.to_string())
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::OrphanedActorsCleaned { actor_ids } => {
@@ -1566,8 +1596,7 @@ impl GraphProjector {
                 )
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -1592,8 +1621,7 @@ impl GraphProjector {
                 .param("strength", strength)
                 .param("explanation", explanation.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::ConcernLinked {
@@ -1615,8 +1643,7 @@ impl GraphProjector {
                 .param("strength", strength)
                 .param("explanation", explanation.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -1670,39 +1697,38 @@ impl GraphProjector {
                 .param("structured_state", structured_state.as_str())
                 .param("ts", format_dt_from_event(event));
 
-                self.client.run(q).await?;
+                let mut ops = vec![Op::Run(q)];
 
-                // SET optional enrichment fields when present
                 let id_str = situation_id.to_string();
                 if let Some(th) = tension_heat {
                     let q = query("MATCH (s:Situation {id: $id}) SET s.tension_heat = $v")
                         .param("id", id_str.clone()).param("v", th);
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
                 if let Some(ref cl) = clarity {
                     let q = query("MATCH (s:Situation {id: $id}) SET s.clarity = $v")
                         .param("id", id_str.clone()).param("v", cl.as_str());
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
                 if let Some(sc) = signal_count {
                     let q = query("MATCH (s:Situation {id: $id}) SET s.signal_count = $v")
                         .param("id", id_str.clone()).param("v", sc as i64);
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
                 if let Some(ref ne) = narrative_embedding {
                     let vals: Vec<f64> = ne.iter().map(|v| *v as f64).collect();
                     let q = query("MATCH (s:Situation {id: $id}) SET s.narrative_embedding = $v")
                         .param("id", id_str.clone()).param("v", vals);
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
                 if let Some(ref ce) = causal_embedding {
                     let vals: Vec<f64> = ce.iter().map(|v| *v as f64).collect();
                     let q = query("MATCH (s:Situation {id: $id}) SET s.causal_embedding = $v")
                         .param("id", id_str).param("v", vals);
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
 
-                Ok(ApplyResult::Applied)
+                Plan::applied(ops)
             }
 
             SystemEvent::SituationChanged {
@@ -1711,51 +1737,43 @@ impl GraphProjector {
             } => {
                 let id_str = situation_id.to_string();
                 let ts = format_dt_from_event(event);
-                match change {
+                let q = match change {
                     SituationChange::Headline { new, .. } => {
-                        let q = query("MATCH (s:Situation {id: $id}) SET s.headline = $value, s.last_updated = datetime($ts)")
-                            .param("id", id_str).param("value", new.as_str()).param("ts", ts);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Situation {id: $id}) SET s.headline = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts)
                     }
                     SituationChange::Lede { new, .. } => {
-                        let q = query("MATCH (s:Situation {id: $id}) SET s.lede = $value, s.last_updated = datetime($ts)")
-                            .param("id", id_str).param("value", new.as_str()).param("ts", ts);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Situation {id: $id}) SET s.lede = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts)
                     }
                     SituationChange::Arc { new, .. } => {
-                        let q = query("MATCH (s:Situation {id: $id}) SET s.arc = $value, s.last_updated = datetime($ts)")
-                            .param("id", id_str).param("value", new.to_string()).param("ts", ts);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Situation {id: $id}) SET s.arc = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.to_string()).param("ts", ts)
                     }
                     SituationChange::Temperature { new, .. } => {
-                        let q = query("MATCH (s:Situation {id: $id}) SET s.temperature = $value, s.last_updated = datetime($ts)")
-                            .param("id", id_str).param("value", new).param("ts", ts);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Situation {id: $id}) SET s.temperature = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new).param("ts", ts)
                     }
                     SituationChange::Location { new, .. } => {
                         let (lat, lng) = location_lat_lng(&new);
                         let name = location_name_str(&new);
-                        let q = query("MATCH (s:Situation {id: $id}) SET s.centroid_lat = $lat, s.centroid_lng = $lng, s.location_name = $name, s.last_updated = datetime($ts)")
-                            .param("id", id_str).param("lat", lat).param("lng", lng).param("name", name).param("ts", ts);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Situation {id: $id}) SET s.centroid_lat = $lat, s.centroid_lng = $lng, s.location_name = $name, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("lat", lat).param("lng", lng).param("name", name).param("ts", ts)
                     }
                     SituationChange::Sensitivity { new, .. } => {
-                        let q = query("MATCH (s:Situation {id: $id}) SET s.sensitivity = $value, s.last_updated = datetime($ts)")
-                            .param("id", id_str).param("value", new.as_str()).param("ts", ts);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Situation {id: $id}) SET s.sensitivity = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts)
                     }
                     SituationChange::Category { new, .. } => {
-                        let q = query("MATCH (s:Situation {id: $id}) SET s.category = $value, s.last_updated = datetime($ts)")
-                            .param("id", id_str).param("value", new.as_deref().unwrap_or("")).param("ts", ts);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Situation {id: $id}) SET s.category = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_deref().unwrap_or("")).param("ts", ts)
                     }
                     SituationChange::StructuredState { new, .. } => {
-                        let q = query("MATCH (s:Situation {id: $id}) SET s.structured_state = $value, s.last_updated = datetime($ts)")
-                            .param("id", id_str).param("value", new.as_str()).param("ts", ts);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Situation {id: $id}) SET s.structured_state = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts)
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::SituationPromoted { situation_ids } => {
@@ -1767,8 +1785,7 @@ impl GraphProjector {
                 )
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::DispatchCreated {
@@ -1812,9 +1829,8 @@ impl GraphProjector {
                 .param("flag_reason", flag_reason.unwrap_or_default())
                 .param("fidelity", fidelity_score.unwrap_or(-1.0));
 
-                self.client.run(q).await?;
+                let mut ops = vec![Op::Run(q)];
 
-                // Supersedes edge
                 if let Some(ref sup_id) = supersedes {
                     let q = query(
                         "MATCH (d:Dispatch {id: $id}), (old:Dispatch {id: $old_id})
@@ -1822,10 +1838,9 @@ impl GraphProjector {
                     )
                     .param("id", dispatch_id.to_string())
                     .param("old_id", sup_id.to_string());
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
 
-                // CITES edges to signals
                 if !signal_ids.is_empty() {
                     let ids: Vec<String> = signal_ids.iter().map(|id| id.to_string()).collect();
                     let q = query(
@@ -1837,18 +1852,17 @@ impl GraphProjector {
                     )
                     .param("did", dispatch_id.to_string())
                     .param("sids", ids);
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
 
-                // Update dispatch count on situation
                 let q = query(
                     "MATCH (s:Situation {id: $sid})
                      SET s.dispatch_count = coalesce(s.dispatch_count, 0) + 1",
                 )
                 .param("sid", situation_id.to_string());
-                self.client.run(q).await?;
+                ops.push(Op::Run(q));
 
-                Ok(ApplyResult::Applied)
+                Plan::applied(ops)
             }
 
             SystemEvent::SignalAssignedToSituation {
@@ -1878,14 +1892,14 @@ impl GraphProjector {
                 .param("reasoning", reasoning.as_str())
                 .param("label", signal_label.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::SituationTagsAggregated {
                 situation_id,
                 tag_slugs,
             } => {
+                let mut ops = Vec::new();
                 for slug in &tag_slugs {
                     let name = slug.replace('-', " ");
                     let q = query(
@@ -1897,9 +1911,9 @@ impl GraphProjector {
                     .param("sid", situation_id.to_string())
                     .param("slug", slug.as_str())
                     .param("name", name.as_str());
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
-                Ok(ApplyResult::Applied)
+                Plan::applied(ops)
             }
 
             SystemEvent::DispatchFlaggedForReview {
@@ -1914,8 +1928,7 @@ impl GraphProjector {
                 .param("id", dispatch_id.to_string())
                 .param("reason", reason.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::SignalsPendingWeaving {
@@ -1931,8 +1944,7 @@ impl GraphProjector {
                 )
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -1942,6 +1954,7 @@ impl GraphProjector {
                 signal_id,
                 tag_slugs,
             } => {
+                let mut ops = Vec::new();
                 for slug in &tag_slugs {
                     let name = slug.replace('-', " ");
                     let q = query(
@@ -1957,9 +1970,9 @@ impl GraphProjector {
                     .param("slug", slug.as_str())
                     .param("name", name.as_str());
 
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
-                Ok(ApplyResult::Applied)
+                Plan::applied(ops)
             }
 
             SystemEvent::TagSuppressed {
@@ -1975,15 +1988,13 @@ impl GraphProjector {
                 .param("situation_id", situation_id.to_string())
                 .param("slug", tag_slug.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::TagsMerged {
                 source_slug,
                 target_slug,
             } => {
-                // Step 1: Repoint TAGGED edges
                 let q1 = query(
                     "MATCH (src:Tag {slug: $source}), (tgt:Tag {slug: $target})
                      WITH src, tgt
@@ -1995,9 +2006,7 @@ impl GraphProjector {
                 )
                 .param("source", source_slug.as_str())
                 .param("target", target_slug.as_str());
-                self.client.run(q1).await?;
 
-                // Step 2: Repoint SUPPRESSED_TAG edges
                 let q2 = query(
                     "MATCH (src:Tag {slug: $source}), (tgt:Tag {slug: $target})
                      WITH src, tgt
@@ -2009,16 +2018,13 @@ impl GraphProjector {
                 )
                 .param("source", source_slug.as_str())
                 .param("target", target_slug.as_str());
-                self.client.run(q2).await?;
 
-                // Step 3: Delete source tag
                 let q3 = query(
                     "MATCH (t:Tag {slug: $source}) DETACH DELETE t",
                 )
                 .param("source", source_slug.as_str());
-                self.client.run(q3).await?;
 
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::RunAll(vec![q1, q2, q3]))
             }
 
             // ---------------------------------------------------------
@@ -2040,8 +2046,7 @@ impl GraphProjector {
                 )
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::FakeCoordinatesNulled { signal_ids, .. } => {
@@ -2062,8 +2067,7 @@ impl GraphProjector {
                 )
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::OrphanedCitationsCleaned { citation_ids } => {
@@ -2075,8 +2079,7 @@ impl GraphProjector {
                 )
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2088,25 +2091,23 @@ impl GraphProjector {
                 ..
             } => {
                 let key = canonical_key.as_str();
-                match change {
+                let q = match change {
                     SystemSourceChange::QualityPenalty { new, .. } => {
-                        let q = query(
+                        query(
                             "MATCH (s:Source {canonical_key: $key}) SET s.quality_penalty = $value",
                         )
                         .param("key", key)
-                        .param("value", new);
-                        self.client.run(q).await?;
+                        .param("value", new)
                     }
                     SystemSourceChange::GapContext { new, .. } => {
-                        let q = query(
+                        query(
                             "MATCH (s:Source {canonical_key: $key}) SET s.gap_context = $value",
                         )
                         .param("key", key)
-                        .param("value", new.as_deref().unwrap_or(""));
-                        self.client.run(q).await?;
+                        .param("value", new.as_deref().unwrap_or(""))
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2114,6 +2115,7 @@ impl GraphProjector {
             // ---------------------------------------------------------
             SystemEvent::SourcesRegistered { sources } => {
                 let ts = format_dt_from_event(event);
+                let mut ops = Vec::new();
                 for source in sources {
                     let q = query(
                         "MERGE (s:Source {canonical_key: $canonical_key})
@@ -2158,7 +2160,7 @@ impl GraphProjector {
                     .param("cw_discussion", source.channel_weights.discussion)
                     .param("cw_events", source.channel_weights.events);
 
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
 
                     if let Some(parent_key) = &source.discovered_from_key {
                         let link_q = query(
@@ -2168,10 +2170,10 @@ impl GraphProjector {
                         )
                         .param("child_key", source.canonical_key.as_str())
                         .param("parent_key", parent_key.as_str());
-                        self.client.run(link_q).await?;
+                        ops.push(Op::Run(link_q));
                     }
                 }
-                Ok(ApplyResult::Applied)
+                Plan::applied(ops)
             }
 
             SystemEvent::SourceChanged {
@@ -2180,41 +2182,36 @@ impl GraphProjector {
                 ..
             } => {
                 let key = canonical_key.as_str();
-                match change {
+                let q = match change {
                     SourceChange::Weight { new, .. } => {
-                        let q =
-                            query("MATCH (s:Source {canonical_key: $key}) SET s.weight = $value")
-                                .param("key", key)
-                                .param("value", new);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Source {canonical_key: $key}) SET s.weight = $value")
+                            .param("key", key)
+                            .param("value", new)
                     }
                     SourceChange::Url { new, .. } => {
-                        let q = query("MATCH (s:Source {canonical_key: $key}) SET s.url = $value")
+                        query("MATCH (s:Source {canonical_key: $key}) SET s.url = $value")
                             .param("key", key)
-                            .param("value", new.as_str());
-                        self.client.run(q).await?;
+                            .param("value", new.as_str())
                     }
                     SourceChange::Role { new, .. } => {
-                        let q = query(
+                        query(
                             "MATCH (s:Source {canonical_key: $key}) SET s.source_role = $value",
                         )
                         .param("key", key)
-                        .param("value", new.to_string());
-                        self.client.run(q).await?;
+                        .param("value", new.to_string())
                     }
                     SourceChange::Active { new, .. } => {
-                        let q =
-                            query("MATCH (s:Source {canonical_key: $key}) SET s.active = $value")
-                                .param("key", key)
-                                .param("value", new);
-                        self.client.run(q).await?;
+                        query("MATCH (s:Source {canonical_key: $key}) SET s.active = $value")
+                            .param("key", key)
+                            .param("value", new)
                     }
                     SourceChange::Cadence { new, .. } => {
                         if let Some(hours) = new {
-                            let q = query("MATCH (s:Source {canonical_key: $key}) SET s.cadence_hours = $value")
+                            query("MATCH (s:Source {canonical_key: $key}) SET s.cadence_hours = $value")
                                 .param("key", key)
-                                .param("value", hours as i64);
-                            self.client.run(q).await?;
+                                .param("value", hours as i64)
+                        } else {
+                            return Plan::skip();
                         }
                     }
                     SourceChange::ChannelWeight { channel, new, .. } => {
@@ -2222,13 +2219,12 @@ impl GraphProjector {
                         let cypher = format!(
                             "MATCH (s:Source {{canonical_key: $key}}) SET s.{prop} = $value"
                         );
-                        let q = query(&cypher)
+                        query(&cypher)
                             .param("key", key)
-                            .param("value", new);
-                        self.client.run(q).await?;
+                            .param("value", new)
                     }
-                }
-                Ok(ApplyResult::Applied)
+                };
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::SourceDeactivated { source_ids, .. } => {
@@ -2240,8 +2236,7 @@ impl GraphProjector {
                 )
                 .param("ids", ids);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::SourceSignalsCleared { canonical_key, .. } => {
@@ -2252,8 +2247,7 @@ impl GraphProjector {
                 )
                 .param("key", canonical_key.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::SourceDeleted { canonical_key, .. } => {
@@ -2263,8 +2257,7 @@ impl GraphProjector {
                 )
                 .param("key", canonical_key.as_str());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2293,13 +2286,12 @@ impl GraphProjector {
                 .param("created_by", created_by.as_str())
                 .param("ts", format_dt_from_event(event));
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::PinsConsumed { pin_ids } => {
                 if pin_ids.is_empty() {
-                    return Ok(ApplyResult::NoOp);
+                    return Plan::skip();
                 }
                 let ids: Vec<String> = pin_ids.iter().map(|id| id.to_string()).collect();
                 let q = query(
@@ -2308,8 +2300,7 @@ impl GraphProjector {
                      DETACH DELETE p",
                 )
                 .param("ids", ids);
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::DemandReceived {
@@ -2334,8 +2325,7 @@ impl GraphProjector {
                 .param("radius", radius_km)
                 .param("ts", format_dt_from_event(event));
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::SubmissionReceived {
@@ -2362,8 +2352,7 @@ impl GraphProjector {
                 .param("ts", format_dt_from_event(event))
                 .param("canonical_key", source_canonical_key.unwrap_or_default());
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2380,8 +2369,7 @@ impl GraphProjector {
                 )
                 .param("id", concern_id.to_string())
                 .param("ts", ts.as_str());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2397,8 +2385,7 @@ impl GraphProjector {
                 )
                 .param("key", canonical_key.as_str())
                 .param("embedding", embedding);
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2421,8 +2408,7 @@ impl GraphProjector {
                 .param("sit_id", situation_id.to_string())
                 .param("sig_ids", sig_id_strings)
                 .param("ts", format_dt_from_event(event));
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2440,7 +2426,7 @@ impl GraphProjector {
                     NodeType::Announcement => "Announcement",
                     NodeType::Concern => "Concern",
                     NodeType::Condition => "Condition",
-                    NodeType::Citation => return Ok(ApplyResult::NoOp),
+                    NodeType::Citation => return Plan::skip(),
                 };
                 let q = query(&format!(
                     "MATCH (n:{label} {{id: $id}})
@@ -2448,8 +2434,7 @@ impl GraphProjector {
                 ))
                 .param("id", signal_id.to_string())
                 .param("ts", format_dt(&investigated_at));
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::ExhaustedRetriesPromoted { .. } => {
@@ -2460,8 +2445,7 @@ impl GraphProjector {
                        AND n.curiosity_retry_count >= 3
                      SET n.curiosity_investigated = 'abandoned'",
                 );
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::ConcernLinkerOutcomeRecorded {
@@ -2472,7 +2456,7 @@ impl GraphProjector {
             } => {
                 let label = match label.as_str() {
                     "Gathering" | "Resource" | "HelpRequest" | "Announcement" => label.as_str(),
-                    _ => return Ok(ApplyResult::NoOp),
+                    _ => return Plan::skip(),
                 };
                 let cypher = if increment_retry {
                     format!(
@@ -2489,8 +2473,7 @@ impl GraphProjector {
                 let q = query(&cypher)
                     .param("id", signal_id.to_string())
                     .param("outcome", outcome.as_str());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::GatheringScouted {
@@ -2509,8 +2492,7 @@ impl GraphProjector {
                 .param("id", concern_id.to_string())
                 .param("ts", format_dt(&scouted_at))
                 .param("found", found_gatherings);
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2540,8 +2522,7 @@ impl GraphProjector {
                 .param("lat", lat)
                 .param("lng", lng)
                 .param("ts", format_dt(&discovered_at));
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::GathersAtPlaceLinked {
@@ -2555,8 +2536,7 @@ impl GraphProjector {
                 )
                 .param("sid", signal_id.to_string())
                 .param("slug", place_slug.as_str());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2569,8 +2549,7 @@ impl GraphProjector {
                 let sid = survivor_id.to_string();
                 let did = duplicate_id.to_string();
 
-                // Re-point RESPONDS_TO edges
-                let q = query(
+                let q1 = query(
                     "MATCH (sig)-[r:RESPONDS_TO]->(dup:Concern {id: $dup_id})
                      MATCH (survivor:Concern {id: $survivor_id})
                      WITH sig, r, survivor, dup
@@ -2581,10 +2560,8 @@ impl GraphProjector {
                 )
                 .param("dup_id", did.as_str())
                 .param("survivor_id", sid.as_str());
-                self.client.run(q).await?;
 
-                // Re-point DRAWN_TO edges
-                let q = query(
+                let q2 = query(
                     "MATCH (sig)-[r:DRAWN_TO]->(dup:Concern {id: $dup_id})
                      MATCH (survivor:Concern {id: $survivor_id})
                      WITH sig, r, survivor, dup
@@ -2595,10 +2572,8 @@ impl GraphProjector {
                 )
                 .param("dup_id", did.as_str())
                 .param("survivor_id", sid.as_str());
-                self.client.run(q).await?;
 
-                // Re-point PART_OF edges
-                let q = query(
+                let q3 = query(
                     "MATCH (dup:Concern {id: $dup_id})-[r:PART_OF]->(s:Situation)
                      MATCH (survivor:Concern {id: $survivor_id})
                      WHERE NOT (survivor)-[:PART_OF]->(s)
@@ -2608,30 +2583,24 @@ impl GraphProjector {
                 )
                 .param("dup_id", did.as_str())
                 .param("survivor_id", sid.as_str());
-                self.client.run(q).await?;
 
-                // Bump corroboration count
-                let q = query(
+                let q4 = query(
                     "MATCH (t:Concern {id: $survivor_id})
                      SET t.corroboration_count = coalesce(t.corroboration_count, 0) + 1",
                 )
                 .param("survivor_id", sid.as_str());
-                self.client.run(q).await?;
 
-                // Delete duplicate
-                let q = query("MATCH (t:Concern {id: $dup_id}) DETACH DELETE t")
+                let q5 = query("MATCH (t:Concern {id: $dup_id}) DETACH DELETE t")
                     .param("dup_id", did.as_str());
-                self.client.run(q).await?;
 
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::RunAll(vec![q1, q2, q3, q4, q5]))
             }
 
             // ---------------------------------------------------------
             // System curiosity
             // ---------------------------------------------------------
             SystemEvent::ExpansionQueryCollected { .. } => {
-                debug!(seq = event.position, "No-op (expansion query — informational)");
-                Ok(ApplyResult::NoOp)
+                Plan::skip()
             }
 
             // ---------------------------------------------------------
@@ -2643,8 +2612,8 @@ impl GraphProjector {
                 scraped_at,
             } => {
                 let now = format_dt(&scraped_at);
-                if signals_produced > 0 {
-                    let q = query(
+                let q = if signals_produced > 0 {
+                    query(
                         "MATCH (s:Source {canonical_key: $key})
                          SET s.last_scraped = datetime($now),
                              s.last_produced_signal = datetime($now),
@@ -2654,20 +2623,18 @@ impl GraphProjector {
                     )
                     .param("key", canonical_key.as_str())
                     .param("now", now.as_str())
-                    .param("count", signals_produced as i64);
-                    self.client.run(q).await?;
+                    .param("count", signals_produced as i64)
                 } else {
-                    let q = query(
+                    query(
                         "MATCH (s:Source {canonical_key: $key})
                          SET s.last_scraped = datetime($now),
                              s.consecutive_empty_runs = s.consecutive_empty_runs + 1,
                              s.scrape_count = coalesce(s.scrape_count, 0) + 1",
                     )
                     .param("key", canonical_key.as_str())
-                    .param("now", now.as_str());
-                    self.client.run(q).await?;
-                }
-                Ok(ApplyResult::Applied)
+                    .param("now", now.as_str())
+                };
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2683,8 +2650,7 @@ impl GraphProjector {
                 )
                 .param("key", canonical_key.as_str())
                 .param("count", sources_discovered as i64);
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2704,8 +2670,7 @@ impl GraphProjector {
                 )
                 .param("headline", headline.as_str())
                 .param("factor", factor);
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             // ---------------------------------------------------------
@@ -2720,11 +2685,11 @@ impl GraphProjector {
                 )
                 .param("id", situation_id.to_string())
                 .param("score", echo_score);
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::CauseHeatComputed { scores } => {
+                let mut queries = Vec::new();
                 for score in &scores {
                     let q = query(&format!(
                         "MATCH (n:{} {{id: $id}}) SET n.cause_heat = $heat",
@@ -2732,21 +2697,21 @@ impl GraphProjector {
                     ))
                     .param("id", score.signal_id.to_string())
                     .param("heat", score.cause_heat);
-                    self.client.run(q).await?;
+                    queries.push(q);
                 }
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::RunAll(queries))
             }
 
             SystemEvent::SignalDiversityComputed { metrics } => {
                 if metrics.is_empty() {
-                    return Ok(ApplyResult::NoOp);
+                    return Plan::skip();
                 }
-                // Group by label for efficient batch writes
                 let mut by_label: std::collections::HashMap<String, Vec<&SignalDiversityScore>> =
                     std::collections::HashMap::new();
                 for m in &metrics {
                     by_label.entry(m.label.clone()).or_default().push(m);
                 }
+                let mut ops = Vec::new();
                 for (label, rows) in &by_label {
                     let params: Vec<neo4rs::BoltType> = rows
                         .iter()
@@ -2789,14 +2754,14 @@ impl GraphProjector {
                     ))
                     .param("rows", params);
 
-                    self.client.run(q).await?;
+                    ops.push(Op::Run(q));
                 }
-                Ok(ApplyResult::Applied)
+                Plan::applied(ops)
             }
 
             SystemEvent::ActorStatsComputed { stats } => {
                 if stats.is_empty() {
-                    return Ok(ApplyResult::NoOp);
+                    return Plan::skip();
                 }
                 let params: Vec<neo4rs::BoltType> = stats
                     .iter()
@@ -2825,19 +2790,15 @@ impl GraphProjector {
                 )
                 .param("rows", params);
 
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
             SystemEvent::SimilarityEdgesRebuilt { edges } => {
-                // Delete all existing SIMILAR_TO edges
-                let q = query(
+                let mut queries = vec![query(
                     "MATCH ()-[e:SIMILAR_TO]->() DELETE e",
-                );
-                self.client.run(q).await?;
+                )];
 
                 if !edges.is_empty() {
-                    // UNWIND + MERGE new edges in batches
                     for batch in edges.chunks(500) {
                         let edge_data: Vec<neo4rs::BoltType> = batch
                             .iter()
@@ -2871,10 +2832,10 @@ impl GraphProjector {
                              SET r.weight = edge.weight",
                         )
                         .param("edges", edge_data);
-                        self.client.run(q).await?;
+                        queries.push(q);
                     }
                 }
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::RunAll(queries))
             }
 
             // ---------------------------------------------------------
@@ -2889,54 +2850,44 @@ impl GraphProjector {
                          v.resolution = 'dismissed by admin'",
                 )
                 .param("id", issue_id.as_str());
-                self.client.run(q).await?;
-                Ok(ApplyResult::Applied)
+                Plan::single(Op::Run(q))
             }
 
         }
     }
 
     // -----------------------------------------------------------------------
-    // Private helpers for typed correction handlers
+    // Plan helpers — pure Op constructors, no I/O
     // -----------------------------------------------------------------------
 
-    async fn set_str(&self, label: &str, id: uuid::Uuid, prop: &str, value: &str) -> Result<()> {
+    fn plan_set_str(&self, label: &str, id: uuid::Uuid, prop: &str, value: &str) -> Op {
         let q = query(&format!(
             "MATCH (n:{label} {{id: $id}}) SET n.{prop} = $value"
         ))
         .param("id", id.to_string())
         .param("value", value);
-        self.client.run(q).await?;
-        Ok(())
+        Op::Run(q)
     }
 
-    async fn set_f64(&self, label: &str, id: uuid::Uuid, prop: &str, value: f64) -> Result<()> {
+    fn plan_set_f64(&self, label: &str, id: uuid::Uuid, prop: &str, value: f64) -> Op {
         let q = query(&format!(
             "MATCH (n:{label} {{id: $id}}) SET n.{prop} = $value"
         ))
         .param("id", id.to_string())
         .param("value", value);
-        self.client.run(q).await?;
-        Ok(())
+        Op::Run(q)
     }
 
-    async fn set_bool(&self, label: &str, id: uuid::Uuid, prop: &str, value: bool) -> Result<()> {
+    fn plan_set_bool(&self, label: &str, id: uuid::Uuid, prop: &str, value: bool) -> Op {
         let q = query(&format!(
             "MATCH (n:{label} {{id: $id}}) SET n.{prop} = $value"
         ))
         .param("id", id.to_string())
         .param("value", value);
-        self.client.run(q).await?;
-        Ok(())
+        Op::Run(q)
     }
 
-
-    async fn set_schedule(
-        &self,
-        label: &str,
-        id: uuid::Uuid,
-        schedule: &Option<Schedule>,
-    ) -> Result<()> {
+    fn plan_set_schedule(&self, label: &str, id: uuid::Uuid, schedule: &Option<Schedule>) -> Op {
         let sp = extract_schedule(schedule);
         let q = query(&format!(
             "MATCH (n:{label} {{id: $id}}) SET
@@ -2956,20 +2907,37 @@ impl GraphProjector {
         .param("schedule_text", sp.schedule_text)
         .param("rdates", sp.rdates)
         .param("exdates", sp.exdates);
-        self.client.run(q).await?;
-        Ok(())
+        Op::Run(q)
     }
 
-    /// Project mentioned entities as `:Entity` nodes with `MENTIONED_IN` edges to the signal,
-    /// and `SAME_AS` edges to matching Actor nodes.
-    async fn project_entities(
-        &self,
-        signal_id: &Uuid,
-        signal_label: &str,
-        entities: &[Entity],
-    ) -> Result<()> {
+    fn plan_update_location(&self, label: &str, id: Uuid, loc: &Option<Location>) -> Vec<Op> {
+        let default_edge = location_edge_type(label, None);
+        let delete_q = query(&format!(
+            "MATCH (n:{label} {{id: $id}})-[r:{default_edge}]->(l:Location)
+             DELETE r"
+        ))
+        .param("id", id.to_string());
+
+        let locations_json = match loc {
+            Some(l) => serde_json::to_string(&[l]).unwrap_or_default(),
+            None => String::new(),
+        };
+        let json_q = query(&format!(
+            "MATCH (n:{label} {{id: $id}}) SET n.locations_json = $locations_json"
+        ))
+        .param("id", id.to_string())
+        .param("locations_json", locations_json);
+
+        let mut ops = vec![Op::Run(delete_q), Op::Run(json_q)];
+        if let Some(loc) = loc {
+            ops.extend(self.plan_locations(&id, label, std::slice::from_ref(loc)));
+        }
+        ops
+    }
+
+    fn plan_entities(&self, signal_id: &Uuid, signal_label: &str, entities: &[Entity]) -> Vec<Op> {
         if entities.is_empty() {
-            return Ok(());
+            return vec![];
         }
 
         let signal_id_str = signal_id.to_string();
@@ -3013,25 +2981,17 @@ impl GraphProjector {
         ))
         .param("signal_id", signal_id_str)
         .param("entities", entity_params);
-        self.client.run(q).await?;
 
-        Ok(())
+        vec![Op::Run(q)]
     }
 
-    /// Project locations as `:Location` nodes with typed edges to the signal.
-    /// MERGE key: normalized_name + lat/lng bucket (3-decimal truncation ≈ 111m grid).
-    /// Edge type depends on signal label and location role.
-    async fn project_locations(
-        &self,
-        signal_id: &Uuid,
-        signal_label: &str,
-        locations: &[Location],
-    ) -> Result<()> {
+    fn plan_locations(&self, signal_id: &Uuid, signal_label: &str, locations: &[Location]) -> Vec<Op> {
         if locations.is_empty() {
-            return Ok(());
+            return vec![];
         }
 
         let signal_id_str = signal_id.to_string();
+        let mut ops = Vec::new();
 
         for loc in locations {
             let name = match loc.name.as_deref() {
@@ -3044,7 +3004,6 @@ impl GraphProjector {
                 None => continue,
             };
 
-            // 3-decimal truncation ≈ 111m grid for MERGE bucketing
             let lat_bucket = (lat * 1000.0).trunc() / 1000.0;
             let lng_bucket = (lng * 1000.0).trunc() / 1000.0;
             let normalized_name = name.trim().to_lowercase();
@@ -3077,47 +3036,11 @@ impl GraphProjector {
             .param("address", loc.address.as_deref().unwrap_or(""))
             .param("precision", precision_str);
 
-            self.client.run(q).await?;
+            ops.push(Op::Run(q));
         }
 
-        Ok(())
+        ops
     }
-
-    /// Replace a signal's primary location edge. Only deletes the default edge type
-    /// for this signal label (e.g. HELD_AT for Gathering), preserving secondary edges
-    /// like AFFECTS that were projected from other roles in the original locations vec.
-    async fn update_location(
-        &self,
-        label: &str,
-        id: Uuid,
-        loc: &Option<Location>,
-    ) -> Result<()> {
-        let default_edge = location_edge_type(label, None);
-        let delete_q = query(&format!(
-            "MATCH (n:{label} {{id: $id}})-[r:{default_edge}]->(l:Location)
-             DELETE r"
-        ))
-        .param("id", id.to_string());
-        self.client.run(delete_q).await?;
-
-        let locations_json = match loc {
-            Some(l) => serde_json::to_string(&[l]).unwrap_or_default(),
-            None => String::new(),
-        };
-        let json_q = query(&format!(
-            "MATCH (n:{label} {{id: $id}}) SET n.locations_json = $locations_json"
-        ))
-        .param("id", id.to_string())
-        .param("locations_json", locations_json);
-        self.client.run(json_q).await?;
-
-        if let Some(loc) = loc {
-            self.project_locations(&id, label, std::slice::from_ref(loc)).await?;
-        }
-
-        Ok(())
-    }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -3289,6 +3212,81 @@ fn severity_str(s: rootsignal_common::types::Severity) -> &'static str {
         rootsignal_common::types::Severity::Medium => "medium",
         rootsignal_common::types::Severity::High => "high",
         rootsignal_common::types::Severity::Critical => "critical",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Signal property SET helpers — used by execute() and execute_batch()
+// ---------------------------------------------------------------------------
+
+/// Build a single-row SET query for a signal property via multi-label coalesce.
+fn build_signal_set_query(
+    property: &str,
+    signal_id: &str,
+    value: neo4rs::BoltType,
+    include_condition: bool,
+) -> neo4rs::Query {
+    let cypher = build_signal_set_cypher(property, include_condition);
+    query(&cypher)
+        .param("id", signal_id)
+        .param("value", value)
+}
+
+/// Cypher for single-row signal property SET.
+fn build_signal_set_cypher(property: &str, include_condition: bool) -> String {
+    if include_condition {
+        format!(
+            "OPTIONAL MATCH (g:Gathering {{id: $id}})
+             OPTIONAL MATCH (a:Resource {{id: $id}})
+             OPTIONAL MATCH (n:HelpRequest {{id: $id}})
+             OPTIONAL MATCH (nc:Announcement {{id: $id}})
+             OPTIONAL MATCH (t:Concern {{id: $id}})
+             OPTIONAL MATCH (cond:Condition {{id: $id}})
+             WITH coalesce(g, a, n, nc, t, cond) AS node
+             WHERE node IS NOT NULL
+             SET node.{property} = $value"
+        )
+    } else {
+        format!(
+            "OPTIONAL MATCH (g:Gathering {{id: $id}})
+             OPTIONAL MATCH (a:Resource {{id: $id}})
+             OPTIONAL MATCH (n:HelpRequest {{id: $id}})
+             OPTIONAL MATCH (nc:Announcement {{id: $id}})
+             OPTIONAL MATCH (t:Concern {{id: $id}})
+             WITH coalesce(g, a, n, nc, t) AS node
+             WHERE node IS NOT NULL
+             SET node.{property} = $value"
+        )
+    }
+}
+
+/// Cypher for UNWIND batch signal property SET.
+fn build_signal_set_unwind_cypher(property: &str, include_condition: bool) -> String {
+    if include_condition {
+        format!(
+            "UNWIND $rows AS row
+             OPTIONAL MATCH (g:Gathering {{id: row.id}})
+             OPTIONAL MATCH (a:Resource {{id: row.id}})
+             OPTIONAL MATCH (n:HelpRequest {{id: row.id}})
+             OPTIONAL MATCH (nc:Announcement {{id: row.id}})
+             OPTIONAL MATCH (t:Concern {{id: row.id}})
+             OPTIONAL MATCH (cond:Condition {{id: row.id}})
+             WITH coalesce(g, a, n, nc, t, cond) AS node, row
+             WHERE node IS NOT NULL
+             SET node.{property} = row.val"
+        )
+    } else {
+        format!(
+            "UNWIND $rows AS row
+             OPTIONAL MATCH (g:Gathering {{id: row.id}})
+             OPTIONAL MATCH (a:Resource {{id: row.id}})
+             OPTIONAL MATCH (n:HelpRequest {{id: row.id}})
+             OPTIONAL MATCH (nc:Announcement {{id: row.id}})
+             OPTIONAL MATCH (t:Concern {{id: row.id}})
+             WITH coalesce(g, a, n, nc, t) AS node, row
+             WHERE node IS NOT NULL
+             SET node.{property} = row.val"
+        )
     }
 }
 
