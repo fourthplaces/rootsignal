@@ -270,12 +270,18 @@ pub mod handlers {
         let deps = ctx.deps();
         let geocoder = match deps.geocoder.as_deref() {
             Some(g) => g,
-            None => return Ok(Events::new()),
+            None => {
+                ctx.logger.warn("Geocoder not available, skipping geocode_locations");
+                return Ok(Events::new());
+            }
         };
 
         let signal_id = match event.signal_id() {
             Some(id) => id,
-            None => return Ok(Events::new()),
+            None => {
+                ctx.logger.debug("No signal_id on event, skipping geocode_locations");
+                return Ok(Events::new());
+            }
         };
 
         let state = ctx.aggregate::<PipelineState>().curr;
@@ -297,6 +303,10 @@ pub mod handlers {
 
             match geocoder.geocode(&search_name, None, None).await {
                 Ok(Some(result)) => {
+                    ctx.logger.info(&format!(
+                        "Geocoded '{}' → ({:.4}, {:.4}) precision={}",
+                        search_name, result.lat, result.lng, result.precision
+                    ));
                     out.push(SystemEvent::LocationGeocoded {
                         signal_id,
                         location_name: name.to_string(),
@@ -308,10 +318,10 @@ pub mod handlers {
                     });
                 }
                 Ok(None) => {
-                    tracing::debug!(name = name, "No geocoding result for location");
+                    ctx.logger.warn(&format!("No geocoding result for '{search_name}'"));
                 }
                 Err(e) => {
-                    tracing::warn!(name = name, error = %e, "Geocoding failed");
+                    ctx.logger.warn(&format!("Geocoding failed for '{search_name}': {e}"));
                 }
             }
         }
