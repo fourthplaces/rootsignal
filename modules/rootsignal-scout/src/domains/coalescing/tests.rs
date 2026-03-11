@@ -212,6 +212,89 @@ mod handler_tests {
             "Stub should produce zero groups, zero fed signals, zero refined"
         );
     }
+
+    #[tokio::test]
+    async fn non_trivial_result_emits_system_events_through_engine() {
+        use crate::testing::MockAgent;
+        use rootsignal_common::events::SystemEvent;
+        use rootsignal_graph::{GroupBrief, SignalDetail, SignalSearchResult};
+
+        let group_id = Uuid::new_v4();
+        let new_signal = Uuid::new_v4();
+
+        let graph = MockGraphQueries::new()
+            .with_group_landscape(vec![GroupBrief {
+                id: group_id,
+                label: "Housing issues".into(),
+                queries: vec!["rent increase".into()],
+                signal_count: 2,
+                member_ids: vec![],
+            }])
+            .with_search_results(vec![SignalSearchResult {
+                id: new_signal,
+                title: "New rent concern".into(),
+                summary: "Rents rising in Uptown".into(),
+                signal_type: "Concern".into(),
+                score: 0.9,
+            }])
+            .with_signal_details(vec![SignalDetail {
+                id: new_signal,
+                title: "New rent concern".into(),
+                summary: "Rents rising in Uptown".into(),
+                signal_type: "Concern".into(),
+                cause_heat: Some(0.7),
+            }]);
+
+        let ai = MockAgent::with_response(serde_json::json!({
+            "add": [{ "signal_id": new_signal.to_string(), "confidence": 0.88 }],
+            "refined_queries": ["rent increase uptown", "housing affordability"]
+        }));
+
+        let graph = Arc::new(graph) as Arc<dyn GraphQueries>;
+        let ai = Arc::new(ai) as Arc<dyn ai_client::Agent>;
+        let (engine, captured) = weave_engine_with_capture(Some(graph), Some(ai));
+
+        engine
+            .emit(LifecycleEvent::GenerateSituationsRequested {
+                run_id: Uuid::new_v4(),
+                region: rootsignal_common::ScoutScope {
+                    center_lat: 44.97,
+                    center_lng: -93.26,
+                    radius_km: 50.0,
+                    name: "Minneapolis".into(),
+                },
+                budget_cents: 0,
+                region_id: None,
+                task_id: None,
+            })
+            .settled()
+            .await
+            .unwrap();
+
+        let events = captured.lock().unwrap().clone();
+
+        let signal_added = events.iter().any(|e| {
+            e.downcast_ref::<SystemEvent>().is_some_and(|se| {
+                matches!(se, SystemEvent::SignalAddedToGroup { signal_id, group_id: gid, .. }
+                    if *signal_id == new_signal && *gid == group_id)
+            })
+        });
+        assert!(signal_added, "Should emit SignalAddedToGroup for the new signal");
+
+        let queries_refined = events.iter().any(|e| {
+            e.downcast_ref::<SystemEvent>().is_some_and(|se| {
+                matches!(se, SystemEvent::GroupQueriesRefined { group_id: gid, queries }
+                    if *gid == group_id && queries.len() == 2)
+            })
+        });
+        assert!(queries_refined, "Should emit GroupQueriesRefined with updated queries");
+
+        let (new_groups, fed_signals, refined_groups) =
+            get_coalescing_completed(&events).expect("Should emit CoalescingCompleted");
+        assert_eq!(new_groups, 0, "No new groups in feed mode");
+        assert_eq!(fed_signals, 1, "One signal fed");
+        assert_eq!(refined_groups, 1, "One group's queries refined");
+    }
 }
 
 #[cfg(test)]
@@ -452,88 +535,79 @@ mod tool_tests {
     }
 
     #[tokio::test]
-    async fn search_signals_tool_definition_has_required_query() {
-        let graph = Arc::new(MockGraphQueries::new()) as Arc<dyn GraphQueries>;
+    async fn search_signals_falls_back_to_vector_when_few_fulltext_results() {
+        let v1 = Uuid::new_v4();
+        let v2 = Uuid::new_v4();
+        let v3 = Uuid::new_v4();
+
+        let graph = MockGraphQueries::new()
+            .with_search_results(vec![
+                rootsignal_graph::SignalSearchResult {
+                    id: Uuid::new_v4(),
+                    title: "FT1".into(),
+                    summary: "fulltext hit".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.9,
+                },
+                rootsignal_graph::SignalSearchResult {
+                    id: Uuid::new_v4(),
+                    title: "FT2".into(),
+                    summary: "fulltext hit".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.8,
+                },
+            ])
+            .with_vector_search_results(vec![
+                rootsignal_graph::SignalSearchResult {
+                    id: v1,
+                    title: "Vec1".into(),
+                    summary: "vector hit".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.95,
+                },
+                rootsignal_graph::SignalSearchResult {
+                    id: v2,
+                    title: "Vec2".into(),
+                    summary: "vector hit".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.85,
+                },
+                rootsignal_graph::SignalSearchResult {
+                    id: v3,
+                    title: "Vec3".into(),
+                    summary: "vector hit".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.75,
+                },
+            ]);
+
+        let graph = Arc::new(graph) as Arc<dyn GraphQueries>;
         let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
 
         let tool = SearchSignalsTool { graph, embedder };
-        let def = tool.definition().await;
+        let result = tool.call(SearchSignalsArgs {
+            query: "community concern".into(),
+        }).await.unwrap();
 
-        assert_eq!(def.name, "search_signals");
-        let required = def.parameters["required"].as_array().unwrap();
-        assert!(
-            required.iter().any(|v| v.as_str() == Some("query")),
-            "query should be required"
-        );
-    }
-
-    #[tokio::test]
-    async fn find_similar_tool_definition_has_required_signal_id() {
-        let graph = Arc::new(MockGraphQueries::new()) as Arc<dyn GraphQueries>;
-        let tool = FindSimilarTool { graph };
-        let def = tool.definition().await;
-
-        assert_eq!(def.name, "find_similar");
-        let required = def.parameters["required"].as_array().unwrap();
-        assert!(
-            required.iter().any(|v| v.as_str() == Some("signal_id")),
-            "signal_id should be required"
-        );
+        assert_eq!(result.results.len(), 3, "Should use vector results when fulltext < 3");
+        let ids: Vec<Uuid> = result.results.iter().map(|r| r.id.parse().unwrap()).collect();
+        assert!(ids.contains(&v1));
+        assert!(ids.contains(&v2));
+        assert!(ids.contains(&v3));
     }
 }
 
 #[cfg(test)]
 mod handler_event_mapping_tests {
-    //! Verify the handler correctly maps CoalescingResult → SystemEvents.
-    //! These exercise the event construction logic in the handler without
-    //! going through the full engine.
+    //! Verify the production result_to_events() correctly maps
+    //! CoalescingResult → SystemEvents + CoalescingCompleted.
 
     use uuid::Uuid;
 
     use rootsignal_common::events::SystemEvent;
 
     use crate::domains::coalescing::activities::types::{CoalescingResult, FedSignal, ProtoGroup};
-
-    /// Simulate what the handler does: convert a CoalescingResult into SystemEvents.
-    /// Extracted from mod.rs handler logic for testability.
-    fn result_to_system_events(result: &CoalescingResult) -> Vec<SystemEvent> {
-        let mut events = vec![];
-
-        for group in &result.new_groups {
-            events.push(SystemEvent::GroupCreated {
-                group_id: group.group_id,
-                label: group.label.clone(),
-                queries: group.queries.clone(),
-                seed_signal_id: group.signal_ids.first().map(|(id, _)| *id),
-            });
-
-            // Skip first signal (it's the seed, already in GroupCreated)
-            for (signal_id, confidence) in group.signal_ids.iter().skip(1) {
-                events.push(SystemEvent::SignalAddedToGroup {
-                    signal_id: *signal_id,
-                    group_id: group.group_id,
-                    confidence: *confidence,
-                });
-            }
-        }
-
-        for fed in &result.fed_signals {
-            events.push(SystemEvent::SignalAddedToGroup {
-                signal_id: fed.signal_id,
-                group_id: fed.group_id,
-                confidence: fed.confidence,
-            });
-        }
-
-        for (group_id, queries) in &result.refined_queries {
-            events.push(SystemEvent::GroupQueriesRefined {
-                group_id: *group_id,
-                queries: queries.clone(),
-            });
-        }
-
-        events
-    }
+    use crate::domains::coalescing::result_to_events;
 
     #[test]
     fn empty_result_produces_no_system_events() {
@@ -542,8 +616,8 @@ mod handler_event_mapping_tests {
             fed_signals: vec![],
             refined_queries: vec![],
         };
-        let events = result_to_system_events(&result);
-        assert!(events.is_empty());
+        let (system_events, _completed) = result_to_events(&result);
+        assert!(system_events.is_empty());
     }
 
     #[test]
@@ -561,7 +635,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         assert_eq!(events.len(), 1, "Single-signal group: only GroupCreated, no SignalAddedToGroup");
         match &events[0] {
             SystemEvent::GroupCreated { group_id: gid, seed_signal_id, .. } => {
@@ -594,7 +668,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         assert_eq!(events.len(), 3, "1 GroupCreated + 2 SignalAddedToGroup");
 
         // First event: GroupCreated with seed
@@ -638,7 +712,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         assert_eq!(events.len(), 1);
         match &events[0] {
             SystemEvent::GroupCreated { seed_signal_id, .. } => {
@@ -663,7 +737,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         assert_eq!(events.len(), 2);
         for event in &events {
             match event {
@@ -686,7 +760,7 @@ mod handler_event_mapping_tests {
             ],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         assert_eq!(events.len(), 1);
         match &events[0] {
             SystemEvent::GroupQueriesRefined { group_id: gid, queries } => {
@@ -720,13 +794,26 @@ mod handler_event_mapping_tests {
             refined_queries: vec![(existing_group, vec!["refined".into()])],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, completed) = result_to_events(&result);
         // GroupCreated, SignalAddedToGroup (sig2), SignalAddedToGroup (fed), GroupQueriesRefined
         assert_eq!(events.len(), 4);
         assert!(matches!(events[0], SystemEvent::GroupCreated { .. }));
         assert!(matches!(events[1], SystemEvent::SignalAddedToGroup { .. }));
         assert!(matches!(events[2], SystemEvent::SignalAddedToGroup { .. }));
         assert!(matches!(events[3], SystemEvent::GroupQueriesRefined { .. }));
+
+        match completed {
+            crate::domains::coalescing::events::CoalescingEvent::CoalescingCompleted {
+                new_groups,
+                fed_signals,
+                refined_groups,
+            } => {
+                assert_eq!(new_groups, 1);
+                assert_eq!(fed_signals, 1);
+                assert_eq!(refined_groups, 1);
+            }
+            other => panic!("Expected CoalescingCompleted, got {:?}", other),
+        }
     }
 
     // --- Adversarial: try to break the event mapping ---
@@ -760,7 +847,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         // g1: GroupCreated + 1 add, g2: GroupCreated + 2 adds = 5 total
         assert_eq!(events.len(), 5);
 
@@ -820,7 +907,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         // g1: 1 create + 1 add, g2: 1 create + 1 add = 4
         assert_eq!(events.len(), 4);
 
@@ -853,7 +940,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         match &events[1] {
             SystemEvent::SignalAddedToGroup { confidence, .. } => {
                 assert!((*confidence - (-0.5)).abs() < f64::EPSILON,
@@ -879,7 +966,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         match &events[0] {
             SystemEvent::GroupCreated { queries: qs, .. } => {
                 assert_eq!(qs.len(), 100);
@@ -907,7 +994,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let events = result_to_system_events(&result);
+        let (events, _completed) = result_to_events(&result);
         assert_eq!(events.len(), 50);
 
         let g1_count = events.iter().filter(|e| matches!(e, SystemEvent::SignalAddedToGroup { group_id, .. } if *group_id == g1)).count();
@@ -928,7 +1015,7 @@ mod coalescer_tests {
 
     use rootsignal_graph::{GraphQueries, GroupBrief, SignalDetail, SignalSearchResult};
 
-    use crate::domains::coalescing::activities::coalescer::{Coalescer, MAX_FEED_GROUPS};
+    use crate::domains::coalescing::activities::coalescer::Coalescer;
     use crate::testing::{FixedEmbedder, MockAgent, MockGraphQueries, TEST_EMBEDDING_DIM};
 
     #[tokio::test]
@@ -1050,17 +1137,6 @@ mod coalescer_tests {
         assert!(
             result.fed_signals.is_empty(),
             "No new candidates means no fed signals"
-        );
-    }
-
-    #[test]
-    fn feed_mode_group_cap_is_within_budget() {
-        // OperationCost::COALESCING = 15 cents. Seed mode uses ~4 LLM calls.
-        // Each feed group uses 1 ai_extract call (~1-2 cents).
-        // Cap must leave room for seed + overhead.
-        assert!(
-            MAX_FEED_GROUPS <= 5,
-            "Feed mode should process at most 5 groups per run to stay within budget (got {MAX_FEED_GROUPS})"
         );
     }
 

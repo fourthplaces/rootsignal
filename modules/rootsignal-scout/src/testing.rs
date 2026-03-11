@@ -2324,6 +2324,7 @@ pub struct MockGraphQueries {
     group_landscape: Vec<rootsignal_graph::GroupBrief>,
     search_results: Vec<rootsignal_graph::SignalSearchResult>,
     signal_details: Vec<rootsignal_graph::SignalDetail>,
+    vector_search_results: Vec<rootsignal_graph::SignalSearchResult>,
 }
 
 impl MockGraphQueries {
@@ -2334,6 +2335,7 @@ impl MockGraphQueries {
             group_landscape: Vec::new(),
             search_results: Vec::new(),
             signal_details: Vec::new(),
+            vector_search_results: Vec::new(),
         }
     }
 
@@ -2359,6 +2361,11 @@ impl MockGraphQueries {
 
     pub fn with_signal_details(mut self, details: Vec<rootsignal_graph::SignalDetail>) -> Self {
         self.signal_details = details;
+        self
+    }
+
+    pub fn with_vector_search_results(mut self, results: Vec<rootsignal_graph::SignalSearchResult>) -> Self {
+        self.vector_search_results = results;
         self
     }
 }
@@ -2438,7 +2445,7 @@ impl GraphQueries for MockGraphQueries {
         Ok(vec![])
     }
     async fn fulltext_search_signals(&self, _: &str, _: u32) -> Result<Vec<rootsignal_graph::SignalSearchResult>> { Ok(self.search_results.clone()) }
-    async fn vector_search_signals(&self, _: &[f32], _: u32, _: Option<(f64, f64, f64, f64)>) -> Result<Vec<rootsignal_graph::SignalSearchResult>> { Ok(vec![]) }
+    async fn vector_search_signals(&self, _: &[f32], _: u32, _: Option<(f64, f64, f64, f64)>) -> Result<Vec<rootsignal_graph::SignalSearchResult>> { Ok(self.vector_search_results.clone()) }
     async fn get_ungrouped_signals(&self, _: u32) -> Result<Vec<rootsignal_graph::UngroupedSignal>> { Ok(vec![]) }
     async fn get_group_landscape(&self, limit: u32) -> Result<Vec<rootsignal_graph::GroupBrief>> {
         Ok(self.group_landscape.iter().take(limit as usize).cloned().collect())

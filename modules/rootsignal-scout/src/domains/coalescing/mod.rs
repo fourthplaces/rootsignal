@@ -20,6 +20,52 @@ fn is_generate_situations(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -
     matches!(e, LifecycleEvent::GenerateSituationsRequested { .. })
 }
 
+pub(crate) fn result_to_events(
+    result: &activities::types::CoalescingResult,
+) -> (Vec<SystemEvent>, CoalescingEvent) {
+    let mut system_events = vec![];
+
+    for group in &result.new_groups {
+        system_events.push(SystemEvent::GroupCreated {
+            group_id: group.group_id,
+            label: group.label.clone(),
+            queries: group.queries.clone(),
+            seed_signal_id: group.signal_ids.first().map(|(id, _)| *id),
+        });
+
+        for (signal_id, confidence) in group.signal_ids.iter().skip(1) {
+            system_events.push(SystemEvent::SignalAddedToGroup {
+                signal_id: *signal_id,
+                group_id: group.group_id,
+                confidence: *confidence,
+            });
+        }
+    }
+
+    for fed in &result.fed_signals {
+        system_events.push(SystemEvent::SignalAddedToGroup {
+            signal_id: fed.signal_id,
+            group_id: fed.group_id,
+            confidence: fed.confidence,
+        });
+    }
+
+    for (group_id, queries) in &result.refined_queries {
+        system_events.push(SystemEvent::GroupQueriesRefined {
+            group_id: *group_id,
+            queries: queries.clone(),
+        });
+    }
+
+    let completed = CoalescingEvent::CoalescingCompleted {
+        new_groups: result.new_groups.len() as u32,
+        fed_signals: result.fed_signals.len() as u32,
+        refined_groups: result.refined_queries.len() as u32,
+    };
+
+    (system_events, completed)
+}
+
 #[handlers]
 pub mod handlers {
     use super::*;
@@ -57,44 +103,11 @@ pub mod handlers {
         let result = coalescer.run().await?;
 
         let mut events = Events::new();
-
-        for group in &result.new_groups {
-            events.push(SystemEvent::GroupCreated {
-                group_id: group.group_id,
-                label: group.label.clone(),
-                queries: group.queries.clone(),
-                seed_signal_id: group.signal_ids.first().map(|(id, _)| *id),
-            });
-
-            for (signal_id, confidence) in group.signal_ids.iter().skip(1) {
-                events.push(SystemEvent::SignalAddedToGroup {
-                    signal_id: *signal_id,
-                    group_id: group.group_id,
-                    confidence: *confidence,
-                });
-            }
+        let (system_events, completed) = result_to_events(&result);
+        for se in system_events {
+            events.push(se);
         }
-
-        for fed in &result.fed_signals {
-            events.push(SystemEvent::SignalAddedToGroup {
-                signal_id: fed.signal_id,
-                group_id: fed.group_id,
-                confidence: fed.confidence,
-            });
-        }
-
-        for (group_id, queries) in &result.refined_queries {
-            events.push(SystemEvent::GroupQueriesRefined {
-                group_id: *group_id,
-                queries: queries.clone(),
-            });
-        }
-
-        events.push(CoalescingEvent::CoalescingCompleted {
-            new_groups: result.new_groups.len() as u32,
-            fed_signals: result.fed_signals.len() as u32,
-            refined_groups: result.refined_queries.len() as u32,
-        });
+        events.push(completed);
 
         Ok(events)
     }
