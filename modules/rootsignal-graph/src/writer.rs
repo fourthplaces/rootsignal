@@ -532,6 +532,26 @@ impl GraphReader {
         }
     }
 
+    /// Get the region for a signal (via Source WATCHES edge).
+    pub async fn get_region_for_signal(&self, signal_id: &str) -> Result<Option<Region>, neo4rs::Error> {
+        let q = query(
+            "MATCH (s:Signal {id: $id})<-[:SCRAPE_PRODUCED]-(src:Source)<-[:WATCHES]-(r:Region)
+             RETURN r.id AS id, r.name AS name,
+                    r.center_lat AS center_lat, r.center_lng AS center_lng,
+                    r.radius_km AS radius_km, r.geo_terms AS geo_terms,
+                    r.is_leaf AS is_leaf, r.created_at AS created_at
+             LIMIT 1",
+        )
+        .param("id", signal_id);
+
+        let mut stream = self.client().execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(Some(row_to_region(&row)))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// List regions, optionally filtered by is_leaf. Ordered by name.
     pub async fn list_regions(
         &self,

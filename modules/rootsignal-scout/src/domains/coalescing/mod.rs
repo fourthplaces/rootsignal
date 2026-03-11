@@ -20,6 +20,10 @@ fn is_generate_situations(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -
     matches!(e, LifecycleEvent::GenerateSituationsRequested { .. })
 }
 
+fn is_coalesce_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, LifecycleEvent::CoalesceRequested { .. })
+}
+
 pub(crate) fn result_to_events(
     result: &activities::types::CoalescingResult,
 ) -> (Vec<SystemEvent>, CoalescingEvent) {
@@ -100,7 +104,54 @@ pub mod handlers {
         }
 
         let coalescer = Coalescer::new(graph, ai, embedder);
-        let result = coalescer.run().await?;
+        let result = coalescer.run(None).await?;
+
+        let mut events = Events::new();
+        let (system_events, completed) = result_to_events(&result);
+        for se in system_events {
+            events.push(se);
+        }
+        events.push(completed);
+
+        Ok(events)
+    }
+
+    #[handle(on = LifecycleEvent, id = "coalescing:coalesce_from_seed", filter = is_coalesce_requested)]
+    async fn coalesce_from_seed(
+        event: LifecycleEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let seed_signal_id = match &event {
+            LifecycleEvent::CoalesceRequested { seed_signal_id, .. } => *seed_signal_id,
+            _ => None,
+        };
+
+        let deps = ctx.deps();
+        let state = ctx.aggregate::<PipelineState>().curr;
+
+        let (graph, ai, embedder) = match (deps.graph.as_ref(), deps.ai.as_ref()) {
+            (Some(g), Some(a)) => (g.clone(), a.clone(), deps.embedder.clone()),
+            _ => {
+                info!("Coalescing skipped: missing graph or AI deps");
+                let mut events = Events::new();
+                events.push(CoalescingEvent::CoalescingSkipped {
+                    reason: "missing graph or AI deps".into(),
+                });
+                return Ok(events);
+            }
+        };
+
+        if !state.has_budget(OperationCost::COALESCING) {
+            info!("Coalescing skipped: insufficient budget");
+            let mut events = Events::new();
+            events.push(CoalescingEvent::CoalescingSkipped {
+                reason: "insufficient budget".into(),
+            });
+            return Ok(events);
+        }
+
+        let coalescer = Coalescer::new(graph, ai, embedder);
+        let result = coalescer.run(seed_signal_id).await?;
 
         let mut events = Events::new();
         let (system_events, completed) = result_to_events(&result);

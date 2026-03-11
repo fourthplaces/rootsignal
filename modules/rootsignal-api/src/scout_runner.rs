@@ -165,6 +165,46 @@ impl ScoutRunner {
         });
     }
 
+    /// Spawn a coalesce flow: seed from a specific signal, coalescing only (no weaving).
+    pub async fn run_coalesce_signal(
+        &self,
+        region_id: &str,
+        scope: &ScoutScope,
+        signal_id: uuid::Uuid,
+    ) {
+        let deps = self.deps.clone();
+        let region_id = region_id.to_string();
+        let scope = scope.clone();
+        let run_id = uuid::Uuid::new_v4();
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, deps.daily_budget_cents,
+        ).await;
+
+        info!(region_id = region_id.as_str(), %signal_id, %run_id, "Spawning coalesce flow");
+
+        tokio::spawn(async move {
+            let engine = deps.build_coalesce_engine(&scope, run_id);
+            let result = engine
+                .emit(LifecycleEvent::CoalesceRequested {
+                    run_id,
+                    region: scope.clone(),
+                    seed_signal_id: Some(signal_id),
+                    budget_cents: budget,
+                    region_id: Some(region_id.clone()),
+                    task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                })
+                .correlation_id(run_id)
+                .settled()
+                .await;
+
+            if let Err(e) = result {
+                warn!(region_id = region_id.as_str(), error = %e, "Coalesce flow failed");
+            } else {
+                info!(region_id = region_id.as_str(), "Coalesce flow completed");
+            }
+        });
+    }
+
     /// Spawn a scout-source flow: scrape specific sources, with optional region context.
     pub async fn run_scout_source(
         &self,

@@ -183,6 +183,15 @@ export const SCRAPE_URL = gql`
 `;
 
 
+export const COALESCE_SIGNAL = gql`
+  mutation CoalesceSignal($signalId: String!) {
+    coalesceSignal(signalId: $signalId) {
+      success
+      message
+    }
+  }
+`;
+
 export const RE_EXTRACT_SIGNAL = gql`
   mutation ReExtractSignal($signalId: UUID!) {
     reExtractSignal(signalId: $signalId) {

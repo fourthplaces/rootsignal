@@ -154,8 +154,9 @@ impl Coalescer {
     }
 
     /// Run seed mode (new groups from ungrouped signals) + feed mode (grow existing groups).
-    pub async fn run(&self) -> Result<CoalescingResult> {
-        let new_groups = self.seed_mode().await?;
+    /// When `seed_signal_id` is Some, seeds from that specific signal instead of auto-selecting.
+    pub async fn run(&self, seed_signal_id: Option<Uuid>) -> Result<CoalescingResult> {
+        let new_groups = self.seed_mode(seed_signal_id).await?;
         let (fed_signals, refined_queries) = self.feed_mode().await?;
 
         Ok(CoalescingResult {
@@ -165,23 +166,36 @@ impl Coalescer {
         })
     }
 
-    /// Seed mode: pick the highest-heat ungrouped Concern, investigate with LLM + tools,
-    /// cluster results into new groups.
-    async fn seed_mode(&self) -> Result<Vec<ProtoGroup>> {
-        let seeds = self.graph.get_ungrouped_signals(1).await?;
-        let seed = match seeds.first() {
-            Some(s) => s,
-            None => {
-                info!("No ungrouped signals — skipping seed mode");
-                return Ok(vec![]);
-            }
-        };
+    /// Seed mode: investigate a signal and cluster related signals into new groups.
+    /// When `seed_signal_id` is Some, fetches that signal directly.
+    /// When None, picks the highest-heat ungrouped Concern.
+    async fn seed_mode(&self, seed_signal_id: Option<Uuid>) -> Result<Vec<ProtoGroup>> {
+        let (seed_id, seed_title, seed_summary, seed_signal_type, seed_cause_heat) =
+            if let Some(id) = seed_signal_id {
+                let details = self.graph.get_signal_details(&[id]).await?;
+                match details.into_iter().next() {
+                    Some(d) => (d.id, d.title, d.summary, d.signal_type, d.cause_heat.unwrap_or(0.0)),
+                    None => {
+                        info!(%id, "Seed signal not found — skipping seed mode");
+                        return Ok(vec![]);
+                    }
+                }
+            } else {
+                let seeds = self.graph.get_ungrouped_signals(1).await?;
+                match seeds.into_iter().next() {
+                    Some(s) => (s.id, s.title, s.summary, s.signal_type, s.cause_heat),
+                    None => {
+                        info!("No ungrouped signals — skipping seed mode");
+                        return Ok(vec![]);
+                    }
+                }
+            };
 
         info!(
-            seed_id = %seed.id,
-            seed_title = seed.title.as_str(),
-            cause_heat = seed.cause_heat,
-            "Seed mode: investigating highest-heat ungrouped signal"
+            seed_id = %seed_id,
+            seed_title = seed_title.as_str(),
+            cause_heat = seed_cause_heat,
+            "Seed mode: investigating signal"
         );
 
         let group_landscape = self.format_group_landscape().await?;
@@ -198,11 +212,11 @@ impl Coalescer {
         ];
         let tool_agent = self.ai.with_tools(tools);
 
-        let system = seed_system_prompt(&seed.title, &seed.summary, &group_landscape);
+        let system = seed_system_prompt(&seed_title, &seed_summary, &group_landscape);
         let user_msg = format!(
             "Investigate this signal and find related signals:\n\
              ID: {}\nType: {}\nTitle: {}\nSummary: {}\nHeat: {:.2}",
-            seed.id, seed.signal_type, seed.title, seed.summary, seed.cause_heat
+            seed_id, seed_signal_type, seed_title, seed_summary, seed_cause_heat
         );
 
         let reasoning = tool_agent
@@ -216,7 +230,7 @@ impl Coalescer {
         // Phase 2: Structure the findings into ProtoGroups
         let extraction_user = format!(
             "Seed signal: {} (ID: {})\n\nInvestigation findings:\n{}",
-            seed.title, seed.id, reasoning
+            seed_title, seed_id, reasoning
         );
 
         let output: SeedOutput =

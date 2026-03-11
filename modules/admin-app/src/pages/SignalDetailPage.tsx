@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
-import { useQuery } from "@apollo/client";
+import { useQuery, useMutation } from "@apollo/client";
 import { SIGNAL_DETAIL } from "@/graphql/queries";
+import { COALESCE_SIGNAL } from "@/graphql/mutations";
 import { LinkPreview } from "@/components/LinkPreview";
 import { ReviewStatusBadge } from "@/components/ReviewStatusBadge";
 
@@ -15,7 +16,8 @@ export function SignalDetailPage() {
   const { data, loading } = useQuery(SIGNAL_DETAIL, {
     variables: { id, ...scheduleVars },
   });
-
+  const [coalesce, { loading: coalescing }] = useMutation(COALESCE_SIGNAL);
+  const [coalesceMsg, setCoalesceMsg] = useState<string | null>(null);
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
@@ -54,7 +56,21 @@ export function SignalDetailPage() {
             <span>&middot; {(signal.confidence * 100).toFixed(0)}% confidence</span>
             <span>&middot; {new Date(signal.contentDate ?? signal.extractedAt).toLocaleDateString()}</span>
           </p>
+          <button
+            className="px-3 py-1 text-xs rounded-md bg-secondary hover:bg-secondary/80 disabled:opacity-50"
+            disabled={coalescing}
+            onClick={async () => {
+              setCoalesceMsg(null);
+              const { data } = await coalesce({ variables: { signalId: id } });
+              setCoalesceMsg(data?.coalesceSignal?.message ?? null);
+            }}
+          >
+            {coalescing ? "Coalescing..." : "Coalesce"}
+          </button>
         </div>
+        {coalesceMsg && (
+          <p className="text-xs text-muted-foreground">{coalesceMsg}</p>
+        )}
         <h1 className="text-xl font-semibold">{signal.title}</h1>
         <p className="mt-2 text-muted-foreground">{signal.summary}</p>
         {signal.url && (

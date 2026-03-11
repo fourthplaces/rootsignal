@@ -1080,7 +1080,7 @@ mod coalescer_tests {
             Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         );
 
-        let result = coalescer.run().await.unwrap();
+        let result = coalescer.run(None).await.unwrap();
 
         assert_eq!(
             result.fed_signals.len(), 1,
@@ -1133,7 +1133,7 @@ mod coalescer_tests {
             Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         );
 
-        let result = coalescer.run().await.unwrap();
+        let result = coalescer.run(None).await.unwrap();
         assert!(
             result.fed_signals.is_empty(),
             "No new candidates means no fed signals"
@@ -1154,7 +1154,7 @@ mod coalescer_tests {
             Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         );
 
-        let result = coalescer.run().await.unwrap();
+        let result = coalescer.run(None).await.unwrap();
         assert!(result.new_groups.is_empty());
         assert!(result.fed_signals.is_empty());
         assert!(result.refined_queries.is_empty());
@@ -1199,7 +1199,7 @@ mod coalescer_tests {
             Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
         );
 
-        let result = coalescer.run().await.unwrap();
+        let result = coalescer.run(None).await.unwrap();
         assert_eq!(result.fed_signals.len(), 1);
         assert_eq!(result.refined_queries.len(), 1);
         assert_eq!(result.refined_queries[0].0, group_id);

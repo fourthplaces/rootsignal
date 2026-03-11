@@ -144,6 +144,18 @@ impl ScoutDeps {
         engine::build_weave_engine(deps, self.make_store(run_id))
     }
 
+    /// Build a coalesce-only engine: analytical clustering without weaving.
+    ///
+    /// Kicked off by `CoalesceRequested`. No situation_weaving, no supervisor.
+    pub fn build_coalesce_engine(
+        &self,
+        scope: &rootsignal_common::ScoutScope,
+        run_id: Uuid,
+    ) -> ScoutEngine {
+        let deps = self.build_region_deps(scope, run_id);
+        engine::build_coalesce_engine(deps, self.make_store(run_id))
+    }
+
     /// Build engine deps for resuming a crashed run.
     pub fn build_engine_deps_for_resume(
         &self,

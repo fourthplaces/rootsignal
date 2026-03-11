@@ -58,5 +58,17 @@ pub enum LifecycleEvent {
         #[serde(default)]
         task_id: Option<String>,
     },
+    /// Kick off coalescing only — seed from a specific signal or auto-select.
+    CoalesceRequested {
+        run_id: Uuid,
+        region: rootsignal_common::ScoutScope,
+        seed_signal_id: Option<Uuid>,
+        #[serde(default)]
+        budget_cents: u64,
+        #[serde(default)]
+        region_id: Option<String>,
+        #[serde(default)]
+        task_id: Option<String>,
+    },
 }
 

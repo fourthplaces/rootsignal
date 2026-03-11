@@ -447,6 +447,43 @@ impl MutationRoot {
         })
     }
 
+    /// Coalesce from a specific signal — seed a coalesce-only engine from this signal.
+    #[graphql(guard = "AdminGuard")]
+    async fn coalesce_signal(&self, ctx: &Context<'_>, signal_id: String) -> Result<ScoutResult> {
+        let runner = require_runner(ctx)?;
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let signal_uuid = Uuid::parse_str(&signal_id)
+            .map_err(|_| async_graphql::Error::new("Invalid signal ID"))?;
+
+        let region = writer
+            .get_region_for_signal(&signal_id)
+            .await
+            .unwrap_or(None);
+
+        let (region_id, scope) = match region {
+            Some(r) => {
+                let rid = r.id.to_string();
+                let scope = ScoutScope::from(&r);
+                (rid, scope)
+            }
+            None => {
+                return Ok(ScoutResult {
+                    success: false,
+                    message: Some("Signal has no region".into()),
+                })
+            }
+        };
+
+        runner
+            .run_coalesce_signal(&region_id, &scope, signal_uuid)
+            .await;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some("Coalescing started".into()),
+        })
+    }
+
     /// Cancel a running run by run_id.
     #[graphql(guard = "AdminGuard")]
     async fn cancel_run(&self, ctx: &Context<'_>, run_id: String) -> Result<ScoutResult> {
