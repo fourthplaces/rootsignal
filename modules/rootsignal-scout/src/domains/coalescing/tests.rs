@@ -916,3 +916,217 @@ mod handler_event_mapping_tests {
         assert_eq!(g2_count, 25);
     }
 }
+
+#[cfg(test)]
+mod coalescer_tests {
+    //! Tests for the Coalescer workflow — MOCK → FUNCTION → OUTPUT.
+    //! Exercises seed mode and feed mode via MockGraphQueries + MockAgent.
+
+    use std::sync::Arc;
+
+    use uuid::Uuid;
+
+    use rootsignal_graph::{GraphQueries, GroupBrief, SignalDetail, SignalSearchResult};
+
+    use crate::domains::coalescing::activities::coalescer::{Coalescer, MAX_FEED_GROUPS};
+    use crate::testing::{FixedEmbedder, MockAgent, MockGraphQueries, TEST_EMBEDDING_DIM};
+
+    #[tokio::test]
+    async fn feed_mode_excludes_signals_already_in_group() {
+        let existing_signal = Uuid::new_v4();
+        let new_signal = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        let graph = MockGraphQueries::new()
+            .with_group_landscape(vec![GroupBrief {
+                id: group_id,
+                label: "Housing issues".into(),
+                queries: vec!["rent increase".into()],
+                signal_count: 1,
+                member_ids: vec![existing_signal],
+            }])
+            .with_search_results(vec![
+                SignalSearchResult {
+                    id: existing_signal,
+                    title: "Existing signal".into(),
+                    summary: "Already in group".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.9,
+                },
+                SignalSearchResult {
+                    id: new_signal,
+                    title: "New signal".into(),
+                    summary: "Not yet in group".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.8,
+                },
+            ])
+            .with_signal_details(vec![
+                SignalDetail {
+                    id: existing_signal,
+                    title: "Existing signal".into(),
+                    summary: "Already in group".into(),
+                    signal_type: "Concern".into(),
+                    cause_heat: Some(0.5),
+                },
+                SignalDetail {
+                    id: new_signal,
+                    title: "New signal".into(),
+                    summary: "Not yet in group".into(),
+                    signal_type: "Concern".into(),
+                    cause_heat: Some(0.7),
+                },
+            ]);
+
+        // LLM returns both signals as adds — the coalescer should filter out the existing one
+        let ai = MockAgent::with_response(serde_json::json!({
+            "add": [
+                { "signal_id": existing_signal.to_string(), "confidence": 0.9 },
+                { "signal_id": new_signal.to_string(), "confidence": 0.85 }
+            ],
+            "refined_queries": []
+        }));
+
+        let coalescer = Coalescer::new(
+            Arc::new(graph) as Arc<dyn GraphQueries>,
+            Arc::new(ai) as Arc<dyn ai_client::Agent>,
+            Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        );
+
+        let result = coalescer.run().await.unwrap();
+
+        assert_eq!(
+            result.fed_signals.len(), 1,
+            "Should only feed the new signal, not the existing member"
+        );
+        assert_eq!(result.fed_signals[0].signal_id, new_signal);
+        assert_eq!(result.fed_signals[0].group_id, group_id);
+    }
+
+    #[tokio::test]
+    async fn feed_mode_all_candidates_already_members_produces_no_fed_signals() {
+        let sig_a = Uuid::new_v4();
+        let sig_b = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        let graph = MockGraphQueries::new()
+            .with_group_landscape(vec![GroupBrief {
+                id: group_id,
+                label: "Transit".into(),
+                queries: vec!["bus route".into()],
+                signal_count: 2,
+                member_ids: vec![sig_a, sig_b],
+            }])
+            .with_search_results(vec![
+                SignalSearchResult {
+                    id: sig_a,
+                    title: "A".into(),
+                    summary: "Already member".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.9,
+                },
+                SignalSearchResult {
+                    id: sig_b,
+                    title: "B".into(),
+                    summary: "Already member".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.8,
+                },
+            ]);
+        // No signal details needed — candidates should be filtered before LLM call
+
+        let ai = MockAgent::with_response(serde_json::json!({
+            "add": [],
+            "refined_queries": []
+        }));
+
+        let coalescer = Coalescer::new(
+            Arc::new(graph) as Arc<dyn GraphQueries>,
+            Arc::new(ai) as Arc<dyn ai_client::Agent>,
+            Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        );
+
+        let result = coalescer.run().await.unwrap();
+        assert!(
+            result.fed_signals.is_empty(),
+            "No new candidates means no fed signals"
+        );
+    }
+
+    #[test]
+    fn feed_mode_group_cap_is_within_budget() {
+        // OperationCost::COALESCING = 15 cents. Seed mode uses ~4 LLM calls.
+        // Each feed group uses 1 ai_extract call (~1-2 cents).
+        // Cap must leave room for seed + overhead.
+        assert!(
+            MAX_FEED_GROUPS <= 5,
+            "Feed mode should process at most 5 groups per run to stay within budget (got {MAX_FEED_GROUPS})"
+        );
+    }
+
+    #[tokio::test]
+    async fn seed_mode_skips_when_no_ungrouped_signals() {
+        let graph = MockGraphQueries::new();
+        let ai = MockAgent::with_response(serde_json::json!({
+            "found_group": false,
+            "skip_reason": "no signals"
+        }));
+
+        let coalescer = Coalescer::new(
+            Arc::new(graph) as Arc<dyn GraphQueries>,
+            Arc::new(ai) as Arc<dyn ai_client::Agent>,
+            Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        );
+
+        let result = coalescer.run().await.unwrap();
+        assert!(result.new_groups.is_empty());
+        assert!(result.fed_signals.is_empty());
+        assert!(result.refined_queries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn feed_mode_refined_queries_propagate() {
+        let group_id = Uuid::new_v4();
+        let new_signal = Uuid::new_v4();
+
+        let graph = MockGraphQueries::new()
+            .with_group_landscape(vec![GroupBrief {
+                id: group_id,
+                label: "Safety".into(),
+                queries: vec!["crime report".into()],
+                signal_count: 3,
+                member_ids: vec![],
+            }])
+            .with_search_results(vec![SignalSearchResult {
+                id: new_signal,
+                title: "New".into(),
+                summary: "New signal".into(),
+                signal_type: "Concern".into(),
+                score: 0.9,
+            }])
+            .with_signal_details(vec![SignalDetail {
+                id: new_signal,
+                title: "New".into(),
+                summary: "New signal".into(),
+                signal_type: "Concern".into(),
+                cause_heat: Some(0.6),
+            }]);
+
+        let ai = MockAgent::with_response(serde_json::json!({
+            "add": [{ "signal_id": new_signal.to_string(), "confidence": 0.8 }],
+            "refined_queries": ["updated crime report", "safety concern"]
+        }));
+
+        let coalescer = Coalescer::new(
+            Arc::new(graph) as Arc<dyn GraphQueries>,
+            Arc::new(ai) as Arc<dyn ai_client::Agent>,
+            Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        );
+
+        let result = coalescer.run().await.unwrap();
+        assert_eq!(result.fed_signals.len(), 1);
+        assert_eq!(result.refined_queries.len(), 1);
+        assert_eq!(result.refined_queries[0].0, group_id);
+        assert_eq!(result.refined_queries[0].1.len(), 2);
+    }
+}

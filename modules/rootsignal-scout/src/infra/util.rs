@@ -38,6 +38,9 @@ environment, social, governance, immigration, civil_rights, other";
 
 /// Cosine similarity between two f64 vectors. Returns 0.0 for zero-norm inputs.
 pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
     let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
     let norm_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -132,6 +135,21 @@ mod tests {
         let a = vec![1.0, 0.0, 0.0];
         let d = vec![0.0, 0.0, 0.0];
         assert!(cosine_similarity(&a, &d).abs() < 0.001);
+    }
+
+    #[test]
+    fn cosine_similarity_mismatched_dimensions_returns_zero() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0, 0.5, 0.5];
+        assert!(
+            cosine_similarity(&a, &b).abs() < 0.001,
+            "Mismatched embedding dimensions must return 0.0, not a partial comparison"
+        );
+    }
+
+    #[test]
+    fn cosine_similarity_empty_vectors_returns_zero() {
+        assert!(cosine_similarity(&[], &[]).abs() < 0.001);
     }
 
     #[test]

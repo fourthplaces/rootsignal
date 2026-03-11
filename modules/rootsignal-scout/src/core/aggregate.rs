@@ -526,6 +526,9 @@ impl PipelineState {
                     "synthesis:map_responses" => self.responses_mapped = true,
                     "synthesis:infer_severity" => self.severity_inferred = true,
                     "expansion:expand_signals" => self.source_expansion_completed = true,
+                    "enrichment:submit_signal_for_review" => {
+                        self.signals_review_completed += 1;
+                    }
                     _ => {}
                 }
             }
@@ -801,6 +804,23 @@ mod tests {
         state.apply_pipeline(&handler_failed("expansion:expand_signals", "search API down"));
 
         assert!(state.source_expansion_completed);
+    }
+
+    #[test]
+    fn dlq_signal_review_handler_balances_review_counter() {
+        let mut state = PipelineState::default();
+
+        // Simulate 3 signals awaiting review (set by apply_world on WorldEvents)
+        state.signals_awaiting_review = 3;
+        state.signals_review_completed = 2;
+        assert!(!state.review_complete());
+
+        // One review handler DLQ'd — should count as "reviewed" so gate unblocks
+        state.apply_pipeline(&handler_failed("enrichment:submit_signal_for_review", "LLM timeout"));
+
+        assert_eq!(state.signals_review_completed, 3);
+        assert!(state.review_complete(),
+            "DLQ'd review handler must increment completed counter so the gate can open");
     }
 
     #[test]

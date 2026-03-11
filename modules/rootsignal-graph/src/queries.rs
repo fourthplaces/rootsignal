@@ -48,6 +48,7 @@ pub struct GroupBrief {
     pub label: String,
     pub queries: Vec<String>,
     pub signal_count: u32,
+    pub member_ids: Vec<Uuid>,
 }
 
 /// A signal without any group membership, ordered by cause_heat.
@@ -750,8 +751,9 @@ impl GraphQueries for crate::writer::GraphReader {
         let q = query(
             "MATCH (g:SignalGroup)
              OPTIONAL MATCH (sig)-[:MEMBER_OF]->(g)
-             WITH g, count(sig) AS sc
-             RETURN g.id AS id, g.label AS label, g.queries AS queries, sc AS signal_count
+             WITH g, count(sig) AS sc, collect(sig.id) AS mids
+             RETURN g.id AS id, g.label AS label, g.queries AS queries,
+                    sc AS signal_count, mids AS member_ids
              ORDER BY sc DESC
              LIMIT $limit",
         )
@@ -763,11 +765,17 @@ impl GraphQueries for crate::writer::GraphReader {
             let id_str: String = row.get("id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
                 let queries: Vec<String> = row.get("queries").unwrap_or_default();
+                let raw_member_ids: Vec<String> = row.get("member_ids").unwrap_or_default();
+                let member_ids: Vec<Uuid> = raw_member_ids
+                    .iter()
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect();
                 results.push(GroupBrief {
                     id,
                     label: row.get("label").unwrap_or_default(),
                     queries,
                     signal_count: row.get::<i64>("signal_count").unwrap_or(0) as u32,
+                    member_ids,
                 });
             }
         }

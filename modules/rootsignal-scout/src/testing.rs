@@ -1023,6 +1023,7 @@ impl SignalExtractor for MockExtractor {
 /// Implements the `Agent` trait from `ai_client`.
 pub struct MockAgent {
     extract_response: Mutex<Option<serde_json::Value>>,
+    prompt_response: Mutex<Option<String>>,
     should_error: bool,
 }
 
@@ -1031,6 +1032,17 @@ impl MockAgent {
     pub fn with_response(response: serde_json::Value) -> Self {
         Self {
             extract_response: Mutex::new(Some(response)),
+            prompt_response: Mutex::new(None),
+            should_error: false,
+        }
+    }
+
+    /// Create a MockAgent that returns both a prompt response (for agentic tool use)
+    /// and an extract response (for structured output).
+    pub fn with_prompt_and_extract(prompt_response: &str, extract_response: serde_json::Value) -> Self {
+        Self {
+            extract_response: Mutex::new(Some(extract_response)),
+            prompt_response: Mutex::new(Some(prompt_response.to_string())),
             should_error: false,
         }
     }
@@ -1039,6 +1051,7 @@ impl MockAgent {
     pub fn failing() -> Self {
         Self {
             extract_response: Mutex::new(None),
+            prompt_response: Mutex::new(None),
             should_error: true,
         }
     }
@@ -1070,11 +1083,35 @@ impl ai_client::Agent for MockAgent {
         &self,
         _tools: Vec<Arc<dyn ai_client::tool::DynTool>>,
     ) -> Box<dyn ai_client::Agent> {
-        unimplemented!("MockAgent: with_tools not needed in tests")
+        // Return a new MockAgent that shares the same responses
+        Box::new(MockAgent {
+            extract_response: Mutex::new(self.extract_response.lock().unwrap().clone()),
+            prompt_response: Mutex::new(self.prompt_response.lock().unwrap().clone()),
+            should_error: self.should_error,
+        })
     }
 
     fn prompt(&self, _input: &str) -> Box<dyn ai_client::PromptBuilder> {
-        unimplemented!("MockAgent: prompt not needed in tests")
+        let response = self.prompt_response.lock().unwrap().clone()
+            .unwrap_or_else(|| "Mock investigation complete.".to_string());
+        Box::new(MockPromptBuilder { response })
+    }
+}
+
+/// Stub PromptBuilder that ignores all configuration and returns a fixed string.
+pub struct MockPromptBuilder {
+    response: String,
+}
+
+#[async_trait]
+impl ai_client::PromptBuilder for MockPromptBuilder {
+    fn preamble(self: Box<Self>, _: &str) -> Box<dyn ai_client::PromptBuilder> { self }
+    fn temperature(self: Box<Self>, _: f32) -> Box<dyn ai_client::PromptBuilder> { self }
+    fn multi_turn(self: Box<Self>, _: usize) -> Box<dyn ai_client::PromptBuilder> { self }
+    fn messages(self: Box<Self>, _: Vec<ai_client::Message>) -> Box<dyn ai_client::PromptBuilder> { self }
+    async fn send(self: Box<Self>) -> Result<String> { Ok(self.response) }
+    async fn stream(self: Box<Self>) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = Result<String>> + Send>>> {
+        bail!("MockPromptBuilder: stream not implemented")
     }
 }
 
@@ -2244,6 +2281,9 @@ mod tests {
 pub struct MockGraphQueries {
     sources: Vec<SourceNode>,
     source_exists_urls: HashSet<String>,
+    group_landscape: Vec<rootsignal_graph::GroupBrief>,
+    search_results: Vec<rootsignal_graph::SignalSearchResult>,
+    signal_details: Vec<rootsignal_graph::SignalDetail>,
 }
 
 impl MockGraphQueries {
@@ -2251,6 +2291,9 @@ impl MockGraphQueries {
         Self {
             sources: Vec::new(),
             source_exists_urls: HashSet::new(),
+            group_landscape: Vec::new(),
+            search_results: Vec::new(),
+            signal_details: Vec::new(),
         }
     }
 
@@ -2261,6 +2304,21 @@ impl MockGraphQueries {
 
     pub fn with_source_exists(mut self, url: &str) -> Self {
         self.source_exists_urls.insert(url.to_string());
+        self
+    }
+
+    pub fn with_group_landscape(mut self, groups: Vec<rootsignal_graph::GroupBrief>) -> Self {
+        self.group_landscape = groups;
+        self
+    }
+
+    pub fn with_search_results(mut self, results: Vec<rootsignal_graph::SignalSearchResult>) -> Self {
+        self.search_results = results;
+        self
+    }
+
+    pub fn with_signal_details(mut self, details: Vec<rootsignal_graph::SignalDetail>) -> Self {
+        self.signal_details = details;
         self
     }
 }
@@ -2339,11 +2397,15 @@ impl GraphQueries for MockGraphQueries {
     async fn compute_cause_heat(&self, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<CauseHeatScore>> {
         Ok(vec![])
     }
-    async fn fulltext_search_signals(&self, _: &str, _: u32) -> Result<Vec<rootsignal_graph::SignalSearchResult>> { Ok(vec![]) }
+    async fn fulltext_search_signals(&self, _: &str, _: u32) -> Result<Vec<rootsignal_graph::SignalSearchResult>> { Ok(self.search_results.clone()) }
     async fn vector_search_signals(&self, _: &[f32], _: u32, _: Option<(f64, f64, f64, f64)>) -> Result<Vec<rootsignal_graph::SignalSearchResult>> { Ok(vec![]) }
     async fn get_ungrouped_signals(&self, _: u32) -> Result<Vec<rootsignal_graph::UngroupedSignal>> { Ok(vec![]) }
-    async fn get_group_landscape(&self, _: u32) -> Result<Vec<rootsignal_graph::GroupBrief>> { Ok(vec![]) }
-    async fn get_signal_details(&self, _: &[Uuid]) -> Result<Vec<rootsignal_graph::SignalDetail>> { Ok(vec![]) }
+    async fn get_group_landscape(&self, limit: u32) -> Result<Vec<rootsignal_graph::GroupBrief>> {
+        Ok(self.group_landscape.iter().take(limit as usize).cloned().collect())
+    }
+    async fn get_signal_details(&self, ids: &[Uuid]) -> Result<Vec<rootsignal_graph::SignalDetail>> {
+        Ok(self.signal_details.iter().filter(|d| ids.contains(&d.id)).cloned().collect())
+    }
 }
 
 // ---------------------------------------------------------------------------

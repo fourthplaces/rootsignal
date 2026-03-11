@@ -183,7 +183,13 @@ pub mod handlers {
 
         let ai = match deps.ai.as_ref() {
             Some(a) => a.clone(),
-            None => return Ok(Events::new()),
+            None => {
+                let signal_id = match event.signal_id() {
+                    Some(id) => id,
+                    None => return Ok(Events::new()),
+                };
+                return Ok(events![review_verdict(signal_id, "pass", None)]);
+            }
         };
         let region = {
             let state = ctx.aggregate::<PipelineState>().curr;

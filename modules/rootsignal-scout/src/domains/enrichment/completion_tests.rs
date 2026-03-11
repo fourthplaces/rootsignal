@@ -82,51 +82,36 @@ async fn response_scrape_skipped_completes_enrichment_via_dedup() {
     );
 }
 
-#[tokio::test]
-async fn pending_reviews_block_enrichment() {
-    let url = "https://example.com/events";
-    let store = Arc::new(MockSignalReader::new());
-    let fetcher = Arc::new(crate::testing::MockFetcher::new().on_page(
-        url,
-        crate::testing::archived_page(url, "Community dinner at Powderhorn Park"),
-    ));
-    let extractor = Arc::new(crate::testing::MockExtractor::new().on_url(
-        url,
-        crate::core::extractor::ExtractionResult {
-            nodes: vec![crate::testing::tension_at("Community Dinner", 44.95, -93.27)],
-            ..Default::default()
-        },
-    ));
-    let (engine, captured, _scope) = crate::testing::test_engine_with_scrape_capture(
-        store as Arc<dyn crate::traits::SignalReader>,
-        fetcher,
-        extractor,
-        Some(mpls_region()),
-    );
+#[test]
+fn enrichment_gate_requires_both_review_complete_and_response_done() {
+    let mut state = PipelineState::default();
+    state.source_plan = Some(crate::core::aggregate::SourcePlan {
+        all_sources: vec![],
+        selected_sources: vec![],
+        tension_phase_keys: std::collections::HashSet::new(),
+        response_phase_keys: std::collections::HashSet::new(),
+        selected_keys: std::collections::HashSet::new(),
+        consumed_pin_ids: Vec::new(),
+    });
 
-    // SourcesPrepared with actual web_urls → start_web_scrape fetches the page,
-    // extractor finds "Community Dinner" → dedup creates a WorldEvent →
-    // signals_awaiting_review=1. No reviews completed → review_complete()=false.
-    engine
-        .emit(crate::testing::sources_prepared_with_web_urls(url))
-        .settled()
-        .await
-        .unwrap();
+    // review done but response not done → gate blocked
+    state.signals_awaiting_review = 1;
+    state.signals_review_completed = 1;
+    state.response_web_done = false;
+    assert!(state.review_complete());
+    assert!(!state.response_scrape_done());
 
-    let state = engine.singleton::<PipelineState>();
-    assert!(
-        state.signals_awaiting_review > 0,
-        "dedup should have created at least one signal (awaiting={})",
-        state.signals_awaiting_review,
-    );
-    assert_eq!(state.signals_review_completed, 0);
+    // response done but review not done → gate blocked
+    state.signals_review_completed = 0;
+    state.response_web_done = true;
+    state.topic_discovery_done = true;
     assert!(!state.review_complete());
+    assert!(state.response_scrape_done());
 
-    assert!(
-        !has_expansion_completed(&captured),
-        "Expansion should NOT fire because review is incomplete ({} awaiting, 0 completed)",
-        state.signals_awaiting_review,
-    );
+    // both done → gate open
+    state.signals_review_completed = 1;
+    assert!(state.review_complete());
+    assert!(state.response_scrape_done());
 }
 
 #[tokio::test]
@@ -152,6 +137,63 @@ async fn zero_signals_skips_review_gate() {
     assert!(
         has_expansion_completed(&captured),
         "Expansion should fire — zero signals means review gate passes immediately"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bug: AI unavailable → review never completes → pipeline stuck forever
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn no_ai_auto_accepts_signals_so_enrichment_proceeds() {
+    let url = "https://example.com/events";
+    let store = Arc::new(MockSignalReader::new());
+    let fetcher = Arc::new(crate::testing::MockFetcher::new().on_page(
+        url,
+        crate::testing::archived_page(url, "Community dinner at Powderhorn Park"),
+    ));
+    let extractor = Arc::new(crate::testing::MockExtractor::new().on_url(
+        url,
+        crate::core::extractor::ExtractionResult {
+            nodes: vec![crate::testing::tension_at("Community Dinner", 44.95, -93.27)],
+            ..Default::default()
+        },
+    ));
+    // No AI configured — deps.ai is None
+    let (engine, captured, _scope) = crate::testing::test_engine_with_scrape_capture(
+        store as Arc<dyn crate::traits::SignalReader>,
+        fetcher,
+        extractor,
+        Some(mpls_region()),
+    );
+
+    engine
+        .emit(crate::testing::sources_prepared_with_web_urls(url))
+        .settled()
+        .await
+        .unwrap();
+
+    // Signal was created — awaiting_review incremented
+    let state = engine.singleton::<PipelineState>();
+    assert!(
+        state.signals_awaiting_review > 0,
+        "dedup should have created at least one signal"
+    );
+
+    // Without AI, review should auto-accept so the gate can open
+    assert!(
+        state.review_complete(),
+        "Review must auto-complete when AI is unavailable ({} awaiting, {} completed)",
+        state.signals_awaiting_review,
+        state.signals_review_completed,
+    );
+
+    // Complete response scrape so enrichment gate can fire
+    emit_response_scrape_done(&engine).await;
+
+    assert!(
+        has_expansion_completed(&captured),
+        "Enrichment must proceed when AI is unavailable — auto-accept signals"
     );
 }
 
