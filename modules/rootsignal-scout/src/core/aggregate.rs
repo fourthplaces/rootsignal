@@ -512,8 +512,22 @@ impl PipelineState {
     /// Apply a pipeline event to aggregate state.
     pub fn apply_pipeline(&mut self, event: &PipelineEvent) {
         match event {
-            PipelineEvent::HandlerFailed { .. } => {
+            PipelineEvent::HandlerFailed { handler_id, .. } => {
                 self.stats.handler_failures += 1;
+                // A DLQ'd handler will never emit its completion event.
+                // Set the flag so downstream gates don't wait forever.
+                match handler_id.as_str() {
+                    "scrape:start_web_scrape" => self.tension_web_done = true,
+                    "scrape:start_social_scrape" => self.tension_social_done = true,
+                    "scrape:process_web_results" => self.response_web_done = true,
+                    "scrape:process_social_results" => self.response_social_done = true,
+                    "scrape:discover_topics" => self.topic_discovery_done = true,
+                    "synthesis:compute_similarity" => self.similarity_computed = true,
+                    "synthesis:map_responses" => self.responses_mapped = true,
+                    "synthesis:infer_severity" => self.severity_inferred = true,
+                    "expansion:expand_signals" => self.source_expansion_completed = true,
+                    _ => {}
+                }
             }
             PipelineEvent::BudgetSpent { cents } => {
                 self.stats.spent_cents += cents;
@@ -664,6 +678,19 @@ mod tests {
         )
     }
 
+    fn social_source(ck: &str) -> SourceNode {
+        use rootsignal_common::types::{DiscoveryMethod, SourceRole};
+        SourceNode::new(
+            ck.to_string(),
+            format!("https://twitter.com/{ck}"),
+            Some(format!("https://twitter.com/{ck}")),
+            DiscoveryMethod::Curated,
+            0.5,
+            SourceRole::Mixed,
+            None,
+        )
+    }
+
     fn plan_with_tension_web(source: SourceNode) -> SourcePlan {
         let ck = source.canonical_key.clone();
         SourcePlan {
@@ -676,33 +703,115 @@ mod tests {
         }
     }
 
+    fn plan_with_tension_social(source: SourceNode) -> SourcePlan {
+        let ck = source.canonical_key.clone();
+        SourcePlan {
+            all_sources: vec![source.clone()],
+            selected_sources: vec![source],
+            tension_phase_keys: HashSet::from([ck]),
+            response_phase_keys: HashSet::new(),
+            selected_keys: HashSet::new(),
+            consumed_pin_ids: Vec::new(),
+        }
+    }
+
     #[test]
-    fn handler_dlq_without_completion_event_blocks_pipeline_forever() {
+    fn dlq_web_scrape_handler_unblocks_tension_gate() {
         let mut state = PipelineState::default();
         let source = web_source("example");
         state.source_plan = Some(plan_with_tension_web(source));
 
-        // Source plan says we have tension web sources
         assert!(state.source_plan.as_ref().unwrap().has_tension_web_sources());
         assert!(!state.tension_scrape_done(), "precondition: not done yet");
 
-        // Handler DLQ'd — no WebScrapeCompleted was emitted
         state.apply_pipeline(&handler_failed("scrape:start_web_scrape", "connection timeout"));
 
-        // BUG: tension_scrape_done() is still false even though the handler
-        // exhausted retries. The pipeline is permanently stuck — no downstream
-        // gates (expansion, response, enrichment, synthesis) will ever fire.
-        //
-        // This SHOULD return true (pipeline should recover from handler failures),
-        // but currently returns false.
-        assert!(!state.tension_scrape_done(),
-            "KNOWN BUG: DLQ'd handler leaves pipeline stuck — \
-             tension_scrape_done() returns false with no way to recover");
-
-        // The handler_failures counter proves the failure was recorded...
+        assert!(state.tension_web_done,
+            "DLQ'd web scrape handler must set tension_web_done so the pipeline can proceed");
+        assert!(state.tension_scrape_done(),
+            "Pipeline must not get stuck when a handler exhausts retries");
         assert_eq!(state.stats.handler_failures, 1);
-        // ...but no state flag was set to unblock the gate
+    }
+
+    #[test]
+    fn dlq_social_scrape_handler_unblocks_tension_gate() {
+        let mut state = PipelineState::default();
+        let source = social_source("twitter-feed");
+        state.source_plan = Some(plan_with_tension_social(source));
+
+        assert!(!state.tension_scrape_done(), "precondition: not done yet");
+
+        state.apply_pipeline(&handler_failed("scrape:start_social_scrape", "rate limited"));
+
+        assert!(state.tension_social_done);
+        assert!(state.tension_scrape_done());
+        assert_eq!(state.stats.handler_failures, 1);
+    }
+
+    #[test]
+    fn dlq_response_web_handler_unblocks_response_gate() {
+        let mut state = PipelineState::default();
+        state.response_web_done = false;
+        state.topic_discovery_done = true;
+
+        state.apply_pipeline(&handler_failed("scrape:process_web_results", "timeout"));
+
+        assert!(state.response_web_done);
+        assert_eq!(state.stats.handler_failures, 1);
+    }
+
+    #[test]
+    fn dlq_response_social_handler_unblocks_response_gate() {
+        let mut state = PipelineState::default();
+
+        state.apply_pipeline(&handler_failed("scrape:process_social_results", "API down"));
+
+        assert!(state.response_social_done);
+    }
+
+    #[test]
+    fn dlq_topic_discovery_handler_unblocks_response_gate() {
+        let mut state = PipelineState::default();
+
+        state.apply_pipeline(&handler_failed("scrape:discover_topics", "LLM error"));
+
+        assert!(state.topic_discovery_done);
+    }
+
+    #[test]
+    fn dlq_synthesis_handlers_unblock_synthesis_gate() {
+        let mut state = PipelineState::default();
+
+        state.apply_pipeline(&handler_failed("synthesis:compute_similarity", "Neo4j down"));
+        assert!(state.similarity_computed);
+
+        state.apply_pipeline(&handler_failed("synthesis:map_responses", "OOM"));
+        assert!(state.responses_mapped);
+
+        state.apply_pipeline(&handler_failed("synthesis:infer_severity", "timeout"));
+        assert!(state.severity_inferred);
+
+        assert_eq!(state.stats.handler_failures, 3);
+    }
+
+    #[test]
+    fn dlq_expansion_handler_unblocks_expansion_gate() {
+        let mut state = PipelineState::default();
+
+        state.apply_pipeline(&handler_failed("expansion:expand_signals", "search API down"));
+
+        assert!(state.source_expansion_completed);
+    }
+
+    #[test]
+    fn dlq_unknown_handler_only_increments_counter() {
+        let mut state = PipelineState::default();
+
+        state.apply_pipeline(&handler_failed("unknown:handler", "error"));
+
+        assert_eq!(state.stats.handler_failures, 1);
         assert!(!state.tension_web_done);
+        assert!(!state.tension_social_done);
     }
 
     #[test]
