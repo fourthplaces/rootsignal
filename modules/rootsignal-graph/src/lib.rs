@@ -37,6 +37,6 @@ SignalBrief, SignalTypeCounts, SituationBrief, SourceBrief, SourceStats, StagedS
 ConcernHub, ConcernLinkerOutcome, ConcernLinkerTarget, ConcernRespondent, ConcernResponseShape,
 UnmetTension, WeaveCandidate, WeaveSignal,
 };
-pub use queries::GraphQueries;
+pub use queries::{GraphQueries, GroupBrief, SignalDetail, SignalSearchResult, UngroupedSignal};
 /// Re-export neo4rs::query for downstream crates that need raw Cypher access (e.g. test assertions).
 pub use neo4rs::query;

@@ -19,6 +19,47 @@ use crate::writer::{
     SourceBrief, SourceStats, UnmetTension, WeaveCandidate, WeaveSignal,
 };
 
+// --- Coalescing types ---
+
+/// A signal returned from fulltext or vector search.
+#[derive(Debug, Clone)]
+pub struct SignalSearchResult {
+    pub id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub signal_type: String,
+    pub score: f64,
+}
+
+/// Batch-fetched signal details for LLM context.
+#[derive(Debug, Clone)]
+pub struct SignalDetail {
+    pub id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub signal_type: String,
+    pub cause_heat: Option<f64>,
+}
+
+/// An existing signal group for LLM landscape context.
+#[derive(Debug, Clone)]
+pub struct GroupBrief {
+    pub id: Uuid,
+    pub label: String,
+    pub queries: Vec<String>,
+    pub signal_count: u32,
+}
+
+/// A signal without any group membership, ordered by cause_heat.
+#[derive(Debug, Clone)]
+pub struct UngroupedSignal {
+    pub id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub signal_type: String,
+    pub cause_heat: f64,
+}
+
 #[async_trait]
 pub trait GraphQueries: Send + Sync {
     // --- Source management ---
@@ -241,6 +282,28 @@ pub trait GraphQueries: Send + Sync {
         min_lng: f64,
         max_lng: f64,
     ) -> Result<Vec<CauseHeatScore>>;
+
+    // --- Coalescing ---
+
+    /// Fulltext search across all 6 signal types by title+summary.
+    async fn fulltext_search_signals(&self, query: &str, limit: u32) -> Result<Vec<SignalSearchResult>>;
+
+    /// Vector similarity search, optional geographic bounding box.
+    async fn vector_search_signals(
+        &self,
+        embedding: &[f32],
+        limit: u32,
+        bbox: Option<(f64, f64, f64, f64)>,
+    ) -> Result<Vec<SignalSearchResult>>;
+
+    /// Highest cause_heat signals without MEMBER_OF edges, for seed selection.
+    async fn get_ungrouped_signals(&self, limit: u32) -> Result<Vec<UngroupedSignal>>;
+
+    /// Existing groups for LLM context during coalescing.
+    async fn get_group_landscape(&self, limit: u32) -> Result<Vec<GroupBrief>>;
+
+    /// Batch-fetch signal details by ID for LLM tool results.
+    async fn get_signal_details(&self, ids: &[Uuid]) -> Result<Vec<SignalDetail>>;
 }
 
 // --- GraphReader implementation ---
@@ -544,5 +607,205 @@ impl GraphQueries for crate::writer::GraphReader {
         max_lng: f64,
     ) -> Result<Vec<CauseHeatScore>> {
         Ok(crate::cause_heat::compute_cause_heat(self.client(), threshold, min_lat, max_lat, min_lng, max_lng).await?)
+    }
+
+    async fn fulltext_search_signals(&self, query_text: &str, limit: u32) -> Result<Vec<SignalSearchResult>> {
+        use neo4rs::query;
+
+        let labels = ["gathering", "resource", "helprequest", "announcement", "concern", "condition"];
+        let mut results = Vec::new();
+
+        for index_name in &labels {
+            let index = format!("{}_text", index_name);
+            let q = query(
+                "CALL db.index.fulltext.queryNodes($index, $query) YIELD node, score
+                 WHERE score > 0.5
+                 RETURN node.id AS id, node.title AS title, node.summary AS summary,
+                        labels(node)[0] AS signal_type, score
+                 LIMIT $limit",
+            )
+            .param("index", index.as_str())
+            .param("query", query_text)
+            .param("limit", limit as i64);
+
+            let mut stream = self.client().execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id_str: String = row.get("id").unwrap_or_default();
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    results.push(SignalSearchResult {
+                        id,
+                        title: row.get("title").unwrap_or_default(),
+                        summary: row.get("summary").unwrap_or_default(),
+                        signal_type: row.get("signal_type").unwrap_or_default(),
+                        score: row.get::<f64>("score").unwrap_or(0.0),
+                    });
+                }
+            }
+        }
+
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(limit as usize);
+        Ok(results)
+    }
+
+    async fn vector_search_signals(
+        &self,
+        embedding: &[f32],
+        limit: u32,
+        bbox: Option<(f64, f64, f64, f64)>,
+    ) -> Result<Vec<SignalSearchResult>> {
+        use neo4rs::query;
+
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
+        let embedding_vec: Vec<f64> = embedding.iter().map(|&x| x as f64).collect();
+        let mut results = Vec::new();
+
+        for label in &labels {
+            let index_name = format!("{}_embedding", label.to_lowercase());
+            let cypher = if bbox.is_some() {
+                format!(
+                    "CALL db.index.vector.queryNodes($index, $limit, $embedding) YIELD node, score
+                     WHERE node.lat >= $min_lat AND node.lat <= $max_lat
+                       AND node.lng >= $min_lng AND node.lng <= $max_lng
+                     RETURN node.id AS id, node.title AS title, node.summary AS summary,
+                            '{label}' AS signal_type, score
+                     LIMIT $limit"
+                )
+            } else {
+                format!(
+                    "CALL db.index.vector.queryNodes($index, $limit, $embedding) YIELD node, score
+                     RETURN node.id AS id, node.title AS title, node.summary AS summary,
+                            '{label}' AS signal_type, score
+                     LIMIT $limit"
+                )
+            };
+
+            let mut q = query(&cypher)
+                .param("index", index_name.as_str())
+                .param("limit", limit as i64)
+                .param("embedding", embedding_vec.clone());
+
+            if let Some((min_lat, max_lat, min_lng, max_lng)) = bbox {
+                q = q.param("min_lat", min_lat)
+                    .param("max_lat", max_lat)
+                    .param("min_lng", min_lng)
+                    .param("max_lng", max_lng);
+            }
+
+            let mut stream = self.client().execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id_str: String = row.get("id").unwrap_or_default();
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    results.push(SignalSearchResult {
+                        id,
+                        title: row.get("title").unwrap_or_default(),
+                        summary: row.get("summary").unwrap_or_default(),
+                        signal_type: row.get("signal_type").unwrap_or_default(),
+                        score: row.get::<f64>("score").unwrap_or(0.0),
+                    });
+                }
+            }
+        }
+
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(limit as usize);
+        Ok(results)
+    }
+
+    async fn get_ungrouped_signals(&self, limit: u32) -> Result<Vec<UngroupedSignal>> {
+        use neo4rs::query;
+
+        let q = query(
+            "MATCH (n:Concern)
+             WHERE NOT (n)-[:MEMBER_OF]->(:SignalGroup)
+               AND n.review_status IN ['accepted', 'staged']
+             RETURN n.id AS id, n.title AS title, n.summary AS summary,
+                    'Concern' AS signal_type,
+                    coalesce(n.cause_heat, 0.0) AS cause_heat
+             ORDER BY cause_heat DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut stream = self.client().execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                results.push(UngroupedSignal {
+                    id,
+                    title: row.get("title").unwrap_or_default(),
+                    summary: row.get("summary").unwrap_or_default(),
+                    signal_type: row.get("signal_type").unwrap_or_default(),
+                    cause_heat: row.get::<f64>("cause_heat").unwrap_or(0.0),
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    async fn get_group_landscape(&self, limit: u32) -> Result<Vec<GroupBrief>> {
+        use neo4rs::query;
+
+        let q = query(
+            "MATCH (g:SignalGroup)
+             OPTIONAL MATCH (sig)-[:MEMBER_OF]->(g)
+             WITH g, count(sig) AS sc
+             RETURN g.id AS id, g.label AS label, g.queries AS queries, sc AS signal_count
+             ORDER BY sc DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut stream = self.client().execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                let queries: Vec<String> = row.get("queries").unwrap_or_default();
+                results.push(GroupBrief {
+                    id,
+                    label: row.get("label").unwrap_or_default(),
+                    queries,
+                    signal_count: row.get::<i64>("signal_count").unwrap_or(0) as u32,
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    async fn get_signal_details(&self, ids: &[Uuid]) -> Result<Vec<SignalDetail>> {
+        use neo4rs::query;
+
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let q = query(
+            "UNWIND $ids AS sid
+             MATCH (n) WHERE n.id = sid
+               AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+             RETURN n.id AS id, n.title AS title, n.summary AS summary,
+                    labels(n)[0] AS signal_type,
+                    n.cause_heat AS cause_heat",
+        )
+        .param("ids", id_strs);
+
+        let mut stream = self.client().execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                results.push(SignalDetail {
+                    id,
+                    title: row.get("title").unwrap_or_default(),
+                    summary: row.get("summary").unwrap_or_default(),
+                    signal_type: row.get("signal_type").unwrap_or_default(),
+                    cause_heat: row.get::<f64>("cause_heat").ok(),
+                });
+            }
+        }
+        Ok(results)
     }
 }

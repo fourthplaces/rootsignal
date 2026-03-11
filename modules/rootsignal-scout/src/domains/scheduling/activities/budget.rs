@@ -34,6 +34,7 @@ impl OperationCost {
     pub const CLAUDE_HAIKU_GATHERING_FINDER: u64 = 3; // per tension: investigation + extraction (may terminate early)
     pub const SEARCH_GATHERING_FINDER: u64 = 5; // per tension: early termination uses ~2-3
     pub const CHROME_GATHERING_FINDER: u64 = 3; // per tension: page reads
+    pub const COALESCING: u64 = 15; // 3 rounds × ~5 tool calls × ~1 cent each
 }
 
 impl BudgetTracker {

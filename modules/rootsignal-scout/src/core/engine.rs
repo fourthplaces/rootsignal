@@ -26,7 +26,7 @@ use crate::core::pipeline_events::PipelineEvent;
 use crate::core::postgres_store::PostgresStore;
 use crate::core::projection;
 use crate::domains::{
-    curiosity, discovery, enrichment, expansion, lifecycle, news_scanning, scrape, signals,
+    coalescing, curiosity, discovery, enrichment, expansion, lifecycle, news_scanning, scrape, signals,
     situation_weaving, supervisor, synthesis,
 };
 use crate::infra::embedder::TextEmbedder;
@@ -205,6 +205,7 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgr
 
     let mut engine = seesaw_core::Engine::new(deps)
         .with_aggregators(pipeline_aggregators::aggregators())
+        .with_handlers(coalescing::handlers::handlers())
         .with_handlers(situation_weaving::handlers::handlers())
         .with_handlers(supervisor::handlers::handlers())
         .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {

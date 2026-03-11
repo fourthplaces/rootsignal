@@ -2328,6 +2328,11 @@ impl GraphQueries for MockGraphQueries {
     async fn compute_cause_heat(&self, _: f64, _: f64, _: f64, _: f64, _: f64) -> Result<Vec<CauseHeatScore>> {
         Ok(vec![])
     }
+    async fn fulltext_search_signals(&self, _: &str, _: u32) -> Result<Vec<rootsignal_graph::SignalSearchResult>> { Ok(vec![]) }
+    async fn vector_search_signals(&self, _: &[f32], _: u32, _: Option<(f64, f64, f64, f64)>) -> Result<Vec<rootsignal_graph::SignalSearchResult>> { Ok(vec![]) }
+    async fn get_ungrouped_signals(&self, _: u32) -> Result<Vec<rootsignal_graph::UngroupedSignal>> { Ok(vec![]) }
+    async fn get_group_landscape(&self, _: u32) -> Result<Vec<rootsignal_graph::GroupBrief>> { Ok(vec![]) }
+    async fn get_signal_details(&self, _: &[Uuid]) -> Result<Vec<rootsignal_graph::SignalDetail>> { Ok(vec![]) }
 }
 
 // ---------------------------------------------------------------------------

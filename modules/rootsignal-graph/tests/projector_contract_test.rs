@@ -1007,6 +1007,22 @@ fn build_all_events() -> Vec<Event> {
             precision: "approximate".into(),
             timezone: Some("America/Chicago".into()),
         }),
+        // Signal groups (coalescing)
+        Event::System(SystemEvent::GroupCreated {
+            group_id: id,
+            label: "Housing affordability cluster".into(),
+            queries: vec!["rent increase".into()],
+            seed_signal_id: Some(id),
+        }),
+        Event::System(SystemEvent::SignalAddedToGroup {
+            signal_id: id,
+            group_id: id,
+            confidence: 0.85,
+        }),
+        Event::System(SystemEvent::GroupQueriesRefined {
+            group_id: id,
+            queries: vec!["rent increase".into(), "housing cost".into()],
+        }),
     ]
 }
 
