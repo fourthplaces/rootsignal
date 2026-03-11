@@ -486,6 +486,40 @@ impl CachedReader {
             }
         }
 
+        // --- Collect locations ---
+        // Locations are structural nodes bounded by the map viewport,
+        // so they bypass the signal limit to ensure edges are visible.
+        if type_set.contains("Location") {
+            for loc in &snap.locations {
+                if has_bounds {
+                    if loc.lat < min_lat.unwrap()
+                        || loc.lat > max_lat.unwrap()
+                        || loc.lng < min_lng.unwrap()
+                        || loc.lng > max_lng.unwrap()
+                    {
+                        continue;
+                    }
+                }
+
+                total_count += 1;
+                nodes.push(GraphNodeItem {
+                    id: loc.id,
+                    node_type: "Location".to_string(),
+                    label: loc.name.clone(),
+                    lat: Some(loc.lat),
+                    lng: Some(loc.lng),
+                    confidence: None,
+                    metadata: serde_json::json!({
+                        "address": loc.address,
+                        "precision": loc.precision,
+                        "signalCount": loc.signal_count,
+                    })
+                    .to_string(),
+                });
+                node_ids.insert(loc.id);
+            }
+        }
+
         // --- Extract edges where both endpoints are in node_ids ---
         let mut edges: Vec<GraphEdgeItem> = Vec::new();
 
@@ -556,6 +590,18 @@ impl CachedReader {
                         });
                     }
                 }
+            }
+        }
+
+        // Signal → Location edges
+        for le in &snap.location_edges {
+            let loc_id = snap.locations[le.location_idx].id;
+            if node_ids.contains(&le.signal_id) && node_ids.contains(&loc_id) {
+                edges.push(GraphEdgeItem {
+                    source_id: le.signal_id,
+                    target_id: loc_id,
+                    edge_type: le.edge_type.clone(),
+                });
             }
         }
 

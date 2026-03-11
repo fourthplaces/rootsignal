@@ -129,18 +129,36 @@ impl EventLog for PostgresStore {
         after_position: u64,
         limit: usize,
     ) -> Result<Vec<PersistedEvent>> {
-        let rows = sqlx::query_as::<_, PersistedEventRow>(
-            "SELECT seq, id, parent_id, correlation_id, event_type, payload, ts, \
-                    aggregate_type, aggregate_id, run_id, schema_v, handler_id, persistent \
-             FROM events \
-             WHERE seq > $1 \
-             ORDER BY seq ASC \
-             LIMIT $2",
-        )
-        .bind(after_position as i64)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
+        // Uuid::nil() = global read (ProjectionStream replay).
+        // Any other correlation_id = scoped read (per-engine settle loop).
+        let rows = if self.correlation_id == Uuid::nil() {
+            sqlx::query_as::<_, PersistedEventRow>(
+                "SELECT seq, id, parent_id, correlation_id, event_type, payload, ts, \
+                        aggregate_type, aggregate_id, run_id, schema_v, handler_id, persistent \
+                 FROM events \
+                 WHERE seq > $1 \
+                 ORDER BY seq ASC \
+                 LIMIT $2",
+            )
+            .bind(after_position as i64)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, PersistedEventRow>(
+                "SELECT seq, id, parent_id, correlation_id, event_type, payload, ts, \
+                        aggregate_type, aggregate_id, run_id, schema_v, handler_id, persistent \
+                 FROM events \
+                 WHERE seq > $1 AND correlation_id = $3 \
+                 ORDER BY seq ASC \
+                 LIMIT $2",
+            )
+            .bind(after_position as i64)
+            .bind(limit as i64)
+            .bind(self.correlation_id)
+            .fetch_all(&self.pool)
+            .await?
+        };
 
         Ok(rows.into_iter().map(|r| r.into_persisted()).collect())
     }

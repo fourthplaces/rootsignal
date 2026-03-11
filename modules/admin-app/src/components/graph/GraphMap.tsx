@@ -12,6 +12,7 @@ const TYPE_COLORS: Record<string, string> = {
   Announcement: "#a855f7",
   Concern: "#ef4444",
   Actor: "#ec4899",
+  Location: "#14b8a6",
   Citation: "#6b7280",
 };
 
@@ -34,6 +35,7 @@ export function GraphMap({
   nodes,
   selectedNodeId,
   highlightedNodeId,
+  initialCenter,
   onBoundsChange,
   onMarkerClick,
   onMarkerHover,
@@ -41,6 +43,7 @@ export function GraphMap({
   nodes: GraphMapNode[];
   selectedNodeId: string | null;
   highlightedNodeId: string | null;
+  initialCenter?: [number, number];
   onBoundsChange: (bounds: MapBounds) => void;
   onMarkerClick: (nodeId: string) => void;
   onMarkerHover: (nodeId: string | null) => void;
@@ -94,8 +97,8 @@ export function GraphMap({
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: "mapbox://styles/mapbox/dark-v11",
-      center: [-97.7, 30.27], // default center (Austin)
-      zoom: 10,
+      center: initialCenter ?? [-97.7, 30.27],
+      zoom: initialCenter ? 13 : 10,
     });
 
     mapRef.current = map;
@@ -159,6 +162,7 @@ export function GraphMap({
             "Announcement", TYPE_COLORS.Announcement!,
             "Concern", TYPE_COLORS.Concern!,
             "Actor", TYPE_COLORS.Actor!,
+            "Location", TYPE_COLORS.Location!,
             "#6b7280",
           ],
           "circle-radius": 7,

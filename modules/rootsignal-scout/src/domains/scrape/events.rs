@@ -35,6 +35,8 @@ pub enum ScrapeEvent {
         urls_failed: u32,
         signals_extracted: u32,
         #[serde(default)]
+        signals_rejected: u32,
+        #[serde(default)]
         source_signal_counts: HashMap<String, u32>,
         #[serde(default)]
         collected_links: Vec<CollectedLink>,
@@ -51,6 +53,8 @@ pub enum ScrapeEvent {
         is_tension: bool,
         sources_scraped: u32,
         signals_extracted: u32,
+        #[serde(default)]
+        signals_rejected: u32,
         #[serde(default)]
         source_signal_counts: HashMap<String, u32>,
         #[serde(default)]

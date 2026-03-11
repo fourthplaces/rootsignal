@@ -337,6 +337,25 @@ pub enum SystemEvent {
         scout_run_id: String,
     },
 
+    GroupCreated {
+        group_id: Uuid,
+        label: String,
+        queries: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seed_signal_id: Option<Uuid>,
+    },
+
+    SignalAddedToGroup {
+        signal_id: Uuid,
+        group_id: Uuid,
+        confidence: f64,
+    },
+
+    GroupQueriesRefined {
+        group_id: Uuid,
+        queries: Vec<String>,
+    },
+
     // -----------------------------------------------------------------------
     // Tag decisions
     // -----------------------------------------------------------------------

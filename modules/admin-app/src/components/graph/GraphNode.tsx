@@ -9,6 +9,7 @@ const NODE_COLORS: Record<string, string> = {
   Announcement: "border-purple-500/50 bg-purple-500/10 text-purple-400",
   Concern: "border-red-500/50 bg-red-500/10 text-red-400",
   Actor: "border-pink-500/50 bg-pink-500/10 text-pink-400",
+  Location: "border-teal-500/50 bg-teal-500/10 text-teal-400",
   Citation: "border-gray-500/50 bg-gray-500/10 text-gray-400",
 };
 
@@ -19,6 +20,7 @@ const TYPE_EMOJI: Record<string, string> = {
   Announcement: "O",
   Concern: "T",
   Actor: "P",
+  Location: "L",
   Citation: "C",
 };
 

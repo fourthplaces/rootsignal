@@ -180,8 +180,14 @@ pub mod handlers {
                             });
                         }
                     }
-                    DedupOutcome::Refreshed { existing_id, node_type, .. }
-                    | DedupOutcome::ContentChanged { existing_id, node_type, .. } => {
+                    DedupOutcome::Refreshed { existing_id, node_type, source_id, .. }
+                    | DedupOutcome::ContentChanged { existing_id, node_type, source_id, .. } => {
+                        if let Some(sid) = source_id {
+                            all_events.push(WorldEvent::SignalLinkedToSource {
+                                signal_id: *existing_id,
+                                source_id: *sid,
+                            });
+                        }
                         refreshed_ids.push((*existing_id, *node_type));
                     }
                 }

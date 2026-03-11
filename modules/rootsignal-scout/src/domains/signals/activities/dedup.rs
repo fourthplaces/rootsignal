@@ -119,6 +119,7 @@ pub async fn deduplicate_extracted_batch(
                                 node_type,
                                 url: sig_url.to_string(),
                                 similarity,
+                                source_id: batch.source_id,
                             });
                             content_changed.push(ContentChangedSignal {
                                 existing_id,
@@ -141,6 +142,7 @@ pub async fn deduplicate_extracted_batch(
                 existing_id,
                 node_type,
                 url: sig_url.to_string(),
+                source_id: batch.source_id,
             });
             continue;
         }

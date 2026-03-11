@@ -95,12 +95,16 @@ pub enum DedupOutcome {
         node_type: NodeType,
         #[serde(alias = "source_url")]
         url: String,
+        #[serde(default)]
+        source_id: Option<Uuid>,
     },
     ContentChanged {
         existing_id: Uuid,
         node_type: NodeType,
         url: String,
         similarity: f64,
+        #[serde(default)]
+        source_id: Option<Uuid>,
     },
 }
 

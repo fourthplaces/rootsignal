@@ -142,6 +142,7 @@ pub struct FetchExtractStats {
     pub urls_unchanged: u32,
     pub urls_failed: u32,
     pub signals_extracted: u32,
+    pub signals_rejected: u32,
 }
 
 pub(crate) enum ScrapeOutcome {
@@ -153,6 +154,7 @@ pub(crate) enum ScrapeOutcome {
         author_actors: HashMap<Uuid, String>,
         schedules: HashMap<Uuid, rootsignal_common::Schedule>,
         logs: Vec<TelemetryEvent>,
+        rejected_count: u32,
     },
     Unchanged,
     Failed,

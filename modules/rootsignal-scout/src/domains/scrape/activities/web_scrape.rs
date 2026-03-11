@@ -166,6 +166,7 @@ async fn fetch_pages(
                             author_actors: result.author_actors.into_iter().collect(),
                             schedules,
                             logs: result.logs,
+                            rejected_count: rejected as u32,
                         },
                         page_links,
                     )
@@ -226,6 +227,7 @@ async fn process_results(
                 author_actors,
                 schedules,
                 logs,
+                rejected_count,
             } => {
                 result.stats.urls_scraped += 1;
 
@@ -236,6 +238,7 @@ async fn process_results(
                 result.expansion_queries.extend(implied);
 
                 result.stats.signals_extracted += nodes.len() as u32;
+                result.stats.signals_rejected += rejected_count;
 
                 if let Some(pub_date) = pub_dates.get(&url) {
                     super::shared::apply_published_at_fallback(&mut nodes, *pub_date);

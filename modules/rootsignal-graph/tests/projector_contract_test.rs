@@ -181,6 +181,10 @@ const APPLIED_EVENT_TYPES: &[&str] = &[
     "system:validation_issue_dismissed",
     // System: Location geocoding
     "system:location_geocoded",
+    // System: Signal groups (coalescing)
+    "system:group_created",
+    "system:signal_added_to_group",
+    "system:group_queries_refined",
 ];
 
 #[test]

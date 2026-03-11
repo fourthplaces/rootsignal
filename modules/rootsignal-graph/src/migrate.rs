@@ -186,6 +186,13 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     info!("Situation/Dispatch constraints and indexes created");
 
+    // ── SignalGroup constraints and indexes ────────────────────────────
+
+    g.run(query("CREATE CONSTRAINT signalgroup_id_unique IF NOT EXISTS FOR (n:SignalGroup) REQUIRE n.id IS UNIQUE")).await?;
+    g.run(query("CREATE INDEX signalgroup_created_at IF NOT EXISTS FOR (n:SignalGroup) ON (n.created_at)")).await?;
+
+    info!("SignalGroup constraints and indexes created");
+
     // ── Schedule constraints and indexes ──────────────────────────────────
 
     g.run(query("CREATE CONSTRAINT schedule_id_unique IF NOT EXISTS FOR (n:Schedule) REQUIRE n.id IS UNIQUE")).await?;

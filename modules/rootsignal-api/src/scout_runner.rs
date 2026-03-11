@@ -131,7 +131,7 @@ impl ScoutRunner {
         });
     }
 
-    /// Spawn a weave flow for a region: cross-signal synthesis at any level.
+    /// Spawn a weave flow for a region: situation weaving as independent workflow.
     pub async fn run_weave(&self, region_id: &str, scope: &ScoutScope) {
         let deps = self.deps.clone();
         let region_id = region_id.to_string();
@@ -144,16 +144,13 @@ impl ScoutRunner {
         info!(region_id = region_id.as_str(), %run_id, "Spawning weave flow");
 
         tokio::spawn(async move {
-            let run_scope = RunScope::Region(scope.clone());
             let engine = deps.build_weave_engine(&scope, run_id);
             let result = engine
-                .emit(LifecycleEvent::ScoutRunRequested {
+                .emit(LifecycleEvent::GenerateSituationsRequested {
                     run_id,
-                    scope: run_scope,
+                    region: scope.clone(),
                     budget_cents: budget,
                     region_id: Some(region_id.clone()),
-                    flow_type: "weave".into(),
-                    source_ids: None,
                     task_id: std::env::var("FLY_MACHINE_ID").ok(),
                 })
                 .correlation_id(run_id)
@@ -246,7 +243,7 @@ impl ScoutRunner {
     /// queue entries, rebuilds engines, and calls `settle()` to finish them.
     pub async fn resume_incomplete_runs(&self) {
         let rows = match sqlx::query_as::<_, IncompleteRun>(
-            "SELECT run_id, scope FROM scout_runs WHERE finished_at IS NULL",
+            "SELECT run_id, scope FROM scout_runs WHERE finished_at IS NULL AND started_at > now() - interval '30 minutes'",
         )
         .fetch_all(&self.deps.pg_pool)
         .await
@@ -322,7 +319,7 @@ impl ScoutRunner {
                     &scope,
                     run_id,
                 );
-                let engine = engine::build_full_engine(engine_deps, Some(store_arc));
+                let engine = engine::build_engine(engine_deps, Some(store_arc));
 
                 if let Err(e) = engine.settle().await {
                     warn!(%run_id, error = %e, "Resume settle failed");

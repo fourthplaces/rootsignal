@@ -2959,6 +2959,87 @@ impl GraphProjector {
                 Plan::applied(vec![Op::Run(merge_q), Op::Run(merge_stub_q), Op::Run(redirect_q)])
             }
 
+            // ---------------------------------------------------------
+            // Signal groups (coalescing)
+            // ---------------------------------------------------------
+            SystemEvent::GroupCreated {
+                group_id,
+                label,
+                queries,
+                seed_signal_id,
+            } => {
+                let ts = format_dt_from_event(event);
+                let queries_json: Vec<String> = queries;
+                let mut ops = vec![];
+
+                let q = query(
+                    "MERGE (g:SignalGroup {id: $id})
+                     ON CREATE SET g.label = $label,
+                                   g.queries = $queries,
+                                   g.created_at = datetime($ts)
+                     ON MATCH SET g.label = $label,
+                                  g.queries = $queries",
+                )
+                .param("id", group_id.to_string())
+                .param("label", label.as_str())
+                .param("queries", queries_json)
+                .param("ts", ts);
+                ops.push(Op::Run(q));
+
+                if let Some(seed_id) = seed_signal_id {
+                    let seed_q = query(
+                        "MATCH (sig) WHERE sig.id = $signal_id
+                           AND (sig:Gathering OR sig:Resource OR sig:HelpRequest OR sig:Announcement OR sig:Concern OR sig:Condition)
+                         MATCH (g:SignalGroup {id: $group_id})
+                         MERGE (sig)-[r:MEMBER_OF]->(g)
+                         ON CREATE SET r.confidence = 1.0",
+                    )
+                    .param("signal_id", seed_id.to_string())
+                    .param("group_id", group_id.to_string());
+                    ops.push(Op::Run(seed_q));
+                }
+
+                Plan::applied(ops)
+            }
+
+            SystemEvent::SignalAddedToGroup {
+                signal_id,
+                group_id,
+                confidence,
+            } => {
+                let q = query(
+                    "MATCH (sig) WHERE sig.id = $signal_id
+                       AND (sig:Gathering OR sig:Resource OR sig:HelpRequest OR sig:Announcement OR sig:Concern OR sig:Condition)
+                     MATCH (g:SignalGroup {id: $group_id})
+                     MERGE (sig)-[r:MEMBER_OF]->(g)
+                     ON CREATE SET r.confidence = $confidence
+                     ON MATCH SET r.confidence = $confidence",
+                )
+                .param("signal_id", signal_id.to_string())
+                .param("group_id", group_id.to_string())
+                .param("confidence", confidence);
+
+                Plan::single(Op::Run(q))
+            }
+
+            SystemEvent::GroupQueriesRefined {
+                group_id,
+                queries,
+            } => {
+                let ts = format_dt_from_event(event);
+                let queries_json: Vec<String> = queries;
+                let q = query(
+                    "MATCH (g:SignalGroup {id: $id})
+                     SET g.queries = $queries,
+                         g.last_refined = datetime($ts)",
+                )
+                .param("id", group_id.to_string())
+                .param("queries", queries_json)
+                .param("ts", ts);
+
+                Plan::single(Op::Run(q))
+            }
+
         }
     }
 

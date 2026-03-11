@@ -24,7 +24,7 @@ Supporting nodes: `Citation` (source evidence), `Actor` (organizations/people), 
 ```
 src/
   core/
-    engine.rs          ScoutEngineDeps, build_engine(), build_full_engine()
+    engine.rs          ScoutEngineDeps, build_engine(), build_weave_engine()
     aggregate.rs       PipelineState singleton aggregate + seesaw aggregators
     projection.rs      Infrastructure handlers: persist (priority 0), neo4j_projection (priority 2)
     pipeline_events.rs PipelineEvent enum (aggregate-mutation bookkeeping)
@@ -75,12 +75,13 @@ All external dependencies are injected via async trait objects:
 | `TextEmbedder` | Text → vector embeddings | `Embedder` (Voyage AI, 1024-dim) | `FixedEmbedder` |
 | `SignalExtractor` | Content → structured signals via LLM | `Extractor` (Claude) | `MockExtractor` |
 
-## Two Engine Variants
+## Engine Variants
 
-- **Scrape engine** (`build_engine`): reap → schedule → scrape → enrichment → expansion → synthesis → finalize. Used by scrape and bootstrap workflows.
-- **Full engine** (`build_full_engine`): extends the scrape chain with situation_weaving → supervisor before finalize. Used by full_run, synthesis, situation_weaver, and supervisor workflows.
+- **Scrape engine** (`build_engine`): reap → schedule → scrape → enrichment → expansion → synthesis. Finds signals.
+- **Weave engine** (`build_weave_engine`): GenerateSituationsRequested → situation_weaving → supervisor. Weaves signals into situations. Independent workflow, runs on its own schedule.
+- **News engine** (`build_news_engine`): NewsScanRequested → scan RSS → extract signals.
 
-Both share the same `ScoutEngineDeps`, infrastructure handlers, and `PipelineState` aggregate.
+All share the same `ScoutEngineDeps`, infrastructure handlers, and `PipelineState` aggregate.
 
 ## Graph Schema
 

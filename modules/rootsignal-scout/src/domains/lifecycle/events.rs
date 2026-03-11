@@ -47,5 +47,16 @@ pub enum LifecycleEvent {
         query_api_errors: HashSet<String>,
     },
     NewsScanRequested,
+    /// Kick off situation weaving for a region — independent of any scout run.
+    GenerateSituationsRequested {
+        run_id: Uuid,
+        region: rootsignal_common::ScoutScope,
+        #[serde(default)]
+        budget_cents: u64,
+        #[serde(default)]
+        region_id: Option<String>,
+        #[serde(default)]
+        task_id: Option<String>,
+    },
 }
 

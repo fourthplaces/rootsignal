@@ -17,19 +17,42 @@ extract_citation, fuzz_node, node_type_label, row_to_actor, row_to_node_by_label
 use crate::GraphClient;
 
 
+/// A geographic location node derived from signal projections.
+/// Keyed by (normalized_name, lat_bucket, lng_bucket) in Neo4j — we generate
+/// a deterministic UUID from these fields for use as graph node IDs.
+pub struct LocationNode {
+    pub id: Uuid,
+    pub name: String,
+    pub lat: f64,
+    pub lng: f64,
+    pub address: Option<String>,
+    pub precision: String,
+    pub signal_count: u32,
+}
+
+/// (signal_id, location_index, edge_type) triple for signal↔location edges.
+pub struct LocationEdge {
+    pub signal_id: Uuid,
+    pub location_idx: usize,
+    pub edge_type: String,
+}
+
 /// In-memory snapshot of all displayable signals, actors, and relationships.
 /// Signals are pre-fuzzed at load time. Expiry filtering is NOT pre-applied — it runs
 /// at query time via `passes_display_filter()` since it depends on `Utc::now()`.
 pub struct SignalCache {
     pub signals: Vec<Node>,
     pub actors: Vec<ActorNode>,
+    pub locations: Vec<LocationNode>,
 
     pub signal_by_id: HashMap<Uuid, usize>,
     pub actor_by_id: HashMap<Uuid, usize>,
+    pub location_by_id: HashMap<Uuid, usize>,
 
     pub citation_by_signal: HashMap<Uuid, Vec<CitationNode>>,
     pub actors_by_signal: HashMap<Uuid, Vec<usize>>,
     pub concern_responses: HashMap<Uuid, Vec<ConcernResponse>>,
+    pub location_edges: Vec<LocationEdge>,
 
     pub tags: Vec<TagNode>,
     pub tag_by_id: HashMap<Uuid, usize>,
@@ -42,12 +65,16 @@ impl SignalCache {
     pub async fn load(client: &GraphClient) -> Result<Self, neo4rs::Error> {
         let start = std::time::Instant::now();
 
-        // Load signals and actors concurrently
-        let (signals_result, actors_result) =
-            tokio::join!(load_all_signals(client), load_all_actors(client),);
+        // Load signals, actors, and locations concurrently
+        let (signals_result, actors_result, locations_result) =
+            tokio::join!(load_all_signals(client), load_all_actors(client), load_all_locations(client));
 
         let mut signals = signals_result?;
         let actors = actors_result?;
+        let locations = locations_result?;
+
+        let location_by_id: HashMap<Uuid, usize> =
+            locations.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
 
         // Apply coordinate fuzzing at load time
         for signal in &mut signals {
@@ -70,11 +97,12 @@ impl SignalCache {
             tags.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
 
         // Load relationships concurrently
-        let (citation_result, actor_signal_result, concern_resp_result, situation_tag_result) = tokio::join!(
+        let (citation_result, actor_signal_result, concern_resp_result, situation_tag_result, loc_edge_result) = tokio::join!(
             load_citations(client),
             load_actor_signal_edges(client),
             load_concern_responses(client),
             load_situation_tag_edges(client),
+            load_location_signal_edges(client),
         );
 
         let citation_by_signal = citation_result?;
@@ -93,6 +121,19 @@ impl SignalCache {
 
         let concern_responses = concern_resp_result?;
 
+        // Build location_edges (signal_id -> location index + edge type)
+        let raw_loc_edges = loc_edge_result?;
+        let mut location_edges: Vec<LocationEdge> = Vec::new();
+        for (signal_id, loc_id, edge_type) in &raw_loc_edges {
+            if let Some(&loc_idx) = location_by_id.get(loc_id) {
+                location_edges.push(LocationEdge {
+                    signal_id: *signal_id,
+                    location_idx: loc_idx,
+                    edge_type: edge_type.clone(),
+                });
+            }
+        }
+
         // Build tags_by_situation map (situation_id -> vec of tag indices)
         let situation_tag_edges = situation_tag_result?;
         let mut tags_by_situation: HashMap<Uuid, Vec<usize>> = HashMap::new();
@@ -109,9 +150,11 @@ impl SignalCache {
         info!(
             signals = signals.len(),
             actors = actors.len(),
+            locations = locations.len(),
             tags = tags.len(),
             evidence_signals = citation_by_signal.len(),
             concern_responses = concern_responses.len(),
+            location_edges = location_edges.len(),
             elapsed_ms = elapsed.as_millis(),
             "Signal cache loaded"
         );
@@ -119,11 +162,14 @@ impl SignalCache {
         Ok(Self {
             signals,
             actors,
+            locations,
             signal_by_id,
             actor_by_id,
+            location_by_id,
             citation_by_signal,
             actors_by_signal,
             concern_responses,
+            location_edges,
             tags,
             tag_by_id,
             tags_by_situation,
@@ -344,6 +390,93 @@ async fn load_all_tags(client: &GraphClient) -> Result<Vec<TagNode>, neo4rs::Err
         });
     }
     Ok(tags)
+}
+
+/// Deterministic UUID from location composite key so graph explorer has stable IDs.
+fn location_composite_id(normalized_name: &str, lat_bucket: f64, lng_bucket: f64) -> Uuid {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    normalized_name.hash(&mut hasher);
+    lat_bucket.to_bits().hash(&mut hasher);
+    lng_bucket.to_bits().hash(&mut hasher);
+    let hash = hasher.finish();
+    // Pack into a v5-style UUID (bytes 0..8 from hash, rest zeroed with version/variant bits)
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&hash.to_be_bytes());
+    // Set version 4 and variant bits for a valid UUID
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
+async fn load_all_locations(client: &GraphClient) -> Result<Vec<LocationNode>, neo4rs::Error> {
+    let cypher = "MATCH (l:Location)
+         OPTIONAL MATCH (n)-[]->(l)
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
+         RETURN l.normalized_name AS normalized_name,
+                l.lat_bucket AS lat_bucket, l.lng_bucket AS lng_bucket,
+                l.name AS name, l.lat AS lat, l.lng AS lng,
+                l.address AS address, l.precision AS precision,
+                count(n) AS signal_count";
+
+    let q = query(cypher);
+    let mut locations = Vec::new();
+    let mut stream = client.execute(q).await?;
+
+    while let Some(row) = stream.next().await? {
+        let normalized_name: String = row.get("normalized_name").unwrap_or_default();
+        let lat_bucket: f64 = row.get("lat_bucket").unwrap_or(0.0);
+        let lng_bucket: f64 = row.get("lng_bucket").unwrap_or(0.0);
+        let name: String = row.get("name").unwrap_or_default();
+        let lat: f64 = row.get("lat").unwrap_or(0.0);
+        let lng: f64 = row.get("lng").unwrap_or(0.0);
+        let address: Option<String> = row.get("address").ok().filter(|s: &String| !s.is_empty());
+        let precision: String = row.get("precision").unwrap_or_else(|_| "exact".to_string());
+        let signal_count: i64 = row.get("signal_count").unwrap_or(0);
+
+        if name.is_empty() || (lat == 0.0 && lng == 0.0) {
+            continue;
+        }
+
+        let id = location_composite_id(&normalized_name, lat_bucket, lng_bucket);
+        locations.push(LocationNode {
+            id,
+            name,
+            lat,
+            lng,
+            address,
+            precision,
+            signal_count: signal_count as u32,
+        });
+    }
+    Ok(locations)
+}
+
+/// Returns (signal_id, location_id, edge_type) triples.
+async fn load_location_signal_edges(client: &GraphClient) -> Result<Vec<(Uuid, Uuid, String)>, neo4rs::Error> {
+    let cypher = "MATCH (n)-[r:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
+         RETURN n.id AS signal_id,
+                l.normalized_name AS normalized_name,
+                l.lat_bucket AS lat_bucket, l.lng_bucket AS lng_bucket,
+                type(r) AS edge_type";
+
+    let q = query(cypher);
+    let mut edges = Vec::new();
+    let mut stream = client.execute(q).await?;
+
+    while let Some(row) = stream.next().await? {
+        let sid_str: String = row.get("signal_id").unwrap_or_default();
+        let Ok(sid) = Uuid::parse_str(&sid_str) else { continue };
+        let normalized_name: String = row.get("normalized_name").unwrap_or_default();
+        let lat_bucket: f64 = row.get("lat_bucket").unwrap_or(0.0);
+        let lng_bucket: f64 = row.get("lng_bucket").unwrap_or(0.0);
+        let edge_type: String = row.get("edge_type").unwrap_or_default();
+
+        let loc_id = location_composite_id(&normalized_name, lat_bucket, lng_bucket);
+        edges.push((sid, loc_id, edge_type));
+    }
+    Ok(edges)
 }
 
 async fn load_situation_tag_edges(

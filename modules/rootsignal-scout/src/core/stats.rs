@@ -11,6 +11,7 @@ pub struct ScoutStats {
     pub urls_unchanged: u32,
     pub urls_failed: u32,
     pub signals_extracted: u32,
+    pub signals_rejected: u32,
     pub signals_deduplicated: u32,
     pub signals_stored: u32,
     pub by_type: HashMap<NodeType, u32>,
@@ -41,6 +42,7 @@ impl ScoutStats {
             urls_unchanged,
             urls_failed,
             signals_extracted,
+            signals_rejected,
             signals_deduplicated,
             signals_stored,
             ref by_type,
@@ -65,6 +67,7 @@ impl ScoutStats {
         self.urls_unchanged += urls_unchanged;
         self.urls_failed += urls_failed;
         self.signals_extracted += signals_extracted;
+        self.signals_rejected += signals_rejected;
         self.signals_deduplicated += signals_deduplicated;
         self.signals_stored += signals_stored;
         for (nt, count) in by_type {
@@ -96,6 +99,7 @@ impl std::fmt::Display for ScoutStats {
             urls_unchanged,
             urls_failed,
             signals_extracted,
+            signals_rejected,
             signals_deduplicated,
             signals_stored,
             ref by_type,
@@ -124,6 +128,9 @@ impl std::fmt::Display for ScoutStats {
         writeln!(f, "Discovery posts:    {discovery_posts_found}")?;
         writeln!(f, "Accounts discovered:{discovery_accounts_found}")?;
         writeln!(f, "Signals extracted:  {signals_extracted}")?;
+        if signals_rejected > 0 {
+            writeln!(f, "Signals rejected:   {signals_rejected}")?;
+        }
         writeln!(f, "Signals deduped:    {signals_deduplicated}")?;
         writeln!(f, "Signals stored:     {signals_stored}")?;
         if signals_updated > 0 {

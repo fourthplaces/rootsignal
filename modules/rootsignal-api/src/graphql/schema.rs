@@ -1057,6 +1057,53 @@ impl QueryRoot {
         })
     }
 
+    // ========== Graph Explorer ==========
+
+    /// Return nodes and edges for the graph explorer, filtered by bounds/time/types.
+    #[graphql(guard = "AdminGuard")]
+    async fn graph_neighborhood(
+        &self,
+        ctx: &Context<'_>,
+        min_lat: Option<f64>,
+        max_lat: Option<f64>,
+        min_lng: Option<f64>,
+        max_lng: Option<f64>,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        node_types: Vec<String>,
+        limit: i32,
+    ) -> Result<GqlGraphNeighborhood> {
+        let cache = ctx.data_unchecked::<Arc<rootsignal_graph::CacheStore>>();
+        let reader = CachedReader::new(
+            Arc::clone(cache),
+            rootsignal_graph::PublicGraphReader::new(
+                ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>().as_ref().clone(),
+            ),
+        );
+        let result = reader
+            .graph_neighborhood(min_lat, max_lat, min_lng, max_lng, from, to, &node_types, limit as u32)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Graph query failed: {e}")))?;
+
+        Ok(GqlGraphNeighborhood {
+            nodes: result.nodes.into_iter().map(|n| GqlGraphNode {
+                id: n.id.to_string(),
+                node_type: n.node_type,
+                label: n.label,
+                lat: n.lat,
+                lng: n.lng,
+                confidence: n.confidence,
+                metadata: n.metadata,
+            }).collect(),
+            edges: result.edges.into_iter().map(|e| GqlGraphEdge {
+                source_id: e.source_id.to_string(),
+                target_id: e.target_id.to_string(),
+                edge_type: e.edge_type,
+            }).collect(),
+            total_count: result.total_count,
+        })
+    }
+
     // ========== Region queries ==========
 
     /// List regions, optionally filtered by leaf status.

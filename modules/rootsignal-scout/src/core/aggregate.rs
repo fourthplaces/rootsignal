@@ -262,6 +262,7 @@ impl PipelineState {
                 urls_unchanged,
                 urls_failed,
                 signals_extracted,
+                signals_rejected,
                 source_signal_counts,
                 collected_links,
                 expansion_queries,
@@ -273,6 +274,7 @@ impl PipelineState {
                 self.stats.urls_unchanged += urls_unchanged;
                 self.stats.urls_failed += urls_failed;
                 self.stats.signals_extracted += signals_extracted;
+                self.stats.signals_rejected += signals_rejected;
                 for (k, v) in source_signal_counts {
                     *self.source_signal_counts.entry(k.clone()).or_default() += v;
                 }
@@ -283,6 +285,7 @@ impl PipelineState {
             ScrapeEvent::SocialScrapeCompleted {
                 is_tension,
                 signals_extracted,
+                signals_rejected,
                 source_signal_counts,
                 collected_links,
                 expansion_queries,
@@ -293,6 +296,7 @@ impl PipelineState {
                 if *is_tension { self.tension_social_done = true; } else { self.response_social_done = true; }
                 self.stats.urls_scraped += sources_scraped;
                 self.stats.signals_extracted += signals_extracted;
+                self.stats.signals_rejected += signals_rejected;
                 for (k, v) in source_signal_counts {
                     *self.source_signal_counts.entry(k.clone()).or_default() += v;
                 }
@@ -476,6 +480,10 @@ impl PipelineState {
                 self.url_to_pub_date.extend(pub_dates.clone());
                 self.query_api_errors.extend(query_api_errors.clone());
                 self.source_plan = Some(source_plan.clone());
+            }
+            LifecycleEvent::GenerateSituationsRequested { budget_cents, region, .. } => {
+                self.run_scope = RunScope::Region(region.clone());
+                self.budget_limit_cents = *budget_cents;
             }
             LifecycleEvent::ScoutRunCompleted { .. } => {}
             _ => {}
