@@ -647,6 +647,64 @@ mod tests {
         assert!(state.has_budget(1_000_000));
     }
 
+    // -----------------------------------------------------------------------
+    // Bug: handler DLQ leaves pipeline permanently stuck
+    // -----------------------------------------------------------------------
+
+    fn web_source(ck: &str) -> SourceNode {
+        use rootsignal_common::types::{DiscoveryMethod, SourceRole};
+        SourceNode::new(
+            ck.to_string(),
+            format!("https://{ck}.org"),
+            Some(format!("https://{ck}.org")),
+            DiscoveryMethod::Curated,
+            0.5,
+            SourceRole::Mixed,
+            None,
+        )
+    }
+
+    fn plan_with_tension_web(source: SourceNode) -> SourcePlan {
+        let ck = source.canonical_key.clone();
+        SourcePlan {
+            all_sources: vec![source.clone()],
+            selected_sources: vec![source],
+            tension_phase_keys: HashSet::from([ck]),
+            response_phase_keys: HashSet::new(),
+            selected_keys: HashSet::new(),
+            consumed_pin_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn handler_dlq_without_completion_event_blocks_pipeline_forever() {
+        let mut state = PipelineState::default();
+        let source = web_source("example");
+        state.source_plan = Some(plan_with_tension_web(source));
+
+        // Source plan says we have tension web sources
+        assert!(state.source_plan.as_ref().unwrap().has_tension_web_sources());
+        assert!(!state.tension_scrape_done(), "precondition: not done yet");
+
+        // Handler DLQ'd — no WebScrapeCompleted was emitted
+        state.apply_pipeline(&handler_failed("scrape:start_web_scrape", "connection timeout"));
+
+        // BUG: tension_scrape_done() is still false even though the handler
+        // exhausted retries. The pipeline is permanently stuck — no downstream
+        // gates (expansion, response, enrichment, synthesis) will ever fire.
+        //
+        // This SHOULD return true (pipeline should recover from handler failures),
+        // but currently returns false.
+        assert!(!state.tension_scrape_done(),
+            "KNOWN BUG: DLQ'd handler leaves pipeline stuck — \
+             tension_scrape_done() returns false with no way to recover");
+
+        // The handler_failures counter proves the failure was recorded...
+        assert_eq!(state.stats.handler_failures, 1);
+        // ...but no state flag was set to unblock the gate
+        assert!(!state.tension_web_done);
+    }
+
     #[test]
     fn budget_limit_set_from_scout_run_requested() {
         let mut state = PipelineState::default();

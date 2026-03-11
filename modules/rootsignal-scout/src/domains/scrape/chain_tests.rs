@@ -320,6 +320,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
                 name: Some("Minneapolis, MN".to_string()),
                 address: None,
                 role: None,
+                timezone: None,
             });
         meta.confidence = 0.7;
     }

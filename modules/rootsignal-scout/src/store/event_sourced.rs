@@ -426,6 +426,7 @@ mod tests {
                 name: Some("Minneapolis".to_string()),
                 address: None,
                 role: None,
+                timezone: None,
             }],
             url: "https://example.com".to_string(),
             extracted_at: Utc::now(),

@@ -391,6 +391,7 @@ mod tests {
                     name: Some(region.name.clone()),
                     address: None,
                     role: None,
+                    timezone: None,
                 }],
                 url: tension.url.clone(),
                 extracted_at: now,

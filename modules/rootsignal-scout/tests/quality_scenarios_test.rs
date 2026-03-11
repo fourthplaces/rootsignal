@@ -65,7 +65,7 @@ fn community_garden_gathering_scores_high_confidence() {
                 }),
                 name: Some("Powderhorn Community Garden, 3524 15th Ave S".into()),
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             url: "https://powderhornpark.org/events".into(),
             ..test_meta()
@@ -125,7 +125,7 @@ fn food_shelf_aid_scores_high_confidence() {
                 }),
                 name: Some("420 15th Ave S, Minneapolis, MN 55454".into()),
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             url: "https://brivahealth.org/food-shelf".into(),
             ..test_meta()
@@ -165,7 +165,7 @@ fn food_shelf_aid_without_url_not_actionable() {
                 }),
                 name: Some("420 15th Ave S".into()),
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             ..test_meta()
         },
@@ -203,7 +203,7 @@ fn ice_enforcement_tension_moderate_confidence() {
                 }),
                 name: Some("Phillips neighborhood, Minneapolis".into()),
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             ..test_meta()
         },
@@ -242,7 +242,7 @@ fn emergency_meeting_gathering_is_actionable() {
                 }),
                 name: Some("Sagrado Corazón Church, 2018 E. Lake St".into()),
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             ..test_meta()
         },
@@ -284,7 +284,7 @@ fn legal_aid_signal_scores_reasonably() {
                 }),
                 name: Some("Centro de Trabajadores Unidos, 2104 Bloomington Ave".into()),
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             ..test_meta()
         },
@@ -357,7 +357,7 @@ fn gathering_action_url_same_as_source_url_not_actionable() {
                 }),
                 name: None,
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             ..test_meta()
         },
@@ -394,7 +394,7 @@ fn need_with_url_is_actionable_without_timing() {
                 }),
                 name: None,
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             ..test_meta()
         },
@@ -447,7 +447,7 @@ fn one_time_aid_distribution_scores_lower_than_ongoing() {
             }),
             name: None,
             address: None,
-            role: None,
+            role: None, timezone: None,
         }],
         ..test_meta()
     };
@@ -505,7 +505,7 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
                 }),
                 name: Some("3524 15th Ave S, Minneapolis".into()),
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             ..test_meta()
         },
@@ -527,7 +527,7 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
                 }),
                 name: Some("Powderhorn area".into()),
                 address: None,
-                role: None,
+                role: None, timezone: None,
             }],
             ..test_meta()
         },

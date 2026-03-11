@@ -1026,6 +1026,49 @@ fn build_all_events() -> Vec<Event> {
     ]
 }
 
+// =========================================================================
+// Coalescing Cypher structural guarantees
+// =========================================================================
+
+#[test]
+fn group_created_cypher_uses_merge() {
+    let source = include_str!("../src/projector.rs");
+    assert!(
+        source.contains("MERGE (g:SignalGroup {id: $id})"),
+        "GroupCreated must MERGE, not CREATE — idempotent replay"
+    );
+}
+
+#[test]
+fn group_created_seed_uses_merge_member_of() {
+    let source = include_str!("../src/projector.rs");
+    assert!(
+        source.contains("MERGE (sig)-[r:MEMBER_OF]->(g)"),
+        "Seed signal edge must use MERGE for idempotent replay"
+    );
+}
+
+#[test]
+fn signal_added_to_group_uses_multi_label_match() {
+    let source = include_str!("../src/projector.rs");
+    // The MEMBER_OF edge query must match all signal labels
+    let signal_match = "sig:Gathering OR sig:Resource OR sig:HelpRequest OR sig:Announcement OR sig:Concern OR sig:Condition";
+    assert!(
+        source.contains(signal_match),
+        "SignalAddedToGroup must match all 6 signal labels for multi-label coalesce"
+    );
+}
+
+#[test]
+fn group_queries_refined_uses_match_not_merge() {
+    let source = include_str!("../src/projector.rs");
+    // Refining queries on an existing group — MATCH, not MERGE
+    assert!(
+        source.contains("MATCH (g:SignalGroup {id: $id})\n                     SET g.queries"),
+        "GroupQueriesRefined should MATCH existing group, not MERGE a new one"
+    );
+}
+
 #[test]
 fn classification_lists_cover_expected_count() {
     let total = NOOP_EVENT_TYPES.len() + APPLIED_EVENT_TYPES.len();

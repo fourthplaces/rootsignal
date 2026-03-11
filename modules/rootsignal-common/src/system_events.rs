@@ -619,3 +619,162 @@ impl SystemEvent {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn serde_round_trip(event: &SystemEvent) -> SystemEvent {
+        let json = serde_json::to_value(event).expect("serialize");
+        serde_json::from_value(json).expect("deserialize")
+    }
+
+    #[test]
+    fn group_created_round_trips_with_seed() {
+        let event = SystemEvent::GroupCreated {
+            group_id: Uuid::new_v4(),
+            label: "Housing affordability".into(),
+            queries: vec!["rent increase".into(), "eviction notice".into()],
+            seed_signal_id: Some(Uuid::new_v4()),
+        };
+        let parsed = serde_round_trip(&event);
+        match parsed {
+            SystemEvent::GroupCreated { label, queries, seed_signal_id, .. } => {
+                assert_eq!(label, "Housing affordability");
+                assert_eq!(queries.len(), 2);
+                assert!(seed_signal_id.is_some());
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn group_created_round_trips_without_seed() {
+        let event = SystemEvent::GroupCreated {
+            group_id: Uuid::new_v4(),
+            label: "Transit disruptions".into(),
+            queries: vec!["bus route change".into()],
+            seed_signal_id: None,
+        };
+        let parsed = serde_round_trip(&event);
+        match parsed {
+            SystemEvent::GroupCreated { seed_signal_id, .. } => {
+                assert!(seed_signal_id.is_none());
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn group_created_omits_seed_signal_id_when_none() {
+        let event = SystemEvent::GroupCreated {
+            group_id: Uuid::new_v4(),
+            label: "test".into(),
+            queries: vec![],
+            seed_signal_id: None,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert!(
+            json.get("seed_signal_id").is_none(),
+            "seed_signal_id should be omitted when None (skip_serializing_if)"
+        );
+    }
+
+    #[test]
+    fn group_created_with_empty_queries_round_trips() {
+        let event = SystemEvent::GroupCreated {
+            group_id: Uuid::new_v4(),
+            label: "".into(),
+            queries: vec![],
+            seed_signal_id: None,
+        };
+        let parsed = serde_round_trip(&event);
+        match parsed {
+            SystemEvent::GroupCreated { queries, .. } => {
+                assert!(queries.is_empty());
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_added_to_group_round_trips() {
+        let event = SystemEvent::SignalAddedToGroup {
+            signal_id: Uuid::new_v4(),
+            group_id: Uuid::new_v4(),
+            confidence: 0.92,
+        };
+        let parsed = serde_round_trip(&event);
+        match parsed {
+            SystemEvent::SignalAddedToGroup { confidence, .. } => {
+                assert!((confidence - 0.92).abs() < f64::EPSILON);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_added_to_group_boundary_confidences() {
+        for conf in [0.0, 1.0, 0.5] {
+            let event = SystemEvent::SignalAddedToGroup {
+                signal_id: Uuid::new_v4(),
+                group_id: Uuid::new_v4(),
+                confidence: conf,
+            };
+            let parsed = serde_round_trip(&event);
+            match parsed {
+                SystemEvent::SignalAddedToGroup { confidence, .. } => {
+                    assert!((confidence - conf).abs() < f64::EPSILON);
+                }
+                _ => panic!("Wrong variant"),
+            }
+        }
+    }
+
+    #[test]
+    fn group_queries_refined_round_trips() {
+        let event = SystemEvent::GroupQueriesRefined {
+            group_id: Uuid::new_v4(),
+            queries: vec!["updated query".into(), "second query".into()],
+        };
+        let parsed = serde_round_trip(&event);
+        match parsed {
+            SystemEvent::GroupQueriesRefined { queries, .. } => {
+                assert_eq!(queries, vec!["updated query", "second query"]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn group_queries_refined_empty_queries_round_trips() {
+        let event = SystemEvent::GroupQueriesRefined {
+            group_id: Uuid::new_v4(),
+            queries: vec![],
+        };
+        let parsed = serde_round_trip(&event);
+        match parsed {
+            SystemEvent::GroupQueriesRefined { queries, .. } => {
+                assert!(queries.is_empty());
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn group_created_deserializes_from_legacy_without_seed() {
+        let json = serde_json::json!({
+            "type": "group_created",
+            "group_id": Uuid::new_v4().to_string(),
+            "label": "test",
+            "queries": ["q1"]
+        });
+        let parsed: SystemEvent = serde_json::from_value(json).unwrap();
+        match parsed {
+            SystemEvent::GroupCreated { seed_signal_id, .. } => {
+                assert!(seed_signal_id.is_none(), "Missing seed_signal_id should default to None");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+}
+

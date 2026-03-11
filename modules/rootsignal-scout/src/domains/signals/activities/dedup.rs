@@ -72,8 +72,7 @@ pub async fn deduplicate_extracted_batch(
     let fingerprint_matches = deps
         .store
         .find_by_fingerprints(&fingerprints)
-        .await
-        .unwrap_or_default();
+        .await?;
 
     for node in &batch.nodes {
         let node_type = node.node_type();

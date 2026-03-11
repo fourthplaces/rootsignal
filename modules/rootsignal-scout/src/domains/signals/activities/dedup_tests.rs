@@ -1290,3 +1290,37 @@ async fn mentioned_names_on_same_source_collapse_to_source_owner() {
     assert_eq!(identified[0], expected_ck,
         "canonical_key must derive from source URL, never from author name");
 }
+
+// ---------------------------------------------------------------------------
+// Bug: store failure during fingerprint lookup silently creates duplicates
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn store_error_on_fingerprint_lookup_propagates_instead_of_creating_duplicates() {
+    let store = Arc::new(MockSignalReader::new().failing_fingerprint_lookup());
+    let deps = test_deps(store);
+    let state = PipelineState::new(HashMap::new());
+
+    let node = tension_at("Free Legal Clinic", 44.93, -93.26);
+
+    let result = super::dedup::deduplicate_extracted_batch(
+        "https://example.org/events",
+        "example.org",
+        &ExtractedBatch {
+            content: "page content".to_string(),
+            nodes: vec![node],
+            resource_tags: HashMap::new(),
+            signal_tags: HashMap::new(),
+            author_actors: HashMap::new(),
+            schedules: HashMap::new(),
+            source_id: None,
+        },
+        &state,
+        &deps,
+    )
+    .await;
+
+    assert!(result.is_err(),
+        "Store failure during fingerprint lookup must propagate as error, \
+         not silently treat all signals as new (creating duplicates)");
+}

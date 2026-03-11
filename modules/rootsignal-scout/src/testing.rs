@@ -244,6 +244,7 @@ struct MockSignalReaderInner {
     blocked: HashSet<String>,
     processed_hashes: HashSet<(String, String)>,
     fail_on_create: bool,
+    fail_on_fingerprint_lookup: bool,
     /// (actor_id, source_id) — HAS_SOURCE edges
     actor_sources: Vec<(Uuid, Uuid)>,
     /// (signal_id, source_id) — PRODUCED_BY edges
@@ -274,6 +275,7 @@ impl MockSignalReader {
                 blocked: HashSet::new(),
                 processed_hashes: HashSet::new(),
                 fail_on_create: false,
+                fail_on_fingerprint_lookup: false,
                 actor_sources: Vec::new(),
                 signal_sources: Vec::new(),
                 actor_by_canonical_key: HashMap::new(),
@@ -284,6 +286,12 @@ impl MockSignalReader {
     /// Make `create_node` return an error for every call.
     pub fn failing_creates(self) -> Self {
         self.inner.lock().unwrap().fail_on_create = true;
+        self
+    }
+
+    /// Make `find_by_fingerprints` return a database error.
+    pub fn failing_fingerprint_lookup(self) -> Self {
+        self.inner.lock().unwrap().fail_on_fingerprint_lookup = true;
         self
     }
 
@@ -779,6 +787,9 @@ impl SignalReader for MockSignalReader {
         pairs: &[(String, NodeType)],
     ) -> Result<HashMap<(String, NodeType), crate::traits::FingerprintMatch>> {
         let inner = self.inner.lock().unwrap();
+        if inner.fail_on_fingerprint_lookup {
+            bail!("MockSignalReader: find_by_fingerprints forced failure");
+        }
         let mut results = HashMap::new();
         for (url, nt) in pairs {
             for signal in inner.signals.values() {

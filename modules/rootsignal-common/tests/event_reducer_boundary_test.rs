@@ -395,6 +395,7 @@ fn scout_pipeline_event_chain_is_expressible() {
             name: Some("Lake Street, Minneapolis".into()),
             address: None,
             role: None,
+            timezone: None,
         }],
         mentioned_entities: vec![Entity {
             name: "Lake Street Council".into(),

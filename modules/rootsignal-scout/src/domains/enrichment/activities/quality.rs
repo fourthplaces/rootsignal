@@ -125,6 +125,7 @@ mod tests {
                 name: Some("Powderhorn Park".to_string()),
                 address: None,
                 role: None,
+                timezone: None,
             }],
             url: "https://example.com/events".to_string(),
             extracted_at: Utc::now(),
@@ -248,6 +249,7 @@ mod tests {
             name: None,
             address: None,
             role: None,
+            timezone: None,
         }];
         let node = Node::Announcement(AnnouncementNode {
             meta,

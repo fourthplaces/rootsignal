@@ -527,6 +527,7 @@ mod tests {
                 name: Some("Minneapolis".into()),
                 address: None,
                 role: None,
+                timezone: None,
             }],
             mentioned_entities: vec![Entity {
                 name: "Lake Street Council".into(),
