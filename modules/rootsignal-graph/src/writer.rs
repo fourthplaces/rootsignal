@@ -4481,6 +4481,8 @@ pub struct SignalBrief {
     pub extracted_at: Option<DateTime<Utc>>,
     pub url: String,
     pub review_status: String,
+    pub location_name: Option<String>,
+    pub content_date: Option<DateTime<Utc>>,
 }
 
 /// A node in the source discovery tree.

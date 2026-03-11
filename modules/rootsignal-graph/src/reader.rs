@@ -1351,6 +1351,7 @@ impl PublicGraphReader {
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
                    s.url AS source_url_from_source, n.review_status AS review_status,
+                   n.location_name AS location_name, n.content_date AS content_date,
                    rel.role AS role
             ORDER BY n.extracted_at DESC
             LIMIT 50";
@@ -1379,6 +1380,8 @@ impl PublicGraphReader {
                 },
                 url: row.get("source_url_from_source").unwrap_or_default(),
                 review_status: row.get("review_status").unwrap_or_else(|_| "staged".to_string()),
+                location_name: row.get("location_name").ok(),
+                content_date: row_datetime_opt_pub(&row, "content_date"),
             });
         }
         Ok(signals)
@@ -1409,7 +1412,8 @@ impl PublicGraphReader {
             WHERE n.review_status IN ['staged', 'accepted']
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
-                   s.url AS source_url_from_source, n.review_status AS review_status
+                   s.url AS source_url_from_source, n.review_status AS review_status,
+                   n.location_name AS location_name, n.content_date AS content_date
             ORDER BY n.extracted_at DESC
             LIMIT 50";
 
@@ -1430,6 +1434,8 @@ impl PublicGraphReader {
                 extracted_at: row_datetime_opt_pub(&row, "extracted_at"),
                 url: row.get("source_url_from_source").unwrap_or_default(),
                 review_status: row.get("review_status").unwrap_or_default(),
+                location_name: row.get("location_name").ok(),
+                content_date: row_datetime_opt_pub(&row, "content_date"),
             });
         }
         Ok(signals)
@@ -1452,7 +1458,8 @@ impl PublicGraphReader {
             AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
-                   n.url AS url, n.review_status AS review_status
+                   n.url AS url, n.review_status AS review_status,
+                   n.location_name AS location_name, n.content_date AS content_date
             ORDER BY n.confidence DESC
             LIMIT $limit";
         let q = query(cypher).param("run_id", run_id).param("limit", limit);
@@ -1472,6 +1479,8 @@ impl PublicGraphReader {
                 extracted_at: row_datetime_opt_pub(&row, "extracted_at"),
                 url: row.get("url").unwrap_or_default(),
                 review_status: row.get("review_status").unwrap_or_default(),
+                location_name: row.get("location_name").ok(),
+                content_date: row_datetime_opt_pub(&row, "content_date"),
             });
         }
         Ok((signals, total))

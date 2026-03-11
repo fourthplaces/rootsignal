@@ -326,6 +326,8 @@ export const ACTOR_DETAIL = gql`
         extractedAt
         url
         reviewStatus
+        locationName
+        contentDate
       }
     }
   }
@@ -738,6 +740,8 @@ export const SOURCE_DETAIL = gql`
         extractedAt
         url
         reviewStatus
+        locationName
+        contentDate
       }
       actors {
         id

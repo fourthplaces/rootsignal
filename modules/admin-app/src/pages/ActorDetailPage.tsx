@@ -30,6 +30,8 @@ type SignalBrief = {
   extractedAt: string | null;
   sourceUrl: string;
   reviewStatus: string;
+  locationName: string | null;
+  contentDate: string | null;
 };
 
 type ActorDetail = {
@@ -212,10 +214,12 @@ export function ActorDetailPage() {
               <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
                 <th className="px-4 py-2 font-medium">Type</th>
                 <th className="px-4 py-2 font-medium">Title</th>
+                <th className="px-4 py-2 font-medium">Location</th>
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium text-right">
                   Confidence
                 </th>
+                <th className="px-4 py-2 font-medium">Published</th>
                 <th className="px-4 py-2 font-medium">Extracted</th>
               </tr>
             </thead>
@@ -243,6 +247,9 @@ export function ActorDetailPage() {
                       {s.title}
                     </Link>
                   </td>
+                  <td className="px-4 py-2 text-muted-foreground max-w-[180px] truncate">
+                    {s.locationName ?? "\u2014"}
+                  </td>
                   <td className="px-4 py-2">
                     <span
                       className={`text-xs px-2 py-0.5 rounded-full border ${
@@ -258,6 +265,9 @@ export function ActorDetailPage() {
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums">
                     {(s.confidence * 100).toFixed(0)}%
+                  </td>
+                  <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+                    {s.contentDate ? formatDate(s.contentDate) : "\u2014"}
                   </td>
                   <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
                     {formatDate(s.extractedAt)}

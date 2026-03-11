@@ -22,7 +22,7 @@ const STATUS_OPTIONS = [
   { value: "rejected", label: "Rejected" },
 ];
 
-type SortKey = "type" | "title" | "confidence" | "sourceUrl" | "contentDate" | "extractedAt" | "reviewStatus";
+type SortKey = "type" | "title" | "locationName" | "confidence" | "sourceUrl" | "contentDate" | "extractedAt" | "reviewStatus";
 type SortDir = "asc" | "desc";
 
 const PAGE_SIZES = [25, 50, 100];
@@ -36,6 +36,7 @@ type Signal = {
   reviewStatus: string;
   wasCorrected: boolean;
   sourceUrl: string | null;
+  locationName: string | null;
   type: string;
   __typename: string;
 };
@@ -51,6 +52,7 @@ function getSignalFields(s: Record<string, unknown>): Signal {
     reviewStatus: (s.reviewStatus as string) ?? "accepted",
     wasCorrected: (s.wasCorrected as boolean) ?? false,
     sourceUrl: (s.sourceUrl as string) ?? null,
+    locationName: (s.locationName as string) ?? null,
     type: typeName,
     __typename: s.__typename as string,
   };
@@ -86,6 +88,14 @@ const columns: Column<Signal>[] = [
         {s.title}
       </Link>
     ),
+  },
+  {
+    key: "locationName",
+    label: "Location",
+    className: "max-w-[180px] truncate",
+    render: (s) => s.locationName
+      ? <span className="text-muted-foreground" title={s.locationName}>{s.locationName}</span>
+      : <span className="text-muted-foreground/50">&mdash;</span>,
   },
   {
     key: "confidence",

@@ -268,6 +268,8 @@ impl QueryRoot {
                 extracted_at: s.extracted_at,
                 url: s.url,
                 review_status: s.review_status,
+                location_name: s.location_name,
+                content_date: s.content_date,
             })
             .collect();
 
@@ -605,6 +607,8 @@ impl QueryRoot {
                 extracted_at: s.extracted_at,
                 url: s.url,
                 review_status: s.review_status,
+                location_name: s.location_name,
+                content_date: s.content_date,
             })
             .collect();
 
@@ -1813,6 +1817,8 @@ pub struct AdminSignalBrief {
     pub extracted_at: Option<DateTime<Utc>>,
     pub url: String,
     pub review_status: String,
+    pub location_name: Option<String>,
+    pub content_date: Option<DateTime<Utc>>,
 }
 
 #[derive(SimpleObject)]

@@ -33,6 +33,8 @@ type SignalBrief = {
   extractedAt: string | null;
   url: string;
   reviewStatus: string;
+  locationName: string | null;
+  contentDate: string | null;
 };
 
 type ActorBrief = {
@@ -579,8 +581,22 @@ export function SourceDetailPage() {
             ),
           },
           {
+            key: "locationName", label: "Location", resizable: true, defaultWidth: 180,
+            render: (s) => s.locationName
+              ? <span className="text-muted-foreground truncate" title={s.locationName}>{s.locationName}</span>
+              : <span className="text-muted-foreground/50">&mdash;</span>,
+          },
+          {
             key: "confidence", label: "Confidence", resizable: true, defaultWidth: 100, align: "right",
             render: (s) => <span className="tabular-nums">{(s.confidence * 100).toFixed(0)}%</span>,
+          },
+          {
+            key: "contentDate", label: "Published", resizable: true, defaultWidth: 140,
+            render: (s) => (
+              <span className="text-muted-foreground whitespace-nowrap">
+                {s.contentDate ? formatDate(s.contentDate) : "\u2014"}
+              </span>
+            ),
           },
           {
             key: "extracted", label: "Extracted", resizable: true, defaultWidth: 180,

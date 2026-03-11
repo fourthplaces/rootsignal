@@ -63,6 +63,7 @@ export function DanglingSignalsPage() {
                 <th className="text-left px-4 py-2 font-medium">Location Name</th>
                 <th className="text-right px-4 py-2 font-medium">Confidence</th>
                 <th className="text-left px-4 py-2 font-medium">Source</th>
+                <th className="text-left px-4 py-2 font-medium">Published</th>
                 <th className="text-left px-4 py-2 font-medium">Extracted</th>
               </tr>
             </thead>
@@ -94,6 +95,9 @@ export function DanglingSignalsPage() {
                           {new URL(s.sourceUrl).hostname}
                         </a>
                       ) : "—"}
+                    </td>
+                    <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+                      {s.contentDate ? formatDate(s.contentDate) : "\u2014"}
                     </td>
                     <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
                       {formatDate(s.extractedAt)}

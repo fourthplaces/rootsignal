@@ -230,6 +230,7 @@ export function RegionDetailPage() {
                   <th className="text-left px-4 py-2 font-medium">Title</th>
                   <th className="text-left px-4 py-2 font-medium">Location</th>
                   <th className="text-right px-4 py-2 font-medium">Confidence</th>
+                  <th className="text-left px-4 py-2 font-medium">Published</th>
                   <th className="text-left px-4 py-2 font-medium">Updated</th>
                 </tr>
               </thead>
@@ -250,6 +251,7 @@ export function RegionDetailPage() {
                     </td>
                     <td className="px-4 py-2 text-muted-foreground">{s.locationName || "-"}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{s.confidence ? `${(Number(s.confidence) * 100).toFixed(0)}%` : "-"}</td>
+                    <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{s.contentDate ? formatDate(s.contentDate as string) : "\u2014"}</td>
                     <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{s.updatedAt ? formatDate(s.updatedAt as string) : "-"}</td>
                   </tr>
                   );
