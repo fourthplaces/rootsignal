@@ -4,6 +4,8 @@ pub mod events;
 #[cfg(test)]
 mod completion_tests;
 #[cfg(test)]
+mod geocoding_tests;
+#[cfg(test)]
 mod source_claim_integration_tests;
 
 use std::collections::HashMap;
@@ -21,6 +23,26 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::signals::events::SignalEvent;
+
+// ── Search name construction ──
+
+/// Build a geocodable search name by appending geographic context.
+///
+/// If the name already contains a comma (e.g. "Rochester, Minnesota"), it's
+/// assumed to be qualified and is returned as-is. Otherwise, actor location
+/// takes priority over region as the more specific context.
+pub fn build_search_name(name: &str, region: Option<&str>, actor_location: Option<&str>) -> String {
+    if name.contains(',') {
+        return name.to_string();
+    }
+    if let Some(loc) = actor_location {
+        return format!("{name}, {loc}");
+    }
+    if let Some(reg) = region {
+        return format!("{name}, {reg}");
+    }
+    name.to_string()
+}
 
 // ── Filters ──
 
@@ -256,6 +278,13 @@ pub mod handlers {
             None => return Ok(Events::new()),
         };
 
+        let state = ctx.aggregate::<PipelineState>().curr;
+        let region_name = state.run_scope.region().map(|r| r.name.as_str());
+        let actor_location = event.url()
+            .and_then(|u| state.url_to_canonical_key.get(u))
+            .and_then(|ck| state.actor_contexts.get(ck))
+            .and_then(|ac| ac.location_name.as_deref());
+
         let mut out = Events::new();
 
         for loc in event.locations() {
@@ -264,13 +293,9 @@ pub mod handlers {
                 _ => continue,
             };
 
-            // Bias toward LLM-provided coords if present (helps disambiguate)
-            let (bias_lat, bias_lng) = match loc.point.as_ref() {
-                Some(p) => (Some(p.lat), Some(p.lng)),
-                None => (None, None),
-            };
+            let search_name = build_search_name(name, region_name, actor_location);
 
-            match geocoder.geocode(name, bias_lat, bias_lng).await {
+            match geocoder.geocode(&search_name, None, None).await {
                 Ok(Some(result)) => {
                     out.push(SystemEvent::LocationGeocoded {
                         signal_id,
@@ -292,5 +317,42 @@ pub mod handlers {
         }
 
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod build_search_name_tests {
+    use super::build_search_name;
+
+    #[test]
+    fn search_name_appends_region_for_bare_names() {
+        assert_eq!(
+            build_search_name("Rochester", Some("Minnesota"), None),
+            "Rochester, Minnesota"
+        );
+    }
+
+    #[test]
+    fn search_name_prefers_actor_location_over_region() {
+        assert_eq!(
+            build_search_name("Lake Street", Some("Minnesota"), Some("Minneapolis, MN")),
+            "Lake Street, Minneapolis, MN"
+        );
+    }
+
+    #[test]
+    fn search_name_preserves_already_qualified_names() {
+        assert_eq!(
+            build_search_name("Rochester, Minnesota", Some("Minnesota"), Some("Minneapolis, MN")),
+            "Rochester, Minnesota"
+        );
+    }
+
+    #[test]
+    fn search_name_passes_through_without_context() {
+        assert_eq!(
+            build_search_name("Rochester", None, None),
+            "Rochester"
+        );
     }
 }

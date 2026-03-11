@@ -402,22 +402,9 @@ impl Extractor {
                 _ => SensitivityLevel::General,
             };
 
-            let location = match (signal.latitude, signal.longitude) {
-                (Some(lat), Some(lng)) => {
-                    let precision = match signal.geo_precision.as_deref() {
-                        Some("exact") => GeoPrecision::Exact,
-                        Some("neighborhood") => GeoPrecision::Neighborhood,
-                        Some("region") => GeoPrecision::Region,
-                        _ => GeoPrecision::Approximate,
-                    };
-                    Some(GeoPoint {
-                        lat,
-                        lng,
-                        precision,
-                    })
-                }
-                _ => None,
-            };
+            // LLM-provided lat/lng are unreliable (wrong country). Ignore them;
+            // the geocoder resolves coordinates from the location name.
+            let location: Option<GeoPoint> = None;
 
             // Use the LLM-returned source_url when present (specific post URL),
             // falling back to the page-level source_url.
@@ -842,13 +829,32 @@ Do NOT classify news reportage as a HelpRequest based on the urgency of the topi
 - **general**: Everything else
 
 ## Location
-- Extract the most specific location possible from the content
-- If you can identify a SPECIFIC place (building, park, intersection, venue), provide exact lat/lng
-- If the content mentions a NEIGHBORHOOD or well-known area within {city_name} (e.g. "Phillips", "Uptown", "Cedar-Riverside"), provide approximate lat/lng for that area's center with geo_precision "neighborhood"
-- If the content is GEOGRAPHICALLY NEUTRAL — no place is mentioned or implied (e.g. general thoughts, abstract policy discussion, personal reflections) — omit lat/lng AND location_name entirely. Do NOT guess a location.
-- If the signal is region-wide (affects the whole area, not a specific place), provide approximate lat/lng for the region's center with geo_precision "region" and set location_name (e.g. "Minneapolis" or "Twin Cities")
-- location_name: the place name as text (e.g. "YWCA Midtown", "Uptown", "City Hall")
-- geo_precision: "exact" for addresses/buildings, "neighborhood" for area-level, "region" for city/metro-wide
+Location is WHERE THIS SIGNAL HAPPENS — not where the author lives, not places
+mentioned as comparisons, not origin stories.
+
+- **About-location, not from-location.** A Minneapolis org posting about their
+  DC conference → location is DC. A national article about a local food shelf →
+  location is the food shelf. "Like what happened in Flint" → Flint is a
+  reference, not a location. "An Italian restaurant on Lake Street" → location
+  is Lake Street, not Italy. "A Somali family opened a shop in Phillips" →
+  location is Phillips, not Somalia.
+- **Resolve relational and organizational references.** "Near the airport" →
+  name the airport. "At the YWCA" → include city ("YWCA Midtown, {city_name}").
+  "On the corner of 38th and Chicago" → "38th & Chicago, {city_name}". "The
+  south side" → "South {city_name}".
+- **Geocodable names.** Include enough geographic context for a geocoding API
+  to find the right place. "{{neighborhood}}, {city_name}" not just
+  "{{neighborhood}}". "Rochester, Minnesota" not just "Rochester".
+- **Neighborhoods and cultural names.** "Uptown", "Phillips", "Over North" →
+  write as "{{name}}, {city_name}".
+- **Diffuse locations.** "Across the metro" or "statewide" → use the region
+  name ("Twin Cities" or "Minnesota"). geo_precision: "region".
+- **No location is fine.** If the signal is geographically neutral — abstract
+  policy, personal reflections, no place mentioned or implied — omit
+  location_name entirely. Do NOT guess.
+- Do NOT provide latitude or longitude — the system geocodes from the name.
+- geo_precision: "exact" for addresses/buildings/intersections, "neighborhood"
+  for area-level, "region" for city/metro-wide
 
 ## Timing
 - ISO 8601 datetime strings for start/end times (e.g. "2026-03-15T14:00:00Z")
@@ -1114,6 +1120,62 @@ mod tests {
             Some("proposed rent increases")
         );
         assert_eq!(signal.category.as_deref(), Some("housing"));
+    }
+
+    #[test]
+    fn extractor_drops_llm_coordinates() {
+        let signal = ExtractedSignal {
+            signal_type: "gathering".to_string(),
+            title: "Community Dinner".to_string(),
+            summary: "Weekly dinner in Phillips".to_string(),
+            sensitivity: "general".to_string(),
+            latitude: Some(48.8566),   // Paris lat — wrong!
+            longitude: Some(2.3522),   // Paris lng — wrong!
+            geo_precision: Some("exact".to_string()),
+            location_name: Some("Phillips, Minneapolis".to_string()),
+            starts_at: None,
+            ends_at: None,
+            action_url: None,
+            organizer: None,
+            is_recurring: None,
+            availability: None,
+            eligibility: None,
+            is_ongoing: None,
+            urgency: None,
+            what_needed: None,
+            stated_goal: None,
+            subject: None,
+            severity: None,
+            category: None,
+            effective_date: None,
+            source_authority: None,
+            published_at: None,
+            mentioned_entities: None,
+            opposing: None,
+            observed_by: None,
+            measurement: None,
+            affected_scope: None,
+            source_url: None,
+            source_id: None,
+            implied_queries: vec![],
+            resources: vec![],
+            tags: vec![],
+            is_firsthand: None,
+            author_actor: None,
+            rrule: None,
+            schedule_text: None,
+            explicit_dates: vec![],
+            exception_dates: vec![],
+            schedule_timezone: None,
+        };
+
+        let response = ExtractionResponse { signals: vec![signal] };
+        let result = Extractor::convert_signals(response, "https://example.com/page");
+
+        assert_eq!(result.nodes.len(), 1, "should produce one node");
+        let loc = &result.nodes[0].meta().unwrap().locations[0];
+        assert!(loc.point.is_none(), "LLM-provided coordinates must be dropped");
+        assert_eq!(loc.name.as_deref(), Some("Phillips, Minneapolis"));
     }
 
     #[test]

@@ -84,14 +84,7 @@ async fn find_ungeocode_locations(pg: &PgPool) -> Result<Vec<SignalWithLocations
                         let name = loc.get("name")?.as_str()?.trim().to_string();
                         if name.is_empty() { return None; }
 
-                        let bias_lat = loc.get("point")
-                            .and_then(|p| p.get("lat"))
-                            .and_then(|v| v.as_f64());
-                        let bias_lng = loc.get("point")
-                            .and_then(|p| p.get("lng"))
-                            .and_then(|v| v.as_f64());
-
-                        Some(LocationEntry { name, bias_lat, bias_lng })
+                        Some(LocationEntry { name, bias_lat: None, bias_lng: None })
                     }).collect::<Vec<_>>()
                 })
                 .unwrap_or_default();

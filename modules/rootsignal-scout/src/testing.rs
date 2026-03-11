@@ -1200,6 +1200,46 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
     })
 }
 
+/// Create a Concern node with a location name but no coordinates.
+/// Used for geocoding tests where the geocoder resolves coordinates from the name.
+pub fn tension_with_location(title: &str, location_name: &str) -> Node {
+    use rootsignal_common::types::{NodeMeta, Severity, ConcernNode};
+    Node::Concern(ConcernNode {
+        meta: NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: String::new(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.8,
+            corroboration_count: 0,
+            locations: vec![rootsignal_common::Location {
+                point: None,
+                name: Some(location_name.to_string()),
+                address: None,
+                role: None,
+                timezone: None,
+            }],
+            url: String::new(),
+            extracted_at: Utc::now(),
+            published_at: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 1,
+            cause_heat: 0.0,
+            implied_queries: Vec::new(),
+            channel_diversity: 1,
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
+            mentioned_entities: vec![],
+            category: None,
+        },
+        severity: Severity::Medium,
+        subject: None,
+        opposing: None,
+    })
+}
+
 /// Create a Need node with just a title (no location).
 pub fn need(title: &str) -> Node {
     use rootsignal_common::types::{HelpRequestNode, NodeMeta, Urgency};
@@ -2443,6 +2483,7 @@ impl ScoutRunTest {
             embedder: None,
             graph: None,
             ai: None,
+            geocoder: None,
         }
     }
 
@@ -2497,6 +2538,7 @@ pub struct ScoutRunTestBuilder {
     embedder: Option<Arc<dyn TextEmbedder>>,
     graph: Option<Arc<dyn GraphQueries>>,
     ai: Option<Arc<dyn ai_client::Agent>>,
+    geocoder: Option<Arc<dyn rootsignal_graph::geocoder::GeocodingLookup>>,
 }
 
 impl ScoutRunTestBuilder {
@@ -2546,6 +2588,12 @@ impl ScoutRunTestBuilder {
         self
     }
 
+    /// Inject a geocoder (for location geocoding tests).
+    pub fn geocoder(mut self, geocoder: Arc<dyn rootsignal_graph::geocoder::GeocodingLookup>) -> Self {
+        self.geocoder = Some(geocoder);
+        self
+    }
+
     /// Build the harness: wire all mocks, create engine.
     pub fn build(self) -> ScoutRunTest {
         let store = Arc::new(MockSignalReader::new());
@@ -2591,6 +2639,9 @@ impl ScoutRunTestBuilder {
 
         if let Some(ai) = self.ai {
             deps.ai = Some(ai);
+        }
+        if let Some(geocoder) = self.geocoder {
+            deps.geocoder = Some(geocoder);
         }
 
         let engine = Arc::new(build_engine(deps, None));

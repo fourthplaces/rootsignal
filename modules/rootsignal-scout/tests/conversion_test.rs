@@ -364,16 +364,17 @@ fn missing_date_becomes_none() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn geo_precision_string_converts_to_typed_precision() {
+fn llm_coordinates_dropped_only_location_name_kept() {
     let response = parse_response(
         r#"{
         "signals": [
             {"signal_type": "resource", "title": "A", "summary": "s", "sensitivity": "general",
-             "latitude": 44.97, "longitude": -93.26, "geo_precision": "exact"},
+             "latitude": 44.97, "longitude": -93.26, "geo_precision": "exact",
+             "location_name": "Lake Harriet"},
             {"signal_type": "resource", "title": "B", "summary": "s", "sensitivity": "general",
              "latitude": 44.97, "longitude": -93.26, "geo_precision": "neighborhood"},
             {"signal_type": "resource", "title": "C", "summary": "s", "sensitivity": "general",
-             "latitude": 44.97, "longitude": -93.26, "geo_precision": "other"},
+             "location_name": "Uptown"},
             {"signal_type": "resource", "title": "D", "summary": "s", "sensitivity": "general"}
         ]
     }"#,
@@ -381,23 +382,25 @@ fn geo_precision_string_converts_to_typed_precision() {
 
     let result = Extractor::convert_signals(response, "https://example.com");
 
-    let loc0 = *result.nodes[0].meta().unwrap().about_point().unwrap();
-    assert_eq!(loc0.precision, GeoPrecision::Exact);
+    // Signal A: has lat/lng AND location_name — coordinates dropped, name kept
+    let meta0 = result.nodes[0].meta().unwrap();
+    assert_eq!(meta0.locations.len(), 1);
+    assert!(meta0.locations[0].point.is_none(), "LLM coordinates must be dropped");
+    assert_eq!(meta0.locations[0].name.as_deref(), Some("Lake Harriet"));
 
-    let loc1 = *result.nodes[1].meta().unwrap().about_point().unwrap();
-    assert_eq!(loc1.precision, GeoPrecision::Neighborhood);
+    // Signal B: has lat/lng but NO location_name — no Location entry at all
+    let meta1 = result.nodes[1].meta().unwrap();
+    assert!(meta1.locations.is_empty(), "lat/lng without location_name produces no location");
 
-    let loc2 = *result.nodes[2].meta().unwrap().about_point().unwrap();
-    assert_eq!(
-        loc2.precision,
-        GeoPrecision::Approximate,
-        "unknown precision defaults to Approximate"
-    );
+    // Signal C: has location_name but NO lat/lng — Location with name only
+    let meta2 = result.nodes[2].meta().unwrap();
+    assert_eq!(meta2.locations.len(), 1);
+    assert!(meta2.locations[0].point.is_none());
+    assert_eq!(meta2.locations[0].name.as_deref(), Some("Uptown"));
 
-    assert!(
-        result.nodes[3].meta().unwrap().about_point().is_none(),
-        "no lat/lng means no location"
-    );
+    // Signal D: neither lat/lng nor location_name — no location
+    let meta3 = result.nodes[3].meta().unwrap();
+    assert!(meta3.locations.is_empty(), "no coordinates and no name means no location");
 }
 
 // ---------------------------------------------------------------------------
