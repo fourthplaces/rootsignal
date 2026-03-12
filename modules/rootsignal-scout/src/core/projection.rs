@@ -98,7 +98,28 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Reactor<ScoutEngin
                     ephemeral: None,
                     persistent: true,
                 };
-                projector.project(&persisted).await?;
+                let result = projector.project(&persisted).await;
+                match &result {
+                    Ok(rootsignal_graph::ApplyResult::DeserializeError(msg)) => {
+                        tracing::error!(
+                            event_type = %persisted.event_type,
+                            error = %msg,
+                            "Neo4j projection deserialization failed — event was silently dropped"
+                        );
+                    }
+                    Ok(rootsignal_graph::ApplyResult::Applied) => {
+                        tracing::debug!(event_type = %persisted.event_type, "Projected to Neo4j");
+                    }
+                    Ok(rootsignal_graph::ApplyResult::NoOp) => {}
+                    Err(e) => {
+                        tracing::error!(
+                            event_type = %persisted.event_type,
+                            error = %e,
+                            "Neo4j projection write failed"
+                        );
+                    }
+                }
+                result?;
                 Ok(events![])
             }
         })
@@ -281,6 +302,44 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                             .bind(flow_type.as_str())
                             .bind(&source_ids_json)
                             .bind(&scope_json)
+                            .bind(task_id.as_deref())
+                            .execute(pool)
+                            .await?;
+                        }
+                    }
+                    LifecycleEvent::GenerateSituationsRequested {
+                        run_id, region, region_id, task_id, ..
+                    } => {
+                        let deps = ctx.deps();
+                        if let Some(pool) = &deps.pg_pool {
+                            let region_name = region.name.clone();
+                            sqlx::query(
+                                "INSERT INTO scout_runs (run_id, region, region_id, flow_type, task_id, started_at) \
+                                 VALUES ($1, $2, $3, 'weave', $4, now()) \
+                                 ON CONFLICT (run_id) DO NOTHING",
+                            )
+                            .bind(run_id.to_string())
+                            .bind(&region_name)
+                            .bind(region_id.as_deref())
+                            .bind(task_id.as_deref())
+                            .execute(pool)
+                            .await?;
+                        }
+                    }
+                    LifecycleEvent::CoalesceRequested {
+                        run_id, region, region_id, task_id, ..
+                    } => {
+                        let deps = ctx.deps();
+                        if let Some(pool) = &deps.pg_pool {
+                            let region_name = region.name.clone();
+                            sqlx::query(
+                                "INSERT INTO scout_runs (run_id, region, region_id, flow_type, task_id, started_at) \
+                                 VALUES ($1, $2, $3, 'coalesce', $4, now()) \
+                                 ON CONFLICT (run_id) DO NOTHING",
+                            )
+                            .bind(run_id.to_string())
+                            .bind(&region_name)
+                            .bind(region_id.as_deref())
                             .bind(task_id.as_deref())
                             .execute(pool)
                             .await?;

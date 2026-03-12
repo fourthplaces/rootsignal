@@ -726,6 +726,7 @@ mod tests {
             schedule: None,
             what_needed: Some("Warming center".to_string()),
             stated_goal: None,
+            action_url: None,
         });
 
         let system_event = Event::System(SystemEvent::SignalTagged {

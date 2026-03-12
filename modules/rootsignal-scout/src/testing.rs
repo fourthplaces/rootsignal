@@ -1151,6 +1151,7 @@ pub fn tension(title: &str) -> Node {
         severity: Severity::Medium,
         subject: None,
         opposing: None,
+        action_url: None,
     })
 }
 
@@ -1197,6 +1198,7 @@ pub fn tension_at(title: &str, lat: f64, lng: f64) -> Node {
         severity: Severity::Medium,
         subject: None,
         opposing: None,
+        action_url: None,
     })
 }
 
@@ -1237,6 +1239,7 @@ pub fn tension_with_location(title: &str, location_name: &str) -> Node {
         severity: Severity::Medium,
         subject: None,
         opposing: None,
+        action_url: None,
     })
 }
 
@@ -1524,6 +1527,7 @@ pub fn notice(title: &str) -> Node {
         subject: None,
         effective_date: None,
         source_authority: None,
+        action_url: None,
     })
 }
 
@@ -1571,6 +1575,7 @@ pub fn notice_at(title: &str, lat: f64, lng: f64) -> Node {
         subject: None,
         effective_date: None,
         source_authority: None,
+        action_url: None,
     })
 }
 
@@ -2215,6 +2220,7 @@ pub fn test_world_event() -> rootsignal_common::events::WorldEvent {
         schedule: None,
         subject: None,
         effective_date: None,
+        action_url: None,
     }
 }
 

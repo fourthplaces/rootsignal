@@ -41,6 +41,37 @@ mod handler_tests {
         (engine, captured)
     }
 
+    fn coalesce_engine_with_capture(
+        graph: Option<Arc<dyn GraphQueries>>,
+        ai: Option<Arc<dyn ai_client::Agent>>,
+    ) -> (causal::Engine<ScoutEngineDeps>, Arc<Mutex<Vec<AnyEvent>>>) {
+        use crate::core::engine::build_coalesce_engine;
+
+        let store = Arc::new(MockSignalReader::new());
+        let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
+        let run_id = Uuid::new_v4();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+
+        let mut deps = ScoutEngineDeps::new(
+            store as Arc<dyn SignalReader>,
+            embedder,
+            run_id,
+        );
+        deps.graph = graph;
+        deps.ai = ai;
+        deps.captured_events = Some(captured.clone());
+
+        let engine = build_coalesce_engine(deps, None);
+        (engine, captured)
+    }
+
+    fn has_run_completed(captured: &[AnyEvent]) -> bool {
+        captured.iter().any(|e| {
+            e.downcast_ref::<LifecycleEvent>()
+                .is_some_and(|le| matches!(le, LifecycleEvent::ScoutRunCompleted { .. }))
+        })
+    }
+
     fn has_coalescing_skipped(captured: &[AnyEvent]) -> bool {
         captured.iter().any(|e| {
             e.downcast_ref::<CoalescingEvent>()
@@ -294,6 +325,69 @@ mod handler_tests {
         assert_eq!(new_groups, 0, "No new groups in feed mode");
         assert_eq!(fed_signals, 1, "One signal fed");
         assert_eq!(refined_groups, 1, "One group's queries refined");
+    }
+
+    // -----------------------------------------------------------------------
+    // Run completion tests — verify is_terminal_event recognizes coalescing
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn coalescing_skipped_emits_run_completed() {
+        let (engine, captured) = weave_engine_with_capture(None, None);
+
+        engine
+            .emit(LifecycleEvent::GenerateSituationsRequested {
+                run_id: Uuid::new_v4(),
+                region: rootsignal_common::ScoutScope {
+                    center_lat: 44.97,
+                    center_lng: -93.26,
+                    radius_km: 50.0,
+                    name: "Minneapolis".into(),
+                },
+                budget_cents: 100,
+                region_id: None,
+                task_id: None,
+            })
+            .settled()
+            .await
+            .unwrap();
+
+        let events = captured.lock().unwrap().clone();
+        assert!(has_coalescing_skipped(&events), "Should emit CoalescingSkipped");
+        assert!(
+            has_run_completed(&events),
+            "CoalescingSkipped is a terminal event — run_completion_handler should emit ScoutRunCompleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn coalesce_requested_skipped_emits_run_completed() {
+        let (engine, captured) = coalesce_engine_with_capture(None, None);
+
+        engine
+            .emit(LifecycleEvent::CoalesceRequested {
+                run_id: Uuid::new_v4(),
+                region: rootsignal_common::ScoutScope {
+                    center_lat: 44.97,
+                    center_lng: -93.26,
+                    radius_km: 50.0,
+                    name: "Minneapolis".into(),
+                },
+                seed_signal_id: None,
+                budget_cents: 100,
+                region_id: None,
+                task_id: None,
+            })
+            .settled()
+            .await
+            .unwrap();
+
+        let events = captured.lock().unwrap().clone();
+        assert!(has_coalescing_skipped(&events), "Should emit CoalescingSkipped");
+        assert!(
+            has_run_completed(&events),
+            "CoalescingSkipped via CoalesceRequested should also emit ScoutRunCompleted"
+        );
     }
 }
 

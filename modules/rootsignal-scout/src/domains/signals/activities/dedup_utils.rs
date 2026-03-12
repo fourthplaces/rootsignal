@@ -91,6 +91,7 @@ mod tests {
             severity: Severity::Medium,
             subject: None,
             opposing: None,
+            action_url: None,
         })
     }
 
@@ -228,6 +229,7 @@ mod tests {
             severity: Severity::Medium,
             subject: None,
             opposing: None,
+            action_url: None,
         })
     }
 
@@ -259,6 +261,7 @@ mod tests {
             severity: Severity::Medium,
             subject: None,
             opposing: None,
+            action_url: None,
         })
     }
 

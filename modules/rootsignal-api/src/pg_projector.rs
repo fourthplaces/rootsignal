@@ -108,6 +108,48 @@ impl PostgresProjector {
                     .await?;
                 }
 
+                "lifecycle:generate_situations_requested" => {
+                    let p = &event.payload;
+                    let run_id = p["run_id"].as_str().unwrap_or_default();
+                    let region = p["region"]["name"].as_str().unwrap_or("unknown");
+                    let region_id = p["region_id"].as_str();
+                    let task_id = p["task_id"].as_str();
+
+                    sqlx::query(
+                        "INSERT INTO scout_runs (run_id, region, region_id, flow_type, task_id, started_at) \
+                         VALUES ($1, $2, $3, 'weave', $4, $5) \
+                         ON CONFLICT (run_id) DO NOTHING",
+                    )
+                    .bind(run_id)
+                    .bind(region)
+                    .bind(region_id)
+                    .bind(task_id)
+                    .bind(event.created_at)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                "lifecycle:coalesce_requested" => {
+                    let p = &event.payload;
+                    let run_id = p["run_id"].as_str().unwrap_or_default();
+                    let region = p["region"]["name"].as_str().unwrap_or("unknown");
+                    let region_id = p["region_id"].as_str();
+                    let task_id = p["task_id"].as_str();
+
+                    sqlx::query(
+                        "INSERT INTO scout_runs (run_id, region, region_id, flow_type, task_id, started_at) \
+                         VALUES ($1, $2, $3, 'coalesce', $4, $5) \
+                         ON CONFLICT (run_id) DO NOTHING",
+                    )
+                    .bind(run_id)
+                    .bind(region)
+                    .bind(region_id)
+                    .bind(task_id)
+                    .bind(event.created_at)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
                 "lifecycle:scout_run_completed" => {
                     let p = &event.payload;
                     let run_id = p["run_id"].as_str().unwrap_or_default();

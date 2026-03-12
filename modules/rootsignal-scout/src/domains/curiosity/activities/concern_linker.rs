@@ -412,6 +412,7 @@ mod tests {
             severity,
             subject: None,
             opposing: Some(tension.opposing.clone()),
+            action_url: None,
         };
 
         // Key assertions: location is set to region center

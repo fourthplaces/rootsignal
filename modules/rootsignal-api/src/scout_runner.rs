@@ -283,7 +283,7 @@ impl ScoutRunner {
     /// queue entries, rebuilds engines, and calls `settle()` to finish them.
     pub async fn resume_incomplete_runs(&self) {
         let rows = match sqlx::query_as::<_, IncompleteRun>(
-            "SELECT run_id, scope FROM scout_runs WHERE finished_at IS NULL AND started_at > now() - interval '30 minutes'",
+            "SELECT run_id, scope, flow_type FROM scout_runs WHERE finished_at IS NULL AND started_at > now() - interval '30 minutes'",
         )
         .fetch_all(&self.deps.pg_pool)
         .await
@@ -351,20 +351,25 @@ impl ScoutRunner {
 
             let store_arc = Arc::new(store);
             let deps = self.deps.clone();
+            let flow_type = run.flow_type.unwrap_or_else(|| "scrape".to_string());
 
-            info!(%run_id, "Resuming incomplete run");
+            info!(%run_id, %flow_type, "Resuming incomplete run");
 
             tokio::spawn(async move {
                 let engine_deps = deps.build_engine_deps_for_resume(
                     &scope,
                     run_id,
                 );
-                let engine = engine::build_engine(engine_deps, Some(store_arc));
+                let engine = match flow_type.as_str() {
+                    "weave" => engine::build_weave_engine(engine_deps, Some(store_arc)),
+                    "coalesce" => engine::build_coalesce_engine(engine_deps, Some(store_arc)),
+                    _ => engine::build_engine(engine_deps, Some(store_arc)),
+                };
 
                 if let Err(e) = engine.settle().await {
-                    warn!(%run_id, error = %e, "Resume settle failed");
+                    warn!(%run_id, %flow_type, error = %e, "Resume settle failed");
                 } else {
-                    info!(%run_id, "Resumed run completed");
+                    info!(%run_id, %flow_type, "Resumed run completed");
                 }
             });
         }
@@ -509,6 +514,7 @@ struct ScheduledScrapeRow {
 struct IncompleteRun {
     run_id: String,
     scope: Option<serde_json::Value>,
+    flow_type: Option<String>,
 }
 
 /// Remove cancellation rows older than 7 days. Called on startup during resume.

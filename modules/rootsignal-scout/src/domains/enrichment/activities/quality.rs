@@ -257,6 +257,7 @@ mod tests {
             subject: None,
             effective_date: None,
             source_authority: None,
+            action_url: None,
         });
         let q = score(&node);
         assert!(
@@ -278,6 +279,7 @@ mod tests {
             severity: Severity::High,
             subject: None,
             opposing: None,
+            action_url: None,
         });
         let q = score(&node);
         assert!(
