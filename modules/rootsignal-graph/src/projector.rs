@@ -26,7 +26,7 @@ use rootsignal_common::events::{
 };
 use rootsignal_common::types::{Entity, NodeType, SourceNode};
 use rootsignal_common::EmbeddingLookup;
-use seesaw_core::types::PersistedEvent;
+use causal::types::PersistedEvent;
 use crate::GraphClient;
 
 fn schema_v(event: &PersistedEvent) -> i16 {
@@ -159,7 +159,7 @@ impl GraphProjector {
             Some(d) => d,
             None => {
                 warn!(
-                    seq = event.position,
+                    seq = event.position.raw(),
                     event_type = event.event_type,
                     "Unknown event domain — update EventDomain enum"
                 );
@@ -294,7 +294,7 @@ impl GraphProjector {
         let parsed = match Event::from_payload(&payload) {
             Ok(e) => e,
             Err(e) => {
-                warn!(seq = event.position, error = %e, "Failed to deserialize fact event payload");
+                warn!(seq = event.position.raw(), error = %e, "Failed to deserialize fact event payload");
                 return Plan::error(e.to_string());
             }
         };
@@ -302,7 +302,7 @@ impl GraphProjector {
         match parsed {
             Event::Telemetry(_) => {
                 debug!(
-                    seq = event.position,
+                    seq = event.position.raw(),
                     event_type = event.event_type,
                     "No-op (telemetry)"
                 );
@@ -381,7 +381,7 @@ impl GraphProjector {
                 Plan::skip()
             }
             _ => {
-                debug!(seq = event.position, event_type = %event.event_type, "No-op (pipeline)");
+                debug!(seq = event.position.raw(), event_type = %event.event_type, "No-op (pipeline)");
                 Plan::skip()
             }
         }
@@ -895,7 +895,7 @@ impl GraphProjector {
             // Provenance links
             // ---------------------------------------------------------
             WorldEvent::SourceLinkDiscovered { .. } => {
-                debug!(seq = event.position, "No-op (source link — informational)");
+                debug!(seq = event.position.raw(), "No-op (source link — informational)");
                 Plan::skip()
             }
 

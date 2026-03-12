@@ -20,7 +20,7 @@ use crate::traits::SignalReader;
 use crate::domains::enrichment::activities::link_promoter::{self, PromotionConfig};
 
 async fn dispatch_events(
-    events: seesaw_core::Events,
+    events: causal::Events,
     ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
 ) {
@@ -363,7 +363,7 @@ async fn instagram_signal_inherits_actor_location_and_collects_mentions() {
         },
     );
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // Signal stored (actor fallback gave it Minneapolis coords → survives geo filter)
@@ -435,7 +435,7 @@ async fn nyc_actor_fallback_stores_signal_with_actor_location() {
         },
     );
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // No geo-filter — signal stored with actor location as fallback
@@ -495,7 +495,7 @@ async fn dallas_signal_from_minneapolis_actor_preserves_both_locations() {
         },
     );
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -575,7 +575,7 @@ async fn ig_bio_location_flows_through_mixed_geography_posts() {
         },
     );
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     // All three signals stored — no geo-filter rejection
@@ -1009,7 +1009,7 @@ async fn resolve_then_fetch_extract_produces_same_signals_as_monolithic() {
         &ctx.url_to_canonical_key,
         &ctx.actor_contexts,
         &resolution.pub_dates,
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
 
     assert_eq!(result.stats.urls_scraped, 1, "one URL fetched+extracted");

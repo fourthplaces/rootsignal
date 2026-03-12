@@ -11,8 +11,8 @@ use rootsignal_common::events::SystemEvent;
 use crate::core::engine::ScoutEngineDeps;
 
 /// Run situation weaving: discover signals, weave via LLM, emit events.
-pub async fn weave_situations(deps: &ScoutEngineDeps, region: Option<&rootsignal_common::ScoutScope>, has_budget: bool) -> seesaw_core::Events {
-    let mut events = seesaw_core::Events::new();
+pub async fn weave_situations(deps: &ScoutEngineDeps, region: Option<&rootsignal_common::ScoutScope>, has_budget: bool) -> causal::Events {
+    let mut events = causal::Events::new();
 
     let (graph, ai, region) = match (
         deps.graph.as_deref(),

@@ -33,7 +33,7 @@ fn extraction_with_locations(nodes: Vec<rootsignal_common::Node>) -> ExtractionR
     }
 }
 
-fn geocoded_events(captured: &[seesaw_core::AnyEvent]) -> Vec<(String, f64, f64, Option<String>)> {
+fn geocoded_events(captured: &[causal::AnyEvent]) -> Vec<(String, f64, f64, Option<String>)> {
     captured.iter().filter_map(|e| {
         if let Some(SystemEvent::LocationGeocoded { location_name, lat, lng, timezone, .. }) =
             e.downcast_ref::<SystemEvent>()

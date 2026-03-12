@@ -6,7 +6,7 @@
 //! populates them by matching on `event_type` strings from `PersistedEvent`.
 
 use anyhow::Result;
-use seesaw_core::types::PersistedEvent;
+use causal::types::PersistedEvent;
 use sqlx::PgPool;
 use tracing::info;
 
@@ -173,6 +173,7 @@ fn extract_region(scope: &serde_json::Value) -> String {
         Some("Region") => scope["name"].as_str().unwrap_or("unknown").to_string(),
         Some("Sources") => scope["region"]["name"]
             .as_str()
+            .or_else(|| scope["sources"][0]["canonical_key"].as_str())
             .unwrap_or("unknown")
             .to_string(),
         _ => "unknown".to_string(),
@@ -295,6 +296,16 @@ mod tests {
     fn extract_region_from_sources_scope() {
         let scope = serde_json::json!({"type": "Sources", "sources": [], "region": {"name": "mpls"}});
         assert_eq!(extract_region(&scope), "mpls");
+    }
+
+    #[test]
+    fn extract_region_from_sources_with_null_region_falls_back_to_canonical_key() {
+        let scope = serde_json::json!({
+            "type": "Sources",
+            "region": null,
+            "sources": [{"canonical_key": "site:linktr.ee mutual aid Minneapolis"}]
+        });
+        assert_eq!(extract_region(&scope), "site:linktr.ee mutual aid Minneapolis");
     }
 
     #[test]

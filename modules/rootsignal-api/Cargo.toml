@@ -44,8 +44,8 @@ spider_transformations = { workspace = true }
 rrule = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
-seesaw_core = { workspace = true }
-seesaw_replay = { workspace = true }
+causal = { workspace = true }
+causal_replay = { workspace = true }
 indicatif = "0.17"
 
 [dev-dependencies]

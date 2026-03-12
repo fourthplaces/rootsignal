@@ -4,7 +4,7 @@ pub mod events;
 mod tests;
 
 use anyhow::Result;
-use seesaw_core::{handle, handlers, Context, Events};
+use causal::{reactor, reactors, Context, Events};
 use tracing::info;
 
 use rootsignal_common::events::SystemEvent;
@@ -70,11 +70,11 @@ pub(crate) fn result_to_events(
     (system_events, completed)
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
-    #[handle(on = LifecycleEvent, id = "coalescing:coalesce_signals", filter = is_generate_situations)]
+    #[reactor(on = LifecycleEvent, id = "coalescing:coalesce_signals", filter = is_generate_situations)]
     async fn coalesce_signals(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -116,7 +116,7 @@ pub mod handlers {
         Ok(events)
     }
 
-    #[handle(on = LifecycleEvent, id = "coalescing:coalesce_from_seed", filter = is_coalesce_requested)]
+    #[reactor(on = LifecycleEvent, id = "coalescing:coalesce_from_seed", filter = is_coalesce_requested)]
     async fn coalesce_from_seed(
         event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,

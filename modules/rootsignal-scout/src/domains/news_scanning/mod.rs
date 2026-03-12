@@ -3,7 +3,7 @@
 pub mod activities;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use causal::{events, reactor, reactors, Context, Events};
 
 use crate::core::engine::ScoutEngineDeps;
 use crate::domains::lifecycle::events::LifecycleEvent;
@@ -12,12 +12,12 @@ fn is_news_scan_requested(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -
     matches!(e, LifecycleEvent::NewsScanRequested)
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     /// NewsScanRequested → scan RSS feeds for signals.
-    #[handle(on = LifecycleEvent, id = "news_scanning:scan_news", filter = is_news_scan_requested)]
+    #[reactor(on = LifecycleEvent, id = "news_scanning:scan_news", filter = is_news_scan_requested)]
     async fn scan_news(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,

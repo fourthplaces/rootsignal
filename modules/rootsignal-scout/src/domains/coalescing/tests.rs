@@ -11,7 +11,7 @@ mod handler_tests {
     use uuid::Uuid;
 
     use rootsignal_graph::GraphQueries;
-    use seesaw_core::AnyEvent;
+    use causal::AnyEvent;
 
     use crate::core::engine::{build_weave_engine, ScoutEngineDeps};
     use crate::domains::coalescing::events::CoalescingEvent;
@@ -22,7 +22,7 @@ mod handler_tests {
     fn weave_engine_with_capture(
         graph: Option<Arc<dyn GraphQueries>>,
         ai: Option<Arc<dyn ai_client::Agent>>,
-    ) -> (seesaw_core::Engine<ScoutEngineDeps>, Arc<Mutex<Vec<AnyEvent>>>) {
+    ) -> (causal::Engine<ScoutEngineDeps>, Arc<Mutex<Vec<AnyEvent>>>) {
         let store = Arc::new(MockSignalReader::new());
         let embedder = Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM));
         let run_id = Uuid::new_v4();

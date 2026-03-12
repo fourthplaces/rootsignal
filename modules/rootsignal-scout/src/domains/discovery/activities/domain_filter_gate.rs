@@ -5,7 +5,7 @@
 //! or LLM-filtered via `filter_domains_batch`.
 
 use ai_client::Agent;
-use seesaw_core::Logger;
+use causal::Logger;
 
 use rootsignal_common::types::{channel_type, ChannelType, SourceNode};
 

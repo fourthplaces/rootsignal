@@ -1,7 +1,7 @@
-//! PostgresStore — durable seesaw store backed by Postgres.
+//! PostgresStore — durable causal store backed by Postgres.
 //!
-//! Scoped by `correlation_id`. Implements seesaw 0.26's split traits:
-//! `EventLog` (append-only event persistence) and `HandlerQueue`
+//! Scoped by `correlation_id`. Implements causal 0.1.1's split traits:
+//! `EventLog` (append-only event persistence) and `ReactorQueue`
 //! (checkpoint-based work distribution with journaling).
 
 use anyhow::Result;
@@ -11,15 +11,15 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use seesaw_core::event_log::EventLog;
-use seesaw_core::handler_queue::HandlerQueue;
-use seesaw_core::types::{
-    AppendResult, HandlerCompletion, HandlerDlq, HandlerResolution, IntentCommit, JournalEntry,
-    LogLevel, QueueStatus, QueuedHandler,
+use causal::event_log::EventLog;
+use causal::reactor_queue::ReactorQueue;
+use causal::types::{
+    AppendResult, ReactorCompletion, ReactorDlq, ReactorResolution, IntentCommit, JournalEntry,
+    LogCursor, LogLevel, QueueStatus, QueuedReactor, StreamVersion,
 };
-use seesaw_core::{NewEvent, PersistedEvent, Snapshot};
+use causal::{NewEvent, PersistedEvent, Snapshot};
 
-/// Postgres-backed seesaw store, scoped by a single correlation_id.
+/// Postgres-backed causal store, scoped by a single correlation_id.
 pub struct PostgresStore {
     pool: PgPool,
     correlation_id: Uuid,
@@ -33,7 +33,7 @@ impl PostgresStore {
         }
     }
 
-    /// Check if this correlation has any pending handler work.
+    /// Check if this correlation has any pending reactor work.
     pub async fn has_pending_work(&self) -> Result<bool> {
         let row = sqlx::query_as::<_, (bool,)>(
             "SELECT EXISTS( \
@@ -52,12 +52,12 @@ impl PostgresStore {
 
 #[async_trait]
 impl EventLog for PostgresStore {
-    async fn latest_position(&self) -> Result<u64> {
+    async fn latest_position(&self) -> Result<LogCursor> {
         let (seq,): (i64,) =
             sqlx::query_as("SELECT COALESCE(MAX(seq), 0) FROM events")
                 .fetch_one(&self.pool)
                 .await?;
-        Ok(seq as u64)
+        Ok(LogCursor::from_raw(seq as u64))
     }
 
     async fn append(&self, event: NewEvent) -> Result<AppendResult> {
@@ -73,7 +73,7 @@ impl EventLog for PostgresStore {
             .unwrap_or(1) as i16;
         let handler_id = event
             .metadata
-            .get("handler_id")
+            .get("_reactor_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -106,7 +106,7 @@ impl EventLog for PostgresStore {
                     .execute(&self.pool)
                     .await;
                 Ok(AppendResult {
-                    position: seq as u64,
+                    position: LogCursor::from_raw(seq as u64),
                     version: None,
                 })
             }
@@ -117,7 +117,7 @@ impl EventLog for PostgresStore {
                         .fetch_one(&self.pool)
                         .await?;
                 Ok(AppendResult {
-                    position: seq as u64,
+                    position: LogCursor::from_raw(seq as u64),
                     version: None,
                 })
             }
@@ -126,7 +126,7 @@ impl EventLog for PostgresStore {
 
     async fn load_from(
         &self,
-        after_position: u64,
+        after_position: LogCursor,
         limit: usize,
     ) -> Result<Vec<PersistedEvent>> {
         // Uuid::nil() = global read (ProjectionStream replay).
@@ -140,7 +140,7 @@ impl EventLog for PostgresStore {
                  ORDER BY seq ASC \
                  LIMIT $2",
             )
-            .bind(after_position as i64)
+            .bind(after_position.raw() as i64)
             .bind(limit as i64)
             .fetch_all(&self.pool)
             .await?
@@ -153,7 +153,7 @@ impl EventLog for PostgresStore {
                  ORDER BY seq ASC \
                  LIMIT $2",
             )
-            .bind(after_position as i64)
+            .bind(after_position.raw() as i64)
             .bind(limit as i64)
             .bind(self.correlation_id)
             .fetch_all(&self.pool)
@@ -167,7 +167,7 @@ impl EventLog for PostgresStore {
         &self,
         aggregate_type: &str,
         aggregate_id: Uuid,
-        after_version: Option<u64>,
+        after_version: Option<StreamVersion>,
     ) -> Result<Vec<PersistedEvent>> {
         let rows = match after_version {
             Some(pos) => {
@@ -182,7 +182,7 @@ impl EventLog for PostgresStore {
                 .bind(aggregate_type)
                 .bind(aggregate_id)
                 .bind(self.correlation_id)
-                .bind(pos as i64)
+                .bind(pos.raw() as i64)
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -225,7 +225,7 @@ impl EventLog for PostgresStore {
         Ok(row.map(|r| Snapshot {
             aggregate_type: r.aggregate_type,
             aggregate_id: r.aggregate_id,
-            version: r.version as u64,
+            version: StreamVersion::from_raw(r.version as u64),
             state: r.state,
             created_at: r.created_at,
         }))
@@ -241,7 +241,7 @@ impl EventLog for PostgresStore {
         .bind(&snapshot.aggregate_type)
         .bind(snapshot.aggregate_id)
         .bind(self.correlation_id)
-        .bind(snapshot.version as i64)
+        .bind(snapshot.version.raw() as i64)
         .bind(&snapshot.state)
         .bind(snapshot.created_at)
         .execute(&self.pool)
@@ -250,10 +250,10 @@ impl EventLog for PostgresStore {
     }
 }
 
-// ── HandlerQueue ────────────────────────────────────────────────────────
+// ── ReactorQueue ────────────────────────────────────────────────────────
 
 #[async_trait]
-impl HandlerQueue for PostgresStore {
+impl ReactorQueue for PostgresStore {
     async fn enqueue(&self, commit: IntentCommit) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
@@ -265,7 +265,7 @@ impl HandlerQueue for PostgresStore {
              DO UPDATE SET position = EXCLUDED.position, updated_at = now()",
         )
         .bind(commit.correlation_id)
-        .bind(commit.checkpoint as i64)
+        .bind(commit.checkpoint.raw() as i64)
         .execute(&mut *tx)
         .await?;
 
@@ -279,7 +279,7 @@ impl HandlerQueue for PostgresStore {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')",
             )
             .bind(commit.event_id)
-            .bind(&intent.handler_id)
+            .bind(&intent.reactor_id)
             .bind(commit.correlation_id)
             .bind(&commit.event_type)
             .bind(&commit.event_payload)
@@ -301,7 +301,7 @@ impl HandlerQueue for PostgresStore {
                  VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(commit.event_id)
-            .bind(&failure.handler_id)
+            .bind(&failure.reactor_id)
             .bind(&failure.error)
             .bind(&failure.reason)
             .bind(failure.attempts)
@@ -326,7 +326,7 @@ impl HandlerQueue for PostgresStore {
         }
 
         // Handler descriptions
-        for (handler_id, data) in &commit.handler_descriptions {
+        for (handler_id, data) in &commit.reactor_descriptions {
             sqlx::query(
                 "INSERT INTO seesaw_handler_descriptions \
                  (correlation_id, handler_id, description, updated_at) \
@@ -345,7 +345,7 @@ impl HandlerQueue for PostgresStore {
         Ok(())
     }
 
-    async fn checkpoint(&self) -> Result<u64> {
+    async fn checkpoint(&self) -> Result<LogCursor> {
         let row = sqlx::query_as::<_, (i64,)>(
             "SELECT position FROM seesaw_checkpoints WHERE correlation_id = $1",
         )
@@ -353,10 +353,10 @@ impl HandlerQueue for PostgresStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|(pos,)| pos as u64).unwrap_or(0))
+        Ok(row.map(|(pos,)| LogCursor::from_raw(pos as u64)).unwrap_or(LogCursor::ZERO))
     }
 
-    async fn dequeue(&self) -> Result<Option<QueuedHandler>> {
+    async fn dequeue(&self) -> Result<Option<QueuedReactor>> {
         let row = sqlx::query_as::<_, EffectRow>(
             "UPDATE seesaw_effect_executions SET status = 'running', updated_at = now() \
              WHERE (event_id, handler_id) = ( \
@@ -388,14 +388,14 @@ impl HandlerQueue for PostgresStore {
         Ok(row.0)
     }
 
-    async fn resolve(&self, resolution: HandlerResolution) -> Result<()> {
+    async fn resolve(&self, resolution: ReactorResolution) -> Result<()> {
         match resolution {
-            HandlerResolution::Complete(completion) => {
-                self.complete_handler_inner(completion).await
+            ReactorResolution::Complete(completion) => {
+                self.complete_reactor_inner(completion).await
             }
-            HandlerResolution::Retry {
+            ReactorResolution::Retry {
                 event_id,
-                handler_id,
+                reactor_id,
                 error,
                 new_attempts,
                 next_execute_at,
@@ -406,7 +406,7 @@ impl HandlerQueue for PostgresStore {
                      WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $6",
                 )
                 .bind(event_id)
-                .bind(&handler_id)
+                .bind(&reactor_id)
                 .bind(new_attempts)
                 .bind(next_execute_at)
                 .bind(&error)
@@ -415,7 +415,7 @@ impl HandlerQueue for PostgresStore {
                 .await?;
                 Ok(())
             }
-            HandlerResolution::DeadLetter(dlq) => self.dlq_handler_inner(dlq).await,
+            ReactorResolution::DeadLetter(dlq) => self.dlq_reactor_inner(dlq).await,
         }
     }
 
@@ -534,7 +534,7 @@ impl HandlerQueue for PostgresStore {
         .await?;
 
         Ok(QueueStatus {
-            pending_handlers: pending_effects as usize,
+            pending_reactors: pending_effects as usize,
             dead_lettered: dead_lettered as usize,
         })
     }
@@ -579,7 +579,7 @@ impl HandlerQueue for PostgresStore {
 // ── Private helpers ─────────────────────────────────────────────────
 
 impl PostgresStore {
-    async fn complete_handler_inner(&self, completion: HandlerCompletion) -> Result<()> {
+    async fn complete_reactor_inner(&self, completion: ReactorCompletion) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -588,7 +588,7 @@ impl PostgresStore {
              WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $4",
         )
         .bind(completion.event_id)
-        .bind(&completion.handler_id)
+        .bind(&completion.reactor_id)
         .bind(&completion.result)
         .bind(self.correlation_id)
         .execute(&mut *tx)
@@ -601,7 +601,7 @@ impl PostgresStore {
                  VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(completion.event_id)
-            .bind(&completion.handler_id)
+            .bind(&completion.reactor_id)
             .bind(self.correlation_id)
             .bind(log_level_str(&entry.level))
             .bind(&entry.message)
@@ -616,7 +616,7 @@ impl PostgresStore {
             "DELETE FROM seesaw_handler_journal \
              WHERE handler_id = $1 AND event_id = $2",
         )
-        .bind(&completion.handler_id)
+        .bind(&completion.reactor_id)
         .bind(completion.event_id)
         .execute(&mut *tx)
         .await?;
@@ -625,7 +625,7 @@ impl PostgresStore {
         Ok(())
     }
 
-    async fn dlq_handler_inner(&self, dlq: HandlerDlq) -> Result<()> {
+    async fn dlq_reactor_inner(&self, dlq: ReactorDlq) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -634,7 +634,7 @@ impl PostgresStore {
              WHERE event_id = $1 AND handler_id = $2 AND correlation_id = $4",
         )
         .bind(dlq.event_id)
-        .bind(&dlq.handler_id)
+        .bind(&dlq.reactor_id)
         .bind(&dlq.error)
         .bind(self.correlation_id)
         .execute(&mut *tx)
@@ -646,7 +646,7 @@ impl PostgresStore {
              VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(dlq.event_id)
-        .bind(&dlq.handler_id)
+        .bind(&dlq.reactor_id)
         .bind(&dlq.error)
         .bind(&dlq.reason)
         .bind(dlq.attempts)
@@ -660,7 +660,7 @@ impl PostgresStore {
                  VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(dlq.event_id)
-            .bind(&dlq.handler_id)
+            .bind(&dlq.reactor_id)
             .bind(self.correlation_id)
             .bind(log_level_str(&entry.level))
             .bind(&entry.message)
@@ -702,10 +702,10 @@ struct EffectRow {
 }
 
 impl EffectRow {
-    fn into_queued(self) -> QueuedHandler {
-        QueuedHandler {
+    fn into_queued(self) -> QueuedReactor {
+        QueuedReactor {
             event_id: self.event_id,
-            handler_id: self.handler_id,
+            reactor_id: self.handler_id,
             correlation_id: self.correlation_id,
             event_type: self.event_type,
             event_payload: self.event_payload,
@@ -753,7 +753,7 @@ impl PersistedEventRow {
         }
 
         PersistedEvent {
-            position: self.seq as u64,
+            position: LogCursor::from_raw(self.seq as u64),
             event_id: self.id.unwrap_or_else(Uuid::new_v4),
             parent_id: self.parent_id,
             correlation_id: self.correlation_id.unwrap_or_else(Uuid::new_v4),

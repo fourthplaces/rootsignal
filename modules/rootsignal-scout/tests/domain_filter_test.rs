@@ -57,7 +57,7 @@ async fn filter_with_snapshot(name: &str, urls: &[&str], region: &str) -> Vec<St
     let store = MockSignalReader::new();
 
     let url_strings: Vec<String> = urls.iter().map(|s| s.to_string()).collect();
-    let logger = seesaw_core::Logger::new();
+    let logger = causal::Logger::new();
     let accepted = domain_filter::filter_domains_batch(&url_strings, Some(region), &claude, &store, &logger).await;
 
     save_snapshot(&snap_path, &accepted);

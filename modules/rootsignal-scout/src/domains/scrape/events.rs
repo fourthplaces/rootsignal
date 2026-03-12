@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use crate::domains::scrape::activities::{StatsDelta, UrlExtraction};
 
-#[seesaw_core::event(prefix = "scrape")]
+#[causal::event(prefix = "scrape")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ScrapeEvent {

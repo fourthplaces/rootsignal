@@ -16,7 +16,7 @@ use crate::core::engine::ScoutEngineDeps;
 use crate::domains::expansion::events::ExpansionEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::testing::*;
-use seesaw_core::AnyEvent;
+use causal::AnyEvent;
 
 fn has_expansion_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> bool {
     captured.lock().unwrap().iter().any(|e| {
@@ -27,7 +27,7 @@ fn has_expansion_completed(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> b
 
 /// Emit response scrape completion events to satisfy `response_scrape_done()`.
 /// Each scrape completion triggers dedup → NoNewSignals, which wakes the review gate.
-async fn emit_response_scrape_done(engine: &seesaw_core::Engine<ScoutEngineDeps>) {
+async fn emit_response_scrape_done(engine: &causal::Engine<ScoutEngineDeps>) {
     engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().is_tension(false).build())).settled().await.unwrap();
     engine.emit(empty_social_scrape(false)).settled().await.unwrap();
     engine.emit(empty_topic_discovery()).settled().await.unwrap();

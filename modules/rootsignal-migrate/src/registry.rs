@@ -41,5 +41,6 @@ pub fn migrations() -> Vec<Migration> {
         sql("036_backfill_sources_discovered",  include_str!("../migrations/036_backfill_sources_discovered.sql")),
         sql("037_events_correlation_seq_index", include_str!("../migrations/037_events_correlation_seq_index.sql")),
         data("038_backfill_location_geocoded", backfill_location_geocoded::plan, backfill_location_geocoded::run),
+        sql("039_rename_replay_pointer",       include_str!("../migrations/039_rename_replay_pointer.sql")),
     ]
 }

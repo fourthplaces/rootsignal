@@ -1,4 +1,4 @@
-use seesaw_core::{aggregator, aggregators, Aggregate};
+use causal::{aggregator, aggregators, Aggregate};
 use serde::{Deserialize, Serialize};
 
 use super::events::CuriosityEvent;

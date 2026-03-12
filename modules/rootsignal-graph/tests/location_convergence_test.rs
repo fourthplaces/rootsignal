@@ -8,7 +8,7 @@
 use rootsignal_graph::{connect_graph, query, GraphClient, GraphProjector};
 use rootsignal_common::events::{Event, SystemEvent};
 use chrono::Utc;
-use seesaw_core::types::PersistedEvent;
+use causal::types::PersistedEvent;
 use serde_json::json;
 use uuid::Uuid;
 

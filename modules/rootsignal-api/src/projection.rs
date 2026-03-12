@@ -1,11 +1,11 @@
-//! Projection lifecycle — unified live + replay behind `seesaw_replay::ProjectionStream`.
+//! Projection lifecycle — unified live + replay behind `causal_replay::ProjectionStream`.
 //!
 //! `REPLAY=1 server` replays all events into a versioned Neo4j database,
 //! health checks, promotes, exits.
 //! Normal `server` catches up from the promoted pointer, then tails via PG NOTIFY.
 //!
 //! The position IS the version. `neo4j.v48050` means "built from the first
-//! 48050 events in the log." `stream.version()` handles both modes.
+//! 48050 events in the log." `stream.position()` handles both modes.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,10 +17,85 @@ use tracing::{error, info, warn};
 use rootsignal_common::{EmbeddingLookup, TextEmbedder};
 use rootsignal_graph::{connect_graph, embedding_store::EmbeddingStore, query, GraphClient, GraphProjector};
 use rootsignal_scout::core::postgres_store::PostgresStore;
-use seesaw_replay::{PgNotifyTailSource, PgPointerStore, PointerStore, ProjectionStream};
+use causal_replay::{PgNotifyTailSource, PgPointerStore, PointerStore, ProjectionStream};
 use uuid::Uuid;
 
 use crate::pg_projector;
+
+/// Pointer wrapper that decouples the DB version name from live-mode progress.
+///
+/// `active` only moves via replay's `stage()` + `promote()` cycle and
+/// determines the versioned Neo4j DB name (e.g. `neo4j.v48050`).
+///
+/// Live mode's `save()` writes to a separate `live_position` column so
+/// restarts resume where they left off without drifting `active`.
+struct LivePointer {
+    inner: PgPointerStore,
+    pool: PgPool,
+}
+
+impl LivePointer {
+    async fn new(pool: PgPool) -> Result<Self> {
+        let inner = PgPointerStore::new(pool.clone()).await?;
+        sqlx::query(
+            "ALTER TABLE causal_replay_pointer \
+             ADD COLUMN IF NOT EXISTS live_position BIGINT",
+        )
+        .execute(&pool)
+        .await?;
+        Ok(Self { inner, pool })
+    }
+
+    /// The promoted position — used to derive the Neo4j DB name.
+    async fn promoted_position(&self) -> Result<causal::types::LogCursor> {
+        Ok(self
+            .inner
+            .position()
+            .await?
+            .unwrap_or(causal::types::LogCursor::ZERO))
+    }
+}
+
+#[async_trait::async_trait]
+impl PointerStore for LivePointer {
+    async fn position(&self) -> Result<Option<causal::types::LogCursor>> {
+        let row: (i64, Option<i64>) = sqlx::query_as(
+            "SELECT active, live_position FROM causal_replay_pointer WHERE id = 1",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let pos = row.1.unwrap_or(row.0).max(row.0);
+        Ok(Some(causal::types::LogCursor::from_raw(pos as u64)))
+    }
+
+    async fn save(&self, position: causal::types::LogCursor) -> Result<()> {
+        sqlx::query(
+            "UPDATE causal_replay_pointer \
+             SET live_position = $1, updated_at = now() \
+             WHERE id = 1",
+        )
+        .bind(position.raw() as i64)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn stage(&self, position: causal::types::LogCursor) -> Result<()> {
+        self.inner.stage(position).await
+    }
+
+    async fn promote(&self) -> Result<causal::types::LogCursor> {
+        self.inner.promote().await
+    }
+
+    async fn set(&self, _position: causal::types::LogCursor) -> Result<()> {
+        Ok(())
+    }
+
+    async fn status(&self) -> Result<causal_replay::PointerStatus> {
+        self.inner.status().await
+    }
+}
 
 struct NoOpEmbedder;
 
@@ -143,12 +218,12 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
     let stream = ProjectionStream::new(&log, &pointer)
         .tail(Box::new(tail));
 
-    let version = stream.version().await?;
+    let position = stream.position().await?;
     let neo4j_db = match std::env::var("NEO4J_DB") {
         Ok(db) => db,
-        Err(_) => format!("neo4j.v{version}"),
+        Err(_) => format!("neo4j.v{position}"),
     };
-    info!(db = neo4j_db.as_str(), version, "Projection target");
+    info!(db = neo4j_db.as_str(), position = position.raw(), "Projection target");
 
     let system = connect_graph(
         &config.neo4j_uri,
@@ -184,7 +259,7 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
     let pg_proj = Arc::new(pg_projector::connect().await?);
     pg_proj.prepare().await?;
 
-    let pb = indicatif::ProgressBar::new(version)
+    let pb = indicatif::ProgressBar::new(position.raw())
         .with_style(
             indicatif::ProgressStyle::with_template(
                 "{bar:40.cyan/blue} {pos}/{len} events ({percent}%) [{elapsed_precise}]",
@@ -196,7 +271,7 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
     stream
         .batch_size(5000)
         .on_progress(move |p| {
-            pb.set_position(p.position);
+            pb.set_position(p.position.raw());
         })
         .promote_if(move || {
             let g = graph_for_gate.clone();
@@ -219,13 +294,13 @@ pub async fn run(pool: PgPool, config: &rootsignal_common::Config) -> Result<Gra
 /// Spawn projection stream as a background task (non-blocking).
 /// Returns the GraphClient connected to the versioned DB.
 pub async fn start(pool: PgPool, config: &rootsignal_common::Config) -> Result<GraphClient> {
-    let pointer = PgPointerStore::new(pool.clone()).await?;
-    let version = pointer.version().await?.unwrap_or(0);
+    let pointer = LivePointer::new(pool.clone()).await?;
+    let promoted = pointer.promoted_position().await?;
     let neo4j_db = match std::env::var("NEO4J_DB") {
         Ok(db) => db,
-        Err(_) => format!("neo4j.v{version}"),
+        Err(_) => format!("neo4j.v{promoted}"),
     };
-    info!(db = neo4j_db.as_str(), version, "Projection target");
+    info!(db = neo4j_db.as_str(), promoted = promoted.raw(), "Projection target");
 
     let system = connect_graph(
         &config.neo4j_uri,
@@ -257,6 +332,8 @@ pub async fn start(pool: PgPool, config: &rootsignal_common::Config) -> Result<G
         GraphProjector::new(graph.clone()).with_embedding_store(embedding_store),
     );
 
+    let pg_proj = Arc::new(pg_projector::connect().await?);
+
     let graph_ret = graph.clone();
     let graph_for_gate = graph.clone();
     tokio::spawn(async move {
@@ -279,10 +356,11 @@ pub async fn start(pool: PgPool, config: &rootsignal_common::Config) -> Result<G
             })
             .run(|event| {
                 let p = projector.clone();
+                let pg = pg_proj.clone();
                 let event = event.clone();
                 async move {
                     p.project(&event).await?;
-                    Ok(())
+                    pg.project_batch(&[event]).await
                 }
             })
             .await;

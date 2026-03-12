@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use seesaw_core::AnyEvent;
+use causal::AnyEvent;
 
 use crate::core::aggregate::PipelineState;
 use crate::domains::expansion::events::ExpansionEvent;

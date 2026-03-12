@@ -21,15 +21,15 @@ use uuid::Uuid;
 use rootsignal_common::canonical_value;
 use rootsignal_common::events::{SystemEvent, WorldEvent};
 use rootsignal_common::types::NodeType;
-use seesaw_core::AnyEvent;
+use causal::AnyEvent;
 
 /// Seed source plan by emitting a SourcesPrepared event.
-async fn seed_scrape_plan(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>, include_social: bool) {
+async fn seed_scrape_plan(engine: &causal::Engine<crate::core::engine::ScoutEngineDeps>, include_social: bool) {
     engine.emit(sources_prepared_event(include_social)).settled().await.unwrap();
 }
 
 /// Emit response completion events to mark response phase done.
-async fn complete_response_roles(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
+async fn complete_response_roles(engine: &causal::Engine<crate::core::engine::ScoutEngineDeps>) {
     engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().is_tension(false).build())).settled().await.unwrap();
     engine.emit(empty_social_scrape(false)).settled().await.unwrap();
     engine.emit(empty_topic_discovery()).settled().await.unwrap();
@@ -37,7 +37,7 @@ async fn complete_response_roles(engine: &seesaw_core::Engine<crate::core::engin
 
 /// Helper: collect durable event names from captured events.
 fn event_names(captured: &Arc<std::sync::Mutex<Vec<AnyEvent>>>) -> Vec<String> {
-    use seesaw_core::event::Event as _;
+    use causal::event::Event as _;
     captured
         .lock()
         .unwrap()

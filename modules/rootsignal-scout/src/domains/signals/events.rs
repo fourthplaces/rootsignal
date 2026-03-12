@@ -108,7 +108,7 @@ pub enum DedupOutcome {
     },
 }
 
-#[seesaw_core::event(prefix = "signal")]
+#[causal::event(prefix = "signal")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SignalEvent {

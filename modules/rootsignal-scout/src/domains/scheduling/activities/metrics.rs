@@ -13,7 +13,7 @@ use rootsignal_common::events::{SourceChange, SystemEvent};
 use rootsignal_common::{is_web_query, SourceNode};
 use rootsignal_graph::GraphQueries;
 
-use seesaw_core::Events;
+use causal::Events;
 
 pub(crate) struct Metrics<'a> {
     graph: &'a dyn GraphQueries,

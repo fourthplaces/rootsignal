@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 
-use seesaw_core::types::PersistedEvent;
+use causal::types::PersistedEvent;
 
 use crate::projector::{ApplyResult, GraphProjector};
 use crate::GraphClient;

@@ -9,7 +9,7 @@ use rootsignal_graph::GraphStore;
 use crate::core::engine::ScoutEngineDeps;
 
 /// Scan news feeds for signals.
-pub async fn scan_news(deps: &ScoutEngineDeps, daily_budget_cents: u64, events: &mut seesaw_core::Events) {
+pub async fn scan_news(deps: &ScoutEngineDeps, daily_budget_cents: u64, events: &mut causal::Events) {
     let (archive, ai) = match (
         deps.archive.as_ref(),
         deps.ai.as_ref(),

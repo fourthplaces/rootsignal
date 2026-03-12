@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[seesaw_core::event(prefix = "expansion")]
+#[causal::event(prefix = "expansion")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExpansionEvent {

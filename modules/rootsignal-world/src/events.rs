@@ -13,7 +13,7 @@ use crate::values::{Location, Schedule};
 
 /// A world fact — something observed in reality, independent of Root Signal's
 /// editorial decisions or operational metrics.
-#[seesaw_core_macros::event(prefix = "world")]
+#[causal_core_macros::event(prefix = "world")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorldEvent {

@@ -1,6 +1,6 @@
-//! Seesaw engine setup for scout.
+//! Causal engine setup for scout.
 //!
-//! Engine variants share the same deps and infrastructure handlers:
+//! Engine variants share the same deps and infrastructure reactors:
 //!
 //! - **Scrape engine** (`build_engine`): reap → schedule → scrape → enrichment →
 //!   expansion → synthesis. Finds signals.
@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 use ai_client::Agent;
-use seesaw_utils::Batcher;
+use causal_utils::Batcher;
 use rootsignal_common::EmbeddingLookup;
 use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector, GraphQueries};
 
@@ -34,7 +34,7 @@ use crate::infra::util::EMBEDDING_MODEL;
 use crate::core::extractor::SignalExtractor;
 use crate::traits::{ContentFetcher, SignalReader};
 
-/// Dependencies shared by all seesaw handlers.
+/// Dependencies shared by all causal reactors.
 pub struct ScoutEngineDeps {
     // --- Fields from PipelineDeps (previously behind Arc<RwLock<Option>>) ---
     pub store: Arc<dyn SignalReader>,
@@ -53,7 +53,7 @@ pub struct ScoutEngineDeps {
     pub run_id: Uuid,
     /// Test-only: capture all dispatched events for inspection.
     /// None in production, Some in tests that need event inspection.
-    pub captured_events: Option<Arc<std::sync::Mutex<Vec<seesaw_core::AnyEvent>>>>,
+    pub captured_events: Option<Arc<std::sync::Mutex<Vec<causal::AnyEvent>>>>,
     /// Postgres connection pool — used by projections to save run stats.
     pub pg_pool: Option<PgPool>,
     /// Archive for web search/page reading in synthesis finders.
@@ -93,11 +93,11 @@ impl ScoutEngineDeps {
     }
 }
 
-/// The seesaw-backed scout engine type.
-pub type SeesawEngine = seesaw_core::Engine<ScoutEngineDeps>;
+/// The causal-backed scout engine type.
+pub type CausalEngine = causal::Engine<ScoutEngineDeps>;
 
 /// Public alias — canonical name for the scout engine.
-pub type ScoutEngine = SeesawEngine;
+pub type ScoutEngine = CausalEngine;
 
 /// Build a scrape-chain engine: reap → schedule → scrape → enrichment →
 /// expansion → synthesis.
@@ -107,7 +107,7 @@ pub type ScoutEngine = SeesawEngine;
 ///
 /// When `seesaw_store` is provided, it replaces the default in-memory store
 /// for durable crash recovery. Pass `None` for tests.
-pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> SeesawEngine {
+pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
@@ -126,21 +126,21 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStor
     });
     let run_id = deps.run_id;
 
-    let mut engine = seesaw_core::Engine::new(deps)
-        // Aggregators — PipelineState maintained by seesaw
+    let mut engine = causal::Engine::new(deps)
+        // Aggregators — PipelineState maintained by causal
         .with_aggregators(pipeline_aggregators::aggregators())
         .with_aggregators(curiosity::aggregates::curiosity_aggregators::aggregators())
-        .with_handlers(signals::handlers::handlers())
-        .with_handlers(lifecycle::handlers::handlers())
-        .with_handlers(scrape::handlers::handlers())
-        .with_handlers(discovery::handlers::handlers())
-        .with_handlers(enrichment::handlers::handlers())
-        .with_handlers(expansion::handlers::handlers())
-        .with_handlers(synthesis::handlers::handlers())
-        .with_handlers(curiosity::handlers::handlers())
+        .with_reactors(signals::reactors::reactors())
+        .with_reactors(lifecycle::reactors::reactors())
+        .with_reactors(scrape::reactors::reactors())
+        .with_reactors(discovery::reactors::reactors())
+        .with_reactors(enrichment::reactors::reactors())
+        .with_reactors(expansion::reactors::reactors())
+        .with_reactors(synthesis::reactors::reactors())
+        .with_reactors(curiosity::reactors::reactors())
         // Surface DLQ'd handlers as events in the causal chain
-        .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
-            handler_id: info.handler_id.clone(),
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
             source_event_type: info.source_event_type.clone(),
             error: info.error.clone(),
             attempts: info.attempts,
@@ -158,11 +158,11 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStor
 
     // Neo4j projection — captured via closure, not on deps
     if let Some(projector) = graph_projector {
-        engine = engine.with_handler(projection::neo4j_projection_handler(projector));
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
     }
 
     // Run completion — inside the causal chain
-    engine = engine.with_handler(projection::run_completion_handler());
+    engine = engine.with_reactor(projection::run_completion_handler());
 
     // Infrastructure projections
     engine = engine.with_projection(projection::scout_runs_projection());
@@ -171,7 +171,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStor
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
-        engine = engine.with_handler(projection::capture_handler(sink));
+        engine = engine.with_reactor(projection::capture_handler(sink));
     }
 
     engine
@@ -184,7 +184,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStor
 /// Excludes: scrape, discovery, enrichment, expansion, synthesis.
 ///
 /// Terminal events: SupervisionCompleted or NothingToSupervise.
-pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> SeesawEngine {
+pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
@@ -203,13 +203,13 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgr
     });
     let run_id = deps.run_id;
 
-    let mut engine = seesaw_core::Engine::new(deps)
+    let mut engine = causal::Engine::new(deps)
         .with_aggregators(pipeline_aggregators::aggregators())
-        .with_handlers(coalescing::handlers::handlers())
-        .with_handlers(situation_weaving::handlers::handlers())
-        .with_handlers(supervisor::handlers::handlers())
-        .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
-            handler_id: info.handler_id.clone(),
+        .with_reactors(coalescing::reactors::reactors())
+        .with_reactors(situation_weaving::reactors::reactors())
+        .with_reactors(supervisor::reactors::reactors())
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
             source_event_type: info.source_event_type.clone(),
             error: info.error.clone(),
             attempts: info.attempts,
@@ -226,18 +226,18 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgr
     }
 
     if let Some(projector) = graph_projector {
-        engine = engine.with_handler(projection::neo4j_projection_handler(projector));
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
     }
 
     // Run completion — inside the causal chain
-    engine = engine.with_handler(projection::run_completion_handler());
+    engine = engine.with_reactor(projection::run_completion_handler());
 
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
     engine = engine.with_projection(projection::scheduled_scrapes_projection());
 
     if let Some(sink) = capture_sink {
-        engine = engine.with_handler(projection::capture_handler(sink));
+        engine = engine.with_reactor(projection::capture_handler(sink));
     }
 
     engine
@@ -250,7 +250,7 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgr
 /// Excludes: situation_weaving, supervisor, scrape, everything else.
 ///
 /// Terminal events: CoalescingCompleted or CoalescingSkipped.
-pub fn build_coalesce_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> SeesawEngine {
+pub fn build_coalesce_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
@@ -269,11 +269,11 @@ pub fn build_coalesce_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Pos
     });
     let run_id = deps.run_id;
 
-    let mut engine = seesaw_core::Engine::new(deps)
+    let mut engine = causal::Engine::new(deps)
         .with_aggregators(pipeline_aggregators::aggregators())
-        .with_handlers(coalescing::handlers::handlers())
-        .on_dlq(|info: seesaw_core::DlqTerminalInfo| PipelineEvent::HandlerFailed {
-            handler_id: info.handler_id.clone(),
+        .with_reactors(coalescing::reactors::reactors())
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
             source_event_type: info.source_event_type.clone(),
             error: info.error.clone(),
             attempts: info.attempts,
@@ -290,16 +290,16 @@ pub fn build_coalesce_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Pos
     }
 
     if let Some(projector) = graph_projector {
-        engine = engine.with_handler(projection::neo4j_projection_handler(projector));
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
     }
 
-    engine = engine.with_handler(projection::run_completion_handler());
+    engine = engine.with_reactor(projection::run_completion_handler());
 
     engine = engine.with_projection(projection::scout_runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
 
     if let Some(sink) = capture_sink {
-        engine = engine.with_handler(projection::capture_handler(sink));
+        engine = engine.with_reactor(projection::capture_handler(sink));
     }
 
     engine
@@ -314,7 +314,7 @@ pub fn build_infra_only_engine(
     pg_pool: PgPool,
     graph_client: GraphClient,
     run_id: Option<Uuid>,
-) -> SeesawEngine {
+) -> CausalEngine {
     let run_id = run_id.unwrap_or_else(Uuid::new_v4);
 
     let store = Arc::new(PostgresStore::new(pg_pool.clone(), run_id));
@@ -327,13 +327,13 @@ pub fn build_infra_only_engine(
         run_id,
     );
 
-    seesaw_core::Engine::new(deps)
+    causal::Engine::new(deps)
         .with_store(store)
         .with_event_metadata(serde_json::json!({
             "run_id": run_id,
             "schema_v": 1
         }))
-        .with_handler(projection::neo4j_projection_handler(projector))
+        .with_reactor(projection::neo4j_projection_handler(projector))
         .with_projection(projection::scout_runs_projection())
         .with_projection(projection::system_log_projection())
         .with_projection(projection::scheduled_scrapes_projection())
@@ -342,7 +342,7 @@ pub fn build_infra_only_engine(
 /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
 ///
 /// Minimal handler set — only news scanning domain + infrastructure.
-pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> SeesawEngine {
+pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
     let capture_sink = deps.captured_events.clone();
     let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
         deps.pg_pool.as_ref().map(|pool| {
@@ -361,8 +361,8 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgre
     });
     let run_id = deps.run_id;
 
-    let mut engine = seesaw_core::Engine::new(deps)
-        .with_handlers(news_scanning::handlers::handlers());
+    let mut engine = causal::Engine::new(deps)
+        .with_reactors(news_scanning::reactors::reactors());
 
     if let Some(s) = seesaw_store {
         engine = engine
@@ -375,7 +375,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgre
     }
 
     if let Some(projector) = graph_projector {
-        engine = engine.with_handler(projection::neo4j_projection_handler(projector));
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
     }
 
     engine = engine.with_projection(projection::scout_runs_projection());
@@ -383,7 +383,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgre
     engine = engine.with_projection(projection::scheduled_scrapes_projection());
 
     if let Some(sink) = capture_sink {
-        engine = engine.with_handler(projection::capture_handler(sink));
+        engine = engine.with_reactor(projection::capture_handler(sink));
     }
 
     engine

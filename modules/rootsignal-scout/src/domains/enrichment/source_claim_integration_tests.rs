@@ -12,10 +12,10 @@ use rootsignal_common::events::WorldEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::scrape::events::ScrapeEvent;
 use crate::testing::*;
-use seesaw_core::AnyEvent;
+use causal::AnyEvent;
 
 /// Emit response scrape completion events to satisfy `response_scrape_done()`.
-async fn emit_response_scrape_done(engine: &seesaw_core::Engine<crate::core::engine::ScoutEngineDeps>) {
+async fn emit_response_scrape_done(engine: &causal::Engine<crate::core::engine::ScoutEngineDeps>) {
     engine.emit(ScrapeEvent::from(TestWebScrapeCompleted::builder().is_tension(false).build())).settled().await.unwrap();
     engine.emit(empty_social_scrape(false)).settled().await.unwrap();
     engine.emit(empty_topic_discovery()).settled().await.unwrap();

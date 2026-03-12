@@ -1,6 +1,6 @@
 //! Scout pipeline configuration and engine builders.
 //!
-//! `ScoutDeps` holds shared deps. Engine builder methods construct seesaw
+//! `ScoutDeps` holds shared deps. Engine builder methods construct causal
 //! engines for each pipeline variant (scrape, weave, news).
 
 use std::sync::Arc;

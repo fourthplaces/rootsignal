@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[seesaw_core::event(prefix = "situation_weaving", ephemeral)]
+#[causal::event(prefix = "situation_weaving", ephemeral)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SituationWeavingEvent {

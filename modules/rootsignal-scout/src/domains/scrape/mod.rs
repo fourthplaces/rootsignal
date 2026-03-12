@@ -11,7 +11,7 @@ pub mod simweb_adapter;
 use std::collections::HashMap;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use causal::{events, reactor, reactors, Context, Events};
 use tracing::info;
 use uuid::Uuid;
 
@@ -78,8 +78,8 @@ fn build_source_keys(sources: &[rootsignal_common::SourceNode]) -> HashMap<Strin
     sources.iter().map(|s| (s.canonical_key.clone(), s.id)).collect()
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     // -----------------------------------------------------------------------
@@ -87,7 +87,7 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourcesPrepared → fetch + extract web pages (only if plan has non-social sources).
-    #[handle(on = LifecycleEvent, id = "scrape:start_web_scrape", filter = has_tension_web_sources)]
+    #[reactor(on = LifecycleEvent, id = "scrape:start_web_scrape", filter = has_tension_web_sources)]
     async fn start_web_scrape(
         event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -152,7 +152,7 @@ pub mod handlers {
     }
 
     /// SourcesPrepared → fetch + extract social media posts (only if plan has social sources).
-    #[handle(on = LifecycleEvent, id = "scrape:start_social_scrape", filter = has_tension_social_sources)]
+    #[reactor(on = LifecycleEvent, id = "scrape:start_social_scrape", filter = has_tension_social_sources)]
     async fn start_social_scrape(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -224,7 +224,7 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourcesResolved → fetch + extract response web pages.
-    #[handle(on = ScrapeEvent, id = "scrape:process_web_results", filter = is_response_sources_resolved)]
+    #[reactor(on = ScrapeEvent, id = "scrape:process_web_results", filter = is_response_sources_resolved)]
     async fn process_web_results(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -287,7 +287,7 @@ pub mod handlers {
     }
 
     /// SourcesResolved → fetch + extract response social media posts (only if plan has social sources).
-    #[handle(on = ScrapeEvent, id = "scrape:process_social_results", filter = has_response_social_sources)]
+    #[reactor(on = ScrapeEvent, id = "scrape:process_social_results", filter = has_response_social_sources)]
     async fn process_social_results(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -355,7 +355,7 @@ pub mod handlers {
     }
 
     /// SourcesResolved → discover from social topics.
-    #[handle(on = ScrapeEvent, id = "scrape:discover_topics", filter = is_response_sources_resolved)]
+    #[reactor(on = ScrapeEvent, id = "scrape:discover_topics", filter = is_response_sources_resolved)]
     async fn discover_topics(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -413,7 +413,7 @@ pub mod handlers {
     // -----------------------------------------------------------------------
 
     /// SourceExpansionCompleted or SourceExpansionSkipped → resolve response URLs.
-    #[handle(on = DiscoveryEvent, id = "scrape:resolve_new_source", filter = is_source_expansion_done, describe = describe_resolve_new_source_gate)]
+    #[reactor(on = DiscoveryEvent, id = "scrape:resolve_new_source", filter = is_source_expansion_done, describe = describe_resolve_new_source_gate)]
     async fn resolve_new_source(
         _event: DiscoveryEvent,
         ctx: Context<ScoutEngineDeps>,

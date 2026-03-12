@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
         .with_env_filter(
             EnvFilter::from_default_env()
                 .add_directive("rootsignal=info".parse()?)
-                .add_directive("seesaw_replay=info".parse()?),
+                .add_directive("causal_replay=info".parse()?),
         )
         .init();
 

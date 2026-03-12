@@ -1,11 +1,11 @@
 //! Infrastructure projections: project events to Neo4j, maintain scout_runs table.
 //!
-//! Persistence is handled by seesaw's unified `Store` trait via
-//! `PostgresStore`. Aggregator state is handled by seesaw's
+//! Persistence is handled by causal's unified `Store` trait via
+//! `PostgresStore`. Aggregator state is handled by causal's
 //! registered aggregators (priority 1).
 //!
 //! Projections here:
-//! - `neo4j_projection_handler` — project events to Neo4j graph (Handler, needs priority control)
+//! - `neo4j_projection_handler` — project events to Neo4j graph (Reactor, needs priority control)
 //! - `scout_runs_projection` — maintain the scout_runs lookup table
 //! - `system_log_projection` — print SystemLog events to stdout
 
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use rootsignal_graph::GraphProjector;
-use seesaw_core::{events, on_any, project, AnyEvent, Context, Events, Handler, Projection};
+use causal::{events, on_any, project, AnyEvent, Context, Events, Reactor, Projection};
 use tracing::info;
 
 use rootsignal_common::events::{Event, EventDomain, SystemEvent, WorldEvent};
@@ -34,15 +34,15 @@ use crate::domains::situation_weaving::events::SituationWeavingEvent;
 use crate::domains::supervisor::events::SupervisorEvent;
 use crate::domains::synthesis::events::SynthesisEvent;
 
-// Priority-0: event persistence — handled by seesaw's unified Store (PostgresStore in production).
-// Priority-1: aggregate state — handled by seesaw aggregators.
+// Priority-0: event persistence — handled by causal's unified Store (PostgresStore in production).
+// Priority-1: aggregate state — handled by causal aggregators.
 
 /// Priority-2 handler: project events to Neo4j graph.
 ///
 /// Captures `GraphProjector` via closure — not on `ScoutEngineDeps`.
 /// Routes events by `EventDomain` — exhaustive match ensures compile-time
 /// safety when new domains are added.
-pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngineDeps> {
+pub fn neo4j_projection_handler(projector: GraphProjector) -> Reactor<ScoutEngineDeps> {
     let projector = Arc::new(projector);
     on_any()
         .id("neo4j_projection")
@@ -77,8 +77,8 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
                 };
 
                 let deps = ctx.deps();
-                let persisted = seesaw_core::types::PersistedEvent {
-                    position: 0,
+                let persisted = causal::types::PersistedEvent {
+                    position: causal::types::LogCursor::ZERO,
                     event_id: ctx.current_event_id(),
                     parent_id: ctx.parent_event_id(),
                     correlation_id: ctx.correlation_id,
@@ -111,7 +111,7 @@ pub fn neo4j_projection_handler(projector: GraphProjector) -> Handler<ScoutEngin
 fn classify_event(
     event: &AnyEvent,
 ) -> (EventDomain, Option<String>, Option<serde_json::Value>) {
-    use seesaw_core::event::Event as _;
+    use causal::event::Event as _;
 
     if let Some(e) = event.downcast_ref::<WorldEvent>() {
         (
@@ -194,7 +194,7 @@ fn is_terminal_event(event: &AnyEvent) -> bool {
 /// Lives inside the causal chain — ScoutRunCompleted is caused by the terminal
 /// domain event, not injected from outside. The projection reacts to
 /// ScoutRunCompleted to write `finished_at`.
-pub fn run_completion_handler() -> Handler<ScoutEngineDeps> {
+pub fn run_completion_handler() -> Reactor<ScoutEngineDeps> {
     on_any()
         .id("run_completion")
         .priority(3)
@@ -378,7 +378,7 @@ pub fn scheduled_scrapes_projection() -> Projection<ScoutEngineDeps> {
 /// Stores raw `AnyEvent`s — test code uses `downcast_ref` to inspect.
 pub fn capture_handler(
     sink: Arc<std::sync::Mutex<Vec<AnyEvent>>>,
-) -> Handler<ScoutEngineDeps> {
+) -> Reactor<ScoutEngineDeps> {
     on_any()
         .id("test_capture")
         .priority(0)

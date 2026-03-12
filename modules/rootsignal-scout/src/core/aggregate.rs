@@ -541,7 +541,7 @@ impl PipelineState {
 
 // ── Aggregate + Apply traits ─────────────────────────────────────
 
-use seesaw_core::{Aggregate, aggregators};
+use causal::{Aggregate, aggregators};
 
 impl Aggregate for PipelineState {
     fn aggregate_type() -> &'static str {

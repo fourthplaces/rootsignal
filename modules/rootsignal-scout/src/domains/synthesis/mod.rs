@@ -8,7 +8,7 @@ mod completion_tests;
 
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
-use seesaw_core::{events, handle, handlers, Context, Events};
+use causal::{events, reactor, reactors, Context, Events};
 use tracing::{info, warn};
 
 use rootsignal_common::events::SystemEvent;
@@ -56,15 +56,15 @@ fn describe_synthesis_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     ]
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     // ---------------------------------------------------------------
     // Similarity: single graph-wide operation, not atomized
     // ---------------------------------------------------------------
 
-    #[handle(on = ExpansionEvent, id = "synthesis:compute_similarity", filter = is_expansion_completed, describe = describe_synthesis_progress)]
+    #[reactor(on = ExpansionEvent, id = "synthesis:compute_similarity", filter = is_expansion_completed, describe = describe_synthesis_progress)]
     async fn compute_similarity(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -98,7 +98,7 @@ pub mod handlers {
     // ResponseMapping: guards deps, loads targets, processes all
     // ===============================================================
 
-    #[handle(on = ExpansionEvent, id = "synthesis:map_responses", filter = is_expansion_completed, describe = describe_synthesis_progress)]
+    #[reactor(on = ExpansionEvent, id = "synthesis:map_responses", filter = is_expansion_completed, describe = describe_synthesis_progress)]
     async fn map_responses(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -184,7 +184,7 @@ pub mod handlers {
     // Severity inference: triggers when all synthesis roles done
     // ---------------------------------------------------------------
 
-    #[handle(on = SynthesisEvent, id = "synthesis:infer_severity", filter = similarity_and_mapping_done, describe = describe_synthesis_gate)]
+    #[reactor(on = SynthesisEvent, id = "synthesis:infer_severity", filter = similarity_and_mapping_done, describe = describe_synthesis_gate)]
     async fn infer_severity(
         _event: SynthesisEvent,
         ctx: Context<ScoutEngineDeps>,

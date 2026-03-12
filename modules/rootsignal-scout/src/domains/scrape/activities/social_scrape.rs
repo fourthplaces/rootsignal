@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use futures::stream::{self, StreamExt};
 use uuid::Uuid;
 
-use seesaw_core::Logger;
+use causal::Logger;
 
 use rootsignal_common::{
     scraping_strategy, ActorContext, ChannelWeights, Node, ScrapingStrategy, SocialPlatform,

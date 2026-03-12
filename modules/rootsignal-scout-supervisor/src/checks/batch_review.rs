@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use anyhow::Result;
 use neo4rs::query;
 use schemars::JsonSchema;
-use seesaw_core::Events;
+use causal::Events;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use uuid::Uuid;

@@ -354,6 +354,39 @@ impl PublicGraphReader {
         }
     }
 
+    /// Get a signal by ID without display filters or coordinate fuzzing.
+    /// Used by admin endpoints that need to see all signals regardless of
+    /// confidence or staleness.
+    pub async fn get_signal_by_id_unfiltered(&self, id: Uuid) -> Result<Option<Node>, neo4rs::Error> {
+        let id_str = id.to_string();
+
+        for nt in &[
+            NodeType::Gathering,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
+            NodeType::Condition,
+        ] {
+            let label = node_type_label(*nt);
+            let cypher = format!(
+                "MATCH (n:{label} {{id: $id}})
+                 RETURN n, labels(n)[0] AS node_label"
+            );
+
+            let q = query(&cypher).param("id", id_str.as_str());
+            let mut stream = self.client.execute(q).await?;
+
+            if let Some(row) = stream.next().await? {
+                if let Some(node) = row_to_node(&row, *nt) {
+                    return Ok(Some(node));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     // --- Actor queries ---
 
     /// Get a single actor by ID with recent signals.

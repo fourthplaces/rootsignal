@@ -177,8 +177,10 @@ impl CachedReader {
 
     pub async fn get_signal_by_id_unfiltered(&self, id: Uuid) -> Result<Option<Node>, neo4rs::Error> {
         let snap = self.cache.load_full();
-        let node = snap.signal_by_id.get(&id).map(|&idx| &snap.signals[idx]);
-        Ok(node.cloned())
+        if let Some(node) = snap.signal_by_id.get(&id).map(|&idx| &snap.signals[idx]) {
+            return Ok(Some(node.clone()));
+        }
+        self.neo4j_reader.get_signal_by_id_unfiltered(id).await
     }
 
     pub async fn get_node_detail(

@@ -6,7 +6,7 @@ pub mod events;
 use std::collections::HashMap;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use causal::{events, reactor, reactors, Context, Events};
 use tracing::info;
 use uuid::Uuid;
 
@@ -22,12 +22,12 @@ fn build_source_keys(sources: &[rootsignal_common::SourceNode]) -> HashMap<Strin
     sources.iter().map(|s| (s.canonical_key.clone(), s.id)).collect()
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     /// ScoutRunRequested → find stale signals, emit SignalsExpired.
-    #[handle(on = LifecycleEvent, id = "lifecycle:find_stale_signals", filter = is_scout_run_requested)]
+    #[reactor(on = LifecycleEvent, id = "lifecycle:find_stale_signals", filter = is_scout_run_requested)]
     async fn find_stale_signals(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -45,7 +45,7 @@ pub mod handlers {
     }
 
     /// ScoutRunRequested → build source plan, resolve web URLs, emit SourcesPrepared.
-    #[handle(on = LifecycleEvent, id = "lifecycle:prepare_sources", filter = is_scout_run_requested)]
+    #[reactor(on = LifecycleEvent, id = "lifecycle:prepare_sources", filter = is_scout_run_requested)]
     async fn prepare_sources(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,

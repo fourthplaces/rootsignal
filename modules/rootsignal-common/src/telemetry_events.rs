@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// An operational telemetry event — infrastructure observations and housekeeping.
-#[seesaw_core_macros::event(prefix = "telemetry")]
+#[causal_core_macros::event(prefix = "telemetry")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TelemetryEvent {

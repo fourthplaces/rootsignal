@@ -4,7 +4,7 @@ use uuid::Uuid;
 use rootsignal_common::events::{Event, Location};
 use rootsignal_common::{GeoPoint, GeoPrecision};
 use rootsignal_graph::{query, GraphClient, GraphProjector};
-use seesaw_core::types::PersistedEvent;
+use causal::types::PersistedEvent;
 
 pub fn stored(seq: i64, event: &Event) -> PersistedEvent {
     PersistedEvent {

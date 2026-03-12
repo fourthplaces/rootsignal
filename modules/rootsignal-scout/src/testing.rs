@@ -1935,7 +1935,7 @@ pub fn test_engine_for_store_with_embedder(
 /// Create a test engine that captures all dispatched events for inspection.
 pub fn test_engine_with_capture() -> (
     Arc<ScoutEngine>,
-    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    Arc<Mutex<Vec<causal::AnyEvent>>>,
 ) {
     let (engine, captured, _scope) = test_engine_with_capture_for_store(
         Arc::new(MockSignalReader::new()) as Arc<dyn SignalReader>,
@@ -1953,7 +1953,7 @@ pub fn test_engine_with_capture_for_store(
     region: Option<rootsignal_common::ScoutScope>,
 ) -> (
     Arc<ScoutEngine>,
-    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    Arc<Mutex<Vec<causal::AnyEvent>>>,
     crate::core::run_scope::RunScope,
 ) {
     let scope = match region {
@@ -1982,7 +1982,7 @@ pub fn test_engine_with_scrape_capture(
     region: Option<rootsignal_common::ScoutScope>,
 ) -> (
     Arc<ScoutEngine>,
-    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    Arc<Mutex<Vec<causal::AnyEvent>>>,
     crate::core::run_scope::RunScope,
 ) {
     let scope = match region {
@@ -2012,7 +2012,7 @@ pub fn test_engine_with_ai(
     region: Option<rootsignal_common::ScoutScope>,
 ) -> (
     Arc<ScoutEngine>,
-    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    Arc<Mutex<Vec<causal::AnyEvent>>>,
     crate::core::run_scope::RunScope,
 ) {
     let scope = match region {
@@ -2043,7 +2043,7 @@ pub fn test_engine_for_source_run(
     ai: Arc<dyn ai_client::Agent>,
 ) -> (
     Arc<ScoutEngine>,
-    Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    Arc<Mutex<Vec<causal::AnyEvent>>>,
     crate::core::run_scope::RunScope,
 ) {
     let captured = Arc::new(Mutex::new(Vec::new()));
@@ -2476,7 +2476,7 @@ pub struct ScoutRunTest {
     engine: Arc<ScoutEngine>,
     run_id: Uuid,
     scope: RunScope,
-    captured: Arc<Mutex<Vec<seesaw_core::AnyEvent>>>,
+    captured: Arc<Mutex<Vec<causal::AnyEvent>>>,
     store: Arc<MockSignalReader>,
 }
 
@@ -2527,7 +2527,7 @@ impl ScoutRunTest {
     }
 
     /// Access captured events for event-level assertions.
-    pub fn captured(&self) -> Vec<seesaw_core::AnyEvent> {
+    pub fn captured(&self) -> Vec<causal::AnyEvent> {
         self.captured.lock().unwrap().clone()
     }
 

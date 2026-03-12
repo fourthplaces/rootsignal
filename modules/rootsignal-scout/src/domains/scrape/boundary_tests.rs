@@ -30,7 +30,7 @@ use rootsignal_common::events::SystemEvent;
 
 /// Dispatch collected events through a test engine, updating state.
 async fn dispatch_events(
-    events: seesaw_core::Events,
+    events: causal::Events,
     ctx: &mut PipelineState,
     store: &Arc<MockSignalReader>,
 ) {
@@ -1077,7 +1077,7 @@ async fn empty_social_account_produces_nothing() {
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "zero posts → no signals");
@@ -1102,7 +1102,7 @@ async fn image_only_posts_produce_no_signals() {
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 0, "text-less posts → no signals");
@@ -1218,7 +1218,7 @@ async fn social_scrape_failure_does_not_crash() {
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
     // Should not panic
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
@@ -1359,7 +1359,7 @@ async fn signal_without_content_location_does_not_backfill_from_actor() {
         },
     );
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
@@ -1408,7 +1408,7 @@ async fn explicit_content_location_not_overwritten_by_actor() {
         },
     );
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
@@ -1466,7 +1466,7 @@ async fn new_actor_inherits_parent_depth_plus_one() {
         },
     );
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
@@ -1509,7 +1509,7 @@ async fn bootstrap_actor_gets_depth_zero() {
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
     // No actor context — this is a bootstrap source
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
@@ -1676,7 +1676,7 @@ async fn social_published_at_becomes_published_at_fallback() {
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 }
 
@@ -2188,7 +2188,7 @@ async fn mixed_text_and_image_posts_produce_correct_signals() {
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
@@ -2286,7 +2286,7 @@ async fn owned_source_author_creates_actor_with_url_canonical_key() {
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(
@@ -2451,7 +2451,7 @@ async fn social_signal_has_produced_by_edge() {
     let sources: Vec<&_> = vec![&source];
     let mut ctx = PipelineState::from_sources(&[source.clone()]);
 
-    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &seesaw_core::Logger::new()).await;
+    let output = super::activities::social_scrape::scrape_social_sources(&deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts, &causal::Logger::new()).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
     assert_eq!(ctx.stats.signals_stored, 1);
@@ -3535,7 +3535,7 @@ async fn fetch_and_extract_produces_signals_and_stats() {
         &ctx.url_to_canonical_key,
         &ctx.actor_contexts,
         &std::collections::HashMap::new(),
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
 
     assert_eq!(result.stats.urls_scraped, 1, "one URL scraped");
@@ -3562,7 +3562,7 @@ async fn fetch_and_extract_with_empty_urls_returns_empty() {
         &ctx.url_to_canonical_key,
         &ctx.actor_contexts,
         &std::collections::HashMap::new(),
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
 
     assert_eq!(result.stats.urls_scraped, 0);
@@ -3589,7 +3589,7 @@ async fn fetch_and_extract_counts_failed_urls() {
         &ctx.url_to_canonical_key,
         &ctx.actor_contexts,
         &std::collections::HashMap::new(),
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
 
     assert_eq!(result.stats.urls_failed, 1, "one URL should fail");
@@ -3635,7 +3635,7 @@ async fn feed_channel_off_skips_post_fetch() {
 
     let output = super::activities::social_scrape::scrape_social_sources(
         &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
@@ -3684,7 +3684,7 @@ async fn media_channel_on_fetches_stories_and_videos() {
 
     let output = super::activities::social_scrape::scrape_social_sources(
         &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
@@ -3732,7 +3732,7 @@ async fn feed_and_media_combined_in_single_extraction() {
 
     let output = super::activities::social_scrape::scrape_social_sources(
         &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
@@ -3775,7 +3775,7 @@ async fn media_fetch_failure_does_not_block_feed() {
 
     let output = super::activities::social_scrape::scrape_social_sources(
         &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
     scrape_and_dispatch(output, &mut ctx, &store).await;
 
@@ -3812,7 +3812,7 @@ async fn unenriched_story_media_emits_scrape_scheduled() {
 
     let mut output = super::activities::social_scrape::scrape_social_sources(
         &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
 
     let events = output.take_events();
@@ -3849,7 +3849,7 @@ async fn enriched_story_media_does_not_emit_scrape_scheduled() {
 
     let mut output = super::activities::social_scrape::scrape_social_sources(
         &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
 
     let events = output.take_events();
@@ -3887,7 +3887,7 @@ async fn media_channel_off_does_not_emit_scrape_scheduled() {
 
     let mut output = super::activities::social_scrape::scrape_social_sources(
         &deps, &sources, &ctx.url_to_canonical_key, &ctx.actor_contexts,
-        &seesaw_core::Logger::new(),
+        &causal::Logger::new(),
     ).await;
 
     let events = output.take_events();

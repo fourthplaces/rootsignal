@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use ai_client::Agent;
 use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
-use seesaw_core::Logger;
+use causal::Logger;
 use tracing::info;
 
 use crate::domains::enrichment::activities::link_promoter::{

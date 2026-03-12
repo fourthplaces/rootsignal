@@ -4,7 +4,7 @@ pub mod activities;
 pub mod events;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use causal::{events, reactor, reactors, Context, Events};
 
 use rootsignal_common::events::SystemEvent;
 
@@ -21,12 +21,12 @@ fn is_expansion_ready(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -> bo
     matches!(e, ExpansionEvent::ExpansionReady)
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     /// ExpansionReady → compute source metrics, expand signals, emit ExpansionCompleted.
-    #[handle(on = ExpansionEvent, id = "expansion:expand_signals", filter = is_expansion_ready)]
+    #[reactor(on = ExpansionEvent, id = "expansion:expand_signals", filter = is_expansion_ready)]
     async fn expand_signals(
         _event: ExpansionEvent,
         ctx: Context<ScoutEngineDeps>,

@@ -388,7 +388,7 @@ pub enum Event {
 impl Event {
     /// The durable event name — `"prefix:variant"` format (e.g. `"world:gathering_announced"`).
     pub fn event_type(&self) -> &str {
-        use seesaw_core::event::Event as _;
+        use causal::event::Event as _;
         match self {
             Event::World(w) => w.durable_name(),
             Event::System(s) => s.durable_name(),

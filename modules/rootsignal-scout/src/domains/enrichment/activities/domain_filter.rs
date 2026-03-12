@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use ai_client::{ai_extract, Agent};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use seesaw_core::Logger;
+use causal::Logger;
 
 use rootsignal_common::extract_domain;
 

@@ -28,7 +28,7 @@ pub struct StaleSignal {
 }
 
 /// A system event — an editorial judgment Root Signal made about world facts.
-#[seesaw_core_macros::event(prefix = "system")]
+#[causal_core_macros::event(prefix = "system")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SystemEvent {

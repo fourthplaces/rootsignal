@@ -10,7 +10,7 @@ use crate::core::extractor::ResourceTag;
 use crate::domains::enrichment::activities::link_promoter::CollectedLink;
 use rootsignal_common::{Node, SourceNode};
 use rootsignal_common::telemetry_events::TelemetryEvent;
-use seesaw_core::Events;
+use causal::Events;
 
 pub(crate) use crate::domains::signals::activities::dedup_utils::{
     batch_title_dedup, is_owned_source, normalize_title, score_and_filter,

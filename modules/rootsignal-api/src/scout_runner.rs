@@ -1,4 +1,4 @@
-//! Spawns seesaw engines in tokio tasks. Each GraphQL mutation creates a
+//! Spawns causal engines in tokio tasks. Each GraphQL mutation creates a
 //! short-lived task that builds the appropriate engine variant, emits the
 //! entry event, and settles.
 //!
@@ -16,11 +16,11 @@ use tracing::{info, warn};
 use rootsignal_scout::core::engine;
 use rootsignal_scout::core::postgres_store::PostgresStore;
 use rootsignal_scout::core::run_scope::RunScope;
-use seesaw_core::handler_queue::HandlerQueue;
+use causal::reactor_queue::ReactorQueue;
 use rootsignal_scout::domains::lifecycle::events::LifecycleEvent;
 use rootsignal_scout::workflows::ScoutDeps;
 
-/// Holds `Arc<ScoutDeps>`. Spawns seesaw engines in tokio tasks.
+/// Holds `Arc<ScoutDeps>`. Spawns causal engines in tokio tasks.
 /// Cancellation goes through Postgres (seesaw_cancellations table).
 #[derive(Clone)]
 pub struct ScoutRunner {

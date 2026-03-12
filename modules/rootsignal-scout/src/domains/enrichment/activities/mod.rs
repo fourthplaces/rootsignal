@@ -31,7 +31,7 @@ pub async fn compute_source_metrics(
     all_sources: &[SourceNode],
     source_signal_counts: &HashMap<String, u32>,
     query_api_errors: &HashSet<String>,
-) -> seesaw_core::Events {
+) -> causal::Events {
     let metrics = Metrics::new(graph, region_name);
     metrics
         .compute_source_metrics(all_sources, source_signal_counts, query_api_errors, Utc::now())

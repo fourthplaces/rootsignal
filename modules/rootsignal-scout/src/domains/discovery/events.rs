@@ -3,7 +3,7 @@
 use rootsignal_common::types::SourceNode;
 use serde::{Deserialize, Serialize};
 
-#[seesaw_core::event(prefix = "discovery")]
+#[causal::event(prefix = "discovery")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DiscoveryEvent {

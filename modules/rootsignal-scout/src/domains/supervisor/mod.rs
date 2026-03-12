@@ -2,7 +2,7 @@ pub mod activities;
 pub mod events;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use causal::{events, reactor, reactors, Context, Events};
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -16,12 +16,12 @@ fn is_weaving_done(e: &SituationWeavingEvent, _ctx: &Context<ScoutEngineDeps>) -
     )
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     /// SituationsWeaved or NothingToWeave → supervise region, emit SupervisionCompleted.
-    #[handle(on = SituationWeavingEvent, id = "supervisor:run_supervisor", filter = is_weaving_done)]
+    #[reactor(on = SituationWeavingEvent, id = "supervisor:run_supervisor", filter = is_weaving_done)]
     async fn run_supervisor(
         _event: SituationWeavingEvent,
         ctx: Context<ScoutEngineDeps>,

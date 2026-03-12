@@ -11,7 +11,7 @@ use rootsignal_common::events::{
 };
 use rootsignal_common::safety::SensitivityLevel;
 use rootsignal_common::types::*;
-use seesaw_core::types::PersistedEvent;
+use causal::types::PersistedEvent;
 use serde_json::json;
 use uuid::Uuid;
 

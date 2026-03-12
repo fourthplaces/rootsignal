@@ -6,7 +6,7 @@ pub mod util;
 
 use anyhow::Result;
 use chrono::Utc;
-use seesaw_core::{handle, handlers, Context, Events};
+use causal::{reactor, reactors, Context, Events};
 use tracing::{info, warn};
 
 use rootsignal_common::events::{SystemEvent, WorldEvent};
@@ -100,11 +100,11 @@ fn emit_concern_edge(out: &mut Events, edge: ConcernEdge) {
     }
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
-    #[handle(on = WorldEvent, id = "curiosity:investigate", filter = signal_not_investigated)]
+    #[reactor(on = WorldEvent, id = "curiosity:investigate", filter = signal_not_investigated)]
     async fn investigate(
         event: WorldEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -189,7 +189,7 @@ pub mod handlers {
         Ok(out)
     }
 
-    #[handle(on = WorldEvent, id = "curiosity:link_concerns", filter = signal_not_concern_linked)]
+    #[reactor(on = WorldEvent, id = "curiosity:link_concerns", filter = signal_not_concern_linked)]
     async fn link_concerns(
         event: WorldEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -382,7 +382,7 @@ pub mod handlers {
         Ok(out)
     }
 
-    #[handle(on = WorldEvent, id = "curiosity:find_responses", filter = concern_not_response_scouted)]
+    #[reactor(on = WorldEvent, id = "curiosity:find_responses", filter = concern_not_response_scouted)]
     async fn find_responses(
         event: WorldEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -570,7 +570,7 @@ pub mod handlers {
         Ok(out)
     }
 
-    #[handle(on = WorldEvent, id = "curiosity:find_gatherings", filter = concern_not_gathering_scouted)]
+    #[reactor(on = WorldEvent, id = "curiosity:find_gatherings", filter = concern_not_gathering_scouted)]
     async fn find_gatherings(
         event: WorldEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -757,7 +757,7 @@ pub mod handlers {
         Ok(out)
     }
 
-    #[handle(on = CuriosityEvent, id = "curiosity:materialize", filter = is_curiosity_discovery)]
+    #[reactor(on = CuriosityEvent, id = "curiosity:materialize", filter = is_curiosity_discovery)]
     async fn materialize(
         event: CuriosityEvent,
         ctx: Context<ScoutEngineDeps>,

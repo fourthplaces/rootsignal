@@ -9,7 +9,7 @@ use uuid::Uuid;
 use rootsignal_common::ActorContext;
 #[cfg(test)]
 use rootsignal_common::SourceNode;
-use seesaw_core::{Events, Logger};
+use causal::{Events, Logger};
 
 use crate::core::aggregate::ExtractedBatch;
 use crate::core::engine::ScoutEngineDeps;

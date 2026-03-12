@@ -4,7 +4,7 @@ pub mod activities;
 pub mod events;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use causal::{events, reactor, reactors, Context, Events};
 use tracing::info;
 
 use rootsignal_common::Block;
@@ -122,12 +122,12 @@ fn describe_expansion_gate(ctx: &Context<ScoutEngineDeps>) -> Vec<Block> {
     ]
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     /// SourcesDiscovered → filter and register accepted sources.
-    #[handle(on = [DiscoveryEvent::SourcesDiscovered], id = "discovery:filter_domains", extract(sources, discovered_by))]
+    #[reactor(on = [DiscoveryEvent::SourcesDiscovered], id = "discovery:filter_domains", extract(sources, discovered_by))]
     async fn filter_domains(
         sources: Vec<rootsignal_common::SourceNode>,
         discovered_by: String,
@@ -158,7 +158,7 @@ pub mod handlers {
     }
 
     /// ScoutRunRequested → seed sources when the region has none.
-    #[handle(on = LifecycleEvent, id = "discovery:bootstrap_sources", filter = is_scout_run_requested)]
+    #[reactor(on = LifecycleEvent, id = "discovery:bootstrap_sources", filter = is_scout_run_requested)]
     async fn bootstrap_sources(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -177,7 +177,7 @@ pub mod handlers {
     }
 
     /// Scrape completed → promote links from collected pages.
-    #[handle(on = ScrapeEvent, id = "discovery:promote_links", filter = should_promote_links, describe = describe_promote_links_gate)]
+    #[reactor(on = ScrapeEvent, id = "discovery:promote_links", filter = should_promote_links, describe = describe_promote_links_gate)]
     async fn promote_links(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -213,7 +213,7 @@ pub mod handlers {
     }
 
     /// Scrape completed → expand source pool when tension roles done.
-    #[handle(on = ScrapeEvent, id = "discovery:expand_sources", filter = tension_done_expansion_pending, describe = describe_expansion_gate)]
+    #[reactor(on = ScrapeEvent, id = "discovery:expand_sources", filter = tension_done_expansion_pending, describe = describe_expansion_gate)]
     async fn expand_sources(
         _event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,

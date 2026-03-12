@@ -4,7 +4,7 @@ pub mod activities;
 pub mod events;
 
 use anyhow::Result;
-use seesaw_core::{handle, handlers, Context, Events};
+use causal::{reactor, reactors, Context, Events};
 
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
@@ -16,12 +16,12 @@ fn is_generate_situations(e: &LifecycleEvent, _ctx: &Context<ScoutEngineDeps>) -
     matches!(e, LifecycleEvent::GenerateSituationsRequested { .. })
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     /// GenerateSituationsRequested → weave situations, emit SituationsWeaved.
-    #[handle(on = LifecycleEvent, id = "situation_weaving:weave_situations", filter = is_generate_situations)]
+    #[reactor(on = LifecycleEvent, id = "situation_weaving:weave_situations", filter = is_generate_situations)]
     async fn weave_situations(
         _event: LifecycleEvent,
         ctx: Context<ScoutEngineDeps>,

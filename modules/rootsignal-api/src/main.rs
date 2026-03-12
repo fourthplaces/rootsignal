@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
         .with_env_filter(
             EnvFilter::from_default_env()
                 .add_directive("rootsignal=info".parse()?)
-                .add_directive("seesaw_replay=info".parse()?),
+                .add_directive("causal_replay=info".parse()?),
         )
         .init();
 
@@ -283,14 +283,14 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Build ScoutRunner for spawning seesaw engines directly
+    // Build ScoutRunner for spawning causal engines directly
     let scout_runner = pg_pool.as_ref().map(|pool| {
         let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::from_config(
             client.clone(),
             pool.clone(),
             &config,
         ));
-        info!("ScoutRunner configured — runScout will spawn seesaw engines directly");
+        info!("ScoutRunner configured — runScout will spawn causal engines directly");
         let runner = ScoutRunner::new(scout_deps);
         // Resume any runs that were in-flight when the server last crashed
         let resume_runner = runner.clone();

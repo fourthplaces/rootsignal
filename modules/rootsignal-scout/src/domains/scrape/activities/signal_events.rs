@@ -1,7 +1,7 @@
 //! Free functions for signal event creation — no `self` dependency.
 
 use rootsignal_common::SourceNode;
-use seesaw_core::Events;
+use causal::Events;
 
 use crate::domains::discovery::events::DiscoveryEvent;
 

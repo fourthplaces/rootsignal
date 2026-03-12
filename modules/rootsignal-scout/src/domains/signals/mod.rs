@@ -2,7 +2,7 @@ pub mod activities;
 pub mod events;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, Context, Events};
+use causal::{events, reactor, reactors, Context, Events};
 
 use rootsignal_common::events::{SystemEvent, WorldEvent};
 
@@ -30,12 +30,12 @@ fn citation_published(c: NewCitation) -> WorldEvent {
     }
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     /// Scrape completed → run dedup on all extracted batches.
-    #[handle(on = ScrapeEvent, id = "signals:dedup_signals", filter = is_scrape_completed)]
+    #[reactor(on = ScrapeEvent, id = "signals:dedup_signals", filter = is_scrape_completed)]
     async fn dedup_signals(
         event: ScrapeEvent,
         ctx: Context<ScoutEngineDeps>,

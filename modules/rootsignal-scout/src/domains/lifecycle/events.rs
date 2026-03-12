@@ -11,7 +11,7 @@ use crate::core::aggregate::SourcePlan;
 use crate::core::run_scope::RunScope;
 use rootsignal_common::types::ActorContext;
 
-#[seesaw_core::event(prefix = "lifecycle")]
+#[causal::event(prefix = "lifecycle")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LifecycleEvent {

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Result;
-use seesaw_core::{events, handle, handlers, AnyEvent, Context, Events};
+use causal::{events, reactor, reactors, AnyEvent, Context, Events};
 use uuid::Uuid;
 
 use rootsignal_common::events::{SystemEvent, WorldEvent};
@@ -93,15 +93,15 @@ fn review_verdict(signal_id: Uuid, decision: &str, rejection_reason: Option<&str
     }
 }
 
-#[handlers]
-pub mod handlers {
+#[reactors]
+pub mod reactors {
     use super::*;
 
     // ---------------------------------------------------------------
     // Gate: collapses [SystemEvent, SignalEvent] fan-in into one EnrichmentReady
     // ---------------------------------------------------------------
 
-    #[handle(on = [SystemEvent, SignalEvent], id = "enrichment:review_gate", filter = enrichment_gate_ready)]
+    #[reactor(on = [SystemEvent, SignalEvent], id = "enrichment:review_gate", filter = enrichment_gate_ready)]
     async fn review_gate(
         _event: AnyEvent,
         _ctx: Context<ScoutEngineDeps>,
@@ -113,7 +113,7 @@ pub mod handlers {
     // Enrichment: runs all enrichment steps sequentially
     // ---------------------------------------------------------------
 
-    #[handle(on = EnrichmentEvent, id = "enrichment:run_enrichment", filter = is_enrichment_ready)]
+    #[reactor(on = EnrichmentEvent, id = "enrichment:run_enrichment", filter = is_enrichment_ready)]
     async fn run_enrichment(
         _event: EnrichmentEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -196,7 +196,7 @@ pub mod handlers {
     // Signal review: batch-accumulate signals, flush to LLM reviewer
     // ---------------------------------------------------------------
 
-    #[handle(on = WorldEvent, id = "enrichment:submit_signal_for_review", filter = is_signal_world_event)]
+    #[reactor(on = WorldEvent, id = "enrichment:submit_signal_for_review", filter = is_signal_world_event)]
     async fn submit_signal_for_review(
         event: WorldEvent,
         ctx: Context<ScoutEngineDeps>,
@@ -262,7 +262,7 @@ pub mod handlers {
     // Geocode locations: reactive, fires on every signal with locations
     // ---------------------------------------------------------------
 
-    #[handle(on = WorldEvent, id = "enrichment:geocode_locations", filter = has_locations_needing_geocoding)]
+    #[reactor(on = WorldEvent, id = "enrichment:geocode_locations", filter = has_locations_needing_geocoding)]
     async fn geocode_locations(
         event: WorldEvent,
         ctx: Context<ScoutEngineDeps>,

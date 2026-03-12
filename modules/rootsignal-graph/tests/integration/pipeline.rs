@@ -8,7 +8,7 @@ use uuid::Uuid;
 use rootsignal_common::events::{Event, Location, SystemEvent, WorldEvent};
 use rootsignal_common::{ActorType, ChannelType, GeoPoint, GeoPrecision};
 use rootsignal_world::types::{Entity, EntityType, Reference};
-use seesaw_core::types::PersistedEvent;
+use causal::types::PersistedEvent;
 use rootsignal_graph::{query, BBox, GraphClient, Pipeline};
 
 fn stored(seq: i64, event: &Event) -> PersistedEvent {

@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[seesaw_core::event(prefix = "pipeline")]
+#[causal::event(prefix = "pipeline")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PipelineEvent {
