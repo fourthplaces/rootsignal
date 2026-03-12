@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "@apollo/client";
 import { ACTOR_DETAIL } from "@/graphql/queries";
 import { DELETE_ACTOR } from "@/graphql/mutations";
 import { PromptDialog } from "@/components/PromptDialog";
+import { DataTable, type Column } from "@/components/DataTable";
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
   Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -51,6 +52,38 @@ type ActorDetail = {
   signals: SignalBrief[];
 };
 
+const signalColumns: Column<SignalBrief>[] = [
+  { key: "signalType", label: "Type", render: (s) => (
+    <span className={`text-xs px-2 py-0.5 rounded-full border ${SIGNAL_TYPE_COLORS[s.signalType] ?? "bg-muted text-muted-foreground border-border"}`}>
+      {s.signalType}
+    </span>
+  )},
+  { key: "title", label: "Title", resizable: true, defaultWidth: 300, render: (s) => (
+    <Link to={`/signals/${s.id}`} className="text-blue-400 hover:underline truncate block">{s.title}</Link>
+  )},
+  { key: "locationName", label: "Location", render: (s) => (
+    <span className="text-muted-foreground truncate max-w-[180px] block">{s.locationName ?? "\u2014"}</span>
+  )},
+  { key: "reviewStatus", label: "Status", render: (s) => (
+    <span className={`text-xs px-2 py-0.5 rounded-full border ${
+      s.reviewStatus === "accepted" ? "bg-green-900/30 text-green-400 border-green-500/30"
+        : s.reviewStatus === "rejected" ? "bg-red-900/30 text-red-400 border-red-500/30"
+        : "bg-amber-900/30 text-amber-400 border-amber-500/30"
+    }`}>
+      {s.reviewStatus}
+    </span>
+  )},
+  { key: "confidence", label: "Confidence", align: "right", render: (s) => (
+    <span className="tabular-nums">{(s.confidence * 100).toFixed(0)}%</span>
+  )},
+  { key: "contentDate", label: "Published", render: (s) => (
+    <span className="text-muted-foreground whitespace-nowrap">{s.contentDate ? formatDate(s.contentDate) : "\u2014"}</span>
+  )},
+  { key: "extractedAt", label: "Extracted", render: (s) => (
+    <span className="text-muted-foreground whitespace-nowrap">{formatDate(s.extractedAt)}</span>
+  )},
+];
+
 export function ActorDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -69,7 +102,7 @@ export function ActorDetailPage() {
   if (!actor) return <p className="text-muted-foreground">Actor not found</p>;
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-6xl">
       {/* Header */}
       <div className="space-y-2">
         <div className="flex items-center gap-3">
@@ -197,86 +230,17 @@ export function ActorDetailPage() {
       )}
 
       {/* Signals */}
-      <div className="rounded-lg border border-border">
-        <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-medium">
-            Recent Signals ({actor.signals.length}
-            {actor.signals.length >= 50 ? "+" : ""})
-          </h3>
-        </div>
-        {actor.signals.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted-foreground">
-            No signals linked
-          </p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
-                <th className="px-4 py-2 font-medium">Type</th>
-                <th className="px-4 py-2 font-medium">Title</th>
-                <th className="px-4 py-2 font-medium">Location</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium text-right">
-                  Confidence
-                </th>
-                <th className="px-4 py-2 font-medium">Published</th>
-                <th className="px-4 py-2 font-medium">Extracted</th>
-              </tr>
-            </thead>
-            <tbody>
-              {actor.signals.map((s) => (
-                <tr
-                  key={s.id}
-                  className="border-b border-border last:border-0 hover:bg-muted/30"
-                >
-                  <td className="px-4 py-2">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full border ${
-                        SIGNAL_TYPE_COLORS[s.signalType] ??
-                        "bg-muted text-muted-foreground border-border"
-                      }`}
-                    >
-                      {s.signalType}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 max-w-[300px] truncate">
-                    <Link
-                      to={`/signals/${s.id}`}
-                      className="text-blue-400 hover:underline"
-                    >
-                      {s.title}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground max-w-[180px] truncate">
-                    {s.locationName ?? "\u2014"}
-                  </td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full border ${
-                        s.reviewStatus === "accepted"
-                          ? "bg-green-900/30 text-green-400 border-green-500/30"
-                          : s.reviewStatus === "rejected"
-                            ? "bg-red-900/30 text-red-400 border-red-500/30"
-                            : "bg-amber-900/30 text-amber-400 border-amber-500/30"
-                      }`}
-                    >
-                      {s.reviewStatus}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {(s.confidence * 100).toFixed(0)}%
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                    {s.contentDate ? formatDate(s.contentDate) : "\u2014"}
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                    {formatDate(s.extractedAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">
+          Recent Signals ({actor.signals.length}
+          {actor.signals.length >= 50 ? "+" : ""})
+        </h3>
+        <DataTable<SignalBrief>
+          columns={signalColumns}
+          data={actor.signals}
+          getRowKey={(s) => s.id}
+          emptyMessage="No signals linked"
+        />
       </div>
       {showDelete && (
         <PromptDialog
