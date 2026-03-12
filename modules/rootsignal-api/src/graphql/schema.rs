@@ -269,7 +269,7 @@ impl QueryRoot {
                 url: s.url,
                 review_status: s.review_status,
                 location_name: s.location_name,
-                content_date: s.content_date,
+                content_date: s.published_at,
             })
             .collect();
 
@@ -608,7 +608,7 @@ impl QueryRoot {
                 url: s.url,
                 review_status: s.review_status,
                 location_name: s.location_name,
-                content_date: s.content_date,
+                content_date: s.published_at,
             })
             .collect();
 

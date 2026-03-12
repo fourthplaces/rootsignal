@@ -96,6 +96,8 @@ pub enum WorldEvent {
         schedule: Option<Schedule>,
         // -- type-specific --
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        action_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         what_needed: Option<String>,
         /// The goal as explicitly stated in the content.
         /// Extract what the content says, not what you infer the goal to be.
@@ -126,6 +128,8 @@ pub enum WorldEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schedule: Option<Schedule>,
         // -- type-specific --
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action_url: Option<String>,
         /// The core subject in plain terms, for search/retrieval.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subject: Option<String>,
@@ -161,6 +165,8 @@ pub enum WorldEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schedule: Option<Schedule>,
         // -- type-specific (strict extraction only) --
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action_url: Option<String>,
         /// The core subject of the friction in plain terms.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subject: Option<String>,
@@ -196,6 +202,8 @@ pub enum WorldEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schedule: Option<Schedule>,
         // -- type-specific (strict extraction only) --
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action_url: Option<String>,
         /// The core subject in plain terms, for search/retrieval.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subject: Option<String>,
@@ -360,6 +368,18 @@ impl WorldEvent {
             | Self::AnnouncementShared { url, .. }
             | Self::ConcernRaised { url, .. }
             | Self::ConditionObserved { url, .. } => Some(url),
+            _ => None,
+        }
+    }
+
+    pub fn action_url(&self) -> Option<&str> {
+        match self {
+            Self::GatheringAnnounced { action_url, .. }
+            | Self::ResourceOffered { action_url, .. }
+            | Self::HelpRequested { action_url, .. }
+            | Self::AnnouncementShared { action_url, .. }
+            | Self::ConcernRaised { action_url, .. }
+            | Self::ConditionObserved { action_url, .. } => action_url.as_deref(),
             _ => None,
         }
     }

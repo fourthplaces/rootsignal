@@ -505,6 +505,7 @@ impl GraphProjector {
                 mentioned_entities,
                 references: _,
                 schedule,
+                action_url: _,
                 what_needed,
                 stated_goal,
             } => {
@@ -557,6 +558,7 @@ impl GraphProjector {
                 mentioned_entities,
                 references: _,
                 schedule,
+                action_url: _,
                 subject,
                 effective_date,
             } => {
@@ -603,6 +605,7 @@ impl GraphProjector {
                 mentioned_entities,
                 references: _,
                 schedule,
+                action_url: _,
                 subject,
                 opposing,
             } => {
@@ -655,6 +658,7 @@ impl GraphProjector {
                 mentioned_entities,
                 references: _,
                 schedule,
+                action_url: _,
                 subject,
                 observed_by,
                 measurement,

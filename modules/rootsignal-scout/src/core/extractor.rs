@@ -527,6 +527,7 @@ impl Extractor {
                         subject: signal.subject.clone(),
                         effective_date,
                         source_authority: signal.source_authority,
+                        action_url: signal.action_url.clone(),
                     })
                 }
                 "concern" => {
@@ -541,6 +542,7 @@ impl Extractor {
                         severity,
                         subject: signal.subject.clone(),
                         opposing: signal.opposing.clone(),
+                        action_url: signal.action_url.clone(),
                     })
                 }
                 "condition" => {
@@ -557,6 +559,7 @@ impl Extractor {
                         observed_by: signal.observed_by.clone(),
                         measurement: signal.measurement.clone(),
                         affected_scope: signal.affected_scope.clone(),
+                        action_url: signal.action_url.clone(),
                     })
                 }
                 other => {

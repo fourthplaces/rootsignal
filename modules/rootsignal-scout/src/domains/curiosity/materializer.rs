@@ -82,6 +82,7 @@ pub fn materialize(
                 severity,
                 subject: None,
                 opposing: Some(opposing),
+                action_url: None,
             });
 
             let concern_edges = vec![ConcernEdge {
@@ -220,6 +221,7 @@ pub fn materialize(
                 severity,
                 subject: None,
                 opposing: Some(opposing),
+                action_url: None,
             });
 
             info!(tension_id = %tension_id, title = title.as_str(), "Materialized emergent tension (confidence 0.4)");

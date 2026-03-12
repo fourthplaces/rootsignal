@@ -1381,10 +1381,11 @@ impl PublicGraphReader {
     /// Fetch recent signals linked to an actor via ACTED_IN.
     pub async fn signals_for_actor(&self, actor_id: &Uuid) -> Result<Vec<SignalBrief>, neo4rs::Error> {
         let cypher = "MATCH (a:Actor {id: $id})-[rel:ACTED_IN]->(n)-[:PRODUCED_BY]->(s:Source)
+            OPTIONAL MATCH (n)-[:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
                    s.url AS source_url_from_source, n.review_status AS review_status,
-                   n.location_name AS location_name, n.content_date AS content_date,
+                   l.name AS location_name, n.published_at AS published_at,
                    rel.role AS role
             ORDER BY n.extracted_at DESC
             LIMIT 50";
@@ -1414,7 +1415,7 @@ impl PublicGraphReader {
                 url: row.get("source_url_from_source").unwrap_or_default(),
                 review_status: row.get("review_status").unwrap_or_else(|_| "staged".to_string()),
                 location_name: row.get("location_name").ok(),
-                content_date: row_datetime_opt_pub(&row, "content_date"),
+                published_at: row_datetime_opt_pub(&row, "published_at"),
             });
         }
         Ok(signals)
@@ -1443,10 +1444,11 @@ impl PublicGraphReader {
     pub async fn signals_for_source(&self, source_id: &Uuid) -> Result<Vec<SignalBrief>, neo4rs::Error> {
         let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
             WHERE n.review_status IN ['staged', 'accepted']
+            OPTIONAL MATCH (n)-[:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
                    s.url AS source_url_from_source, n.review_status AS review_status,
-                   n.location_name AS location_name, n.content_date AS content_date
+                   l.name AS location_name, n.published_at AS published_at
             ORDER BY n.extracted_at DESC
             LIMIT 50";
 
@@ -1468,7 +1470,7 @@ impl PublicGraphReader {
                 url: row.get("source_url_from_source").unwrap_or_default(),
                 review_status: row.get("review_status").unwrap_or_default(),
                 location_name: row.get("location_name").ok(),
-                content_date: row_datetime_opt_pub(&row, "content_date"),
+                published_at: row_datetime_opt_pub(&row, "published_at"),
             });
         }
         Ok(signals)
@@ -1489,10 +1491,11 @@ impl PublicGraphReader {
 
         let cypher = "MATCH (n) WHERE n.scout_run_id = $run_id
             AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+            OPTIONAL MATCH (n)-[:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
                    n.confidence AS confidence, n.extracted_at AS extracted_at,
                    n.url AS url, n.review_status AS review_status,
-                   n.location_name AS location_name, n.content_date AS content_date
+                   l.name AS location_name, n.published_at AS published_at
             ORDER BY n.confidence DESC
             LIMIT $limit";
         let q = query(cypher).param("run_id", run_id).param("limit", limit);
@@ -1513,7 +1516,7 @@ impl PublicGraphReader {
                 url: row.get("url").unwrap_or_default(),
                 review_status: row.get("review_status").unwrap_or_default(),
                 location_name: row.get("location_name").ok(),
-                content_date: row_datetime_opt_pub(&row, "content_date"),
+                published_at: row_datetime_opt_pub(&row, "published_at"),
             });
         }
         Ok((signals, total))
@@ -2062,6 +2065,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 } else {
                     Some(source_authority)
                 },
+                action_url: None,
             }))
         }
         NodeType::Concern => {
@@ -2088,6 +2092,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 } else {
                     Some(opposing)
                 },
+                action_url: None,
             }))
         }
         NodeType::Condition => {
@@ -2110,6 +2115,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 observed_by: if observed_by.is_empty() { None } else { Some(observed_by) },
                 measurement: if measurement.is_empty() { None } else { Some(measurement) },
                 affected_scope: if affected_scope.is_empty() { None } else { Some(affected_scope) },
+                action_url: None,
             }))
         }
         NodeType::Citation => None,

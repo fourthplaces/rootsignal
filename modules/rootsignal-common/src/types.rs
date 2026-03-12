@@ -324,6 +324,7 @@ pub struct AnnouncementNode {
     pub subject: Option<String>,
     pub effective_date: Option<DateTime<Utc>>,
     pub source_authority: Option<String>,
+    pub action_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,6 +335,7 @@ pub struct ConcernNode {
     pub subject: Option<String>,
     /// What is being opposed, as explicitly stated in the content.
     pub opposing: Option<String>,
+    pub action_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,6 +350,7 @@ pub struct ConditionNode {
     pub measurement: Option<String>,
     /// Scope of what's affected as stated in the content.
     pub affected_scope: Option<String>,
+    pub action_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
