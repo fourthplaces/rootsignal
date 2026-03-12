@@ -56,6 +56,24 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Register Neo4j client for data migrations that need it
+    if let (Ok(uri), Ok(user), Ok(pass)) = (
+        std::env::var("NEO4J_URI"),
+        std::env::var("NEO4J_USER"),
+        std::env::var("NEO4J_PASSWORD"),
+    ) {
+        let db = std::env::var("NEO4J_DB").unwrap_or_else(|_| "neo4j".into());
+        match rootsignal_graph::connect_graph(&uri, &user, &pass, &db).await {
+            Ok(client) => {
+                tracing::info!(db = db.as_str(), "Connected to Neo4j");
+                ctx.insert(Arc::new(client));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Neo4j not available — graph migrations will skip");
+            }
+        }
+    }
+
     if cli.check {
         let warnings = checks::check(&all);
         if warnings.is_empty() {

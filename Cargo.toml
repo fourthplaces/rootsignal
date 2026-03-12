@@ -86,10 +86,11 @@ typed-builder = "0.20"
 testcontainers = "0.23"
 
 # Event sourcing
-causal = "0.1.1"
-causal_core_macros = "0.1.1"
-causal_utils = "0.1.1"
-causal_replay = { version = "0.1.1", features = ["postgres"] }
+causal = "0.1.2"
+causal_core_macros = "0.1.2"
+causal_utils = "0.1.2"
+causal_replay = { version = "0.1.2", features = ["postgres"] }
+causal_inspector = { version = "0.1.2", features = ["axum"] }
 
 # Local crates
 ai-client = { path = "modules/ai-client" }

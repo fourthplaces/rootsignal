@@ -32,6 +32,8 @@ mod debug_context;
 mod event_broadcast;
 mod event_cache;
 mod graphql;
+mod inspector_display;
+mod inspector_read_model;
 mod investigate;
 mod investigate_tools;
 mod jwt;
@@ -250,6 +252,40 @@ async fn main() -> Result<()> {
         .as_ref()
         .map(|pool| event_broadcast::EventBroadcast::spawn(pool.clone()));
 
+    // Causal Inspector: bridge AdminEvent broadcast → StoredEvent for live subscriptions
+    let (inspector_tx, _) =
+        tokio::sync::broadcast::channel::<causal_inspector::StoredEvent>(1024);
+    if let Some(ref broadcast) = event_broadcast {
+        let mut rx = broadcast.subscribe();
+        let tx = inspector_tx.clone();
+        tokio::spawn(async move {
+            while let Ok(admin_event) = rx.recv().await {
+                let payload: serde_json::Value =
+                    serde_json::from_str(&admin_event.payload).unwrap_or_default();
+                let stored = causal_inspector::StoredEvent {
+                    seq: admin_event.seq,
+                    ts: admin_event.ts,
+                    event_type: admin_event.event_type,
+                    payload,
+                    id: admin_event.id.and_then(|s| s.parse().ok()),
+                    parent_id: admin_event.parent_id.and_then(|s| s.parse().ok()),
+                    correlation_id: admin_event.correlation_id.and_then(|s| s.parse().ok()),
+                    reactor_id: admin_event.handler_id,
+                    aggregate_type: None,
+                    aggregate_id: None,
+                    stream_version: None,
+                };
+                let _ = tx.send(stored);
+            }
+        });
+    }
+
+    let inspector_router = pg_pool.as_ref().map(|pool| {
+        let read_model = Arc::new(inspector_read_model::PgInspectorReadModel::new(pool.clone()));
+        let display = inspector_display::RootsignalEventDisplay;
+        causal_inspector::router(read_model, display, inspector_tx.clone())
+    });
+
     // Hydrate in-memory event cache (most recent 500K events)
     let event_cache = if let Some(ref pool) = pg_pool {
         match event_cache::EventCache::hydrate(pool, 500_000).await {
@@ -351,7 +387,17 @@ async fn main() -> Result<()> {
         .route("/api/debug-context", get(debug_context::debug_context_handler))
         // Health check
         .route("/", get(|| async { "ok" }))
-        .with_state(state)
+        .with_state(state);
+
+    // Causal Inspector: nested GraphQL + WebSocket router
+    let app = if let Some(inspector) = inspector_router {
+        info!("Causal Inspector mounted at /api/inspector");
+        app.nest("/api/inspector", inspector)
+    } else {
+        app
+    };
+
+    let app = app
         // Link preview (separate state)
         .route(
             "/api/link-preview",

@@ -2,16 +2,16 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Search, X, Copy, Check, Maximize2 } from "lucide-react";
 import { useEventsPaneContext, type AdminEvent } from "../EventsPaneContext";
-import { eventTextColor } from "../eventColor";
+import { eventTextColor, eventBg } from "../eventColor";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const LAYER_COLORS: Record<string, string> = {
-  world: "bg-blue-500/20 text-blue-400",
-  system: "bg-amber-500/20 text-amber-400",
-  telemetry: "bg-zinc-500/20 text-zinc-400",
+const LAYER_COLORS: Record<string, { bg: string; text: string; dot: string; border: string }> = {
+  world: { bg: "bg-blue-500/15", text: "text-blue-400", dot: "bg-blue-400", border: "border-l-blue-500/60" },
+  system: { bg: "bg-amber-500/15", text: "text-amber-400", dot: "bg-amber-400", border: "border-l-amber-500/60" },
+  telemetry: { bg: "bg-zinc-500/15", text: "text-zinc-400", dot: "bg-zinc-400", border: "border-l-zinc-500/40" },
 };
 
 const LAYER_OPTIONS = ["world", "system", "telemetry"] as const;
@@ -234,43 +234,48 @@ function FilterBar() {
     useEventsPaneContext();
 
   return (
-    <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-border bg-card/50">
-      {LAYER_OPTIONS.map((layer) => {
-        const active = layers.has(layer);
-        const color = LAYER_COLORS[layer] ?? "";
-        return (
-          <button
-            key={layer}
-            onClick={() => toggleLayer(layer)}
-            className={`px-2 py-0.5 rounded text-xs font-medium transition-opacity ${color} ${
-              active ? "opacity-100" : "opacity-30"
-            }`}
-          >
-            {layer}
-          </button>
-        );
-      })}
+    <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-card/60 backdrop-blur-sm">
+      <div className="flex items-center rounded-md border border-border/60 overflow-hidden">
+        {LAYER_OPTIONS.map((layer) => {
+          const active = layers.has(layer);
+          const colors = LAYER_COLORS[layer];
+          return (
+            <button
+              key={layer}
+              onClick={() => toggleLayer(layer)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-all border-r border-border/40 last:border-r-0 ${
+                active ? `${colors.bg} ${colors.text}` : "text-muted-foreground/40 hover:text-muted-foreground/70"
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full transition-all ${active ? colors.dot : "bg-muted-foreground/20"}`} />
+              {layer}
+            </button>
+          );
+        })}
+      </div>
 
-      <span className="w-px h-4 bg-border" />
-
-      <input
-        type="text"
-        placeholder="search events..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground placeholder:text-muted-foreground w-64"
-      />
+      <div className="relative flex-1 min-w-48 max-w-80">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" />
+        <input
+          type="text"
+          placeholder="Search events..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-7 pr-2 py-1 text-xs rounded-md bg-background/80 border border-border/60 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring/40 focus:border-ring/40 transition-colors"
+        />
+      </div>
 
       {runId && (
-        <>
-          <span className="w-px h-4 bg-border" />
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px] font-mono">
-            run: {runId.slice(0, 8)}…
-            <button onClick={() => setRunId("")} className="hover:text-foreground">
-              <X className="w-3 h-3" />
-            </button>
-          </span>
-        </>
+        <span className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-md bg-purple-500/15 border border-purple-500/20 text-purple-300 text-[11px] font-mono transition-colors">
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+          {runId.slice(0, 8)}
+          <button
+            onClick={() => setRunId("")}
+            className="ml-0.5 p-0.5 rounded hover:bg-purple-500/20 transition-colors"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </span>
       )}
     </div>
   );
@@ -294,40 +299,42 @@ function EventRow({
   onFilterRun: (runId: string) => void;
 }) {
   const [payloadOpen, setPayloadOpen] = useState(false);
-  const layerColor = LAYER_COLORS[event.layer] ?? "bg-zinc-500/20 text-zinc-400";
+  const colors = LAYER_COLORS[event.layer] ?? LAYER_COLORS.telemetry;
 
   return (
     <div
-      className={`group w-full text-left px-3 py-2 border-b border-border hover:bg-accent/30 transition-colors ${
-        isSelected ? "bg-accent/50 ring-1 ring-blue-500/50" : ""
+      className={`group w-full text-left border-l-2 border-b border-b-border/50 hover:bg-accent/20 transition-all ${
+        isSelected
+          ? `bg-accent/40 border-l-blue-400 ${colors.border.replace("border-l-", "")}`
+          : colors.border
       }`}
     >
-      <div onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }} className="w-full text-left cursor-pointer">
+      <div onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }} className="w-full text-left cursor-pointer px-3 py-1.5">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[10px] font-mono text-muted-foreground w-12 shrink-0 text-right">
+          <span className="text-[10px] font-mono text-muted-foreground/60 w-10 shrink-0 text-right tabular-nums">
             {event.seq}
           </span>
-          <span className="text-[10px] text-muted-foreground shrink-0 w-32">
+          <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0 w-28 tabular-nums">
             {formatTs(event.ts)}
-          </span>
-          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${layerColor}`}>
-            {event.layer}
           </span>
           {event.runId && (
             <button
               onClick={(e) => { e.stopPropagation(); onFilterRun(event.runId!); }}
-              className="px-1 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 shrink-0 transition-colors"
+              className="px-1.5 py-0.5 rounded text-[10px] font-mono text-purple-400/70 hover:text-purple-300 hover:bg-purple-500/15 shrink-0 transition-colors"
               title={`Filter by run ${event.runId}`}
             >
               {event.runId.slice(0, 8)}
             </button>
           )}
-          <span className="text-xs font-mono shrink-0" style={{ color: eventTextColor(event.name) }}>
+          <span
+            className="px-1.5 py-0.5 rounded text-[11px] font-mono font-medium shrink-0"
+            style={{ backgroundColor: eventBg(event.name), color: eventTextColor(event.name) }}
+          >
             {event.name}
           </span>
           <button
             onClick={(e) => { e.stopPropagation(); setPayloadOpen((v) => !v); }}
-            className="text-[10px] font-mono text-muted-foreground hover:text-foreground truncate text-left"
+            className="text-[10px] font-mono text-muted-foreground/40 hover:text-muted-foreground truncate text-left transition-colors"
             title="Click to expand payload"
           >
             {event.summary ?? compactPayload(event.payload)}
@@ -342,7 +349,7 @@ function EventRow({
         </div>
       </div>
       {payloadOpen && (
-        <CopyablePayload payload={event.payload} className="mt-1 ml-14 max-h-64" />
+        <CopyablePayload payload={event.payload} className="mt-1 mx-3 mb-2 ml-14 max-h-64" />
       )}
     </div>
   );
@@ -369,8 +376,14 @@ function InfiniteScrollSentinel({ onVisible, loading }: { onVisible: () => void;
   }, []);
 
   return (
-    <div ref={ref} className="flex items-center justify-center py-3">
-      {loading && <span className="text-[10px] text-muted-foreground">Loading...</span>}
+    <div ref={ref} className="flex items-center justify-center py-4">
+      {loading && (
+        <div className="flex items-center gap-2">
+          <div className="w-1 h-1 rounded-full bg-muted-foreground/40 animate-pulse" />
+          <div className="w-1 h-1 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:150ms]" />
+          <div className="w-1 h-1 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:300ms]" />
+        </div>
+      )}
     </div>
   );
 }
@@ -407,20 +420,20 @@ export function TimelinePane() {
       <FilterBar />
       {loading && filteredEvents.length === 0 ? (
         <div className="animate-pulse">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-border">
-              <div className="h-3 w-12 bg-muted rounded shrink-0" />
-              <div className="h-3 w-32 bg-muted rounded shrink-0" />
-              <div className="h-4 w-14 bg-muted rounded shrink-0" />
-              <div className="h-4 w-16 bg-muted rounded shrink-0" />
-              <div className="h-3 w-28 bg-muted rounded shrink-0" />
-              <div className="h-3 bg-muted rounded flex-1" style={{ maxWidth: `${150 + (i * 37) % 200}px` }} />
+          {Array.from({ length: 14 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-1.5 border-l-2 border-l-muted/30 border-b border-b-border/30" style={{ opacity: 1 - i * 0.05 }}>
+              <div className="h-3 w-10 bg-muted/40 rounded shrink-0" />
+              <div className="h-3 w-28 bg-muted/30 rounded shrink-0" />
+              <div className="h-4 w-14 bg-muted/20 rounded shrink-0" />
+              <div className="h-4 bg-muted/25 rounded shrink-0" style={{ width: `${80 + (i * 47) % 120}px` }} />
+              <div className="h-3 bg-muted/15 rounded flex-1" style={{ maxWidth: `${120 + (i * 37) % 200}px` }} />
             </div>
           ))}
         </div>
       ) : filteredEvents.length === 0 ? (
-        <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-          No events found
+        <div className="flex flex-col items-center justify-center h-40 gap-2">
+          <Search className="w-5 h-5 text-muted-foreground/30" />
+          <span className="text-xs text-muted-foreground/50">No events found</span>
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto">

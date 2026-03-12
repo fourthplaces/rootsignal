@@ -46,6 +46,7 @@ futures = { workspace = true }
 async-stream = { workspace = true }
 causal = { workspace = true }
 causal_replay = { workspace = true }
+causal_inspector = { workspace = true }
 indicatif = "0.17"
 
 [dev-dependencies]
