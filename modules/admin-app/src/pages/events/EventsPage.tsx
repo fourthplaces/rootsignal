@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import "@xyflow/react/dist/style.css";
 
 const CausalInspector = lazy(() =>
   import("causal-inspector").then((m) => ({ default: m.CausalInspector }))

@@ -15,7 +15,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@types/d3-force": "^3.0.10",
     "@xyflow/react": "^12.10.1",
-    "causal-inspector": "^0.1.1",
+    "causal-inspector": "^0.1.2",
     "clsx": "^2.1.1",
     "d3-force": "^3.0.0",
     "flexlayout-react": "^0.8.18",
