@@ -115,7 +115,7 @@ export function ScoutRunDetailPage() {
       {/* Breadcrumb + header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link to="/scout-runs" className="text-muted-foreground hover:text-foreground text-sm">Scout Runs</Link>
+          <Link to="/workflows" className="text-muted-foreground hover:text-foreground text-sm">Workflows</Link>
           <span className="text-muted-foreground">/</span>
           <h1 className="text-sm font-semibold font-mono">{run.runId.slice(0, 8)}</h1>
           {run.flowType && (

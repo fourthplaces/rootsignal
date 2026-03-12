@@ -343,8 +343,8 @@ export const ALL_TAGS = gql`
 `;
 
 export const ADMIN_SCOUT_RUNS = gql`
-  query AdminScoutRuns($region: String, $limit: Int) {
-    adminScoutRuns(region: $region, limit: $limit) {
+  query AdminRuns($region: String, $limit: Int) {
+    adminRuns(region: $region, limit: $limit) {
       runId
       region
       regionId
@@ -369,8 +369,8 @@ export const ADMIN_SCOUT_RUNS = gql`
 `;
 
 export const ADMIN_SCOUT_RUNS_BY_SOURCE = gql`
-  query AdminScoutRunsBySource($sourceId: String!, $limit: Int) {
-    adminScoutRunsBySource(sourceId: $sourceId, limit: $limit) {
+  query AdminRunsBySource($sourceId: String!, $limit: Int) {
+    adminRunsBySource(sourceId: $sourceId, limit: $limit) {
       runId
       region
       regionId

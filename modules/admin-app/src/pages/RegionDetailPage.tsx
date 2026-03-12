@@ -123,15 +123,15 @@ export function RegionDetailPage() {
   const situations = situationsData?.situationsInBounds ?? [];
   const actors = actorsData?.actorsInBounds ?? [];
   const regionSources = sourcesData?.adminRegionSourcesByRegion ?? [];
-  const runs = runsData?.adminScoutRuns ?? [];
+  const runs = runsData?.adminRuns ?? [];
 
   return (
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <Link to="/scout" className="text-xs text-muted-foreground hover:text-foreground">
-            &larr; Back to Scout
+          <Link to="/regions" className="text-xs text-muted-foreground hover:text-foreground">
+            &larr; Back to Regions
           </Link>
           <h1 className="text-xl font-semibold mt-1">{region.name}</h1>
         </div>
@@ -411,7 +411,7 @@ export function RegionDetailPage() {
                 {runs.map((run: Record<string, string | null>) => (
                   <tr key={run.runId} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-2">
-                      <Link to={`/scout-runs/${run.runId}`} className="text-blue-400 hover:underline font-mono text-xs">
+                      <Link to={`/workflows/${run.runId}`} className="text-blue-400 hover:underline font-mono text-xs">
                         {run.runId?.slice(0, 8)}
                       </Link>
                     </td>

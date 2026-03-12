@@ -259,7 +259,7 @@ export function SourceDetailPage() {
       <div className="space-y-2">
         <div className="flex items-center gap-3">
           <Link
-            to="/scout?tab=sources"
+            to="/sources"
             className="text-muted-foreground hover:text-foreground text-sm"
           >
             Sources
@@ -477,12 +477,12 @@ export function SourceDetailPage() {
 
       {/* Recent runs */}
       {(() => {
-        const runs: ScoutRunBrief[] = runsData?.adminScoutRunsBySource ?? [];
+        const runs: ScoutRunBrief[] = runsData?.adminRunsBySource ?? [];
         const runColumns: Column<ScoutRunBrief>[] = [
           {
             key: "run", label: "Run", resizable: true, defaultWidth: 100,
             render: (r) => (
-              <Link to={`/scout-runs/${r.runId}`} className="text-blue-400 hover:underline font-mono text-xs">
+              <Link to={`/workflows/${r.runId}`} className="text-blue-400 hover:underline font-mono text-xs">
                 {r.runId.slice(0, 8)}
               </Link>
             ),
@@ -538,7 +538,7 @@ export function SourceDetailPage() {
               columns={runColumns}
               data={runs}
               getRowKey={(r) => r.runId}
-              onRowClick={(r) => navigate(`/scout-runs/${r.runId}`)}
+              onRowClick={(r) => navigate(`/workflows/${r.runId}`)}
               emptyMessage="No scout runs found for this source"
             />
           </div>

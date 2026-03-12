@@ -228,7 +228,7 @@ export function ScoutPage() {
     variables: { limit: 50 },
     skip: tab !== "runs",
   });
-  const runs: ScoutRun[] = runsData?.adminScoutRuns ?? [];
+  const runs: ScoutRun[] = runsData?.adminRuns ?? [];
   const [cancelRun] = useMutation(CANCEL_RUN);
 
   // --- Findings ---
