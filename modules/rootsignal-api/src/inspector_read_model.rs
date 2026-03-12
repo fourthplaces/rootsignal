@@ -289,6 +289,7 @@ impl InspectorReadModel for PgInspectorReadModel {
         &self,
         search: Option<&str>,
         limit: usize,
+        since: Option<DateTime<Utc>>,
     ) -> Result<Vec<CorrelationSummaryEntry>> {
         let rows = sqlx::query(
             r#"
@@ -304,12 +305,14 @@ impl InspectorReadModel for PgInspectorReadModel {
                    OR correlation_id::text ILIKE '%' || $1 || '%'
                    OR event_type ILIKE '%' || $1 || '%')
             GROUP BY correlation_id
+            HAVING ($3::timestamptz IS NULL OR MIN(ts) >= $3)
             ORDER BY MAX(ts) DESC
             LIMIT $2
             "#,
         )
         .bind(search)
         .bind(limit as i64)
+        .bind(since)
         .fetch_all(&self.pool)
         .await?;
 
