@@ -13,6 +13,8 @@ function investigationKey(investigation: NonNullable<ReturnType<typeof useEvents
       return `run-${investigation.runId}`;
     case "source_dive":
       return `source-${investigation.sourceId}`;
+    case "node":
+      return `node-${investigation.nodeId}`;
   }
 }
 

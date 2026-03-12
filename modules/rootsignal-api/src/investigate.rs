@@ -61,6 +61,11 @@ pub enum InvestigateRequest {
         source_id: Uuid,
         messages: Vec<ChatMessage>,
     },
+    #[serde(rename = "node")]
+    Node {
+        node_id: Uuid,
+        messages: Vec<ChatMessage>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -444,6 +449,10 @@ pub async fn investigate_handler(
             source_id,
             messages,
         } => handle_source_dive_mode(state, pool, &api_key, source_id, messages).await,
+        InvestigateRequest::Node {
+            node_id,
+            messages,
+        } => handle_node_mode(state, pool, &api_key, node_id, messages).await,
     }
 }
 
@@ -1087,6 +1096,209 @@ async fn handle_logs_mode(
     );
 
     run_agent(claude, LOGS_SYSTEM_PROMPT, &context, &chat_messages).await
+}
+
+// ---------------------------------------------------------------------------
+// Node mode — investigate a single graph node
+// ---------------------------------------------------------------------------
+
+const NODE_SYSTEM_PROMPT: &str = r#"You are a graph node investigation assistant for RootSignal, an event-sourced community intelligence platform. Your job is to help operators deeply understand a single node in the knowledge graph — how it got there, why its properties are what they are, and whether anything looks wrong.
+
+## Node Types
+
+The graph contains these node types:
+- **Gathering**: Community events (meetups, festivals, town halls)
+- **Resource**: Available help (food banks, legal aid, shelters)
+- **HelpRequest**: Someone asking for help
+- **Announcement**: General community announcements
+- **Concern**: Friction, tensions, or issues in the community
+- **Condition**: Ongoing environmental or social conditions
+- **Actor**: People or organizations mentioned in signals
+- **Location**: Physical places, geocoded to canonical addresses
+- **Citation**: Source web pages that provided evidence for signals
+
+## How Nodes Get Their Properties
+
+Every property on a node was set by an event in the event store. The pipeline flow:
+1. **Source scraped** → content fetched from a URL
+2. **Signals extracted** → LLM parses content into structured signals (title, summary, location, etc.)
+3. **Signal accepted** → deduplication passes, node created in graph
+4. **Enrichment events** → category classified, severity inferred, confidence scored, location geocoded, etc.
+5. **Corrections** → supervisor may correct fields (title, summary, location)
+
+If a property looks wrong, the answer is in the events — trace which event set it and what input it was working from.
+
+## Location Geocoding
+
+Location is a common investigation target. The pipeline:
+1. LLM extracts location names from content (e.g. "Minneapolis, MN")
+2. `LocationGeocoded` event fires with Mapbox canonical address + lat/lng
+3. Location nodes merge by canonical address (many name variants → one canonical node)
+
+If lat/lng looks wrong, check: Was the LLM's extracted location name wrong? Did Mapbox geocode it to the wrong place? Did the wrong Location node get merged?
+
+## Your Tools
+
+The node's metadata, events, and connected edges are already loaded in context. Use tools to drill deeper:
+- `get_signal` — re-fetch the node's current state from the graph
+- `find_events_for_node` — all events that created or modified this node
+- `get_event` — load full payload of a specific event by seq number
+- `load_causal_tree` — trace the causal chain from any event
+- `search_events` — find related events by keyword
+- `fetch_url` — fetch a source page to compare what it actually says vs. what was extracted
+- `get_findings_for_node` — check if the supervisor flagged quality issues
+- `get_source_info` — look up the source that produced this signal
+
+## How to Respond
+
+The operator is looking at this node in the graph explorer and wants to understand something specific about it. They can see the node's properties and relationships — don't recite what they can already see. Instead, investigate the story behind the data.
+
+Be conversational and direct. Trace the provenance of properties the user asks about. When you find something interesting or wrong, explain what happened and why. Mention event seq numbers when they help.
+
+If you spot a bug — a property that was set incorrectly by the pipeline — say so clearly and offer to file a GitHub issue.
+"#;
+
+fn build_node_context(
+    node: &rootsignal_common::Node,
+    events: &[scout_run::EventRow],
+    edges: &[(String, String, String)],
+) -> String {
+    let mut ctx = String::new();
+
+    // Node identity
+    let id = node.id();
+    let node_type = format!("{:?}", node.node_type());
+    ctx.push_str(&format!("## Node: {} ({})\n\n", node_type, id));
+
+    // Properties table
+    if let Some(meta) = node.meta() {
+        ctx.push_str("### Properties\n\n");
+        ctx.push_str("| Field | Value |\n|-------|-------|\n");
+        ctx.push_str(&format!("| id | `{}` |\n", id));
+        ctx.push_str(&format!("| type | {} |\n", node_type));
+        ctx.push_str(&format!("| title | {} |\n", meta.title));
+        ctx.push_str(&format!("| summary | {} |\n", truncate_payload(&meta.summary)));
+        ctx.push_str(&format!("| url | {} |\n", meta.url));
+        ctx.push_str(&format!("| confidence | {:.2} |\n", meta.confidence));
+        if let Some(cat) = &meta.category {
+            ctx.push_str(&format!("| category | {} |\n", cat));
+        }
+        for loc in &meta.locations {
+            let role = loc.role.as_deref().unwrap_or("primary");
+            if let Some(name) = &loc.name {
+                ctx.push_str(&format!("| location ({}) | {} |\n", role, name));
+            }
+            if let Some(addr) = &loc.address {
+                ctx.push_str(&format!("| address ({}) | {} |\n", role, addr));
+            }
+            if let Some(pt) = &loc.point {
+                ctx.push_str(&format!("| lat/lng ({}) | {}, {} |\n", role, pt.lat, pt.lng));
+            }
+        }
+        ctx.push_str(&format!("| extracted_at | {} |\n", meta.extracted_at));
+        if let Some(pub_at) = meta.published_at {
+            ctx.push_str(&format!("| published_at | {} |\n", pub_at));
+        }
+        ctx.push_str(&format!("| review_status | {:?} |\n", meta.review_status));
+    }
+
+    // Connected edges
+    if !edges.is_empty() {
+        ctx.push_str("\n### Connected Edges\n\n");
+        ctx.push_str("| direction | type | other_node |\n|-----------|------|------------|\n");
+        for (direction, edge_type, other_label) in edges {
+            ctx.push_str(&format!("| {} | {} | {} |\n", direction, edge_type, other_label));
+        }
+    }
+
+    // Recent events
+    if !events.is_empty() {
+        ctx.push_str(&format!("\n### Event History ({} events)\n\n", events.len()));
+        ctx.push_str("| seq | layer | name | timestamp | summary |\n");
+        ctx.push_str("|-----|-------|------|-----------|----------|\n");
+        for e in events {
+            let n = json_str(&e.data, "type").unwrap_or_else(|| e.event_type.clone());
+            let s = event_summary(&n, &e.data);
+            let l = event_layer(&e.event_type);
+            ctx.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                e.seq, l, n, e.ts,
+                s.as_deref().unwrap_or("-"),
+            ));
+        }
+    }
+
+    ctx
+}
+
+async fn handle_node_mode(
+    state: Arc<AppState>,
+    pool: Arc<sqlx::PgPool>,
+    api_key: &str,
+    node_id: Uuid,
+    chat_messages: Vec<ChatMessage>,
+) -> axum::response::Response {
+    // Load node from graph
+    let node = match state.reader.get_signal_by_id_unfiltered(node_id).await {
+        Ok(Some(n)) => n,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, "Node not found in graph").into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, node_id = %node_id, "Failed to load node for investigation");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load node: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    // Load events that touched this node
+    let events = scout_run::list_events_by_node_id(&pool, &node_id.to_string(), 50)
+        .await
+        .unwrap_or_default();
+
+    // Load connected edges from the graph neighborhood
+    let edges = state.reader.edges_for_node(node_id)
+        .await
+        .unwrap_or_default();
+
+    let context = build_node_context(&node, &events, &edges);
+
+    let mut claude = Claude::new(api_key, ai_client::models::SONNET_4)
+        .tool(GetSignalTool {
+            reader: state.reader.clone(),
+        })
+        .tool(FindEventsForNodeTool { pool: pool.clone() })
+        .tool(SearchEventsTool { pool: pool.clone() })
+        .tool(GetEventTool { pool: pool.clone() })
+        .tool(LoadCausalTreeTool { pool: pool.clone() })
+        .tool(GetRunInfoTool { pool })
+        .tool(FetchUrlTool)
+        .tool(GetFindingsForNodeTool {
+            reader: state.reader.clone(),
+        })
+        .tool(GetSourceInfoTool {
+            writer: state.writer.clone(),
+        });
+
+    if let (Some(token), Some(repo)) = (&state.config.github_token, &state.config.github_repo) {
+        claude = claude.tool(CreateGitHubIssueTool {
+            github_token: token.clone(),
+            github_repo: repo.clone(),
+        });
+    }
+
+    tracing::info!(
+        message_count = chat_messages.len(),
+        node_id = %node_id,
+        event_count = events.len(),
+        edge_count = edges.len(),
+        "Starting node investigation"
+    );
+
+    run_agent(claude, NODE_SYSTEM_PROMPT, &context, &chat_messages).await
 }
 
 async fn run_agent(

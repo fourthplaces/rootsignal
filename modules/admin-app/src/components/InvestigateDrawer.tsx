@@ -59,7 +59,8 @@ export type InvestigateMode =
   | { mode: "sources"; sourceIds: string[]; sourceLabel: string }
   | { mode: "scout_run"; runId: string; runLabel: string }
   | { mode: "logs"; runId?: string; handlerId?: string }
-  | { mode: "source_dive"; sourceId: string; sourceLabel: string };
+  | { mode: "source_dive"; sourceId: string; sourceLabel: string }
+  | { mode: "node"; nodeId: string; nodeLabel: string; nodeType: string };
 
 type ChatMsg = {
   role: "user" | "assistant";
@@ -131,6 +132,15 @@ function getModeConfig(investigation: InvestigateMode): ModeConfig {
         loadingLabel: "Investigating source...",
         showSynthesis: false,
         buildBody: (messages) => ({ mode: "source_dive", source_id: investigation.sourceId, messages }),
+      };
+    case "node":
+      return {
+        title: `Investigate: ${investigation.nodeLabel}`,
+        subtitle: `${investigation.nodeType} · ${investigation.nodeId.slice(0, 8)}…`,
+        autoMessage: "Tell me the story of this node — how did it get its current properties? Anything look off?",
+        loadingLabel: "Investigating node...",
+        showSynthesis: false,
+        buildBody: (messages) => ({ mode: "node", node_id: investigation.nodeId, messages }),
       };
   }
 }

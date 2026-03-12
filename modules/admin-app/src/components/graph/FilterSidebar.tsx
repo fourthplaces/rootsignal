@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@apollo/client";
+import { Search } from "lucide-react";
 import { ADMIN_NODE_EVENTS, SOURCE_DETAIL } from "@/graphql/queries";
 
 const NODE_TYPE_OPTIONS = [
@@ -74,6 +75,7 @@ export function FilterSidebar({
   selectedNode,
   edges,
   nodeMap,
+  onInvestigate,
 }: {
   nodeTypes: Set<string>;
   onToggleNodeType: (type: string) => void;
@@ -90,6 +92,7 @@ export function FilterSidebar({
   selectedNode: GraphNodeInfo | null;
   edges: GraphEdgeInfo[];
   nodeMap: Map<string, GraphNodeInfo>;
+  onInvestigate?: (node: GraphNodeInfo) => void;
 }) {
   const histogram = useMemo(() => {
     const counts = new Map<string, number>();
@@ -218,7 +221,7 @@ export function FilterSidebar({
         {!selectedNode ? (
           <p className="text-muted-foreground text-xs">Click a node to inspect it.</p>
         ) : (
-          <PropertiesContent node={selectedNode} edges={edges} nodeMap={nodeMap} />
+          <PropertiesContent node={selectedNode} edges={edges} nodeMap={nodeMap} onInvestigate={onInvestigate} />
         )}
       </CollapsibleSection>
     </div>
@@ -233,10 +236,12 @@ function PropertiesContent({
   node,
   edges,
   nodeMap,
+  onInvestigate,
 }: {
   node: GraphNodeInfo;
   edges: GraphEdgeInfo[];
   nodeMap: Map<string, GraphNodeInfo>;
+  onInvestigate?: (node: GraphNodeInfo) => void;
 }) {
   const [tab, setTab] = useState<InspectorTab>("properties");
 
@@ -253,7 +258,18 @@ function PropertiesContent({
 
   return (
     <div className="space-y-2">
-      <div className="text-xs font-medium truncate text-foreground">{node.label}</div>
+      <div className="flex items-center gap-1.5">
+        <div className="text-xs font-medium truncate text-foreground flex-1">{node.label}</div>
+        {onInvestigate && (
+          <button
+            onClick={() => onInvestigate(node)}
+            title="Investigate this node with AI"
+            className="shrink-0 p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
       <div className="flex gap-1">
         {tabs.map((t) => (
           <button

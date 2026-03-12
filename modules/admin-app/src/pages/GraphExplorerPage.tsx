@@ -11,6 +11,7 @@ import { GRAPH_NEIGHBORHOOD } from "@/graphql/queries";
 import { FilterSidebar } from "@/components/graph/FilterSidebar";
 import { GraphMap, type MapBounds } from "@/components/graph/GraphMap";
 import { ForceGraph } from "@/components/graph/ForceGraph";
+import { InvestigateDrawer, type InvestigateMode } from "@/components/InvestigateDrawer";
 
 type GqlNode = {
   id: string;
@@ -68,6 +69,7 @@ export function GraphExplorerPage() {
   );
   const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
+  const [investigation, setInvestigation] = useState<InvestigateMode | null>(null);
 
   const initialCenter = useMemo<[number, number] | undefined>(() => {
     const lat = parseFloat(searchParams.get("lat") ?? "");
@@ -187,6 +189,10 @@ export function GraphExplorerPage() {
     setHighlightedNodeId(nodeId);
   }, []);
 
+  const handleInvestigate = useCallback((node: { id: string; label: string; nodeType: string }) => {
+    setInvestigation({ mode: "node", nodeId: node.id, nodeLabel: node.label, nodeType: node.nodeType });
+  }, []);
+
   const nodeMap = useMemo(() => {
     const m = new Map<string, GqlNode>();
     for (const n of gqlNodes) m.set(n.id, n);
@@ -250,8 +256,19 @@ export function GraphExplorerPage() {
           selectedNode={selectedNode}
           edges={gqlEdges}
           nodeMap={nodeMap}
+          onInvestigate={handleInvestigate}
         />
       </Panel>
+
+      {/* AI investigation drawer — slides over the right panel */}
+      {investigation && (
+        <div className="fixed inset-y-16 right-0 w-[420px] z-50 border-l border-border bg-card shadow-2xl">
+          <InvestigateDrawer
+            investigation={investigation}
+            onClose={() => setInvestigation(null)}
+          />
+        </div>
+      )}
     </PanelGroup>
   );
 }

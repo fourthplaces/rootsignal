@@ -2495,6 +2495,31 @@ impl PublicGraphReader {
         }
         Ok(results)
     }
+
+    /// Return all edges connected to a node as (direction, edge_type, other_label) tuples.
+    pub async fn edges_for_node(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<(String, String, String)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (n {id: $id})-[r]-(other)
+             RETURN type(r) AS rel_type,
+                    CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END AS direction,
+                    coalesce(other.title, other.headline, other.name, other.canonical_value, other.canonical_address, other.id, 'unknown') AS other_label
+             LIMIT 50",
+        )
+        .param("id", node_id.to_string());
+
+        let mut stream = self.client.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let direction: String = row.get("direction").unwrap_or_default();
+            let rel_type: String = row.get("rel_type").unwrap_or_default();
+            let other_label: String = row.get("other_label").unwrap_or_default();
+            results.push((direction, rel_type, other_label));
+        }
+        Ok(results)
+    }
 }
 
 /// Parse a Situation node from a neo4rs Row.
