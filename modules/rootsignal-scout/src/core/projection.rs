@@ -25,6 +25,7 @@ use crate::core::pipeline_events::PipelineEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::expansion::events::ExpansionEvent;
+use crate::core::run_scope::RunScope;
 use crate::domains::lifecycle::events::LifecycleEvent;
 use crate::domains::scheduling::events::{ScheduledScope, SchedulingEvent};
 use crate::domains::scrape::events::ScrapeEvent;
@@ -228,6 +229,21 @@ pub fn run_completion_handler() -> Handler<ScoutEngineDeps> {
         })
 }
 
+/// Extract display metadata from a RunScope for the scout_runs table.
+///
+/// Returns (region_name, full_scope_json). The scope JSON preserves
+/// the complete RunScope so the display layer can derive source labels
+/// and region info without hitting Neo4j.
+pub fn run_scope_metadata(scope: &RunScope) -> (String, Option<serde_json::Value>) {
+    let region = scope
+        .region()
+        .map(|r| r.name.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let scope_json = serde_json::to_value(scope).ok();
+    (region, scope_json)
+}
+
 /// Projection: maintain the `scout_runs` lookup table.
 ///
 /// On `ScoutRunRequested`: INSERT a new row with flow metadata.
@@ -242,13 +258,7 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                     } => {
                         let deps = ctx.deps();
                         if let Some(pool) = &deps.pg_pool {
-                            let region = scope
-                                .region()
-                                .map(|r| r.name.as_str())
-                                .unwrap_or("unknown");
-                            let scope_json = scope
-                                .region()
-                                .and_then(|r| serde_json::to_value(r).ok());
+                            let (region, scope_json) = run_scope_metadata(scope);
                             let source_ids_json = source_ids.as_ref()
                                 .and_then(|ids| serde_json::to_value(ids).ok());
                             sqlx::query(
@@ -379,5 +389,75 @@ pub fn capture_handler(
                 Ok::<Events, anyhow::Error>(events![])
             }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::run_scope::RunScope;
+    use rootsignal_common::{DiscoveryMethod, ScoutScope, SourceNode, SourceRole};
+
+    fn test_scope() -> ScoutScope {
+        ScoutScope {
+            name: "twincities".into(),
+            center_lat: 44.9,
+            center_lng: -93.2,
+            radius_km: 30.0,
+        }
+    }
+
+    fn test_source(label: &str) -> SourceNode {
+        SourceNode::new(
+            format!("web_page:{label}"),
+            label.to_string(),
+            Some(format!("https://{label}")),
+            DiscoveryMethod::Curated,
+            0.5,
+            SourceRole::Mixed,
+            None,
+        )
+    }
+
+    #[test]
+    fn region_run_stores_full_scope() {
+        let scope = RunScope::Region(test_scope());
+        let (region, scope_json) = run_scope_metadata(&scope);
+
+        assert_eq!(region, "twincities");
+        let json = scope_json.expect("scope_json should be Some");
+        assert_eq!(json["type"], "Region");
+        assert_eq!(json["name"], "twincities");
+    }
+
+    #[test]
+    fn source_run_with_region_stores_sources_and_region() {
+        let scope = RunScope::Sources {
+            sources: vec![test_source("facebook.com/mpls")],
+            region: Some(test_scope()),
+        };
+        let (region, scope_json) = run_scope_metadata(&scope);
+
+        assert_eq!(region, "twincities");
+        let json = scope_json.expect("scope_json should be Some");
+        assert_eq!(json["type"], "Sources");
+        let sources = json["sources"].as_array().expect("sources should be array");
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0]["canonical_value"], "facebook.com/mpls");
+    }
+
+    #[test]
+    fn source_run_without_region_still_stores_sources() {
+        let scope = RunScope::Sources {
+            sources: vec![test_source("nextdoor.com/feed")],
+            region: None,
+        };
+        let (region, scope_json) = run_scope_metadata(&scope);
+
+        assert_eq!(region, "unknown");
+        let json = scope_json.expect("scope_json should be Some even without region");
+        assert_eq!(json["type"], "Sources");
+        let sources = json["sources"].as_array().expect("sources should be array");
+        assert_eq!(sources[0]["canonical_value"], "nextdoor.com/feed");
+    }
 }
 

@@ -59,6 +59,7 @@ pub struct ScoutRunRow {
     pub region_id: Option<String>,
     pub flow_type: Option<String>,
     pub source_ids: Option<serde_json::Value>,
+    pub scope: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +72,7 @@ pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<V
     let rows = sqlx::query(
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
-               region_id, flow_type, source_ids
+               region_id, flow_type, source_ids, scope
         FROM scout_runs
         WHERE region = $1
         ORDER BY started_at DESC
@@ -92,7 +93,7 @@ pub async fn list_by_source_id(pool: &PgPool, source_id: &str, limit: u32) -> Re
     let rows = sqlx::query(
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
-               region_id, flow_type, source_ids
+               region_id, flow_type, source_ids, scope
         FROM scout_runs
         WHERE source_ids @> $1::jsonb
         ORDER BY started_at DESC
@@ -165,7 +166,7 @@ pub async fn list_recent(pool: &PgPool, limit: u32) -> Result<Vec<ScoutRunRow>> 
     let rows = sqlx::query(
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
-               region_id, flow_type, source_ids
+               region_id, flow_type, source_ids, scope
         FROM scout_runs
         ORDER BY started_at DESC
         LIMIT $1
@@ -182,7 +183,7 @@ pub async fn find_by_id(pool: &PgPool, run_id: &str) -> Result<Option<ScoutRunRo
     let row = sqlx::query(
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
-               region_id, flow_type, source_ids
+               region_id, flow_type, source_ids, scope
         FROM scout_runs
         WHERE run_id = $1
         "#,
@@ -1037,6 +1038,7 @@ fn row_to_scout_run(r: &sqlx::postgres::PgRow) -> ScoutRunRow {
         region_id: r.get("region_id"),
         flow_type: r.get("flow_type"),
         source_ids: r.get("source_ids"),
+        scope: r.get("scope"),
     }
 }
 
