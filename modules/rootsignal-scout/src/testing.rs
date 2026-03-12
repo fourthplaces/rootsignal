@@ -2511,6 +2511,9 @@ impl ScoutRunTest {
                 flow_type: String::new(),
                 source_ids: None,
                 task_id: None,
+                parent_run_id: None,
+                schedule_id: None,
+                run_at: None,
             })
             .settled()
             .await

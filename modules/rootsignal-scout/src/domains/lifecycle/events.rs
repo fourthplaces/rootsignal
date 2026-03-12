@@ -29,6 +29,12 @@ pub enum LifecycleEvent {
         source_ids: Option<Vec<String>>,
         #[serde(default)]
         task_id: Option<String>,
+        #[serde(default)]
+        parent_run_id: Option<String>,
+        #[serde(default)]
+        schedule_id: Option<String>,
+        #[serde(default)]
+        run_at: Option<DateTime<Utc>>,
     },
     ScoutRunCompleted {
         run_id: Uuid,
@@ -57,6 +63,12 @@ pub enum LifecycleEvent {
         region_id: Option<String>,
         #[serde(default)]
         task_id: Option<String>,
+        #[serde(default)]
+        parent_run_id: Option<String>,
+        #[serde(default)]
+        schedule_id: Option<String>,
+        #[serde(default)]
+        run_at: Option<DateTime<Utc>>,
     },
     /// Kick off coalescing only — seed from a specific signal or auto-select.
     CoalesceRequested {
@@ -69,6 +81,24 @@ pub enum LifecycleEvent {
         region_id: Option<String>,
         #[serde(default)]
         task_id: Option<String>,
+        #[serde(default)]
+        parent_run_id: Option<String>,
+        #[serde(default)]
+        schedule_id: Option<String>,
+        #[serde(default)]
+        run_at: Option<DateTime<Utc>>,
+    },
+    /// A run was explicitly cancelled before completion.
+    RunCancelled {
+        run_id: Uuid,
+        cancelled_at: DateTime<Utc>,
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    /// A run failed with an unrecoverable error.
+    RunFailed {
+        run_id: Uuid,
+        error: String,
     },
 }
 

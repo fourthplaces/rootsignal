@@ -124,6 +124,9 @@ mod handler_tests {
                 budget_cents: 100,
                 region_id: None,
                 task_id: None,
+                parent_run_id: None,
+                schedule_id: None,
+                run_at: None,
             })
             .settled()
             .await
@@ -157,6 +160,9 @@ mod handler_tests {
                 budget_cents: 100,
                 region_id: None,
                 task_id: None,
+                parent_run_id: None,
+                schedule_id: None,
+                run_at: None,
             })
             .settled()
             .await
@@ -190,6 +196,9 @@ mod handler_tests {
                 budget_cents: 1,
                 region_id: None,
                 task_id: None,
+                parent_run_id: None,
+                schedule_id: None,
+                run_at: None,
             })
             .settled()
             .await
@@ -227,6 +236,9 @@ mod handler_tests {
                 budget_cents: 0,
                 region_id: None,
                 task_id: None,
+                parent_run_id: None,
+                schedule_id: None,
+                run_at: None,
             })
             .settled()
             .await
@@ -297,6 +309,9 @@ mod handler_tests {
                 budget_cents: 0,
                 region_id: None,
                 task_id: None,
+                parent_run_id: None,
+                schedule_id: None,
+                run_at: None,
             })
             .settled()
             .await
@@ -347,6 +362,9 @@ mod handler_tests {
                 budget_cents: 100,
                 region_id: None,
                 task_id: None,
+                parent_run_id: None,
+                schedule_id: None,
+                run_at: None,
             })
             .settled()
             .await
@@ -377,6 +395,9 @@ mod handler_tests {
                 budget_cents: 100,
                 region_id: None,
                 task_id: None,
+                parent_run_id: None,
+                schedule_id: None,
+                run_at: None,
             })
             .settled()
             .await

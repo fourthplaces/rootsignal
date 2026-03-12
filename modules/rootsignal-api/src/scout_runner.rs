@@ -81,6 +81,9 @@ impl ScoutRunner {
                     flow_type: "bootstrap".into(),
                     source_ids: None,
                     task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                    parent_run_id: None,
+                    schedule_id: None,
+                    run_at: None,
                 })
                 .correlation_id(run_id)
                 .settled()
@@ -118,6 +121,9 @@ impl ScoutRunner {
                     flow_type: "scrape".into(),
                     source_ids: None,
                     task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                    parent_run_id: None,
+                    schedule_id: None,
+                    run_at: None,
                 })
                 .correlation_id(run_id)
                 .settled()
@@ -152,6 +158,9 @@ impl ScoutRunner {
                     budget_cents: budget,
                     region_id: Some(region_id.clone()),
                     task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                    parent_run_id: None,
+                    schedule_id: None,
+                    run_at: None,
                 })
                 .correlation_id(run_id)
                 .settled()
@@ -192,6 +201,9 @@ impl ScoutRunner {
                     budget_cents: budget,
                     region_id: Some(region_id.clone()),
                     task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                    parent_run_id: None,
+                    schedule_id: None,
+                    run_at: None,
                 })
                 .correlation_id(run_id)
                 .settled()
@@ -235,6 +247,9 @@ impl ScoutRunner {
                     flow_type: "scout_source".into(),
                     source_ids: Some(source_ids_owned.clone()),
                     task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                    parent_run_id: None,
+                    schedule_id: None,
+                    run_at: None,
                 })
                 .correlation_id(run_id)
                 .settled()

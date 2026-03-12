@@ -280,7 +280,8 @@ pub fn runs_projection() -> Projection<ScoutEngineDeps> {
             if let Some(lifecycle) = event.downcast_ref::<LifecycleEvent>() {
                 match lifecycle {
                     LifecycleEvent::ScoutRunRequested {
-                        run_id, scope, region_id, flow_type, source_ids, task_id, ..
+                        run_id, scope, region_id, flow_type, source_ids, task_id,
+                        parent_run_id, schedule_id, run_at, ..
                     } => {
                         let deps = ctx.deps();
                         if let Some(pool) = &deps.pg_pool {
@@ -288,8 +289,8 @@ pub fn runs_projection() -> Projection<ScoutEngineDeps> {
                             let source_ids_json = source_ids.as_ref()
                                 .and_then(|ids| serde_json::to_value(ids).ok());
                             sqlx::query(
-                                "INSERT INTO runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
-                                 VALUES ($1, $2, $3, $4, $5, $6, $7, now()) \
+                                "INSERT INTO runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, parent_run_id, schedule_id, run_at, started_at) \
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, now()), now()) \
                                  ON CONFLICT (run_id) DO UPDATE SET \
                                    region_id = COALESCE(EXCLUDED.region_id, runs.region_id), \
                                    flow_type = COALESCE(EXCLUDED.flow_type, runs.flow_type), \
@@ -303,44 +304,81 @@ pub fn runs_projection() -> Projection<ScoutEngineDeps> {
                             .bind(&source_ids_json)
                             .bind(&scope_json)
                             .bind(task_id.as_deref())
+                            .bind(parent_run_id.as_deref())
+                            .bind(schedule_id.as_deref())
+                            .bind(run_at)
                             .execute(pool)
                             .await?;
                         }
                     }
                     LifecycleEvent::GenerateSituationsRequested {
-                        run_id, region, region_id, task_id, ..
+                        run_id, region, region_id, task_id,
+                        parent_run_id, schedule_id, run_at, ..
                     } => {
                         let deps = ctx.deps();
                         if let Some(pool) = &deps.pg_pool {
                             let region_name = region.name.clone();
                             sqlx::query(
-                                "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, started_at) \
-                                 VALUES ($1, $2, $3, 'weave', $4, now()) \
+                                "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, parent_run_id, schedule_id, run_at, started_at) \
+                                 VALUES ($1, $2, $3, 'weave', $4, $5, $6, COALESCE($7, now()), now()) \
                                  ON CONFLICT (run_id) DO NOTHING",
                             )
                             .bind(run_id.to_string())
                             .bind(&region_name)
                             .bind(region_id.as_deref())
                             .bind(task_id.as_deref())
+                            .bind(parent_run_id.as_deref())
+                            .bind(schedule_id.as_deref())
+                            .bind(run_at)
                             .execute(pool)
                             .await?;
                         }
                     }
                     LifecycleEvent::CoalesceRequested {
-                        run_id, region, region_id, task_id, ..
+                        run_id, region, region_id, task_id,
+                        parent_run_id, schedule_id, run_at, ..
                     } => {
                         let deps = ctx.deps();
                         if let Some(pool) = &deps.pg_pool {
                             let region_name = region.name.clone();
                             sqlx::query(
-                                "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, started_at) \
-                                 VALUES ($1, $2, $3, 'coalesce', $4, now()) \
+                                "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, parent_run_id, schedule_id, run_at, started_at) \
+                                 VALUES ($1, $2, $3, 'coalesce', $4, $5, $6, COALESCE($7, now()), now()) \
                                  ON CONFLICT (run_id) DO NOTHING",
                             )
                             .bind(run_id.to_string())
                             .bind(&region_name)
                             .bind(region_id.as_deref())
                             .bind(task_id.as_deref())
+                            .bind(parent_run_id.as_deref())
+                            .bind(schedule_id.as_deref())
+                            .bind(run_at)
+                            .execute(pool)
+                            .await?;
+                        }
+                    }
+                    LifecycleEvent::RunCancelled { run_id, cancelled_at, .. } => {
+                        let deps = ctx.deps();
+                        if let Some(pool) = &deps.pg_pool {
+                            sqlx::query(
+                                "UPDATE runs SET cancelled_at = $2, finished_at = $2 \
+                                 WHERE run_id = $1 AND finished_at IS NULL",
+                            )
+                            .bind(run_id.to_string())
+                            .bind(cancelled_at)
+                            .execute(pool)
+                            .await?;
+                        }
+                    }
+                    LifecycleEvent::RunFailed { run_id, error } => {
+                        let deps = ctx.deps();
+                        if let Some(pool) = &deps.pg_pool {
+                            sqlx::query(
+                                "UPDATE runs SET error = $2, finished_at = now() \
+                                 WHERE run_id = $1 AND finished_at IS NULL",
+                            )
+                            .bind(run_id.to_string())
+                            .bind(error)
                             .execute(pool)
                             .await?;
                         }

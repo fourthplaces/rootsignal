@@ -188,7 +188,7 @@ impl MutationRoot {
         url: String,
         reason: Option<String>,
     ) -> Result<AddSourceResult> {
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
         let input = url.trim().to_string();
 
         if input.is_empty() {
@@ -245,6 +245,7 @@ impl MutationRoot {
                 sources: vec![source],
                 discovered_by: "admin".into(),
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
@@ -503,7 +504,7 @@ impl MutationRoot {
 
     /// Public source submission (rate-limited, no auth required).
     async fn submit_source(&self, ctx: &Context<'_>, url: String) -> Result<SubmitSourceResult> {
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
 
         // Rate limit
         rate_limit_check(ctx, SUBMIT_RATE_LIMIT_PER_HOUR)?;
@@ -562,6 +563,7 @@ impl MutationRoot {
                 sources: vec![source],
                 discovered_by: "human_submission".into(),
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create source: {e}")))?;
@@ -600,12 +602,13 @@ impl MutationRoot {
     ) -> Result<bool> {
         use rootsignal_common::events::SystemEvent;
 
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
         engine
             .emit(SystemEvent::TagSuppressed {
                 situation_id,
                 tag_slug,
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to untag situation: {e}")))?;
@@ -622,12 +625,13 @@ impl MutationRoot {
     ) -> Result<bool> {
         use rootsignal_common::events::SystemEvent;
 
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
         engine
             .emit(SystemEvent::TagsMerged {
                 source_slug,
                 target_slug,
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to merge tags: {e}")))?;
@@ -639,11 +643,12 @@ impl MutationRoot {
     async fn dismiss_finding(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
         use rootsignal_common::events::SystemEvent;
 
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
         engine
             .emit(SystemEvent::ValidationIssueDismissed {
                 issue_id: id,
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to dismiss finding: {e}")))?;
@@ -674,7 +679,7 @@ impl MutationRoot {
             .next()
             .ok_or_else(|| async_graphql::Error::new(format!("Source {id} not found")))?;
 
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
 
         if let Some(new_active) = active {
             if new_active != source.active {
@@ -687,6 +692,7 @@ impl MutationRoot {
                             new: new_active,
                         },
                     })
+                    .correlation_id(run_id)
                     .settled()
                     .await
                     .map_err(|e| async_graphql::Error::new(format!("Failed to update active: {e}")))?;
@@ -704,6 +710,7 @@ impl MutationRoot {
                             new: new_weight,
                         },
                     })
+                    .correlation_id(run_id)
                     .settled()
                     .await
                     .map_err(|e| async_graphql::Error::new(format!("Failed to update weight: {e}")))?;
@@ -721,6 +728,7 @@ impl MutationRoot {
                             new: new_qp,
                         },
                     })
+                    .correlation_id(run_id)
                     .settled()
                     .await
                     .map_err(|e| async_graphql::Error::new(format!("Failed to update quality_penalty: {e}")))?;
@@ -741,6 +749,7 @@ impl MutationRoot {
                                 new: cw.value,
                             },
                         })
+                        .correlation_id(run_id)
                         .settled()
                         .await
                         .map_err(|e| async_graphql::Error::new(format!("Failed to update channel weight: {e}")))?;
@@ -769,12 +778,13 @@ impl MutationRoot {
             .next()
             .ok_or_else(|| async_graphql::Error::new(format!("Source {source_id} not found")))?;
 
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
         engine
             .emit(SystemEvent::SourceSignalsCleared {
                 source_id: source.id,
                 canonical_key: source.canonical_key.clone(),
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to clear signals: {e}")))?;
@@ -800,12 +810,13 @@ impl MutationRoot {
             .next()
             .ok_or_else(|| async_graphql::Error::new(format!("Source {id} not found")))?;
 
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
         engine
             .emit(SystemEvent::SourceDeleted {
                 source_id: source.id,
                 canonical_key: source.canonical_key.clone(),
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to delete source: {e}")))?;
@@ -828,11 +839,12 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("Failed to load actor: {e}")))?
             .ok_or_else(|| async_graphql::Error::new(format!("Actor {id} not found")))?;
 
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
         engine
             .emit(SystemEvent::OrphanedActorsCleaned {
                 actor_ids: vec![id],
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to delete actor: {e}")))?;
@@ -872,7 +884,7 @@ impl MutationRoot {
         }
 
         let demand_id = Uuid::new_v4();
-        let engine = require_engine(ctx)?;
+        let (engine, run_id) = require_engine(ctx)?;
         engine
             .emit(SystemEvent::DemandReceived {
                 demand_id,
@@ -881,6 +893,7 @@ impl MutationRoot {
                 center_lng,
                 radius_km,
             })
+            .correlation_id(run_id)
             .settled()
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to record demand: {e}")))?;
@@ -969,7 +982,10 @@ fn check_rate_limit_window(entries: &mut Vec<Instant>, now: Instant, max_per_hou
 }
 
 /// Create a per-mutation engine via the factory.
-fn require_engine(ctx: &Context<'_>) -> Result<rootsignal_scout::core::engine::ScoutEngine> {
+///
+/// Returns (engine, run_id). Callers must chain `.correlation_id(run_id)`
+/// on every `.emit()` so the settle loop finds events in the scoped store.
+fn require_engine(ctx: &Context<'_>) -> Result<(rootsignal_scout::core::engine::ScoutEngine, uuid::Uuid)> {
     ctx.data_unchecked::<Option<EngineFactory>>()
         .as_ref()
         .ok_or_else(|| async_graphql::Error::new("Engine not configured (Postgres required)"))

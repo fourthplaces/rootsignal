@@ -957,6 +957,9 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
             flow_type: String::new(),
             source_ids: None,
             task_id: None,
+            parent_run_id: None,
+            schedule_id: None,
+            run_at: None,
         })
         .settled()
         .await
@@ -1048,4 +1051,67 @@ async fn serp_query_resolves_and_extracts_social_links_from_linktree_pages() {
         "pipeline should extract signals (extracted: {})",
         state.stats.signals_extracted,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Admin add_source: SourcesDiscovered → SourcesRegistered with correct IDs
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn admin_source_registers_with_correct_id_and_canonical_key() {
+    let (engine, captured) = test_engine_with_capture();
+
+    let source_id = Uuid::new_v4();
+    let url = "https://gofundme.com/f/help-minneapolis-family";
+    let cv = canonical_value(url);
+    let source = rootsignal_common::SourceNode {
+        id: source_id,
+        canonical_key: cv.clone(),
+        canonical_value: cv.clone(),
+        url: Some(url.to_string()),
+        discovery_method: rootsignal_common::DiscoveryMethod::HumanSubmission,
+        created_at: Utc::now(),
+        last_scraped: None,
+        last_produced_signal: None,
+        signals_produced: 0,
+        signals_corroborated: 0,
+        consecutive_empty_runs: 0,
+        active: true,
+        gap_context: Some("Admin: test".to_string()),
+        weight: 0.5,
+        cadence_hours: None,
+        avg_signals_per_scrape: 0.0,
+        quality_penalty: 1.0,
+        source_role: rootsignal_common::SourceRole::default(),
+        scrape_count: 0,
+        sources_discovered: 0,
+        discovered_from_key: None,
+        channel_weights: rootsignal_common::ChannelWeights::default(),
+    };
+
+    engine
+        .emit(DiscoveryEvent::SourcesDiscovered {
+            sources: vec![source],
+            discovered_by: "admin".into(),
+        })
+        .settled()
+        .await
+        .unwrap();
+
+    let events = captured.lock().unwrap();
+    let registered: Vec<&Vec<rootsignal_common::SourceNode>> = events
+        .iter()
+        .filter_map(|e| e.downcast_ref::<SystemEvent>())
+        .filter_map(|e| match e {
+            SystemEvent::SourcesRegistered { sources } => Some(sources),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(registered.len(), 1, "expected exactly one SourcesRegistered event");
+    let sources = registered[0];
+    assert_eq!(sources.len(), 1, "expected exactly one source registered");
+    assert_eq!(sources[0].id, source_id, "registered source ID must match the emitted source ID");
+    assert_eq!(sources[0].canonical_key, cv, "registered canonical_key must match");
+    assert_eq!(sources[0].url.as_deref(), Some(url), "registered URL must match");
 }

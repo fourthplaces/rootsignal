@@ -52,7 +52,7 @@ impl SignalReaderFactory {
 /// Used by API mutations to dispatch `SourceDiscovered` through the engine
 /// instead of calling `upsert_source` directly.
 pub struct EngineFactory {
-    create_fn: Box<dyn Fn() -> ScoutEngine + Send + Sync>,
+    create_fn: Box<dyn Fn() -> (ScoutEngine, uuid::Uuid) + Send + Sync>,
 }
 
 impl EngineFactory {
@@ -69,7 +69,7 @@ impl EngineFactory {
                 deps.graph_client = Some(graph_client.clone());
                 deps.pg_pool = Some(pg_pool.clone());
                 let store = Arc::new(crate::core::postgres_store::PostgresStore::new(pg_pool.clone(), run_id));
-                build_engine(deps, Some(store))
+                (build_engine(deps, Some(store)), run_id)
             }),
         }
     }
@@ -80,13 +80,16 @@ impl EngineFactory {
             create_fn: Box::new(move || {
                 let run_id = uuid::Uuid::new_v4();
                 let embedder = Arc::new(NoOpEmbedder) as Arc<dyn TextEmbedder>;
-                build_engine(ScoutEngineDeps::new(store.clone(), embedder, run_id), None)
+                (build_engine(ScoutEngineDeps::new(store.clone(), embedder, run_id), None), run_id)
             }),
         }
     }
 
-    /// Create an engine for a single operation.
-    pub fn create(&self) -> ScoutEngine {
+    /// Create an engine and its correlation ID for a single operation.
+    ///
+    /// Callers must chain `.correlation_id(run_id)` on every `.emit()` call
+    /// so the settle loop can find events in the scoped PostgresStore.
+    pub fn create(&self) -> (ScoutEngine, uuid::Uuid) {
         (self.create_fn)()
     }
 }

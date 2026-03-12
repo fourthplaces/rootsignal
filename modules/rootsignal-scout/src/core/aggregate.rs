@@ -845,6 +845,9 @@ mod tests {
             flow_type: String::new(),
             source_ids: None,
             task_id: None,
+            parent_run_id: None,
+            schedule_id: None,
+            run_at: None,
         });
         assert_eq!(state.budget_limit_cents, 500);
         assert!(state.has_budget(500));

@@ -210,6 +210,7 @@ fn ice_enforcement_tension_moderate_confidence() {
         severity: Severity::High,
         subject: None,
         opposing: Some("Legal support, community safe spaces, know-your-rights information".into()),
+        action_url: None,
     });
 
     let q = quality::score(&node);
@@ -326,6 +327,7 @@ fn notice_always_actionable_even_empty() {
         subject: None,
         effective_date: None,
         source_authority: None,
+        action_url: None,
     });
 
     let q = quality::score(&node);
@@ -512,6 +514,7 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         severity: Severity::Medium,
         subject: None,
         opposing: None,
+        action_url: None,
     });
 
     // Signal B: vague neighborhood name, but has Neighborhood-precision coords
@@ -534,6 +537,7 @@ fn backfilled_approximate_scores_lower_than_provided_neighborhood() {
         severity: Severity::Medium,
         subject: None,
         opposing: None,
+        action_url: None,
     });
 
     let q_a = quality::score(&node_a);

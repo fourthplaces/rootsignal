@@ -894,16 +894,12 @@ export const ADMIN_EVENTS = gql`
     $limit: Int!
     $cursor: Int
     $search: String
-    $from: DateTime
-    $to: DateTime
     $runId: String
   ) {
     adminEvents(
       limit: $limit
       cursor: $cursor
       search: $search
-      from: $from
-      to: $to
       runId: $runId
     ) {
       events {

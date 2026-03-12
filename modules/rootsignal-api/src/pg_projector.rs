@@ -14,17 +14,22 @@ use tracing::info;
 /// because the projection DB is a derived read model that replay owns entirely.
 const SCHEMA_DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS runs (
-    run_id      TEXT        PRIMARY KEY,
-    region      TEXT        NOT NULL,
-    started_at  TIMESTAMPTZ NOT NULL,
-    finished_at TIMESTAMPTZ,
-    stats       JSONB       NOT NULL DEFAULT '{}',
-    region_id   TEXT,
-    flow_type   TEXT,
-    source_ids  JSONB,
-    task_id     TEXT,
-    scope       JSONB,
-    spent_cents BIGINT      DEFAULT 0
+    run_id        TEXT        PRIMARY KEY,
+    region        TEXT        NOT NULL,
+    started_at    TIMESTAMPTZ NOT NULL,
+    finished_at   TIMESTAMPTZ,
+    stats         JSONB       NOT NULL DEFAULT '{}',
+    region_id     TEXT,
+    flow_type     TEXT,
+    source_ids    JSONB,
+    task_id       TEXT,
+    scope         JSONB,
+    spent_cents   BIGINT      DEFAULT 0,
+    parent_run_id TEXT,
+    schedule_id   TEXT,
+    run_at        TIMESTAMPTZ,
+    error         TEXT,
+    cancelled_at  TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_region_finished
@@ -90,10 +95,16 @@ impl PostgresProjector {
                     let source_ids = p.get("source_ids").filter(|v| !v.is_null());
                     let scope = p.get("scope").filter(|v| !v.is_null());
                     let task_id = p["task_id"].as_str();
+                    let parent_run_id = p["parent_run_id"].as_str();
+                    let schedule_id = p["schedule_id"].as_str();
+                    let run_at = p["run_at"]
+                        .as_str()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc));
 
                     sqlx::query(
-                        "INSERT INTO runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                        "INSERT INTO runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, parent_run_id, schedule_id, run_at, started_at) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, $11), $11) \
                          ON CONFLICT (run_id) DO NOTHING",
                     )
                     .bind(run_id)
@@ -103,6 +114,9 @@ impl PostgresProjector {
                     .bind(source_ids)
                     .bind(scope)
                     .bind(task_id)
+                    .bind(parent_run_id)
+                    .bind(schedule_id)
+                    .bind(run_at)
                     .bind(event.created_at)
                     .execute(&mut *tx)
                     .await?;
@@ -114,16 +128,25 @@ impl PostgresProjector {
                     let region = p["region"]["name"].as_str().unwrap_or("unknown");
                     let region_id = p["region_id"].as_str();
                     let task_id = p["task_id"].as_str();
+                    let parent_run_id = p["parent_run_id"].as_str();
+                    let schedule_id = p["schedule_id"].as_str();
+                    let run_at = p["run_at"]
+                        .as_str()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc));
 
                     sqlx::query(
-                        "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, started_at) \
-                         VALUES ($1, $2, $3, 'weave', $4, $5) \
+                        "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, parent_run_id, schedule_id, run_at, started_at) \
+                         VALUES ($1, $2, $3, 'weave', $4, $5, $6, COALESCE($7, $8), $8) \
                          ON CONFLICT (run_id) DO NOTHING",
                     )
                     .bind(run_id)
                     .bind(region)
                     .bind(region_id)
                     .bind(task_id)
+                    .bind(parent_run_id)
+                    .bind(schedule_id)
+                    .bind(run_at)
                     .bind(event.created_at)
                     .execute(&mut *tx)
                     .await?;
@@ -135,16 +158,59 @@ impl PostgresProjector {
                     let region = p["region"]["name"].as_str().unwrap_or("unknown");
                     let region_id = p["region_id"].as_str();
                     let task_id = p["task_id"].as_str();
+                    let parent_run_id = p["parent_run_id"].as_str();
+                    let schedule_id = p["schedule_id"].as_str();
+                    let run_at = p["run_at"]
+                        .as_str()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc));
 
                     sqlx::query(
-                        "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, started_at) \
-                         VALUES ($1, $2, $3, 'coalesce', $4, $5) \
+                        "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, parent_run_id, schedule_id, run_at, started_at) \
+                         VALUES ($1, $2, $3, 'coalesce', $4, $5, $6, COALESCE($7, $8), $8) \
                          ON CONFLICT (run_id) DO NOTHING",
                     )
                     .bind(run_id)
                     .bind(region)
                     .bind(region_id)
                     .bind(task_id)
+                    .bind(parent_run_id)
+                    .bind(schedule_id)
+                    .bind(run_at)
+                    .bind(event.created_at)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                "lifecycle:run_cancelled" => {
+                    let p = &event.payload;
+                    let run_id = p["run_id"].as_str().unwrap_or_default();
+                    let cancelled_at = p["cancelled_at"]
+                        .as_str()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc));
+
+                    sqlx::query(
+                        "UPDATE runs SET cancelled_at = $2, finished_at = $2 \
+                         WHERE run_id = $1 AND finished_at IS NULL",
+                    )
+                    .bind(run_id)
+                    .bind(cancelled_at)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                "lifecycle:run_failed" => {
+                    let p = &event.payload;
+                    let run_id = p["run_id"].as_str().unwrap_or_default();
+                    let error = p["error"].as_str().unwrap_or_default();
+
+                    sqlx::query(
+                        "UPDATE runs SET error = $2, finished_at = $3 \
+                         WHERE run_id = $1 AND finished_at IS NULL",
+                    )
+                    .bind(run_id)
+                    .bind(error)
                     .bind(event.created_at)
                     .execute(&mut *tx)
                     .await?;

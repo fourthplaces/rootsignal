@@ -230,7 +230,7 @@ export function CopyablePayload({ payload, className = "" }: { payload: string; 
 // ---------------------------------------------------------------------------
 
 function FilterBar() {
-  const { layers, toggleLayer, search, setSearch, runId, setRunId, timeFrom, setTimeFrom, timeTo, setTimeTo } =
+  const { layers, toggleLayer, search, setSearch, runId, setRunId } =
     useEventsPaneContext();
 
   return (
@@ -259,23 +259,6 @@ function FilterBar() {
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground placeholder:text-muted-foreground w-64"
-      />
-
-      <span className="w-px h-4 bg-border" />
-
-      <label className="text-xs text-muted-foreground">From</label>
-      <input
-        type="date"
-        value={timeFrom}
-        onChange={(e) => setTimeFrom(e.target.value)}
-        className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground w-32"
-      />
-      <label className="text-xs text-muted-foreground">To</label>
-      <input
-        type="date"
-        value={timeTo}
-        onChange={(e) => setTimeTo(e.target.value)}
-        className="px-2 py-1 text-xs rounded bg-background border border-border text-foreground w-32"
       />
 
       {runId && (
