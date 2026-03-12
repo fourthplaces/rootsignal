@@ -22,6 +22,7 @@ use rootsignal_common::telemetry_events::TelemetryEvent;
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::pipeline_events::PipelineEvent;
+use crate::domains::coalescing::events::CoalescingEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
 use crate::domains::expansion::events::ExpansionEvent;
@@ -184,6 +185,10 @@ fn is_terminal_event(event: &AnyEvent) -> bool {
 
     if event.downcast_ref::<SupervisorEvent>()
         .is_some_and(|e| matches!(e, SupervisorEvent::SupervisionCompleted | SupervisorEvent::NothingToSupervise { .. }))
+    { return true; }
+
+    if event.downcast_ref::<CoalescingEvent>()
+        .is_some_and(|e| matches!(e, CoalescingEvent::CoalescingCompleted { .. } | CoalescingEvent::CoalescingSkipped { .. }))
     { return true; }
 
     false
