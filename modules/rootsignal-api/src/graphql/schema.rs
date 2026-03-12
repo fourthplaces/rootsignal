@@ -316,7 +316,7 @@ impl QueryRoot {
             if let Some(pool) = pool {
                 let (running,): (bool,) = sqlx::query_as(
                     "SELECT EXISTS(
-                         SELECT 1 FROM scout_runs
+                         SELECT 1 FROM runs
                          WHERE finished_at IS NULL
                            AND started_at >= now() - interval '30 minutes'
                      )",
@@ -717,7 +717,7 @@ impl QueryRoot {
             if let Some(pool) = pool {
                 let (running,): (bool,) = sqlx::query_as(
                     "SELECT EXISTS(
-                         SELECT 1 FROM scout_runs
+                         SELECT 1 FROM runs
                          WHERE finished_at IS NULL
                            AND started_at >= now() - interval '30 minutes'
                      )",
@@ -778,7 +778,7 @@ impl QueryRoot {
 
     /// List recent scout runs, optionally filtered by region.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_scout_runs(
+    async fn admin_runs(
         &self,
         ctx: &Context<'_>,
         region: Option<String>,
@@ -802,7 +802,7 @@ impl QueryRoot {
 
     /// List scout runs that included a specific source.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_scout_runs_by_source(
+    async fn admin_runs_by_source(
         &self,
         ctx: &Context<'_>,
         source_id: String,

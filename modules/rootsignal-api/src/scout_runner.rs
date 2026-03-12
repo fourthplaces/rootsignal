@@ -279,11 +279,11 @@ impl ScoutRunner {
 
     /// Resume runs that were in-flight when the server crashed.
     ///
-    /// Queries `scout_runs` for rows without `finished_at`, reclaims stale
+    /// Queries `runs` for rows without `finished_at`, reclaims stale
     /// queue entries, rebuilds engines, and calls `settle()` to finish them.
     pub async fn resume_incomplete_runs(&self) {
         let rows = match sqlx::query_as::<_, IncompleteRun>(
-            "SELECT run_id, scope, flow_type FROM scout_runs WHERE finished_at IS NULL AND started_at > now() - interval '30 minutes'",
+            "SELECT run_id, scope, flow_type FROM runs WHERE finished_at IS NULL AND started_at > now() - interval '30 minutes'",
         )
         .fetch_all(&self.deps.pg_pool)
         .await
@@ -321,7 +321,7 @@ impl ScoutRunner {
                 Ok(false) => {
                     info!(%run_id, "No pending work, marking finished");
                     let _ = sqlx::query(
-                        "UPDATE scout_runs SET finished_at = now() WHERE run_id = $1 AND finished_at IS NULL",
+                        "UPDATE runs SET finished_at = now() WHERE run_id = $1 AND finished_at IS NULL",
                     )
                     .bind(run_id.to_string())
                     .execute(&self.deps.pg_pool)

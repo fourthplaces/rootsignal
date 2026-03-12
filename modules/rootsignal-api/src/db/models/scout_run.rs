@@ -73,7 +73,7 @@ pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<V
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
                region_id, flow_type, source_ids, scope
-        FROM scout_runs
+        FROM runs
         WHERE region = $1
         ORDER BY started_at DESC
         LIMIT $2
@@ -94,7 +94,7 @@ pub async fn list_by_source_id(pool: &PgPool, source_id: &str, limit: u32) -> Re
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
                region_id, flow_type, source_ids, scope
-        FROM scout_runs
+        FROM runs
         WHERE source_ids @> $1::jsonb
         ORDER BY started_at DESC
         LIMIT $2
@@ -108,7 +108,7 @@ pub async fn list_by_source_id(pool: &PgPool, source_id: &str, limit: u32) -> Re
     Ok(rows.iter().map(row_to_scout_run).collect())
 }
 
-/// Scrape stats for a single source, derived from scout_runs.
+/// Scrape stats for a single source, derived from runs.
 pub struct SourceScrapeStats {
     pub last_scraped: Option<DateTime<Utc>>,
     pub scrape_count: u32,
@@ -123,7 +123,7 @@ pub async fn source_scrape_stats(pool: &PgPool, source_id: &str) -> Result<Sourc
         SELECT
             MAX(finished_at) AS last_scraped,
             COUNT(*)::int     AS scrape_count
-        FROM scout_runs
+        FROM runs
         WHERE source_ids @> $1::jsonb
           AND finished_at IS NOT NULL
         "#,
@@ -139,7 +139,7 @@ pub async fn source_scrape_stats(pool: &PgPool, source_id: &str) -> Result<Sourc
     let recent_counts: Vec<i32> = sqlx::query_scalar(
         r#"
         SELECT COALESCE((stats->>'signals_extracted')::int, 0)
-        FROM scout_runs
+        FROM runs
         WHERE source_ids @> $1::jsonb
           AND finished_at IS NOT NULL
         ORDER BY finished_at DESC
@@ -167,7 +167,7 @@ pub async fn list_recent(pool: &PgPool, limit: u32) -> Result<Vec<ScoutRunRow>> 
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
                region_id, flow_type, source_ids, scope
-        FROM scout_runs
+        FROM runs
         ORDER BY started_at DESC
         LIMIT $1
         "#,
@@ -184,7 +184,7 @@ pub async fn find_by_id(pool: &PgPool, run_id: &str) -> Result<Option<ScoutRunRo
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
                region_id, flow_type, source_ids, scope
-        FROM scout_runs
+        FROM runs
         WHERE run_id = $1
         "#,
     )
@@ -437,14 +437,14 @@ pub async fn count_events_by_variant(
 }
 
 // ---------------------------------------------------------------------------
-// Busy checks (uses scout_runs as implicit lock)
+// Busy checks (uses runs as implicit lock)
 // ---------------------------------------------------------------------------
 
 /// Check if a region has a running (non-stale) scout run.
 pub async fn is_region_busy(pool: &PgPool, region_id: &str) -> Result<bool> {
     let (busy,): (bool,) = sqlx::query_as(
         "SELECT EXISTS(
-             SELECT 1 FROM scout_runs
+             SELECT 1 FROM runs
              WHERE region_id = $1
                AND finished_at IS NULL
                AND started_at >= now() - interval '30 minutes'
@@ -460,7 +460,7 @@ pub async fn is_region_busy(pool: &PgPool, region_id: &str) -> Result<bool> {
 pub async fn is_source_busy(pool: &PgPool, source_id: &str) -> Result<bool> {
     let (busy,): (bool,) = sqlx::query_as(
         "SELECT EXISTS(
-             SELECT 1 FROM scout_runs
+             SELECT 1 FROM runs
              WHERE source_ids @> $1::jsonb
                AND finished_at IS NULL
                AND started_at >= now() - interval '30 minutes'

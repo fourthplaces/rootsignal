@@ -4,7 +4,7 @@ use tracing::info;
 
 use rootsignal_graph::GraphClient;
 
-/// Manages supervisor state: advisory lock, watermark (from scout_runs), and scout-running check.
+/// Manages supervisor state: advisory lock, watermark (from runs), and scout-running check.
 pub struct SupervisorState {
     pg_pool: PgPool,
     client: GraphClient,
@@ -102,7 +102,7 @@ impl SupervisorState {
     pub async fn is_scout_running(&self) -> Result<bool, anyhow::Error> {
         let (running,): (bool,) = sqlx::query_as(
             "SELECT EXISTS(
-                 SELECT 1 FROM scout_runs
+                 SELECT 1 FROM runs
                  WHERE finished_at IS NULL
                    AND started_at >= now() - interval '30 minutes'
              )",

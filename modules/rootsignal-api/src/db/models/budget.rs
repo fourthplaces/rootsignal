@@ -24,7 +24,7 @@ pub async fn load_config(pool: &PgPool) -> Result<BudgetConfig> {
 /// Total spend across all runs today.
 pub async fn daily_spend(pool: &PgPool) -> Result<i64> {
     let spent: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(spent_cents), 0) FROM scout_runs \
+        "SELECT COALESCE(SUM(spent_cents), 0) FROM runs \
          WHERE started_at >= CURRENT_DATE AT TIME ZONE 'UTC'",
     )
     .fetch_one(pool)

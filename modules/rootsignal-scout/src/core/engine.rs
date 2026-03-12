@@ -165,7 +165,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStor
     engine = engine.with_reactor(projection::run_completion_handler());
 
     // Infrastructure projections
-    engine = engine.with_projection(projection::scout_runs_projection());
+    engine = engine.with_projection(projection::runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
     engine = engine.with_projection(projection::scheduled_scrapes_projection());
 
@@ -232,7 +232,7 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgr
     // Run completion — inside the causal chain
     engine = engine.with_reactor(projection::run_completion_handler());
 
-    engine = engine.with_projection(projection::scout_runs_projection());
+    engine = engine.with_projection(projection::runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
     engine = engine.with_projection(projection::scheduled_scrapes_projection());
 
@@ -295,7 +295,7 @@ pub fn build_coalesce_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Pos
 
     engine = engine.with_reactor(projection::run_completion_handler());
 
-    engine = engine.with_projection(projection::scout_runs_projection());
+    engine = engine.with_projection(projection::runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
 
     if let Some(sink) = capture_sink {
@@ -334,7 +334,7 @@ pub fn build_infra_only_engine(
             "schema_v": 1
         }))
         .with_reactor(projection::neo4j_projection_handler(projector))
-        .with_projection(projection::scout_runs_projection())
+        .with_projection(projection::runs_projection())
         .with_projection(projection::system_log_projection())
         .with_projection(projection::scheduled_scrapes_projection())
 }
@@ -378,7 +378,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgre
         engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
     }
 
-    engine = engine.with_projection(projection::scout_runs_projection());
+    engine = engine.with_projection(projection::runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
     engine = engine.with_projection(projection::scheduled_scrapes_projection());
 

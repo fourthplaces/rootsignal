@@ -1,4 +1,4 @@
-//! Infrastructure projections: project events to Neo4j, maintain scout_runs table.
+//! Infrastructure projections: project events to Neo4j, maintain runs table.
 //!
 //! Persistence is handled by causal's unified `Store` trait via
 //! `PostgresStore`. Aggregator state is handled by causal's
@@ -6,7 +6,7 @@
 //!
 //! Projections here:
 //! - `neo4j_projection_handler` — project events to Neo4j graph (Reactor, needs priority control)
-//! - `scout_runs_projection` — maintain the scout_runs lookup table
+//! - `runs_projection` — maintain the runs lookup table
 //! - `system_log_projection` — print SystemLog events to stdout
 
 use std::sync::Arc;
@@ -238,7 +238,7 @@ pub fn run_completion_handler() -> Reactor<ScoutEngineDeps> {
                 if let Some(pool) = &deps.pg_pool {
                     let stats_json = serde_json::to_value(&final_stats)?;
                     sqlx::query(
-                        "UPDATE scout_runs SET stats = $2, spent_cents = $3 WHERE run_id = $1",
+                        "UPDATE runs SET stats = $2, spent_cents = $3 WHERE run_id = $1",
                     )
                     .bind(deps.run_id.to_string())
                     .bind(stats_json)
@@ -255,7 +255,7 @@ pub fn run_completion_handler() -> Reactor<ScoutEngineDeps> {
         })
 }
 
-/// Extract display metadata from a RunScope for the scout_runs table.
+/// Extract display metadata from a RunScope for the runs table.
 ///
 /// Returns (region_name, full_scope_json). The scope JSON preserves
 /// the complete RunScope so the display layer can derive source labels
@@ -270,12 +270,12 @@ pub fn run_scope_metadata(scope: &RunScope) -> (String, Option<serde_json::Value
     (region, scope_json)
 }
 
-/// Projection: maintain the `scout_runs` lookup table.
+/// Projection: maintain the `runs` lookup table.
 ///
 /// On `ScoutRunRequested`: INSERT a new row with flow metadata.
 /// On `ScoutRunCompleted`: UPDATE `finished_at` from the event timestamp.
-pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
-    project("scout_runs_projection").then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
+pub fn runs_projection() -> Projection<ScoutEngineDeps> {
+    project("runs_projection").then(move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| {
         async move {
             if let Some(lifecycle) = event.downcast_ref::<LifecycleEvent>() {
                 match lifecycle {
@@ -288,13 +288,13 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                             let source_ids_json = source_ids.as_ref()
                                 .and_then(|ids| serde_json::to_value(ids).ok());
                             sqlx::query(
-                                "INSERT INTO scout_runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
+                                "INSERT INTO runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
                                  VALUES ($1, $2, $3, $4, $5, $6, $7, now()) \
                                  ON CONFLICT (run_id) DO UPDATE SET \
-                                   region_id = COALESCE(EXCLUDED.region_id, scout_runs.region_id), \
-                                   flow_type = COALESCE(EXCLUDED.flow_type, scout_runs.flow_type), \
-                                   source_ids = COALESCE(EXCLUDED.source_ids, scout_runs.source_ids), \
-                                   task_id = COALESCE(EXCLUDED.task_id, scout_runs.task_id)",
+                                   region_id = COALESCE(EXCLUDED.region_id, runs.region_id), \
+                                   flow_type = COALESCE(EXCLUDED.flow_type, runs.flow_type), \
+                                   source_ids = COALESCE(EXCLUDED.source_ids, runs.source_ids), \
+                                   task_id = COALESCE(EXCLUDED.task_id, runs.task_id)",
                             )
                             .bind(run_id.to_string())
                             .bind(region)
@@ -314,7 +314,7 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                         if let Some(pool) = &deps.pg_pool {
                             let region_name = region.name.clone();
                             sqlx::query(
-                                "INSERT INTO scout_runs (run_id, region, region_id, flow_type, task_id, started_at) \
+                                "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, started_at) \
                                  VALUES ($1, $2, $3, 'weave', $4, now()) \
                                  ON CONFLICT (run_id) DO NOTHING",
                             )
@@ -333,7 +333,7 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                         if let Some(pool) = &deps.pg_pool {
                             let region_name = region.name.clone();
                             sqlx::query(
-                                "INSERT INTO scout_runs (run_id, region, region_id, flow_type, task_id, started_at) \
+                                "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, started_at) \
                                  VALUES ($1, $2, $3, 'coalesce', $4, now()) \
                                  ON CONFLICT (run_id) DO NOTHING",
                             )
@@ -349,7 +349,7 @@ pub fn scout_runs_projection() -> Projection<ScoutEngineDeps> {
                         let deps = ctx.deps();
                         if let Some(pool) = &deps.pg_pool {
                             sqlx::query(
-                                "UPDATE scout_runs SET finished_at = $2 WHERE run_id = $1 AND finished_at IS NULL",
+                                "UPDATE runs SET finished_at = $2 WHERE run_id = $1 AND finished_at IS NULL",
                             )
                             .bind(run_id.to_string())
                             .bind(finished_at)

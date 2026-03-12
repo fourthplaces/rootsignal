@@ -1,6 +1,6 @@
 //! Postgres read-model projector for replay.
 //!
-//! Owns the `scout_runs` and `scheduled_scrapes` projected tables in a
+//! Owns the `runs` and `scheduled_scrapes` projected tables in a
 //! separate database. `prepare()` creates the database if needed, ensures
 //! the schema, and truncates for a clean rebuild. `project_batch()` then
 //! populates them by matching on `event_type` strings from `PersistedEvent`.
@@ -13,7 +13,7 @@ use tracing::info;
 /// DDL for projection-owned tables. These live here — not in rootsignal-migrate —
 /// because the projection DB is a derived read model that replay owns entirely.
 const SCHEMA_DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS scout_runs (
+CREATE TABLE IF NOT EXISTS runs (
     run_id      TEXT        PRIMARY KEY,
     region      TEXT        NOT NULL,
     started_at  TIMESTAMPTZ NOT NULL,
@@ -27,12 +27,12 @@ CREATE TABLE IF NOT EXISTS scout_runs (
     spent_cents BIGINT      DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_scout_runs_region_finished
-    ON scout_runs (region, finished_at DESC);
-CREATE INDEX IF NOT EXISTS idx_scout_runs_region_id
-    ON scout_runs (region_id) WHERE region_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_scout_runs_flow_type
-    ON scout_runs (flow_type) WHERE flow_type IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_runs_region_finished
+    ON runs (region, finished_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_region_id
+    ON runs (region_id) WHERE region_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_runs_flow_type
+    ON runs (flow_type) WHERE flow_type IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS scheduled_scrapes (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -68,7 +68,7 @@ impl PostgresProjector {
     /// Call this once before replay starts.
     pub async fn prepare(&self) -> Result<()> {
         sqlx::raw_sql(SCHEMA_DDL).execute(&self.pool).await?;
-        sqlx::query("TRUNCATE scout_runs, scheduled_scrapes")
+        sqlx::query("TRUNCATE runs, scheduled_scrapes")
             .execute(&self.pool)
             .await?;
         info!("Projection database ready (tables created, truncated)");
@@ -92,7 +92,7 @@ impl PostgresProjector {
                     let task_id = p["task_id"].as_str();
 
                     sqlx::query(
-                        "INSERT INTO scout_runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
+                        "INSERT INTO runs (run_id, region, region_id, flow_type, source_ids, scope, task_id, started_at) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
                          ON CONFLICT (run_id) DO NOTHING",
                     )
@@ -116,7 +116,7 @@ impl PostgresProjector {
                     let task_id = p["task_id"].as_str();
 
                     sqlx::query(
-                        "INSERT INTO scout_runs (run_id, region, region_id, flow_type, task_id, started_at) \
+                        "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, started_at) \
                          VALUES ($1, $2, $3, 'weave', $4, $5) \
                          ON CONFLICT (run_id) DO NOTHING",
                     )
@@ -137,7 +137,7 @@ impl PostgresProjector {
                     let task_id = p["task_id"].as_str();
 
                     sqlx::query(
-                        "INSERT INTO scout_runs (run_id, region, region_id, flow_type, task_id, started_at) \
+                        "INSERT INTO runs (run_id, region, region_id, flow_type, task_id, started_at) \
                          VALUES ($1, $2, $3, 'coalesce', $4, $5) \
                          ON CONFLICT (run_id) DO NOTHING",
                     )
@@ -159,7 +159,7 @@ impl PostgresProjector {
                         .map(|dt| dt.with_timezone(&chrono::Utc));
 
                     sqlx::query(
-                        "UPDATE scout_runs SET finished_at = $2 WHERE run_id = $1 AND finished_at IS NULL",
+                        "UPDATE runs SET finished_at = $2 WHERE run_id = $1 AND finished_at IS NULL",
                     )
                     .bind(run_id)
                     .bind(finished_at)
