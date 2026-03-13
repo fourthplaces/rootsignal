@@ -70,7 +70,9 @@ impl OpenAiPromptBuilder {
         let mut request = ChatRequest::new(&self.agent.model).messages(messages);
 
         if let Some(temp) = self.temperature {
-            request = request.temperature(temp);
+            if !uses_max_completion_tokens(&self.agent.model) {
+                request = request.temperature(temp);
+            }
         }
 
         // Add tools
