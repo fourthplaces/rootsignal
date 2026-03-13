@@ -17,7 +17,7 @@ use crate::improve::Improver;
 use crate::judge::Verdict;
 use crate::scenario_gym::ScenarioGym;
 
-const SONNET_MODEL: &str = "claude-sonnet-4-20250514";
+use ai_client::models::SONNET_4 as SONNET_MODEL;
 
 /// Configuration for an evolution run.
 pub struct EvolutionConfig {

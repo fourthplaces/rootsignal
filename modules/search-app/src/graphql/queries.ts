@@ -28,7 +28,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         startsAt
         organizer
       }
-      ... on GqlAidSignal {
+      ... on GqlResourceSignal {
         id
         title
         summary
@@ -40,7 +40,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         locationName
         availability
       }
-      ... on GqlNeedSignal {
+      ... on GqlHelpRequestSignal {
         id
         title
         summary
@@ -53,7 +53,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         urgency
         whatNeeded
       }
-      ... on GqlNoticeSignal {
+      ... on GqlAnnouncementSignal {
         id
         title
         summary
@@ -65,7 +65,7 @@ export const SIGNALS_IN_BOUNDS = gql`
         locationName
         severity
       }
-      ... on GqlTensionSignal {
+      ... on GqlConcernSignal {
         id
         title
         summary
@@ -76,44 +76,20 @@ export const SIGNALS_IN_BOUNDS = gql`
         location { lat lng }
         locationName
         severity
-        whatWouldHelp
+        opposing
       }
-    }
-  }
-`;
-
-export const STORIES_IN_BOUNDS = gql`
-  query StoriesInBounds(
-    $minLat: Float!
-    $maxLat: Float!
-    $minLng: Float!
-    $maxLng: Float!
-    $tag: String
-    $limit: Int
-  ) {
-    storiesInBounds(
-      minLat: $minLat
-      maxLat: $maxLat
-      minLng: $minLng
-      maxLng: $maxLng
-      tag: $tag
-      limit: $limit
-    ) {
-      id
-      headline
-      summary
-      signalCount
-      energy
-      velocity
-      centroidLat
-      centroidLng
-      dominantType
-      arc
-      category
-      lede
-      tags {
-        slug
-        name
+      ... on GqlConditionSignal {
+        id
+        title
+        summary
+        confidence
+        causeHeat
+        channelDiversity
+        extractedAt
+        location { lat lng }
+        locationName
+        severity
+        measurement
       }
     }
   }
@@ -151,7 +127,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           startsAt
           organizer
         }
-        ... on GqlAidSignal {
+        ... on GqlResourceSignal {
           id
           title
           summary
@@ -163,7 +139,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           locationName
           availability
         }
-        ... on GqlNeedSignal {
+        ... on GqlHelpRequestSignal {
           id
           title
           summary
@@ -176,7 +152,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           urgency
           whatNeeded
         }
-        ... on GqlNoticeSignal {
+        ... on GqlAnnouncementSignal {
           id
           title
           summary
@@ -188,7 +164,7 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           locationName
           severity
         }
-        ... on GqlTensionSignal {
+        ... on GqlConcernSignal {
           id
           title
           summary
@@ -199,70 +175,21 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           location { lat lng }
           locationName
           severity
-          whatWouldHelp
+          opposing
         }
-      }
-    }
-  }
-`;
-
-export const SEARCH_STORIES_IN_BOUNDS = gql`
-  query SearchStoriesInBounds(
-    $query: String!
-    $minLat: Float!
-    $maxLat: Float!
-    $minLng: Float!
-    $maxLng: Float!
-    $limit: Int
-  ) {
-    searchStoriesInBounds(
-      query: $query
-      minLat: $minLat
-      maxLat: $maxLat
-      minLng: $minLng
-      maxLng: $maxLng
-      limit: $limit
-    ) {
-      score
-      story {
-        id
-        headline
-        summary
-        signalCount
-        energy
-        velocity
-        centroidLat
-        centroidLng
-        dominantType
-        arc
-        category
-        lede
-        tags {
-          slug
-          name
+        ... on GqlConditionSignal {
+          id
+          title
+          summary
+          confidence
+          causeHeat
+          channelDiversity
+          extractedAt
+          location { lat lng }
+          locationName
+          severity
+          measurement
         }
-      }
-      topMatchingSignalTitle
-    }
-  }
-`;
-
-export const STORY_DETAIL = gql`
-  query StoryDetail($id: UUID!) {
-    story(id: $id) {
-      id
-      headline
-      summary
-      signalCount
-      energy
-      velocity
-      arc
-      category
-      lede
-      narrative
-      tags {
-        slug
-        name
       }
     }
   }
@@ -295,10 +222,9 @@ export const SIGNAL_DETAIL = gql`
         endsAt
         organizer
         isRecurring
-        evidence { sourceUrl snippet relevance }
-        story { id headline }
+        citations { sourceUrl snippet relevance }
       }
-      ... on GqlAidSignal {
+      ... on GqlResourceSignal {
         id
         title
         summary
@@ -311,10 +237,9 @@ export const SIGNAL_DETAIL = gql`
         sourceUrl
         availability
         isOngoing
-        evidence { sourceUrl snippet relevance }
-        story { id headline }
+        citations { sourceUrl snippet relevance }
       }
-      ... on GqlNeedSignal {
+      ... on GqlHelpRequestSignal {
         id
         title
         summary
@@ -327,11 +252,10 @@ export const SIGNAL_DETAIL = gql`
         sourceUrl
         urgency
         whatNeeded
-        goal
-        evidence { sourceUrl snippet relevance }
-        story { id headline }
+        statedGoal
+        citations { sourceUrl snippet relevance }
       }
-      ... on GqlNoticeSignal {
+      ... on GqlAnnouncementSignal {
         id
         title
         summary
@@ -344,10 +268,9 @@ export const SIGNAL_DETAIL = gql`
         sourceUrl
         severity
         category
-        evidence { sourceUrl snippet relevance }
-        story { id headline }
+        citations { sourceUrl snippet relevance }
       }
-      ... on GqlTensionSignal {
+      ... on GqlConcernSignal {
         id
         title
         summary
@@ -360,9 +283,26 @@ export const SIGNAL_DETAIL = gql`
         sourceUrl
         severity
         category
-        whatWouldHelp
-        evidence { sourceUrl snippet relevance }
-        story { id headline }
+        opposing
+        citations { sourceUrl snippet relevance }
+      }
+      ... on GqlConditionSignal {
+        id
+        title
+        summary
+        confidence
+        causeHeat
+        channelDiversity
+        extractedAt
+        location { lat lng precision }
+        locationName
+        sourceUrl
+        severity
+        subject
+        observedBy
+        measurement
+        affectedScope
+        citations { sourceUrl snippet relevance }
       }
     }
   }
@@ -426,6 +366,27 @@ export const SITUATION_DETAIL = gql`
       lastUpdated
       sensitivity
       category
+      briefingBody
+      signals(limit: 50) {
+        ... on GqlGatheringSignal {
+          id title summary locationName startsAt endsAt actionUrl organizer isRecurring
+        }
+        ... on GqlResourceSignal {
+          id title summary locationName actionUrl availability isOngoing
+        }
+        ... on GqlHelpRequestSignal {
+          id title summary locationName urgency whatNeeded actionUrl statedGoal
+        }
+        ... on GqlAnnouncementSignal {
+          id title summary locationName severity subject effectiveDate sourceAuthority
+        }
+        ... on GqlConcernSignal {
+          id title summary locationName severity subject opposing
+        }
+        ... on GqlConditionSignal {
+          id title summary locationName severity subject observedBy measurement affectedScope
+        }
+      }
       dispatches(limit: 50) {
         id
         body

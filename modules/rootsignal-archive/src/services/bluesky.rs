@@ -96,8 +96,10 @@ impl BlueskyService {
             anyhow::bail!("Bluesky search API error {status}: {body}");
         }
 
-        let search: SearchPostsResponse =
-            resp.json().await.context("Failed to parse Bluesky search")?;
+        let search: SearchPostsResponse = resp
+            .json()
+            .await
+            .context("Failed to parse Bluesky search")?;
 
         let posts = search
             .posts

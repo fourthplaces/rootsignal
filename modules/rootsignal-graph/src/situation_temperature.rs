@@ -15,10 +15,11 @@ use chrono::{DateTime, Duration, Utc};
 use neo4rs::query;
 use uuid::Uuid;
 
+use rootsignal_common::events::{SituationChange, SystemEvent};
 use rootsignal_common::{Clarity, SituationArc};
 
+use crate::writer::GraphStore;
 use crate::GraphClient;
-use crate::writer::GraphWriter;
 
 /// All computed temperature components for a situation.
 #[derive(Debug, Clone)]
@@ -44,7 +45,7 @@ pub async fn compute_temperature(
     situation_id: &Uuid,
 ) -> Result<TemperatureComponents, neo4rs::Error> {
     let sit_id = situation_id.to_string();
-    let g = &client.graph;
+    let g = client;
 
     // Fetch situation metadata
     let meta_q = query(
@@ -120,7 +121,7 @@ pub async fn compute_temperature(
 /// Recompute and persist temperature for a situation.
 pub async fn recompute_situation_temperature(
     client: &GraphClient,
-    writer: &GraphWriter,
+    writer: &GraphStore,
     situation_id: &Uuid,
 ) -> Result<TemperatureComponents, Box<dyn std::error::Error + Send + Sync>> {
     let components = compute_temperature(client, situation_id).await?;
@@ -141,7 +142,7 @@ pub async fn recompute_situation_temperature(
 
     if let Some(ref centroid) = components.narrative_centroid {
         // Fetch existing causal embedding to preserve it
-        let causal = fetch_causal_embedding(&client.graph, &situation_id.to_string())
+        let causal = fetch_causal_embedding(client, &situation_id.to_string())
             .await?
             .unwrap_or_else(|| centroid.clone());
         writer
@@ -152,6 +153,75 @@ pub async fn recompute_situation_temperature(
     Ok(components)
 }
 
+/// Compute temperature for a situation and return SituationChanged events (no writes).
+pub async fn compute_temperature_events(
+    client: &GraphClient,
+    situation_id: &Uuid,
+) -> Result<(TemperatureComponents, Vec<SystemEvent>), Box<dyn std::error::Error + Send + Sync>> {
+    let components = compute_temperature(client, situation_id).await?;
+
+    // Fetch the previous temperature so we can emit a delta event
+    let prev_temp = fetch_previous_temperature(client, &situation_id.to_string()).await?;
+
+    let mut events = Vec::new();
+
+    // Temperature change
+    if (components.temperature - prev_temp).abs() > 0.001 {
+        events.push(SystemEvent::SituationChanged {
+            situation_id: *situation_id,
+            change: SituationChange::Temperature {
+                old: prev_temp,
+                new: components.temperature,
+            },
+        });
+    }
+
+    // Arc change
+    let prev_arc_str = fetch_previous_arc(client, &situation_id.to_string()).await?;
+    let prev_arc = prev_arc_str.parse::<SituationArc>().unwrap_or(SituationArc::Emerging);
+    if components.arc != prev_arc {
+        events.push(SystemEvent::SituationChanged {
+            situation_id: *situation_id,
+            change: SituationChange::Arc {
+                old: prev_arc,
+                new: components.arc.clone(),
+            },
+        });
+    }
+
+    Ok((components, events))
+}
+
+/// Fetch the current temperature from the graph for delta computation.
+async fn fetch_previous_temperature(
+    g: &neo4rs::Graph,
+    situation_id: &str,
+) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
+    let q = query("MATCH (s:Situation {id: $id}) RETURN s.temperature AS t")
+        .param("id", situation_id);
+    let mut stream = g.execute(q).await?;
+    if let Some(row) = stream.next().await? {
+        Ok(row.get("t").unwrap_or(0.0))
+    } else {
+        Ok(0.0)
+    }
+}
+
+/// Fetch the current arc from the graph for delta computation.
+async fn fetch_previous_arc(
+    g: &neo4rs::Graph,
+    situation_id: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let q = query("MATCH (s:Situation {id: $id}) RETURN s.arc AS a")
+        .param("id", situation_id);
+    let mut stream = g.execute(q).await?;
+    if let Some(row) = stream.next().await? {
+        Ok(row.get("a").unwrap_or_default())
+    } else {
+        Ok(String::new())
+    }
+}
+
 // --- Component computations (all from graph queries) ---
 
 /// Mean cause_heat of non-debunked Tension-type signals in this situation.
@@ -160,7 +230,7 @@ async fn compute_tension_heat_agg(
     situation_id: &str,
 ) -> Result<f64, neo4rs::Error> {
     let q = query(
-        "MATCH (t:Tension)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (t:Concern)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
          RETURN avg(coalesce(t.cause_heat, 0.0)) AS avg_heat,
                 count(t) AS cnt",
@@ -192,11 +262,11 @@ async fn compute_entity_velocity(
 
     // Count unique source domains in the 7-day window that weren't present before
     let fast_q = query(
-        "MATCH (sig)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.created_at >= $window_start
          WITH collect(DISTINCT sig.source_domain) AS recent_domains
-         OPTIONAL MATCH (old_sig)-[e2:EVIDENCES]->(s2:Situation {id: $id})
+         OPTIONAL MATCH (old_sig)-[e2:PART_OF]->(s2:Situation {id: $id})
          WHERE coalesce(e2.debunked, false) = false
            AND old_sig.created_at < $window_start
          WITH recent_domains, collect(DISTINCT old_sig.source_domain) AS old_domains
@@ -209,11 +279,11 @@ async fn compute_entity_velocity(
 
     // Count unique source domains in the 30-day window
     let slow_q = query(
-        "MATCH (sig)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.created_at >= $window_start
          WITH collect(DISTINCT sig.source_domain) AS recent_domains
-         OPTIONAL MATCH (old_sig)-[e2:EVIDENCES]->(s2:Situation {id: $id})
+         OPTIONAL MATCH (old_sig)-[e2:PART_OF]->(s2:Situation {id: $id})
          WHERE coalesce(e2.debunked, false) = false
            AND old_sig.created_at < $window_start
          WITH recent_domains, collect(DISTINCT old_sig.source_domain) AS old_domains
@@ -242,14 +312,11 @@ async fn execute_velocity_query(
 }
 
 /// Ratio of unmet tensions (no RESPONDS_TO) to total tensions, 90-day window.
-async fn compute_response_gap(
-    g: &neo4rs::Graph,
-    situation_id: &str,
-) -> Result<f64, neo4rs::Error> {
+async fn compute_response_gap(g: &neo4rs::Graph, situation_id: &str) -> Result<f64, neo4rs::Error> {
     let cutoff = (Utc::now() - Duration::days(90)).to_rfc3339();
 
     let q = query(
-        "MATCH (t:Tension)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (t:Concern)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND t.created_at >= $cutoff
          WITH t
@@ -282,7 +349,7 @@ async fn compute_amplification(
     // Count signals with external geographic references (signals that mention
     // the situation's location but originate from elsewhere)
     let q = query(
-        "MATCH (sig)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.external_reference = true
          RETURN count(DISTINCT sig.source_domain) AS external_refs",
@@ -306,7 +373,7 @@ async fn compute_clarity_need(
     last_updated: DateTime<Utc>,
 ) -> Result<f64, neo4rs::Error> {
     let q = query(
-        "MATCH (t:Tension)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (t:Concern)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND coalesce(t.cause_heat, 0.0) >= 0.5
          RETURN count(t) AS thesis_support,
@@ -323,8 +390,7 @@ async fn compute_clarity_need(
         (0, 0)
     };
 
-    let clarity_score =
-        (support as f64 / 3.0).min(1.0) * (diversity as f64 / 2.0).min(1.0);
+    let clarity_score = (support as f64 / 3.0).min(1.0) * (diversity as f64 / 2.0).min(1.0);
     let mut clarity_need = 1.0 - clarity_score;
 
     // Staleness decay: after 30 days of no new signals, decay to 0 over next 60 days
@@ -338,11 +404,7 @@ async fn compute_clarity_need(
 }
 
 /// Derive arc from temperature + age, evaluated top-to-bottom (first match wins).
-pub fn derive_arc(
-    temperature: f64,
-    first_seen: DateTime<Utc>,
-    previous_arc: &str,
-) -> SituationArc {
+pub fn derive_arc(temperature: f64, first_seen: DateTime<Utc>, previous_arc: &str) -> SituationArc {
     let age_hours = (Utc::now() - first_seen).num_hours();
 
     // Priority 1: Reactivation (was Cold, now warm enough)
@@ -375,12 +437,9 @@ pub fn derive_arc(
 }
 
 /// Derive clarity label from graph evidence.
-async fn derive_clarity(
-    g: &neo4rs::Graph,
-    situation_id: &str,
-) -> Result<Clarity, neo4rs::Error> {
+async fn derive_clarity(g: &neo4rs::Graph, situation_id: &str) -> Result<Clarity, neo4rs::Error> {
     let q = query(
-        "MATCH (t:Tension)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (t:Concern)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND coalesce(t.cause_heat, 0.0) >= 0.5
          RETURN count(t) AS support,
@@ -435,13 +494,15 @@ async fn compute_dampened_centroid(
     situation_id: &str,
 ) -> Result<(Vec<f32>, Option<f64>, Option<f64>), neo4rs::Error> {
     let q = query(
-        "MATCH (sig)-[e:EVIDENCES]->(s:Situation {id: $id})
+        "MATCH (sig)-[e:PART_OF]->(s:Situation {id: $id})
          WHERE coalesce(e.debunked, false) = false
            AND sig.embedding IS NOT NULL
+         OPTIONAL MATCH (sig)-[:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(loc:Location)
+         WITH sig, e, head(collect(loc)) AS primary_loc
          RETURN sig.embedding AS embedding,
                 coalesce(sig.cause_heat, 0.0) AS cause_heat,
                 sig.created_at AS created_at,
-                sig.lat AS lat, sig.lng AS lng",
+                primary_loc.lat AS lat, primary_loc.lng AS lng",
     )
     .param("id", situation_id);
 
@@ -496,7 +557,10 @@ async fn compute_dampened_centroid(
     }
 
     let embedding: Vec<f32> = if total_weight > 0.0 {
-        centroid.iter().map(|v| (*v / total_weight) as f32).collect()
+        centroid
+            .iter()
+            .map(|v| (*v / total_weight) as f32)
+            .collect()
     } else {
         vec![0.0; dim]
     };
@@ -541,10 +605,7 @@ mod tests {
     fn test_derive_arc_emerging_young_warm() {
         // 12 hours old, high temp → still Emerging
         let first_seen = Utc::now() - Duration::hours(12);
-        assert_eq!(
-            derive_arc(0.93, first_seen, "").to_string(),
-            "emerging"
-        );
+        assert_eq!(derive_arc(0.93, first_seen, "").to_string(), "emerging");
     }
 
     #[test]
@@ -579,10 +640,7 @@ mod tests {
     fn test_derive_arc_dead_cat_bounce() {
         let first_seen = Utc::now() - Duration::days(60);
         // Was cold, weak bounce at 0.2 → Cooling (not reactivation)
-        assert_eq!(
-            derive_arc(0.20, first_seen, "cold").to_string(),
-            "cooling"
-        );
+        assert_eq!(derive_arc(0.20, first_seen, "cold").to_string(), "cooling");
     }
 
     #[test]
@@ -609,19 +667,13 @@ mod tests {
     fn test_derive_arc_exactly_72h_is_not_emerging() {
         // At exactly 72h, first_seen >= 72h is true → not Emerging
         let first_seen = Utc::now() - Duration::hours(72);
-        assert_eq!(
-            derive_arc(0.5, first_seen, "").to_string(),
-            "developing"
-        );
+        assert_eq!(derive_arc(0.5, first_seen, "").to_string(), "developing");
     }
 
     #[test]
     fn test_derive_arc_71h_is_emerging() {
         let first_seen = Utc::now() - Duration::hours(71);
-        assert_eq!(
-            derive_arc(0.5, first_seen, "").to_string(),
-            "emerging"
-        );
+        assert_eq!(derive_arc(0.5, first_seen, "").to_string(), "emerging");
     }
 
     #[test]

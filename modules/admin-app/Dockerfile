@@ -2,7 +2,7 @@
 FROM node:22-slim AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm install
 COPY . .
 ARG VITE_API_URL
 ARG VITE_MAPBOX_TOKEN

@@ -1,0 +1,517 @@
+//! Causal engine setup for scout.
+//!
+//! Engine variants share the same deps and infrastructure reactors:
+//!
+//! - **Scrape engine** (`build_engine`): reap → schedule → scrape → enrichment →
+//!   expansion → synthesis. Finds signals.
+//!
+//! - **Weave engine** (`build_weave_engine`): GenerateSituationsRequested →
+//!   situation_weaving → supervisor. Weaves signals into situations.
+//!   Independent workflow, runs on its own schedule.
+//!
+//! - **News engine** (`build_news_engine`): NewsScanRequested → scan RSS → extract signals.
+
+use std::sync::Arc;
+
+use uuid::Uuid;
+use ai_client::Agent;
+use causal_utils::Batcher;
+use rootsignal_common::EmbeddingLookup;
+use rootsignal_graph::{EmbeddingStore, GraphClient, GraphProjector, GraphQueries};
+
+use sqlx::PgPool;
+
+use crate::core::aggregate::pipeline_aggregators;
+use crate::core::pipeline_events::PipelineEvent;
+use crate::core::postgres_store::PostgresStore;
+use crate::core::projection;
+use crate::domains::{
+    cluster_weaving, coalescing, curiosity, discovery, enrichment, expansion, lifecycle, news_scanning, scrape, signals,
+    situation_weaving, supervisor, synthesis,
+};
+use crate::infra::embedder::TextEmbedder;
+use crate::infra::util::EMBEDDING_MODEL;
+use crate::core::extractor::SignalExtractor;
+use crate::traits::{ContentFetcher, SignalReader};
+
+/// Dependencies shared by all causal reactors.
+pub struct ScoutEngineDeps {
+    // --- Fields from PipelineDeps (previously behind Arc<RwLock<Option>>) ---
+    pub store: Arc<dyn SignalReader>,
+    pub embedder: Arc<dyn TextEmbedder>,
+    pub fetcher: Option<Arc<dyn ContentFetcher>>,
+    pub ai: Option<Arc<dyn Agent>>,
+    /// Raw API key — only used by out-of-scope callers (supervisor, news_scanner)
+    /// that haven't been migrated to `dyn Agent` yet.
+    pub anthropic_api_key: Option<String>,
+    pub graph: Option<Arc<dyn GraphQueries>>,
+    /// Raw graph client for Neo4j projector — None in tests, Some in production.
+    pub graph_client: Option<GraphClient>,
+    pub extractor: Option<Arc<dyn SignalExtractor>>,
+    // --- Engine infrastructure ---
+    /// Current run ID for event tagging.
+    pub run_id: Uuid,
+    /// Test-only: capture all dispatched events for inspection.
+    /// None in production, Some in tests that need event inspection.
+    pub captured_events: Option<Arc<std::sync::Mutex<Vec<causal::AnyEvent>>>>,
+    /// Postgres connection pool — used by projections to save run stats.
+    pub pg_pool: Option<PgPool>,
+    /// Archive for web search/page reading in synthesis finders.
+    pub archive: Option<Arc<rootsignal_archive::Archive>>,
+    /// Batcher for grouping items across handler invocations (e.g. signal review).
+    pub batcher: Batcher,
+    /// Config-level daily budget — used by NewsScanner which manages its own budget.
+    pub daily_budget_cents: u64,
+    /// Geocoder for resolving location names to coordinates.
+    pub geocoder: Option<Arc<dyn rootsignal_graph::geocoder::GeocodingLookup>>,
+}
+
+impl ScoutEngineDeps {
+    /// Create deps with required fields; all optional fields default to None.
+    pub fn new(
+        store: Arc<dyn SignalReader>,
+        embedder: Arc<dyn TextEmbedder>,
+        run_id: Uuid,
+    ) -> Self {
+        Self {
+            store,
+            embedder,
+            fetcher: None,
+            ai: None,
+            anthropic_api_key: None,
+            graph: None,
+            graph_client: None,
+            extractor: None,
+            run_id,
+            captured_events: None,
+            pg_pool: None,
+            archive: None,
+            batcher: Batcher::new(),
+            daily_budget_cents: 0,
+            geocoder: None,
+        }
+    }
+}
+
+/// The causal-backed scout engine type.
+pub type CausalEngine = causal::Engine<ScoutEngineDeps>;
+
+/// Public alias — canonical name for the scout engine.
+pub type ScoutEngine = CausalEngine;
+
+/// Build a scrape-chain engine: reap → schedule → scrape → enrichment →
+/// expansion → synthesis.
+///
+/// Terminal event: SeverityInferred (after similarity + response mapping).
+/// Does NOT include situation_weaving or supervisor handlers.
+///
+/// When `seesaw_store` is provided, it replaces the default in-memory store
+/// for durable crash recovery. Pass `None` for tests.
+pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
+    let capture_sink = deps.captured_events.clone();
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                EMBEDDING_MODEL.to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
+    });
+    let run_id = deps.run_id;
+
+    let mut engine = causal::Engine::new(deps)
+        // Aggregators — PipelineState maintained by causal
+        .with_aggregators(pipeline_aggregators::aggregators())
+        .with_aggregators(curiosity::aggregates::curiosity_aggregators::aggregators())
+        .with_reactors(signals::reactors::reactors())
+        .with_reactors(lifecycle::reactors::reactors())
+        .with_reactors(scrape::reactors::reactors())
+        .with_reactors(discovery::reactors::reactors())
+        .with_reactors(enrichment::reactors::reactors())
+        .with_reactors(expansion::reactors::reactors())
+        .with_reactors(synthesis::reactors::reactors())
+        .with_reactors(curiosity::reactors::reactors())
+        // Surface DLQ'd handlers as events in the causal chain
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
+            source_event_type: info.source_event_type.clone(),
+            error: info.error.clone(),
+            attempts: info.attempts,
+        });
+
+    if let Some(s) = seesaw_store {
+        engine = engine
+            .with_store(s)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .snapshot_every(100);
+    }
+
+    // Neo4j projection — captured via closure, not on deps
+    if let Some(projector) = graph_projector {
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
+    }
+
+    // Run completion — inside the causal chain
+    engine = engine.with_reactor(projection::run_completion_handler());
+
+    // Infrastructure projections
+    engine = engine.with_projection(projection::runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::scheduled_scrapes_projection());
+    engine = engine.with_projection(projection::schedules_projection());
+
+    // Test-only: register capture handler when sink is provided
+    if let Some(sink) = capture_sink {
+        engine = engine.with_reactor(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
+/// Build a weave engine: situation weaving as an independent workflow.
+///
+/// Kicked off by `GenerateSituationsRequested { region }`.
+/// Includes: situation_weaving, supervisor.
+/// Excludes: scrape, discovery, enrichment, expansion, synthesis.
+///
+/// Terminal events: SupervisionCompleted or NothingToSupervise.
+pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
+    let capture_sink = deps.captured_events.clone();
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                EMBEDDING_MODEL.to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
+    });
+    let run_id = deps.run_id;
+
+    let mut engine = causal::Engine::new(deps)
+        .with_aggregators(pipeline_aggregators::aggregators())
+        .with_reactors(coalescing::reactors::reactors())
+        .with_reactors(situation_weaving::reactors::reactors())
+        .with_reactors(supervisor::reactors::reactors())
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
+            source_event_type: info.source_event_type.clone(),
+            error: info.error.clone(),
+            attempts: info.attempts,
+        });
+
+    if let Some(s) = seesaw_store {
+        engine = engine
+            .with_store(s)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .snapshot_every(100);
+    }
+
+    if let Some(projector) = graph_projector {
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
+    }
+
+    // Run completion — inside the causal chain
+    engine = engine.with_reactor(projection::run_completion_handler());
+
+    engine = engine.with_projection(projection::runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::scheduled_scrapes_projection());
+    engine = engine.with_projection(projection::schedules_projection());
+
+    if let Some(sink) = capture_sink {
+        engine = engine.with_reactor(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
+/// Build a coalesce-only engine: analytical clustering without weaving.
+///
+/// Kicked off by `CoalesceRequested { region, seed_signal_id }`.
+/// Includes: coalescing only.
+/// Excludes: situation_weaving, supervisor, scrape, everything else.
+///
+/// Terminal events: CoalescingCompleted or CoalescingSkipped.
+pub fn build_coalesce_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
+    let capture_sink = deps.captured_events.clone();
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                EMBEDDING_MODEL.to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
+    });
+    let run_id = deps.run_id;
+
+    let mut engine = causal::Engine::new(deps)
+        .with_aggregators(pipeline_aggregators::aggregators())
+        .with_reactors(coalescing::reactors::reactors())
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
+            source_event_type: info.source_event_type.clone(),
+            error: info.error.clone(),
+            attempts: info.attempts,
+        });
+
+    if let Some(s) = seesaw_store {
+        engine = engine
+            .with_store(s)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .snapshot_every(100);
+    }
+
+    if let Some(projector) = graph_projector {
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
+    }
+
+    engine = engine.with_reactor(projection::run_completion_handler());
+
+    engine = engine.with_projection(projection::runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
+
+    if let Some(sink) = capture_sink {
+        engine = engine.with_reactor(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
+/// Build a cluster-weave engine: weave a single SignalGroup into a Situation.
+///
+/// Kicked off by `ClusterWeaveRequested { group_id }`.
+/// Includes: cluster_weaving only.
+///
+/// Terminal event: ClusterWeaveCompleted.
+pub fn build_cluster_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
+    let capture_sink = deps.captured_events.clone();
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                EMBEDDING_MODEL.to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
+    });
+    let run_id = deps.run_id;
+
+    let mut engine = causal::Engine::new(deps)
+        .with_aggregators(pipeline_aggregators::aggregators())
+        .with_reactors(cluster_weaving::reactors::reactors())
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
+            source_event_type: info.source_event_type.clone(),
+            error: info.error.clone(),
+            attempts: info.attempts,
+        });
+
+    if let Some(s) = seesaw_store {
+        engine = engine
+            .with_store(s)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .snapshot_every(100);
+    }
+
+    if let Some(projector) = graph_projector {
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
+    }
+
+    engine = engine.with_reactor(projection::run_completion_handler());
+
+    engine = engine.with_projection(projection::runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
+
+    if let Some(sink) = capture_sink {
+        engine = engine.with_reactor(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
+/// Build a feed-group engine: gravity feed for a single SignalGroup.
+///
+/// Kicked off by `FeedGroupRequested { group_id }`.
+/// Includes: coalescing (feed_group reactor only).
+///
+/// Terminal event: GroupFeedCompleted.
+pub fn build_feed_group_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
+    let capture_sink = deps.captured_events.clone();
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                EMBEDDING_MODEL.to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
+    });
+    let run_id = deps.run_id;
+
+    let mut engine = causal::Engine::new(deps)
+        .with_aggregators(pipeline_aggregators::aggregators())
+        .with_reactors(coalescing::reactors::reactors())
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
+            source_event_type: info.source_event_type.clone(),
+            error: info.error.clone(),
+            attempts: info.attempts,
+        });
+
+    if let Some(s) = seesaw_store {
+        engine = engine
+            .with_store(s)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .snapshot_every(100);
+    }
+
+    if let Some(projector) = graph_projector {
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
+    }
+
+    engine = engine.with_reactor(projection::run_completion_handler());
+
+    engine = engine.with_projection(projection::runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::schedules_projection());
+
+    if let Some(sink) = capture_sink {
+        engine = engine.with_reactor(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
+/// Build an infrastructure-only engine: event persistence + Neo4j projector.
+///
+/// No domain handlers, no aggregators, no production deps — used for emitting
+/// system events from error paths where the main engine is dead.
+/// Takes only the two infrastructure handles it actually needs.
+pub fn build_infra_only_engine(
+    pg_pool: PgPool,
+    graph_client: GraphClient,
+    run_id: Option<Uuid>,
+) -> CausalEngine {
+    let run_id = run_id.unwrap_or_else(Uuid::new_v4);
+
+    let store = Arc::new(PostgresStore::new(pg_pool.clone(), run_id));
+
+    let projector = GraphProjector::new(graph_client.clone());
+
+    let deps = ScoutEngineDeps::new(
+        Arc::new(crate::traits::NoOpSignalReader),
+        Arc::new(crate::infra::embedder::NoOpEmbedder),
+        run_id,
+    );
+
+    causal::Engine::new(deps)
+        .with_store(store)
+        .with_event_metadata(serde_json::json!({
+            "run_id": run_id,
+            "schema_v": 1
+        }))
+        .with_reactor(projection::neo4j_projection_handler(projector))
+        .with_projection(projection::runs_projection())
+        .with_projection(projection::system_log_projection())
+        .with_projection(projection::scheduled_scrapes_projection())
+        .with_projection(projection::schedules_projection())
+}
+
+/// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
+///
+/// Minimal handler set — only news scanning domain + infrastructure.
+pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
+    let capture_sink = deps.captured_events.clone();
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                EMBEDDING_MODEL.to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
+    });
+    let run_id = deps.run_id;
+
+    let mut engine = causal::Engine::new(deps)
+        .with_reactors(news_scanning::reactors::reactors());
+
+    if let Some(s) = seesaw_store {
+        engine = engine
+            .with_store(s)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .snapshot_every(100);
+    }
+
+    if let Some(projector) = graph_projector {
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
+    }
+
+    engine = engine.with_projection(projection::runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::scheduled_scrapes_projection());
+    engine = engine.with_projection(projection::schedules_projection());
+
+    if let Some(sink) = capture_sink {
+        engine = engine.with_reactor(projection::capture_handler(sink));
+    }
+
+    engine
+}

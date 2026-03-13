@@ -140,11 +140,11 @@ This is where raw web content becomes structured signal. If extraction is wrong 
 
 **Input:** Extracted signals (Vec<Node>) + embeddings (from Embedder) + prior graph state (existing titles, existing embeddings, existing nodes)
 **Output:** Graph writes — create new nodes, corroborate existing ones (increase source_diversity), refresh timestamps, wire evidence trails, link actors, tag resources
-**Currently:** `store_signals()` in `scrape_phase.rs` (~700 lines). Holds `GraphWriter` (concrete).
+**Currently:** `store_signals()` in `scrape_phase.rs` (~700 lines). Holds `GraphStore` (concrete).
 
 This is the core of Scout — the trust mechanism. It has tight read-write interleaving: each dedup read gates which write happens. This is architecturally correct. We don't restructure it into a pipeline. Instead, we:
 
-1. Put GraphWriter behind a trait so the organ can run without Neo4j
+1. Put GraphStore behind a trait so the organ can run without Neo4j
 2. Extract the decision logic into pure functions so we can test the organ's brain without its hands
 
 **Trait abstraction:**
@@ -730,7 +730,7 @@ Phase 1: Shared utility tests (zero infrastructure, immediate value)
 
 Phase 2: Trait abstractions (unlock organ-level testing)
 ├── ContentFetcher trait + impl for Archive
-├── SignalStore trait + impl for GraphWriter
+├── SignalStore trait + impl for GraphStore
 ├── MockFetcher (HashMap-based)
 └── MockSignalStore (stateful in-memory graph)
 

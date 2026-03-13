@@ -1,8 +1,9 @@
-pub mod discovery;
-pub mod enrichment;
+pub mod core;
+pub mod domains;
 pub mod infra;
-pub mod pipeline;
-pub mod scheduling;
+pub mod news_scanner;
+pub mod store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+pub mod traits;
 pub mod workflows;

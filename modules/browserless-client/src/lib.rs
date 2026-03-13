@@ -13,7 +13,7 @@ pub struct BrowserlessClient {
 impl BrowserlessClient {
     pub fn new(base_url: &str, token: Option<&str>) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(60))
             .build()
             .expect("Failed to build HTTP client");
 
@@ -25,6 +25,9 @@ impl BrowserlessClient {
     }
 
     /// Fetch fully-rendered HTML content for a URL via Browserless /content endpoint.
+    ///
+    /// Uses `networkidle2` wait strategy so JS-heavy pages (Linktree, SPAs)
+    /// fully hydrate before the DOM snapshot is taken.
     pub async fn content(&self, url: &str) -> Result<String> {
         let url = if !url.starts_with("http://") && !url.starts_with("https://") {
             format!("https://{url}")
@@ -37,7 +40,13 @@ impl BrowserlessClient {
             endpoint.push_str(&format!("?token={token}"));
         }
 
-        let body = serde_json::json!({ "url": url });
+        let body = serde_json::json!({
+            "url": url,
+            "gotoOptions": {
+                "waitUntil": "networkidle2",
+                "timeout": 45000
+            }
+        });
 
         let resp = self
             .client

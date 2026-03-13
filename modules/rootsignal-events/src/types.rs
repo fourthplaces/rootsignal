@@ -1,0 +1,103 @@
+//! Core types for the event store. Domain-agnostic.
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// An event as stored in Postgres. Returned by all read methods.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredEvent {
+    pub seq: i64,
+    pub ts: DateTime<Utc>,
+    pub event_type: String,
+    pub parent_seq: Option<i64>,
+    pub caused_by_seq: Option<i64>,
+    pub run_id: Option<String>,
+    pub actor: Option<String>,
+    pub payload: serde_json::Value,
+    pub schema_v: i16,
+    /// Seesaw event UUID — the causal identity of this event.
+    pub id: Option<Uuid>,
+    /// Seesaw parent event UUID — which event caused this one.
+    pub parent_id: Option<Uuid>,
+    /// Seesaw correlation ID — links the full causal tree.
+    pub correlation_id: Option<Uuid>,
+    /// Aggregate type (e.g. "PipelineState") for aggregate-scoped events.
+    pub aggregate_type: Option<String>,
+    /// Aggregate instance ID for aggregate-scoped events.
+    pub aggregate_id: Option<Uuid>,
+    /// Which handler produced this event (from seesaw metadata).
+    pub handler_id: Option<String>,
+}
+
+/// An event to be appended. The caller builds this; the store assigns seq/ts.
+#[derive(Debug, Clone)]
+pub struct AppendEvent {
+    pub event_type: String,
+    pub payload: serde_json::Value,
+    pub run_id: Option<String>,
+    pub actor: Option<String>,
+    pub schema_v: i16,
+    /// Seesaw event UUID.
+    pub id: Option<Uuid>,
+    /// Seesaw parent event UUID.
+    pub parent_id: Option<Uuid>,
+    /// Seesaw correlation ID — links the full causal tree.
+    pub correlation_id: Option<Uuid>,
+    /// Aggregate type for aggregate-scoped events.
+    pub aggregate_type: Option<String>,
+    /// Aggregate instance ID for aggregate-scoped events.
+    pub aggregate_id: Option<Uuid>,
+    /// Which handler produced this event (from seesaw metadata).
+    pub handler_id: Option<String>,
+}
+
+impl AppendEvent {
+    /// Create an event from anything that serializes to JSON.
+    /// The `event_type` is extracted from the serde tag.
+    pub fn new(event_type: impl Into<String>, payload: serde_json::Value) -> Self {
+        Self {
+            event_type: event_type.into(),
+            payload,
+            run_id: None,
+            actor: None,
+            schema_v: 1,
+            id: None,
+            parent_id: None,
+            correlation_id: None,
+            aggregate_type: None,
+            aggregate_id: None,
+            handler_id: None,
+        }
+    }
+
+    pub fn with_run_id(mut self, run_id: impl Into<String>) -> Self {
+        self.run_id = Some(run_id.into());
+        self
+    }
+
+    pub fn with_actor(mut self, actor: impl Into<String>) -> Self {
+        self.actor = Some(actor.into());
+        self
+    }
+
+    pub fn with_schema_v(mut self, v: i16) -> Self {
+        self.schema_v = v;
+        self
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    pub fn with_parent_id(mut self, parent_id: Uuid) -> Self {
+        self.parent_id = Some(parent_id);
+        self
+    }
+
+    pub fn with_handler_id(mut self, handler_id: impl Into<String>) -> Self {
+        self.handler_id = Some(handler_id.into());
+        self
+    }
+}

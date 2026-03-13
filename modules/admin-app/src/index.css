@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "flexlayout-react/style/dark.css";
+@plugin "@tailwindcss/typography";
 
 @theme {
   --color-background: #09090b;
@@ -43,4 +45,89 @@ body {
   color: #a1a1aa !important;
   font-size: 16px !important;
   padding: 4px 8px !important;
+}
+
+/* ---------------------------------------------------------------------------
+   flexlayout-react theme — map dark theme to zinc neutrals
+   --------------------------------------------------------------------------- */
+
+.flexlayout__layout {
+  --color-text: #fafafa;
+  --color-background: #09090b;
+  --color-base: #09090b;
+  --color-1: #0a0a0c;
+  --color-2: #18181b;
+  --color-3: #27272a;
+  --color-4: #3f3f46;
+  --color-5: #52525b;
+  --color-6: #71717a;
+  --color-drag1: rgba(96, 165, 250, 0.6);
+  --color-drag2: rgba(74, 222, 128, 0.5);
+  --color-drag1-background: rgba(96, 165, 250, 0.08);
+  --color-drag2-background: rgba(74, 222, 128, 0.08);
+  --font-size: 0.75rem;
+  --font-family: inherit;
+  --color-overflow: #71717a;
+  --color-icon: #a1a1aa;
+  --color-tabset-background: #09090b;
+  --color-tabset-background-selected: #09090b;
+  --color-tabset-background-maximized: #18181b;
+  --color-tabset-divider-line: #27272a;
+  --color-tabset-header-background: #09090b;
+  --color-tabset-header: #fafafa;
+  --color-tab-content: #09090b;
+  --color-tab-selected: #fafafa;
+  --color-tab-selected-background: #27272a;
+  --color-tab-unselected: #a1a1aa;
+  --color-tab-unselected-background: transparent;
+  --color-splitter: #18181b;
+  --color-splitter-hover: #3f3f46;
+  --color-splitter-drag: #52525b;
+  --color-drag-rect-border: #3f3f46;
+  --color-drag-rect-background: #09090b;
+  --color-drag-rect: #fafafa;
+  --color-popup-border: #3f3f46;
+  --color-popup-unselected: #fafafa;
+  --color-popup-unselected-background: #09090b;
+  --color-popup-selected: #fafafa;
+  --color-popup-selected-background: #27272a;
+  --color-edge-marker: #52525b;
+  --color-toolbar-button-hover: #27272a;
+}
+
+/* Remove dark theme gradients for flatter look */
+.flexlayout__tabset-selected {
+  background-image: none !important;
+}
+
+.flexlayout__tabset-maximized {
+  background-image: none !important;
+}
+
+/* Remove box-shadows for cleaner look */
+.flexlayout__tabset_header {
+  box-shadow: none !important;
+}
+
+.flexlayout__tab_top,
+.flexlayout__tab_bottom {
+  box-shadow: none !important;
+}
+
+.flexlayout__border_button {
+  box-shadow: none !important;
+}
+
+/* Splitter handle */
+.flexlayout__splitter_handle {
+  background-color: #52525b;
+}
+
+/* Flow diagram: nodes above edge arrows — .react-flow__nodes lacks position by default, so z-index is ignored */
+.react-flow .react-flow__edges {
+  z-index: 0 !important;
+}
+.react-flow .react-flow__nodes {
+  position: relative;
+  z-index: 1 !important;
 }

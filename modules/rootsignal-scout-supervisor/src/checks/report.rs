@@ -4,13 +4,13 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::Serialize;
 use tracing::{info, warn};
+use super::batch_review::{BatchReviewOutput, RunAnalysis, SignalForReview, Verdict};
 
 /// Root data directory, controlled by `DATA_DIR` env var (default: `"data"`).
 fn data_dir() -> PathBuf {
     PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()))
 }
 
-use super::batch_review::{BatchReviewOutput, RunAnalysis, SignalForReview, Verdict};
 
 // =============================================================================
 // Data dump
@@ -95,10 +95,7 @@ pub fn create_github_issue(
 
     let mut table_rows = String::new();
     for v in &rejections {
-        let signal = output
-            .reviewed_signals
-            .iter()
-            .find(|s| s.id == v.signal_id);
+        let signal = output.reviewed_signals.iter().find(|s| s.id == v.signal_id);
         let title_col = signal.map(|s| s.title.as_str()).unwrap_or("?");
         let type_col = signal.map(|s| s.signal_type.as_str()).unwrap_or("?");
         let module_col = signal.map(|s| s.created_by.as_str()).unwrap_or("?");
@@ -154,7 +151,16 @@ Full signal data dump: `{report_path}`
 
     // Shell out to gh CLI
     match std::process::Command::new("gh")
-        .args(["issue", "create", "--title", &title, "--body", &body, "--label", "supervisor"])
+        .args([
+            "issue",
+            "create",
+            "--title",
+            &title,
+            "--body",
+            &body,
+            "--label",
+            "supervisor",
+        ])
         .output()
     {
         Ok(result) => {
@@ -182,3 +188,4 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{}…", &s[..max - 1])
     }
 }
+

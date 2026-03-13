@@ -39,6 +39,7 @@ pub struct ArchivePostRow {
     pub hashtags: Vec<String>,
     pub engagement: Option<serde_json::Value>,
     pub published_at: Option<DateTime<Utc>>,
+    pub fetch_count: i64,
 }
 
 pub struct ArchiveShortVideoRow {
@@ -48,6 +49,7 @@ pub struct ArchiveShortVideoRow {
     pub text: Option<String>,
     pub engagement: Option<serde_json::Value>,
     pub published_at: Option<DateTime<Utc>>,
+    pub fetch_count: i64,
 }
 
 pub struct ArchiveStoryRow {
@@ -58,6 +60,7 @@ pub struct ArchiveStoryRow {
     pub location: Option<String>,
     pub expires_at: Option<DateTime<Utc>>,
     pub fetched_at: DateTime<Utc>,
+    pub fetch_count: i64,
 }
 
 pub struct ArchiveLongVideoRow {
@@ -67,6 +70,7 @@ pub struct ArchiveLongVideoRow {
     pub text: Option<String>,
     pub engagement: Option<serde_json::Value>,
     pub published_at: Option<DateTime<Utc>>,
+    pub fetch_count: i64,
 }
 
 pub struct ArchivePageRow {
@@ -74,6 +78,7 @@ pub struct ArchivePageRow {
     pub source_url: String,
     pub title: Option<String>,
     pub fetched_at: DateTime<Utc>,
+    pub fetch_count: i64,
 }
 
 pub struct ArchiveFeedRow {
@@ -82,6 +87,7 @@ pub struct ArchiveFeedRow {
     pub title: Option<String>,
     pub item_count: i64,
     pub fetched_at: DateTime<Utc>,
+    pub fetch_count: i64,
 }
 
 pub struct ArchiveSearchResultRow {
@@ -107,17 +113,16 @@ pub struct ArchiveFileRow {
 
 /// Get total row counts for all 8 content types in parallel.
 pub async fn count_all(pool: &PgPool) -> Result<ArchiveCounts> {
-    let (posts, short_videos, stories, long_videos, pages, feeds, search_results, files) =
-        tokio::try_join!(
-            count_table(pool, "posts"),
-            count_table(pool, "short_videos"),
-            count_table(pool, "stories"),
-            count_table(pool, "long_videos"),
-            count_table(pool, "pages"),
-            count_table(pool, "feeds"),
-            count_table(pool, "search_results"),
-            count_table(pool, "files"),
-        )?;
+    let (posts, short_videos, stories, long_videos, pages, feeds, search_results, files) = tokio::try_join!(
+        count_table(pool, "posts"),
+        count_table(pool, "short_videos"),
+        count_table(pool, "stories"),
+        count_table(pool, "long_videos"),
+        count_table(pool, "pages"),
+        count_table(pool, "feeds"),
+        count_table(pool, "search_results"),
+        count_table(pool, "files"),
+    )?;
 
     Ok(ArchiveCounts {
         posts,
@@ -209,9 +214,9 @@ pub async fn volume_by_day(pool: &PgPool, days: u32) -> Result<Vec<ArchiveVolume
 pub async fn recent_posts(pool: &PgPool, limit: u32) -> Result<Vec<ArchivePostRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<String>, Vec<String>, Option<serde_json::Value>, Option<DateTime<Utc>>)>(
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<String>, Vec<String>, Option<serde_json::Value>, Option<DateTime<Utc>>, i64)>(
         r#"
-        SELECT p.id, s.url, p.permalink, p.author, p.text, p.hashtags, p.engagement, p.published_at
+        SELECT p.id, s.url, p.permalink, p.author, p.text, p.hashtags, p.engagement, p.published_at, s.fetch_count
         FROM posts p
         JOIN sources s ON s.id = p.source_id
         ORDER BY p.fetched_at DESC
@@ -233,6 +238,7 @@ pub async fn recent_posts(pool: &PgPool, limit: u32) -> Result<Vec<ArchivePostRo
             hashtags: r.5,
             engagement: r.6,
             published_at: r.7,
+            fetch_count: r.8,
         })
         .collect())
 }
@@ -240,9 +246,20 @@ pub async fn recent_posts(pool: &PgPool, limit: u32) -> Result<Vec<ArchivePostRo
 pub async fn recent_short_videos(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveShortVideoRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<serde_json::Value>, Option<DateTime<Utc>>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<serde_json::Value>,
+            Option<DateTime<Utc>>,
+            i64,
+        ),
+    >(
         r#"
-        SELECT sv.id, s.url, sv.permalink, sv.text, sv.engagement, sv.published_at
+        SELECT sv.id, s.url, sv.permalink, sv.text, sv.engagement, sv.published_at, s.fetch_count
         FROM short_videos sv
         JOIN sources s ON s.id = sv.source_id
         ORDER BY sv.fetched_at DESC
@@ -262,6 +279,7 @@ pub async fn recent_short_videos(pool: &PgPool, limit: u32) -> Result<Vec<Archiv
             text: r.3,
             engagement: r.4,
             published_at: r.5,
+            fetch_count: r.6,
         })
         .collect())
 }
@@ -269,9 +287,9 @@ pub async fn recent_short_videos(pool: &PgPool, limit: u32) -> Result<Vec<Archiv
 pub async fn recent_stories(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveStoryRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<String>, Option<DateTime<Utc>>, DateTime<Utc>)>(
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<String>, Option<DateTime<Utc>>, DateTime<Utc>, i64)>(
         r#"
-        SELECT st.id, s.url, st.permalink, st.text, st.location, st.expires_at, st.fetched_at
+        SELECT st.id, s.url, st.permalink, st.text, st.location, st.expires_at, st.fetched_at, s.fetch_count
         FROM stories st
         JOIN sources s ON s.id = st.source_id
         ORDER BY st.fetched_at DESC
@@ -292,6 +310,7 @@ pub async fn recent_stories(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveStor
             location: r.4,
             expires_at: r.5,
             fetched_at: r.6,
+            fetch_count: r.7,
         })
         .collect())
 }
@@ -299,9 +318,20 @@ pub async fn recent_stories(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveStor
 pub async fn recent_long_videos(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveLongVideoRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<serde_json::Value>, Option<DateTime<Utc>>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<serde_json::Value>,
+            Option<DateTime<Utc>>,
+            i64,
+        ),
+    >(
         r#"
-        SELECT lv.id, s.url, lv.permalink, lv.text, lv.engagement, lv.published_at
+        SELECT lv.id, s.url, lv.permalink, lv.text, lv.engagement, lv.published_at, s.fetch_count
         FROM long_videos lv
         JOIN sources s ON s.id = lv.source_id
         ORDER BY lv.fetched_at DESC
@@ -321,6 +351,7 @@ pub async fn recent_long_videos(pool: &PgPool, limit: u32) -> Result<Vec<Archive
             text: r.3,
             engagement: r.4,
             published_at: r.5,
+            fetch_count: r.6,
         })
         .collect())
 }
@@ -328,9 +359,9 @@ pub async fn recent_long_videos(pool: &PgPool, limit: u32) -> Result<Vec<Archive
 pub async fn recent_pages(pool: &PgPool, limit: u32) -> Result<Vec<ArchivePageRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, DateTime<Utc>)>(
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, DateTime<Utc>, i64)>(
         r#"
-        SELECT pg.id, s.url, pg.title, pg.fetched_at
+        SELECT pg.id, s.url, pg.title, pg.fetched_at, s.fetch_count
         FROM pages pg
         JOIN sources s ON s.id = pg.source_id
         ORDER BY pg.fetched_at DESC
@@ -348,6 +379,7 @@ pub async fn recent_pages(pool: &PgPool, limit: u32) -> Result<Vec<ArchivePageRo
             source_url: r.1,
             title: r.2,
             fetched_at: r.3,
+            fetch_count: r.4,
         })
         .collect())
 }
@@ -355,9 +387,9 @@ pub async fn recent_pages(pool: &PgPool, limit: u32) -> Result<Vec<ArchivePageRo
 pub async fn recent_feeds(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveFeedRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, i64, DateTime<Utc>)>(
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, i64, DateTime<Utc>, i64)>(
         r#"
-        SELECT f.id, s.url, f.title, COALESCE(jsonb_array_length(f.items), 0), f.fetched_at
+        SELECT f.id, s.url, f.title, COALESCE(jsonb_array_length(f.items), 0), f.fetched_at, s.fetch_count
         FROM feeds f
         JOIN sources s ON s.id = f.source_id
         ORDER BY f.fetched_at DESC
@@ -376,6 +408,7 @@ pub async fn recent_feeds(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveFeedRo
             title: r.2,
             item_count: r.3,
             fetched_at: r.4,
+            fetch_count: r.5,
         })
         .collect())
 }
@@ -388,7 +421,7 @@ pub async fn recent_search_results(
 
     let rows = sqlx::query_as::<_, (Uuid, String, i64, DateTime<Utc>)>(
         r#"
-        SELECT sr.id, sr.query, COALESCE(jsonb_array_length(sr.results), 0), sr.fetched_at
+        SELECT sr.id, sr.query, COALESCE(jsonb_array_length(sr.results), 0)::BIGINT, sr.fetched_at
         FROM search_results sr
         ORDER BY sr.fetched_at DESC
         LIMIT $1
@@ -412,7 +445,18 @@ pub async fn recent_search_results(
 pub async fn recent_files(pool: &PgPool, limit: u32) -> Result<Vec<ArchiveFileRow>> {
     let limit = limit.min(100) as i64;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, String, Option<f64>, Option<i32>, DateTime<Utc>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            String,
+            Option<f64>,
+            Option<i32>,
+            DateTime<Utc>,
+        ),
+    >(
         r#"
         SELECT id, url, title, mime_type, duration, page_count, fetched_at
         FROM files
@@ -519,4 +563,56 @@ pub fn platform_from_url(url: &str) -> String {
         d if d.contains("youtube.com") || d.contains("youtu.be") => "YouTube".to_string(),
         _ => domain.to_string(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Source-scoped archive summary
+// ---------------------------------------------------------------------------
+
+pub struct ArchiveSourceSummary {
+    pub posts: i64,
+    pub pages: i64,
+    pub feeds: i64,
+    pub short_videos: i64,
+    pub long_videos: i64,
+    pub stories: i64,
+    pub search_results: i64,
+    pub files: i64,
+    pub last_fetched_at: Option<DateTime<Utc>>,
+}
+
+/// Count archive rows per content type for a given source URL.
+pub async fn archive_summary_for_source(
+    pool: &PgPool,
+    source_url: &str,
+) -> Result<ArchiveSourceSummary> {
+    let row = sqlx::query_as::<_, (i64, i64, i64, i64, i64, i64, i64, i64, Option<DateTime<Utc>>)>(
+        r#"
+        SELECT
+            (SELECT count(*) FROM posts p JOIN sources s ON s.id = p.source_id WHERE s.url = $1),
+            (SELECT count(*) FROM pages p JOIN sources s ON s.id = p.source_id WHERE s.url = $1),
+            (SELECT count(*) FROM feeds f JOIN sources s ON s.id = f.source_id WHERE s.url = $1),
+            (SELECT count(*) FROM short_videos sv JOIN sources s ON s.id = sv.source_id WHERE s.url = $1),
+            (SELECT count(*) FROM long_videos lv JOIN sources s ON s.id = lv.source_id WHERE s.url = $1),
+            (SELECT count(*) FROM stories st JOIN sources s ON s.id = st.source_id WHERE s.url = $1),
+            (SELECT count(*) FROM search_results sr JOIN sources s ON s.id = sr.source_id WHERE s.url = $1),
+            (SELECT count(*) FROM files f2 JOIN sources s ON s.id = f2.source_id WHERE s.url = $1),
+            (SELECT max(s.last_scraped_at) FROM source_content_types sct JOIN sources s ON s.id = sct.source_id WHERE s.url = $1)
+        "#,
+    )
+    .bind(source_url)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(ArchiveSourceSummary {
+        posts: row.0,
+        pages: row.1,
+        feeds: row.2,
+        short_videos: row.3,
+        long_videos: row.4,
+        stories: row.5,
+        search_results: row.6,
+        files: row.7,
+        last_fetched_at: row.8,
+    })
 }

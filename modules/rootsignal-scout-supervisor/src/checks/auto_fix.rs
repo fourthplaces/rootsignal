@@ -1,79 +1,120 @@
 use neo4rs::query;
-use tracing::{info, warn};
+use tracing::info;
+use uuid::Uuid;
 
+use rootsignal_common::events::SystemEvent;
 use rootsignal_graph::GraphClient;
 
 use crate::types::AutoFixStats;
 
 /// Run all deterministic auto-fix checks against the graph.
-/// These are idempotent and safe to run concurrently with the scout.
+/// Returns stats and a vec of events describing what should be fixed.
+/// The caller is responsible for persisting the events; the GraphProjector handles the writes.
 pub async fn run_auto_fixes(
     client: &GraphClient,
     center_lat: f64,
     center_lng: f64,
-) -> Result<AutoFixStats, neo4rs::Error> {
+) -> Result<(AutoFixStats, Vec<SystemEvent>), neo4rs::Error> {
     let mut stats = AutoFixStats::default();
+    let mut events = Vec::new();
 
-    stats.orphaned_evidence_deleted = fix_orphaned_evidence(client).await?;
-    stats.orphaned_edges_deleted = fix_orphaned_acted_in_edges(client).await?;
-    stats.actors_merged = fix_duplicate_actors(client).await?;
-    stats.empty_signals_deleted = fix_empty_signals(client).await?;
-    stats.fake_coords_nulled =
-        fix_fake_center_coords(client, center_lat, center_lng).await?;
+    if let Some(ev) = fix_orphaned_citations(client).await? {
+        stats.orphaned_citations_deleted = match &ev {
+            SystemEvent::OrphanedCitationsCleaned { citation_ids } => citation_ids.len() as u64,
+            _ => 0,
+        };
+        events.push(ev);
+    }
+
+    if let Some(ev) = fix_orphaned_actors(client).await? {
+        stats.orphaned_edges_deleted = match &ev {
+            SystemEvent::OrphanedActorsCleaned { actor_ids } => actor_ids.len() as u64,
+            _ => 0,
+        };
+        events.push(ev);
+    }
+
+    let merge_events = fix_duplicate_actors(client).await?;
+    stats.actors_merged = merge_events.len() as u64;
+    events.extend(merge_events);
+
+    if let Some(ev) = fix_empty_signals(client).await? {
+        stats.empty_signals_deleted = match &ev {
+            SystemEvent::EmptyEntitiesCleaned { signal_ids } => signal_ids.len() as u64,
+            _ => 0,
+        };
+        events.push(ev);
+    }
+
+    if let Some(ev) = fix_fake_center_coords(client, center_lat, center_lng).await? {
+        stats.fake_coords_nulled = match &ev {
+            SystemEvent::FakeCoordinatesNulled { signal_ids, .. } => signal_ids.len() as u64,
+            _ => 0,
+        };
+        events.push(ev);
+    }
 
     info!("{stats}");
-    Ok(stats)
+    Ok((stats, events))
 }
 
-/// Delete Evidence nodes that have no SOURCED_FROM edge pointing to them.
-async fn fix_orphaned_evidence(client: &GraphClient) -> Result<u64, neo4rs::Error> {
+/// Find Citation nodes that have no SOURCED_FROM edge pointing to them.
+async fn fix_orphaned_citations(
+    client: &GraphClient,
+) -> Result<Option<SystemEvent>, neo4rs::Error> {
     let q = query(
-        "MATCH (ev:Evidence)
+        "MATCH (ev:Citation)
          WHERE NOT ()-[:SOURCED_FROM]->(ev)
-         DETACH DELETE ev
-         RETURN count(ev) AS deleted",
+         RETURN ev.id AS id",
     );
 
-    let mut stream = client.inner().execute(q).await?;
-    if let Some(row) = stream.next().await? {
-        let deleted: i64 = row.get("deleted").unwrap_or(0);
-        if deleted > 0 {
-            info!(deleted, "Deleted orphaned Evidence nodes");
+    let mut ids = Vec::new();
+    let mut stream = client.execute(q).await?;
+    while let Some(row) = stream.next().await? {
+        let id_str: String = row.get("id").unwrap_or_default();
+        if let Ok(id) = Uuid::parse_str(&id_str) {
+            ids.push(id);
         }
-        return Ok(deleted as u64);
     }
-    Ok(0)
+
+    if ids.is_empty() {
+        return Ok(None);
+    }
+
+    info!(deleted = ids.len(), "Found orphaned Citation nodes");
+    Ok(Some(SystemEvent::OrphanedCitationsCleaned {
+        citation_ids: ids,
+    }))
 }
 
-/// Delete ACTED_IN edges where either the Actor or Signal node is missing.
-async fn fix_orphaned_acted_in_edges(client: &GraphClient) -> Result<u64, neo4rs::Error> {
-    // DETACH DELETE removes edges with the node, so truly orphaned
-    // edges shouldn't exist. But partial transaction failures could leave them.
-    // Check for Actor nodes with no remaining signal connections and clean up.
+/// Find Actor nodes with no remaining signal connections.
+async fn fix_orphaned_actors(client: &GraphClient) -> Result<Option<SystemEvent>, neo4rs::Error> {
     let q = query(
         "MATCH (a:Actor)
          WHERE NOT (a)<-[:ACTED_IN]-()
-         DETACH DELETE a
-         RETURN count(a) AS deleted",
+         RETURN a.id AS id",
     );
 
-    let mut stream = client.inner().execute(q).await?;
-    if let Some(row) = stream.next().await? {
-        let deleted: i64 = row.get("deleted").unwrap_or(0);
-        if deleted > 0 {
-            info!(deleted, "Deleted orphaned Actor nodes (no ACTED_IN edges)");
+    let mut ids = Vec::new();
+    let mut stream = client.execute(q).await?;
+    while let Some(row) = stream.next().await? {
+        let id_str: String = row.get("id").unwrap_or_default();
+        if let Ok(id) = Uuid::parse_str(&id_str) {
+            ids.push(id);
         }
-        return Ok(deleted as u64);
     }
-    Ok(0)
+
+    if ids.is_empty() {
+        return Ok(None);
+    }
+
+    info!(deleted = ids.len(), "Found orphaned Actor nodes (no ACTED_IN edges)");
+    Ok(Some(SystemEvent::OrphanedActorsCleaned { actor_ids: ids }))
 }
 
-/// Merge duplicate Actors with identical normalized names.
-/// Keeps the Actor with more signal connections, re-points edges from the duplicate.
-async fn fix_duplicate_actors(client: &GraphClient) -> Result<u64, neo4rs::Error> {
-    let mut merged = 0u64;
-
-    // Find Actor pairs with the same lowercased name
+/// Find duplicate Actors with identical normalized names.
+/// Returns one DuplicateActorsMerged event per pair.
+async fn fix_duplicate_actors(client: &GraphClient) -> Result<Vec<SystemEvent>, neo4rs::Error> {
     let q = query(
         "MATCH (a1:Actor), (a2:Actor)
          WHERE a1.id < a2.id
@@ -84,119 +125,108 @@ async fn fix_duplicate_actors(client: &GraphClient) -> Result<u64, neo4rs::Error
          WITH a1, a2, count(r1) AS a1_count
          OPTIONAL MATCH (a2)<-[r2:ACTED_IN]-()
          WITH a1, a2, a1_count, count(r2) AS a2_count
-         RETURN a1.id AS keep_id, a2.id AS drop_id,
-                a1.name AS keep_name, a2.name AS drop_name,
-                CASE WHEN a1_count >= a2_count THEN a1.id ELSE a2.id END AS winner_id,
-                CASE WHEN a1_count >= a2_count THEN a2.id ELSE a1.id END AS loser_id",
+         RETURN CASE WHEN a1_count >= a2_count THEN a1.id ELSE a2.id END AS winner_id,
+                CASE WHEN a1_count >= a2_count THEN a2.id ELSE a1.id END AS loser_id,
+                a1.name AS keep_name, a2.name AS drop_name",
     );
 
-    let mut stream = client.inner().execute(q).await?;
-    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut stream = client.execute(q).await?;
+    let mut events = Vec::new();
 
     while let Some(row) = stream.next().await? {
-        let winner: String = row.get("winner_id").unwrap_or_default();
-        let loser: String = row.get("loser_id").unwrap_or_default();
+        let winner_str: String = row.get("winner_id").unwrap_or_default();
+        let loser_str: String = row.get("loser_id").unwrap_or_default();
         let keep_name: String = row.get("keep_name").unwrap_or_default();
         let drop_name: String = row.get("drop_name").unwrap_or_default();
-        if !winner.is_empty() && !loser.is_empty() {
-            info!(keep = %keep_name, drop = %drop_name, "Merging duplicate Actors");
-            pairs.push((winner, loser));
-        }
+
+        let (Ok(kept_id), Ok(merged_id)) =
+            (Uuid::parse_str(&winner_str), Uuid::parse_str(&loser_str))
+        else {
+            continue;
+        };
+
+        info!(keep = %keep_name, drop = %drop_name, "Found duplicate Actors to merge");
+        events.push(SystemEvent::DuplicateActorsMerged {
+            kept_id,
+            merged_ids: vec![merged_id],
+        });
     }
 
-    for (winner_id, loser_id) in &pairs {
-        // Re-point ACTED_IN edges from loser to winner
-        let repoint = query(
-            "MATCH (loser:Actor {id: $loser_id})<-[r:ACTED_IN]-(sig)
-             MATCH (winner:Actor {id: $winner_id})
-             CREATE (sig)-[:ACTED_IN {role: r.role}]->(winner)
-             DELETE r",
-        )
-        .param("loser_id", loser_id.clone())
-        .param("winner_id", winner_id.clone());
-
-        match client.inner().run(repoint).await {
-            Ok(_) => {}
-            Err(e) => {
-                warn!(loser = %loser_id, winner = %winner_id, error = %e, "Failed to re-point ACTED_IN edges");
-                continue;
-            }
-        }
-
-        // Delete the loser Actor
-        let delete =
-            query("MATCH (a:Actor {id: $id}) DETACH DELETE a").param("id", loser_id.clone());
-
-        match client.inner().run(delete).await {
-            Ok(_) => merged += 1,
-            Err(e) => warn!(id = %loser_id, error = %e, "Failed to delete duplicate Actor"),
-        }
+    if !events.is_empty() {
+        info!(merged = events.len(), "Found duplicate Actor pairs");
     }
-
-    if merged > 0 {
-        info!(merged, "Merged duplicate Actor nodes");
-    }
-    Ok(merged)
+    Ok(events)
 }
 
-/// Delete signal nodes with empty or null titles.
-async fn fix_empty_signals(client: &GraphClient) -> Result<u64, neo4rs::Error> {
-    let mut deleted = 0u64;
+/// Find signal nodes with empty or null titles.
+async fn fix_empty_signals(client: &GraphClient) -> Result<Option<SystemEvent>, neo4rs::Error> {
+    let mut ids = Vec::new();
 
-    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.title IS NULL OR n.title = ''
-             DETACH DELETE n
-             RETURN count(n) AS deleted"
+             RETURN n.id AS id"
         ));
 
-        let mut stream = client.inner().execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let d: i64 = row.get("deleted").unwrap_or(0);
-            if d > 0 {
-                info!(label, deleted = d, "Deleted signals with empty titles");
+        let mut stream = client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                info!(label, "Found signal with empty title");
+                ids.push(id);
             }
-            deleted += d as u64;
         }
     }
 
-    Ok(deleted)
+    if ids.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(SystemEvent::EmptyEntitiesCleaned { signal_ids: ids }))
 }
 
-/// Null out coordinates that are suspiciously close to the scope center.
-/// The scout strips coords within 0.01 degrees; we catch anything within 0.02
-/// that slipped through (e.g., LLM echoed a slightly offset default).
+/// Find coordinates that are suspiciously close to the scope center.
 async fn fix_fake_center_coords(
     client: &GraphClient,
     center_lat: f64,
     center_lng: f64,
-) -> Result<u64, neo4rs::Error> {
-    let mut nulled = 0u64;
+) -> Result<Option<SystemEvent>, neo4rs::Error> {
     let epsilon = 0.02;
+    let mut signal_ids = Vec::new();
+    let mut old_coords = Vec::new();
 
-    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.lat IS NOT NULL AND n.lng IS NOT NULL
                AND abs(n.lat - $center_lat) < $epsilon
                AND abs(n.lng - $center_lng) < $epsilon
-             SET n.lat = null, n.lng = null
-             RETURN count(n) AS nulled"
+             RETURN n.id AS id, n.lat AS lat, n.lng AS lng"
         ))
         .param("center_lat", center_lat)
         .param("center_lng", center_lng)
         .param("epsilon", epsilon);
 
-        let mut stream = client.inner().execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let n: i64 = row.get("nulled").unwrap_or(0);
-            if n > 0 {
-                info!(label, nulled = n, "Nulled fake center coordinates");
+        let mut stream = client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let lat: f64 = row.get("lat").unwrap_or(0.0);
+            let lng: f64 = row.get("lng").unwrap_or(0.0);
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                info!(label, "Found fake center coordinates");
+                signal_ids.push(id);
+                old_coords.push((lat, lng));
             }
-            nulled += n as u64;
         }
     }
 
-    Ok(nulled)
+    if signal_ids.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(SystemEvent::FakeCoordinatesNulled {
+        signal_ids,
+        old_coords,
+    }))
 }

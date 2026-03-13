@@ -1,0 +1,3 @@
+ALTER TABLE deferred_scrapes RENAME TO scheduled_scrapes;
+ALTER INDEX idx_deferred_scrapes_pending RENAME TO idx_scheduled_scrapes_pending;
+ALTER INDEX idx_deferred_scrapes_unique_pending RENAME TO idx_scheduled_scrapes_unique_pending;

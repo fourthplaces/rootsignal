@@ -1,0 +1,865 @@
+//! EventSourcedReader — read-only graph queries backed by Neo4j.
+//!
+//! The events table is the single source of truth. The graph is a projection.
+//! All domain writes flow through the engine dispatch loop.
+//!
+//! Read methods delegate to GraphStore (graph is always current).
+
+use std::collections::{HashMap, HashSet};
+
+use anyhow::Result;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
+
+use rootsignal_common::events::{Location, Schedule, SystemEvent, WorldEvent};
+use rootsignal_common::types::{ActorNode, Entity, EntityType, GeoPoint, Node, NodeType, SourceNode};
+use rootsignal_common::{
+    FRESHNESS_MAX_DAYS, GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
+};
+use rootsignal_graph::GraphStore;
+use crate::traits::SignalReader;
+
+
+/// Read-only SignalReader backed by Neo4j via GraphStore.
+pub struct EventSourcedReader {
+    graph: GraphStore,
+}
+
+impl EventSourcedReader {
+    pub fn new(graph: GraphStore) -> Self {
+        Self { graph }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Node → Event conversion helpers
+// ---------------------------------------------------------------------------
+
+fn meta_to_locations(meta: &rootsignal_common::types::NodeMeta) -> Vec<Location> {
+    meta.locations.clone()
+}
+
+/// Build mentioned_entities for a world event, synthesizing from per-type fields
+/// when they aren't already present in the extracted entities.
+fn mentioned_entities_for(node: &Node) -> Vec<Entity> {
+    let meta = node.meta().expect("signal nodes always have meta");
+    let mut entities = meta.mentioned_entities.clone();
+
+    // Synthesize entities from per-type fields if not already present by name
+    let has_name = |name: &str| entities.iter().any(|e| e.name == name);
+
+    match node {
+        Node::Gathering(n) => {
+            if let Some(ref org) = n.organizer {
+                if !org.is_empty() && !has_name(org) {
+                    entities.push(Entity {
+                        name: org.clone(),
+                        entity_type: EntityType::Organization,
+                        role: Some("organizer".to_string()),
+                    });
+                }
+            }
+        }
+        Node::Announcement(n) => {
+            if let Some(ref auth) = n.source_authority {
+                if !auth.is_empty() && !has_name(auth) {
+                    entities.push(Entity {
+                        name: auth.clone(),
+                        entity_type: EntityType::Organization,
+                        role: Some("source_authority".to_string()),
+                    });
+                }
+            }
+        }
+        Node::Condition(n) => {
+            if let Some(ref obs) = n.observed_by {
+                if !obs.is_empty() && !has_name(obs) {
+                    entities.push(Entity {
+                        name: obs.clone(),
+                        entity_type: EntityType::Organization,
+                        role: Some("observer".to_string()),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    entities
+}
+
+/// Build the world-fact event for a discovery — no sensitivity or implied_queries.
+/// `schedule_override` merges validated rrule/rdates/exdates into the schedule when present.
+pub(crate) fn node_to_world_event(node: &Node, schedule_override: Option<&Schedule>) -> WorldEvent {
+    let entities = mentioned_entities_for(node);
+    match node {
+        Node::Gathering(n) => WorldEvent::GatheringAnnounced {
+            id: n.meta.id,
+            title: n.meta.title.clone(),
+            summary: n.meta.summary.clone(),
+            url: n.meta.url.clone(),
+            published_at: n.meta.published_at,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: entities.clone(),
+            references: vec![],
+            schedule: schedule_override.cloned().or_else(|| schedule_from_gathering(n)),
+            action_url: if n.action_url.is_empty() {
+                None
+            } else {
+                Some(n.action_url.clone())
+            },
+        },
+        Node::Resource(n) => WorldEvent::ResourceOffered {
+            id: n.meta.id,
+            title: n.meta.title.clone(),
+            summary: n.meta.summary.clone(),
+            url: n.meta.url.clone(),
+            published_at: n.meta.published_at,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: entities.clone(),
+            references: vec![],
+            schedule: None,
+            action_url: if n.action_url.is_empty() {
+                None
+            } else {
+                Some(n.action_url.clone())
+            },
+            availability: n.availability.clone(),
+            eligibility: n.eligibility.clone(),
+        },
+        Node::HelpRequest(n) => WorldEvent::HelpRequested {
+            id: n.meta.id,
+            title: n.meta.title.clone(),
+            summary: n.meta.summary.clone(),
+            url: n.meta.url.clone(),
+            published_at: n.meta.published_at,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: entities.clone(),
+            references: vec![],
+            schedule: None,
+            action_url: n.action_url.clone(),
+            what_needed: n.what_needed.clone(),
+            stated_goal: n.stated_goal.clone(),
+        },
+        Node::Announcement(n) => WorldEvent::AnnouncementShared {
+            id: n.meta.id,
+            title: n.meta.title.clone(),
+            summary: n.meta.summary.clone(),
+            url: n.meta.url.clone(),
+            published_at: n.meta.published_at,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: entities.clone(),
+            references: vec![],
+            schedule: None,
+            action_url: n.action_url.clone(),
+            subject: n.subject.clone(),
+            effective_date: n.effective_date,
+        },
+        Node::Concern(n) => WorldEvent::ConcernRaised {
+            id: n.meta.id,
+            title: n.meta.title.clone(),
+            summary: n.meta.summary.clone(),
+            url: n.meta.url.clone(),
+            published_at: n.meta.published_at,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: entities.clone(),
+            references: vec![],
+            schedule: None,
+            action_url: n.action_url.clone(),
+            subject: n.subject.clone(),
+            opposing: n.opposing.clone(),
+        },
+        Node::Condition(n) => WorldEvent::ConditionObserved {
+            id: n.meta.id,
+            title: n.meta.title.clone(),
+            summary: n.meta.summary.clone(),
+            url: n.meta.url.clone(),
+            published_at: n.meta.published_at,
+            extraction_id: None,
+            locations: meta_to_locations(&n.meta),
+            mentioned_entities: entities.clone(),
+            references: vec![],
+            schedule: None,
+            action_url: n.action_url.clone(),
+            subject: n.subject.clone(),
+            observed_by: n.observed_by.clone(),
+            measurement: n.measurement.clone(),
+            affected_scope: n.affected_scope.clone(),
+        },
+        Node::Citation(_) => unreachable!("Evidence nodes use create_evidence, not create_node"),
+    }
+}
+
+/// Build system decision events paired with a discovery.
+/// Returns SensitivityClassified (always) + ImpliedQueriesExtracted (if non-empty).
+pub(crate) fn node_system_events(node: &Node) -> Vec<SystemEvent> {
+    let meta = node.meta().expect("discovery nodes always have meta");
+    let mut events = vec![SystemEvent::SensitivityClassified {
+        signal_id: meta.id,
+        level: meta.sensitivity,
+    }];
+    if !meta.implied_queries.is_empty() {
+        events.push(SystemEvent::ImpliedQueriesExtracted {
+            signal_id: meta.id,
+            queries: meta.implied_queries.clone(),
+        });
+    }
+    events
+}
+
+fn schedule_from_gathering(n: &rootsignal_common::types::GatheringNode) -> Option<Schedule> {
+    if n.starts_at.is_none() && n.ends_at.is_none() && !n.is_recurring {
+        return None;
+    }
+    Some(Schedule {
+        starts_at: n.starts_at,
+        ends_at: n.ends_at,
+        all_day: false,
+        rrule: None,
+        timezone: None,
+        schedule_text: None,
+        rdates: vec![],
+        exdates: vec![],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// SignalReader implementation
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl SignalReader for EventSourcedReader {
+    // --- URL/content guards (read-only, delegate to graph) ---
+
+    async fn blocked_urls(&self, urls: &[String]) -> Result<HashSet<String>> {
+        Ok(self.graph.blocked_urls(urls).await?)
+    }
+
+    async fn content_already_processed(&self, hash: &str, url: &str) -> Result<bool> {
+        Ok(self.graph.content_already_processed(hash, url).await?)
+    }
+
+    async fn signal_ids_for_url(&self, url: &str) -> Result<Vec<(Uuid, NodeType)>> {
+        let mut results = Vec::new();
+        for (label, node_type) in &[
+            ("Gathering", NodeType::Gathering),
+            ("Resource", NodeType::Resource),
+            ("HelpRequest", NodeType::HelpRequest),
+            ("Announcement", NodeType::Announcement),
+            ("Concern", NodeType::Concern),
+        ] {
+            let q = rootsignal_graph::query(&format!(
+                "MATCH (n:{label}) WHERE n.url = $url RETURN n.id AS id"
+            ))
+            .param("url", url);
+
+            let neo4j = self.graph.client();
+            let mut stream = neo4j.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id_str: String = row.get("id").unwrap_or_default();
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    results.push((id, *node_type));
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    // --- Dedup queries (read-only, delegate to graph) ---
+
+    async fn find_by_fingerprints(
+        &self,
+        pairs: &[(String, NodeType)],
+    ) -> Result<HashMap<(String, NodeType), crate::traits::FingerprintMatch>> {
+        let raw = self.graph.find_by_fingerprints(pairs).await?;
+        Ok(raw.into_iter().map(|(key, (id, canonical_key, embedding))| {
+            (key, crate::traits::FingerprintMatch { id, canonical_key, embedding })
+        }).collect())
+    }
+
+    // --- Actor graph (append event → project to graph) ---
+
+    async fn find_actor_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
+        Ok(self
+            .graph
+            .find_actor_by_canonical_key(canonical_key)
+            .await?)
+    }
+
+    // --- Source management (append event → project to graph) ---
+
+    async fn get_active_sources(&self) -> Result<Vec<SourceNode>> {
+        Ok(self.graph.get_active_sources().await?)
+    }
+
+    async fn find_source_by_canonical_key(&self, canonical_key: &str) -> Result<Option<Uuid>> {
+        let q = rootsignal_graph::query(
+            "MATCH (s:Source {canonical_key: $ck, active: true}) RETURN s.id AS id LIMIT 1",
+        )
+        .param("ck", canonical_key);
+
+        let mut stream = self.graph.client().execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            return Ok(uuid::Uuid::parse_str(&id_str).ok());
+        }
+        Ok(None)
+    }
+
+    async fn find_expired_signals(&self) -> Result<Vec<(Uuid, NodeType, String)>> {
+        let neo4j = self.graph.client();
+        let mut expired = Vec::new();
+
+        // 1. Past non-recurring gatherings
+        let q = rootsignal_graph::query(&format!(
+            "MATCH (n:Gathering)
+             WHERE n.is_recurring = false
+               AND n.starts_at IS NOT NULL AND n.starts_at <> ''
+               AND CASE
+                   WHEN n.ends_at IS NOT NULL AND n.ends_at <> ''
+                   THEN datetime(n.ends_at) < datetime() - duration('PT{}H')
+                   ELSE datetime(n.starts_at) < datetime() - duration('PT{}H')
+               END
+             RETURN n.id AS id",
+            GATHERING_PAST_GRACE_HOURS, GATHERING_PAST_GRACE_HOURS
+        ));
+        let mut stream = neo4j.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                expired.push((id, NodeType::Gathering, "past_event".to_string()));
+            }
+        }
+
+        // 2. Expired needs
+        let q = rootsignal_graph::query(&format!(
+            "MATCH (n:HelpRequest)
+             WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
+             RETURN n.id AS id",
+            NEED_EXPIRE_DAYS
+        ));
+        let mut stream = neo4j.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                expired.push((id, NodeType::HelpRequest, "need_expired".to_string()));
+            }
+        }
+
+        // 3. Expired notices
+        let q = rootsignal_graph::query(&format!(
+            "MATCH (n:Announcement)
+             WHERE datetime(n.extracted_at) < datetime() - duration('P{}D')
+             RETURN n.id AS id",
+            NOTICE_EXPIRE_DAYS
+        ));
+        let mut stream = neo4j.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                expired.push((id, NodeType::Announcement, "notice_expired".to_string()));
+            }
+        }
+
+        // 4. Stale unconfirmed signals (Aid, Tension)
+        for (label, node_type) in &[("Resource", NodeType::Resource), ("Concern", NodeType::Concern)] {
+            let q = rootsignal_graph::query(&format!(
+                "MATCH (n:{label})
+                 WHERE datetime(n.last_confirmed_active) < datetime() - duration('P{days}D')
+                 RETURN n.id AS id",
+                label = label,
+                days = FRESHNESS_MAX_DAYS,
+            ));
+            let mut stream = neo4j.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id_str: String = row.get("id").unwrap_or_default();
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    expired.push((id, *node_type, "stale_unconfirmed".to_string()));
+                }
+            }
+        }
+
+        Ok(expired)
+    }
+
+    // --- Actor location enrichment (pass through) ---
+
+    async fn get_signals_for_actor(
+        &self,
+        actor_id: Uuid,
+    ) -> Result<Vec<(f64, f64, String, DateTime<Utc>)>> {
+        Ok(self.graph.get_signals_for_actor(actor_id).await?)
+    }
+
+    async fn list_all_actors(&self) -> Result<Vec<(ActorNode, Vec<SourceNode>)>> {
+        Ok(self.graph.list_all_actors().await?)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — verify Node → Event mapping
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rootsignal_common::events::{Event, SystemEvent, TelemetryEvent, WorldEvent};
+    use rootsignal_common::safety::SensitivityLevel;
+    use rootsignal_common::types::*;
+
+    fn test_meta(title: &str) -> NodeMeta {
+        NodeMeta {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            summary: "test summary".to_string(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.85,
+            corroboration_count: 0,
+            locations: vec![Location {
+                point: Some(GeoPoint {
+                    lat: 44.9778,
+                    lng: -93.265,
+                    precision: GeoPrecision::Neighborhood,
+                }),
+                name: Some("Minneapolis".to_string()),
+                address: None,
+                role: None,
+                timezone: None,
+            }],
+            url: "https://example.com".to_string(),
+            extracted_at: Utc::now(),
+            published_at: None,
+            last_confirmed_active: Utc::now(),
+            source_diversity: 0,
+            cause_heat: 0.0,
+            implied_queries: vec!["test query".to_string()],
+            channel_diversity: 1,
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
+            mentioned_entities: vec![],
+            category: None,
+        }
+    }
+
+    #[test]
+    fn gathering_node_maps_to_world_event_without_sensitivity() {
+        let meta = test_meta("Community Dinner");
+        let id = meta.id;
+        let node = Node::Gathering(GatheringNode {
+            meta,
+            starts_at: Some(Utc::now()),
+            ends_at: None,
+            action_url: "https://example.com/signup".to_string(),
+            organizer: Some("Lake Street Council".to_string()),
+            is_recurring: false,
+        });
+
+        let world = node_to_world_event(&node, None);
+        match world {
+            WorldEvent::GatheringAnnounced {
+                id: eid,
+                ref title,
+                ref action_url,
+                ref schedule,
+                ..
+            } => {
+                assert_eq!(eid, id);
+                assert_eq!(title, "Community Dinner");
+                assert_eq!(*action_url, Some("https://example.com/signup".to_string()));
+                assert!(schedule.is_some());
+            }
+            _ => panic!("Expected GatheringAnnounced"),
+        }
+
+        // Verify no sensitivity field in serialized payload
+        let event = Event::World(world);
+        let payload = event.to_payload();
+        assert!(
+            payload.get("sensitivity").is_none(),
+            "World event should not contain sensitivity"
+        );
+    }
+
+    #[test]
+    fn node_system_events_emits_sensitivity_and_implied_queries() {
+        let meta = test_meta("Test Signal");
+        let id = meta.id;
+        let node = Node::Gathering(GatheringNode {
+            meta,
+            starts_at: None,
+            ends_at: None,
+            action_url: String::new(),
+            organizer: None,
+            is_recurring: false,
+        });
+
+        let events = node_system_events(&node);
+        assert_eq!(events.len(), 2);
+
+        match &events[0] {
+            SystemEvent::SensitivityClassified { signal_id, level } => {
+                assert_eq!(*signal_id, id);
+                assert_eq!(*level, SensitivityLevel::General);
+            }
+            _ => panic!("Expected SensitivityClassified"),
+        }
+
+        match &events[1] {
+            SystemEvent::ImpliedQueriesExtracted { signal_id, queries } => {
+                assert_eq!(*signal_id, id);
+                assert_eq!(queries, &["test query".to_string()]);
+            }
+            _ => panic!("Expected ImpliedQueriesExtracted"),
+        }
+    }
+
+    #[test]
+    fn node_with_no_implied_queries_skips_extraction_event() {
+        let mut meta = test_meta("No Queries");
+        meta.implied_queries = vec![];
+        let node = Node::Gathering(GatheringNode {
+            meta,
+            starts_at: None,
+            ends_at: None,
+            action_url: String::new(),
+            organizer: None,
+            is_recurring: false,
+        });
+
+        let events = node_system_events(&node);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            SystemEvent::SensitivityClassified { .. }
+        ));
+    }
+
+    #[test]
+    fn aid_node_maps_to_aid_discovered_event() {
+        let meta = test_meta("Food Shelf");
+        let id = meta.id;
+        let node = Node::Resource(ResourceOfferNode {
+            meta,
+            action_url: "https://example.com/food".to_string(),
+            availability: Some("Mon-Fri".to_string()),
+            eligibility: None,
+            is_ongoing: true,
+        });
+
+        let world = node_to_world_event(&node, None);
+        match world {
+            WorldEvent::ResourceOffered {
+                id: eid,
+                title,
+                availability,
+                ..
+            } => {
+                assert_eq!(eid, id);
+                assert_eq!(title, "Food Shelf");
+                assert_eq!(availability, Some("Mon-Fri".to_string()));
+            }
+            _ => panic!("Expected ResourceOffered"),
+        }
+    }
+
+    #[test]
+    fn need_node_maps_to_need_discovered_event() {
+        let meta = test_meta("Volunteers Needed");
+        let id = meta.id;
+        let node = Node::HelpRequest(HelpRequestNode {
+            meta,
+            urgency: Urgency::High,
+            what_needed: Some("20 volunteers".to_string()),
+            action_url: None,
+            stated_goal: Some("clean up after storm".to_string()),
+        });
+
+        let world = node_to_world_event(&node, None);
+        match world {
+            WorldEvent::HelpRequested {
+                id: eid,
+                title,
+                what_needed,
+                stated_goal,
+                ..
+            } => {
+                assert_eq!(eid, id);
+                assert_eq!(title, "Volunteers Needed");
+                assert_eq!(what_needed, Some("20 volunteers".to_string()));
+                assert_eq!(stated_goal, Some("clean up after storm".to_string()));
+            }
+            _ => panic!("Expected HelpRequested"),
+        }
+    }
+
+    #[test]
+    fn evidence_node_maps_to_citation_recorded_event() {
+        let signal_id = Uuid::new_v4();
+        let evidence = CitationNode {
+            id: Uuid::new_v4(),
+            source_url: "https://source.com/article".to_string(),
+            retrieved_at: Utc::now(),
+            content_hash: "abc123".to_string(),
+            snippet: Some("relevant text".to_string()),
+            relevance: Some("high".to_string()),
+            confidence: Some(0.9),
+            channel_type: Some(ChannelType::Press),
+        };
+
+        let event = Event::World(WorldEvent::CitationPublished {
+            citation_id: evidence.id,
+            signal_id,
+            url: evidence.source_url.clone(),
+            content_hash: evidence.content_hash.clone(),
+            snippet: evidence.snippet.clone(),
+            relevance: evidence.relevance.clone(),
+            channel_type: evidence.channel_type,
+            evidence_confidence: evidence.confidence,
+        });
+        match event {
+            Event::World(WorldEvent::CitationPublished {
+                citation_id,
+                signal_id,
+                url,
+                content_hash,
+                snippet,
+                ..
+            }) => {
+                assert_eq!(citation_id, evidence.id);
+                assert_eq!(signal_id, signal_id);
+                assert_eq!(url, "https://source.com/article");
+                assert_eq!(content_hash, "abc123");
+                assert_eq!(snippet, Some("relevant text".to_string()));
+            }
+            _ => panic!("Expected CitationPublished"),
+        }
+    }
+
+    #[test]
+    fn event_roundtrips_through_json_payload() {
+        let meta = test_meta("Roundtrip Test");
+        let node = Node::Gathering(GatheringNode {
+            meta,
+            starts_at: None,
+            ends_at: None,
+            action_url: String::new(),
+            organizer: None,
+            is_recurring: false,
+        });
+
+        let world = node_to_world_event(&node, None);
+        let event = Event::World(world);
+        let payload = event.to_payload();
+        let roundtripped = Event::from_payload(&payload).unwrap();
+
+        match roundtripped {
+            Event::World(WorldEvent::GatheringAnnounced { title, .. }) => {
+                assert_eq!(title, "Roundtrip Test");
+            }
+            _ => panic!("Expected GatheringAnnounced after roundtrip"),
+        }
+    }
+
+    #[test]
+    fn location_maps_from_node_meta_geo_point() {
+        let meta = test_meta("Location Test");
+        let locs = meta_to_locations(&meta);
+        assert_eq!(locs.len(), 1);
+        let loc = &locs[0];
+        assert!(loc.point.is_some());
+        let point = loc.point.unwrap();
+        assert!((point.lat - 44.9778).abs() < f64::EPSILON);
+        assert!((point.lng - (-93.265)).abs() < f64::EPSILON);
+        assert_eq!(loc.name, Some("Minneapolis".to_string()));
+    }
+
+    #[test]
+    fn empty_action_url_maps_to_none() {
+        let meta = test_meta("No Action URL");
+        let node = Node::Gathering(GatheringNode {
+            meta,
+            starts_at: None,
+            ends_at: None,
+            action_url: String::new(),
+            organizer: None,
+            is_recurring: false,
+        });
+
+        let world = node_to_world_event(&node, None);
+        match world {
+            WorldEvent::GatheringAnnounced {
+                action_url,
+                schedule,
+                ..
+            } => {
+                assert!(action_url.is_none());
+                assert!(schedule.is_none());
+            }
+            _ => panic!("Expected GatheringAnnounced"),
+        }
+    }
+
+    #[test]
+    fn all_three_event_layers_roundtrip_through_payload() {
+        let world_event = Event::World(WorldEvent::HelpRequested {
+            id: Uuid::new_v4(),
+            title: "Warming Center Needed".to_string(),
+            summary: "Residents need warming center".to_string(),
+            url: "https://example.com".to_string(),
+            published_at: None,
+            extraction_id: None,
+            locations: vec![],
+            mentioned_entities: vec![Entity {
+                name: "Red Cross".to_string(),
+                entity_type: EntityType::Organization,
+                role: None,
+            }],
+            references: vec![],
+            schedule: None,
+            what_needed: Some("Warming center".to_string()),
+            stated_goal: None,
+            action_url: None,
+        });
+
+        let system_event = Event::System(SystemEvent::SignalTagged {
+            signal_id: Uuid::new_v4(),
+            tag_slugs: vec!["housing".to_string(), "crisis".to_string()],
+        });
+
+        let telemetry_event = Event::Telemetry(TelemetryEvent::UrlScraped {
+            url: "https://example.com".to_string(),
+            strategy: "direct".to_string(),
+            success: true,
+            content_bytes: 1024,
+        });
+
+        for (label, event) in [
+            ("world", world_event),
+            ("system", system_event),
+            ("telemetry", telemetry_event),
+        ] {
+            let payload = event.to_payload();
+            let roundtripped = Event::from_payload(&payload)
+                .unwrap_or_else(|e| panic!("{label} event failed roundtrip: {e}"));
+
+            // Verify layer identity is preserved
+            match (&event, &roundtripped) {
+                (Event::World(_), Event::World(_)) => {}
+                (Event::System(_), Event::System(_)) => {}
+                (Event::Telemetry(_), Event::Telemetry(_)) => {}
+                _ => panic!("{label} event deserialized into wrong layer"),
+            }
+        }
+    }
+
+    #[test]
+    fn signal_linked_to_source_roundtrips() {
+        let signal_id = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let event = Event::World(WorldEvent::SignalLinkedToSource {
+            signal_id,
+            source_id,
+        });
+        let payload = event.to_payload();
+        let roundtripped = Event::from_payload(&payload).unwrap();
+
+        match roundtripped {
+            Event::World(WorldEvent::SignalLinkedToSource {
+                signal_id: sid,
+                source_id: src,
+            }) => {
+                assert_eq!(sid, signal_id);
+                assert_eq!(src, source_id);
+            }
+            _ => panic!("Expected SignalLinkedToSource after roundtrip"),
+        }
+    }
+
+    #[test]
+    fn mentioned_entities_flow_into_world_event() {
+        let mut meta = test_meta("Community Workshop");
+        meta.mentioned_entities = vec![
+            Entity { name: "YMCA".to_string(), entity_type: EntityType::Organization, role: None },
+            Entity { name: "Habitat for Humanity".to_string(), entity_type: EntityType::Organization, role: None },
+        ];
+
+        let node = Node::HelpRequest(HelpRequestNode {
+            meta,
+            urgency: rootsignal_common::Urgency::Medium,
+            what_needed: Some("Volunteers".to_string()),
+            action_url: None,
+            stated_goal: None,
+        });
+
+        let world = node_to_world_event(&node, None);
+        match world {
+            WorldEvent::HelpRequested {
+                mentioned_entities, ..
+            } => {
+                assert_eq!(mentioned_entities.len(), 2);
+                assert_eq!(mentioned_entities[0].name, "YMCA");
+                assert_eq!(mentioned_entities[1].name, "Habitat for Humanity");
+                assert_eq!(mentioned_entities[0].entity_type, EntityType::Organization);
+            }
+            _ => panic!("Expected HelpRequested"),
+        }
+    }
+
+    #[test]
+    fn organizer_synthesized_as_entity_when_not_already_present() {
+        let meta = test_meta("Block Party");
+        let node = Node::Gathering(rootsignal_common::GatheringNode {
+            meta,
+            starts_at: Some(Utc::now()),
+            ends_at: None,
+            action_url: "https://example.com".to_string(),
+            organizer: Some("Lake Street Council".to_string()),
+            is_recurring: false,
+        });
+
+        let world = node_to_world_event(&node, None);
+        match world {
+            WorldEvent::GatheringAnnounced { mentioned_entities, .. } => {
+                assert_eq!(mentioned_entities.len(), 1);
+                assert_eq!(mentioned_entities[0].name, "Lake Street Council");
+                assert_eq!(mentioned_entities[0].role.as_deref(), Some("organizer"));
+            }
+            _ => panic!("Expected GatheringAnnounced"),
+        }
+    }
+
+    #[test]
+    fn organizer_not_duplicated_when_already_in_entities() {
+        let mut meta = test_meta("Block Party");
+        meta.mentioned_entities = vec![Entity {
+            name: "Lake Street Council".to_string(),
+            entity_type: EntityType::Organization,
+            role: Some("organizer".to_string()),
+        }];
+        let node = Node::Gathering(rootsignal_common::GatheringNode {
+            meta,
+            starts_at: Some(Utc::now()),
+            ends_at: None,
+            action_url: "https://example.com".to_string(),
+            organizer: Some("Lake Street Council".to_string()),
+            is_recurring: false,
+        });
+
+        let world = node_to_world_event(&node, None);
+        match world {
+            WorldEvent::GatheringAnnounced { mentioned_entities, .. } => {
+                assert_eq!(mentioned_entities.len(), 1, "organizer should not be duplicated");
+            }
+            _ => panic!("Expected GatheringAnnounced"),
+        }
+    }
+}
+

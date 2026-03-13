@@ -10,14 +10,32 @@
   },
   "dependencies": {
     "@apollo/client": "^3.12.0",
+    "@dagrejs/dagre": "^2.0.4",
+    "@floating-ui/react": "^0.27.19",
+    "@tailwindcss/typography": "^0.5.19",
+    "@types/d3-force": "^3.0.10",
+    "@xyflow/react": "^12.10.1",
+    "causal-inspector": "^0.1.6",
     "clsx": "^2.1.1",
+    "d3-force": "^3.0.0",
+    "flexlayout-react": "^0.8.18",
     "graphql": "^16.10.0",
+    "graphql-ws": "^6.0.7",
+    "lucide-react": "^0.575.0",
     "mapbox-gl": "^3.18.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.6.5",
     "react-router": "^7.2.0",
     "recharts": "^2.15.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.5.0"
+  },
+  "overrides": {
+    "causal-inspector": {
+      "@dagrejs/dagre": "$@dagrejs/dagre"
+    }
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",

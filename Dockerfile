@@ -16,14 +16,17 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # -- Stage 4: build the api binary --
 COPY . .
-RUN cargo build --release --bin api
+RUN cargo build --release --bin api --bin rootsignal-migrate
 
 # -- Stage 5: minimal runtime image --
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/api /usr/local/bin/api
+COPY --from=builder /app/target/release/rootsignal-migrate /usr/local/bin/rootsignal-migrate
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV API_HOST=0.0.0.0
 EXPOSE 3000
-CMD ["api"]
+CMD ["entrypoint.sh"]

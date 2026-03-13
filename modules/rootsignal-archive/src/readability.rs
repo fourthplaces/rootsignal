@@ -35,8 +35,14 @@ mod tests {
     fn basic_html_to_markdown() {
         let html = b"<html><body><h1>Hello World</h1><p>Some content here.</p></body></html>";
         let md = html_to_markdown(html, Some("https://example.com"));
-        assert!(md.contains("Hello World"), "Expected heading in output: {md}");
-        assert!(md.contains("Some content"), "Expected paragraph in output: {md}");
+        assert!(
+            md.contains("Hello World"),
+            "Expected heading in output: {md}"
+        );
+        assert!(
+            md.contains("Some content"),
+            "Expected paragraph in output: {md}"
+        );
     }
 
     #[test]

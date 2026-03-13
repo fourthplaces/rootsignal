@@ -9,38 +9,53 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use rootsignal_common::{
-    ActorNode, EvidenceNode, Node, NodeType, StoryNode, TagNode, TensionResponse,
-    CONFIDENCE_DISPLAY_LIMITED,
+    ActorNode, CitationNode, ConcernResponse, Node, NodeType, TagNode, CONFIDENCE_DISPLAY_LIMITED,
 };
-
 use crate::reader::{
-    extract_evidence, fuzz_node, node_type_label, row_to_actor, row_to_node_by_label, row_to_story,
+extract_citation, fuzz_node, node_type_label, row_to_actor, row_to_node_by_label,
 };
 use crate::GraphClient;
 
-/// In-memory snapshot of all displayable signals, stories, actors, and relationships.
+
+/// A geographic location node derived from signal projections.
+/// Keyed by (normalized_name, lat_bucket, lng_bucket) in Neo4j — we generate
+/// a deterministic UUID from these fields for use as graph node IDs.
+pub struct LocationNode {
+    pub id: Uuid,
+    pub name: String,
+    pub lat: f64,
+    pub lng: f64,
+    pub address: Option<String>,
+    pub precision: String,
+    pub signal_count: u32,
+}
+
+/// (signal_id, location_index, edge_type) triple for signal↔location edges.
+pub struct LocationEdge {
+    pub signal_id: Uuid,
+    pub location_idx: usize,
+    pub edge_type: String,
+}
+
+/// In-memory snapshot of all displayable signals, actors, and relationships.
 /// Signals are pre-fuzzed at load time. Expiry filtering is NOT pre-applied — it runs
 /// at query time via `passes_display_filter()` since it depends on `Utc::now()`.
 pub struct SignalCache {
     pub signals: Vec<Node>,
-    pub stories: Vec<StoryNode>,
     pub actors: Vec<ActorNode>,
+    pub locations: Vec<LocationNode>,
 
     pub signal_by_id: HashMap<Uuid, usize>,
-    pub story_by_id: HashMap<Uuid, usize>,
     pub actor_by_id: HashMap<Uuid, usize>,
+    pub location_by_id: HashMap<Uuid, usize>,
 
-    pub evidence_by_signal: HashMap<Uuid, Vec<EvidenceNode>>,
+    pub citation_by_signal: HashMap<Uuid, Vec<CitationNode>>,
     pub actors_by_signal: HashMap<Uuid, Vec<usize>>,
-    pub story_by_signal: HashMap<Uuid, usize>,
-    pub signals_by_story: HashMap<Uuid, Vec<usize>>,
-    pub stories_by_actor: HashMap<Uuid, Vec<usize>>,
-    pub tension_responses: HashMap<Uuid, Vec<TensionResponse>>,
-    pub actors_for_story: HashMap<Uuid, Vec<usize>>,
+    pub concern_responses: HashMap<Uuid, Vec<ConcernResponse>>,
+    pub location_edges: Vec<LocationEdge>,
 
     pub tags: Vec<TagNode>,
     pub tag_by_id: HashMap<Uuid, usize>,
-    pub tags_by_story: HashMap<Uuid, Vec<usize>>,
     pub tags_by_situation: HashMap<Uuid, Vec<usize>>,
 
     pub loaded_at: DateTime<Utc>,
@@ -50,16 +65,16 @@ impl SignalCache {
     pub async fn load(client: &GraphClient) -> Result<Self, neo4rs::Error> {
         let start = std::time::Instant::now();
 
-        // Load signals, stories, and actors concurrently
-        let (signals_result, stories_result, actors_result) = tokio::join!(
-            load_all_signals(client),
-            load_all_stories(client),
-            load_all_actors(client),
-        );
+        // Load signals, actors, and locations concurrently
+        let (signals_result, actors_result, locations_result) =
+            tokio::join!(load_all_signals(client), load_all_actors(client), load_all_locations(client));
 
         let mut signals = signals_result?;
-        let stories = stories_result?;
         let actors = actors_result?;
+        let locations = locations_result?;
+
+        let location_by_id: HashMap<Uuid, usize> =
+            locations.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
 
         // Apply coordinate fuzzing at load time
         for signal in &mut signals {
@@ -73,38 +88,24 @@ impl SignalCache {
             .filter_map(|(i, n)| n.meta().map(|m| (m.id, i)))
             .collect();
 
-        let story_by_id: HashMap<Uuid, usize> = stories
-            .iter()
-            .enumerate()
-            .map(|(i, s)| (s.id, i))
-            .collect();
-
-        let actor_by_id: HashMap<Uuid, usize> = actors
-            .iter()
-            .enumerate()
-            .map(|(i, a)| (a.id, i))
-            .collect();
+        let actor_by_id: HashMap<Uuid, usize> =
+            actors.iter().enumerate().map(|(i, a)| (a.id, i)).collect();
 
         // Load tags
         let tags = load_all_tags(client).await?;
-        let tag_by_id: HashMap<Uuid, usize> = tags
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.id, i))
-            .collect();
+        let tag_by_id: HashMap<Uuid, usize> =
+            tags.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
 
         // Load relationships concurrently
-        let (evidence_result, actor_signal_result, story_signal_result, tension_resp_result, story_tag_result, situation_tag_result) =
-            tokio::join!(
-                load_evidence(client),
-                load_actor_signal_edges(client),
-                load_story_signal_edges(client),
-                load_tension_responses(client),
-                load_story_tag_edges(client),
-                load_situation_tag_edges(client),
-            );
+        let (citation_result, actor_signal_result, concern_resp_result, situation_tag_result, loc_edge_result) = tokio::join!(
+            load_citations(client),
+            load_actor_signal_edges(client),
+            load_concern_responses(client),
+            load_situation_tag_edges(client),
+            load_location_signal_edges(client),
+        );
 
-        let evidence_by_signal = evidence_result?;
+        let citation_by_signal = citation_result?;
 
         // Build actors_by_signal map (signal_id -> vec of actor indices)
         let actor_signal_edges = actor_signal_result?;
@@ -118,62 +119,18 @@ impl SignalCache {
             }
         }
 
-        // Build story<->signal maps
-        let story_signal_edges = story_signal_result?;
-        let mut story_by_signal: HashMap<Uuid, usize> = HashMap::new();
-        let mut signals_by_story: HashMap<Uuid, Vec<usize>> = HashMap::new();
-        for (story_id, signal_id) in &story_signal_edges {
-            if let (Some(&story_idx), Some(&signal_idx)) =
-                (story_by_id.get(story_id), signal_by_id.get(signal_id))
-            {
-                story_by_signal.insert(*signal_id, story_idx);
-                signals_by_story
-                    .entry(*story_id)
-                    .or_default()
-                    .push(signal_idx);
-            }
-        }
+        let concern_responses = concern_resp_result?;
 
-        // Derive stories_by_actor from actor_signal_edges + story_by_signal
-        let mut stories_by_actor: HashMap<Uuid, Vec<usize>> = HashMap::new();
-        for (signal_id, actor_id) in &actor_signal_edges {
-            if let Some(&story_idx) = story_by_signal.get(signal_id) {
-                let entries = stories_by_actor.entry(*actor_id).or_default();
-                if !entries.contains(&story_idx) {
-                    entries.push(story_idx);
-                }
-            }
-        }
-
-        // Derive actors_for_story from signals_by_story + actors_by_signal
-        let mut actors_for_story: HashMap<Uuid, Vec<usize>> = HashMap::new();
-        for (story_id, signal_indices) in &signals_by_story {
-            let mut actor_set = Vec::new();
-            for &sig_idx in signal_indices {
-                if let Some(meta) = signals[sig_idx].meta() {
-                    if let Some(actor_indices) = actors_by_signal.get(&meta.id) {
-                        for &actor_idx in actor_indices {
-                            if !actor_set.contains(&actor_idx) {
-                                actor_set.push(actor_idx);
-                            }
-                        }
-                    }
-                }
-            }
-            actors_for_story.insert(*story_id, actor_set);
-        }
-
-        let tension_responses = tension_resp_result?;
-
-        // Build tags_by_story map (story_id -> vec of tag indices)
-        let story_tag_edges = story_tag_result?;
-        let mut tags_by_story: HashMap<Uuid, Vec<usize>> = HashMap::new();
-        for (story_id, tag_id) in &story_tag_edges {
-            if let Some(&tag_idx) = tag_by_id.get(tag_id) {
-                let entries = tags_by_story.entry(*story_id).or_default();
-                if !entries.contains(&tag_idx) {
-                    entries.push(tag_idx);
-                }
+        // Build location_edges (signal_id -> location index + edge type)
+        let raw_loc_edges = loc_edge_result?;
+        let mut location_edges: Vec<LocationEdge> = Vec::new();
+        for (signal_id, loc_id, edge_type) in &raw_loc_edges {
+            if let Some(&loc_idx) = location_by_id.get(loc_id) {
+                location_edges.push(LocationEdge {
+                    signal_id: *signal_id,
+                    location_idx: loc_idx,
+                    edge_type: edge_type.clone(),
+                });
             }
         }
 
@@ -192,32 +149,29 @@ impl SignalCache {
         let elapsed = start.elapsed();
         info!(
             signals = signals.len(),
-            stories = stories.len(),
             actors = actors.len(),
+            locations = locations.len(),
             tags = tags.len(),
-            evidence_signals = evidence_by_signal.len(),
-            tension_responses = tension_responses.len(),
+            evidence_signals = citation_by_signal.len(),
+            concern_responses = concern_responses.len(),
+            location_edges = location_edges.len(),
             elapsed_ms = elapsed.as_millis(),
             "Signal cache loaded"
         );
 
         Ok(Self {
             signals,
-            stories,
             actors,
+            locations,
             signal_by_id,
-            story_by_id,
             actor_by_id,
-            evidence_by_signal,
+            location_by_id,
+            citation_by_signal,
             actors_by_signal,
-            story_by_signal,
-            signals_by_story,
-            stories_by_actor,
-            tension_responses,
-            actors_for_story,
+            concern_responses,
+            location_edges,
             tags,
             tag_by_id,
-            tags_by_story,
             tags_by_situation,
             loaded_at: Utc::now(),
         })
@@ -295,10 +249,11 @@ impl CacheStore {
 async fn load_all_signals(client: &GraphClient) -> Result<Vec<Node>, neo4rs::Error> {
     let all_types = [
         NodeType::Gathering,
-        NodeType::Aid,
-        NodeType::Need,
-        NodeType::Notice,
-        NodeType::Tension,
+        NodeType::Resource,
+        NodeType::HelpRequest,
+        NodeType::Announcement,
+        NodeType::Concern,
+        NodeType::Condition,
     ];
 
     let branches: Vec<String> = all_types
@@ -317,7 +272,7 @@ async fn load_all_signals(client: &GraphClient) -> Result<Vec<Node>, neo4rs::Err
     let q = query(&cypher).param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
 
     let mut signals = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         if let Some(node) = row_to_node_by_label(&row) {
             signals.push(node);
@@ -326,22 +281,10 @@ async fn load_all_signals(client: &GraphClient) -> Result<Vec<Node>, neo4rs::Err
     Ok(signals)
 }
 
-async fn load_all_stories(client: &GraphClient) -> Result<Vec<StoryNode>, neo4rs::Error> {
-    let q = query("MATCH (s:Story) RETURN s");
-    let mut stories = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
-    while let Some(row) = stream.next().await? {
-        if let Some(story) = row_to_story(&row) {
-            stories.push(story);
-        }
-    }
-    Ok(stories)
-}
-
 async fn load_all_actors(client: &GraphClient) -> Result<Vec<ActorNode>, neo4rs::Error> {
     let q = query("MATCH (a:Actor) RETURN a");
     let mut actors = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         if let Some(actor) = row_to_actor(&row) {
             actors.push(actor);
@@ -350,21 +293,21 @@ async fn load_all_actors(client: &GraphClient) -> Result<Vec<ActorNode>, neo4rs:
     Ok(actors)
 }
 
-async fn load_evidence(
+async fn load_citations(
     client: &GraphClient,
-) -> Result<HashMap<Uuid, Vec<EvidenceNode>>, neo4rs::Error> {
-    let cypher = "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-         WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
+) -> Result<HashMap<Uuid, Vec<CitationNode>>, neo4rs::Error> {
+    let cypher = "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
          RETURN n.id AS signal_id, collect(ev) AS evidence";
 
     let q = query(cypher);
-    let mut map: HashMap<Uuid, Vec<EvidenceNode>> = HashMap::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut map: HashMap<Uuid, Vec<CitationNode>> = HashMap::new();
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("signal_id").unwrap_or_default();
         if let Ok(id) = Uuid::parse_str(&id_str) {
-            let evidence = extract_evidence(&row);
+            let evidence = extract_citation(&row);
             if !evidence.is_empty() {
                 map.insert(id, evidence);
             }
@@ -374,16 +317,14 @@ async fn load_evidence(
 }
 
 /// Returns (signal_id, actor_id) pairs.
-async fn load_actor_signal_edges(
-    client: &GraphClient,
-) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
+async fn load_actor_signal_edges(client: &GraphClient) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
     let cypher = "MATCH (a:Actor)-[:ACTED_IN]->(n)
-         WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
          RETURN n.id AS signal_id, a.id AS actor_id";
 
     let q = query(cypher);
     let mut edges = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let sid_str: String = row.get("signal_id").unwrap_or_default();
@@ -395,49 +336,27 @@ async fn load_actor_signal_edges(
     Ok(edges)
 }
 
-/// Returns (story_id, signal_id) pairs.
-async fn load_story_signal_edges(
+async fn load_concern_responses(
     client: &GraphClient,
-) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
-    let cypher = "MATCH (s:Story)-[:CONTAINS]->(n)
-         WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
-         RETURN s.id AS story_id, n.id AS signal_id";
-
-    let q = query(cypher);
-    let mut edges = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
-
-    while let Some(row) = stream.next().await? {
-        let sid_str: String = row.get("story_id").unwrap_or_default();
-        let nid_str: String = row.get("signal_id").unwrap_or_default();
-        if let (Ok(sid), Ok(nid)) = (Uuid::parse_str(&sid_str), Uuid::parse_str(&nid_str)) {
-            edges.push((sid, nid));
-        }
-    }
-    Ok(edges)
-}
-
-async fn load_tension_responses(
-    client: &GraphClient,
-) -> Result<HashMap<Uuid, Vec<TensionResponse>>, neo4rs::Error> {
-    let cypher = "MATCH (t:Tension)<-[rel:RESPONDS_TO|DRAWN_TO]-(n)
-         WHERE n:Aid OR n:Gathering OR n:Need
-         RETURN t.id AS tension_id, n, labels(n)[0] AS node_label,
+) -> Result<HashMap<Uuid, Vec<ConcernResponse>>, neo4rs::Error> {
+    let cypher = "MATCH (t:Concern)<-[rel:RESPONDS_TO|DRAWN_TO]-(n)
+         WHERE n:Resource OR n:Gathering OR n:HelpRequest
+         RETURN t.id AS concern_id, n, labels(n)[0] AS node_label,
                 rel.match_strength AS match_strength, rel.explanation AS explanation";
 
     let q = query(cypher);
-    let mut map: HashMap<Uuid, Vec<TensionResponse>> = HashMap::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut map: HashMap<Uuid, Vec<ConcernResponse>> = HashMap::new();
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
-        let tid_str: String = row.get("tension_id").unwrap_or_default();
-        let Ok(tid) = Uuid::parse_str(&tid_str) else {
+        let cid_str: String = row.get("concern_id").unwrap_or_default();
+        let Ok(cid) = Uuid::parse_str(&cid_str) else {
             continue;
         };
         if let Some(node) = row_to_node_by_label(&row) {
             let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
             let explanation: String = row.get("explanation").unwrap_or_default();
-            map.entry(tid).or_default().push(TensionResponse {
+            map.entry(cid).or_default().push(ConcernResponse {
                 node: fuzz_node(node),
                 match_strength,
                 explanation,
@@ -451,7 +370,7 @@ async fn load_all_tags(client: &GraphClient) -> Result<Vec<TagNode>, neo4rs::Err
     let cypher = "MATCH (t:Tag) RETURN t.id AS id, t.slug AS slug, t.name AS name, t.created_at AS created_at";
     let q = query(cypher);
     let mut tags = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
@@ -460,8 +379,8 @@ async fn load_all_tags(client: &GraphClient) -> Result<Vec<TagNode>, neo4rs::Err
         };
         let slug: String = row.get("slug").unwrap_or_default();
         let name: String = row.get("name").unwrap_or_default();
-        let created_at = crate::writer::row_datetime_opt_pub(&row, "created_at")
-            .unwrap_or_else(Utc::now);
+        let created_at =
+            crate::writer::row_datetime_opt_pub(&row, "created_at").unwrap_or_else(Utc::now);
 
         tags.push(TagNode {
             id,
@@ -473,21 +392,89 @@ async fn load_all_tags(client: &GraphClient) -> Result<Vec<TagNode>, neo4rs::Err
     Ok(tags)
 }
 
-async fn load_story_tag_edges(
-    client: &GraphClient,
-) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
-    let cypher = "MATCH (s:Story)-[:TAGGED]->(t:Tag)
-         RETURN s.id AS story_id, t.id AS tag_id";
+/// Deterministic UUID from location composite key so graph explorer has stable IDs.
+fn location_composite_id(normalized_name: &str, lat_bucket: f64, lng_bucket: f64) -> Uuid {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    normalized_name.hash(&mut hasher);
+    lat_bucket.to_bits().hash(&mut hasher);
+    lng_bucket.to_bits().hash(&mut hasher);
+    let hash = hasher.finish();
+    // Pack into a v5-style UUID (bytes 0..8 from hash, rest zeroed with version/variant bits)
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&hash.to_be_bytes());
+    // Set version 4 and variant bits for a valid UUID
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
+async fn load_all_locations(client: &GraphClient) -> Result<Vec<LocationNode>, neo4rs::Error> {
+    let cypher = "MATCH (l:Location)
+         OPTIONAL MATCH (n)-[]->(l)
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
+         RETURN l.normalized_name AS normalized_name,
+                l.lat_bucket AS lat_bucket, l.lng_bucket AS lng_bucket,
+                l.name AS name, l.lat AS lat, l.lng AS lng,
+                l.address AS address, l.precision AS precision,
+                count(n) AS signal_count";
+
     let q = query(cypher);
-    let mut edges = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut locations = Vec::new();
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
-        let sid_str: String = row.get("story_id").unwrap_or_default();
-        let tid_str: String = row.get("tag_id").unwrap_or_default();
-        if let (Ok(sid), Ok(tid)) = (Uuid::parse_str(&sid_str), Uuid::parse_str(&tid_str)) {
-            edges.push((sid, tid));
+        let normalized_name: String = row.get("normalized_name").unwrap_or_default();
+        let lat_bucket: f64 = row.get("lat_bucket").unwrap_or(0.0);
+        let lng_bucket: f64 = row.get("lng_bucket").unwrap_or(0.0);
+        let name: String = row.get("name").unwrap_or_default();
+        let lat: f64 = row.get("lat").unwrap_or(0.0);
+        let lng: f64 = row.get("lng").unwrap_or(0.0);
+        let address: Option<String> = row.get("address").ok().filter(|s: &String| !s.is_empty());
+        let precision: String = row.get("precision").unwrap_or_else(|_| "exact".to_string());
+        let signal_count: i64 = row.get("signal_count").unwrap_or(0);
+
+        if name.is_empty() || (lat == 0.0 && lng == 0.0) {
+            continue;
         }
+
+        let id = location_composite_id(&normalized_name, lat_bucket, lng_bucket);
+        locations.push(LocationNode {
+            id,
+            name,
+            lat,
+            lng,
+            address,
+            precision,
+            signal_count: signal_count as u32,
+        });
+    }
+    Ok(locations)
+}
+
+/// Returns (signal_id, location_id, edge_type) triples.
+async fn load_location_signal_edges(client: &GraphClient) -> Result<Vec<(Uuid, Uuid, String)>, neo4rs::Error> {
+    let cypher = "MATCH (n)-[r:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
+         WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
+         RETURN n.id AS signal_id,
+                l.normalized_name AS normalized_name,
+                l.lat_bucket AS lat_bucket, l.lng_bucket AS lng_bucket,
+                type(r) AS edge_type";
+
+    let q = query(cypher);
+    let mut edges = Vec::new();
+    let mut stream = client.execute(q).await?;
+
+    while let Some(row) = stream.next().await? {
+        let sid_str: String = row.get("signal_id").unwrap_or_default();
+        let Ok(sid) = Uuid::parse_str(&sid_str) else { continue };
+        let normalized_name: String = row.get("normalized_name").unwrap_or_default();
+        let lat_bucket: f64 = row.get("lat_bucket").unwrap_or(0.0);
+        let lng_bucket: f64 = row.get("lng_bucket").unwrap_or(0.0);
+        let edge_type: String = row.get("edge_type").unwrap_or_default();
+
+        let loc_id = location_composite_id(&normalized_name, lat_bucket, lng_bucket);
+        edges.push((sid, loc_id, edge_type));
     }
     Ok(edges)
 }
@@ -499,7 +486,7 @@ async fn load_situation_tag_edges(
          RETURN s.id AS situation_id, t.id AS tag_id";
     let q = query(cypher);
     let mut edges = Vec::new();
-    let mut stream = client.graph.execute(q).await?;
+    let mut stream = client.execute(q).await?;
 
     while let Some(row) = stream.next().await? {
         let sid_str: String = row.get("situation_id").unwrap_or_default();

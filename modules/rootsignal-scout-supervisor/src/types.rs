@@ -145,7 +145,7 @@ impl fmt::Display for SupervisorStats {
 /// Stats from auto-fix checks.
 #[derive(Debug, Default)]
 pub struct AutoFixStats {
-    pub orphaned_evidence_deleted: u64,
+    pub orphaned_citations_deleted: u64,
     pub orphaned_edges_deleted: u64,
     pub actors_merged: u64,
     pub empty_signals_deleted: u64,
@@ -156,8 +156,8 @@ impl fmt::Display for AutoFixStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "auto_fix(orphaned_evidence={} orphaned_edges={} actors_merged={} empty_signals={} fake_coords={})",
-            self.orphaned_evidence_deleted,
+            "auto_fix(orphaned_citations={} orphaned_edges={} actors_merged={} empty_signals={} fake_coords={})",
+            self.orphaned_citations_deleted,
             self.orphaned_edges_deleted,
             self.actors_merged,
             self.empty_signals_deleted,

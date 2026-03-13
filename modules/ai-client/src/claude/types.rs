@@ -120,6 +120,8 @@ pub(crate) struct ChatRequest {
     pub tools: Option<Vec<ToolDefinitionWire>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
 }
 
 impl ChatRequest {
@@ -132,6 +134,7 @@ impl ChatRequest {
             temperature: None,
             tools: None,
             tool_choice: None,
+            stream: None,
         }
     }
 
@@ -162,6 +165,11 @@ impl ChatRequest {
 
     pub fn tool(mut self, tool: ToolDefinitionWire) -> Self {
         self.tools.get_or_insert_with(Vec::new).push(tool);
+        self
+    }
+
+    pub fn streaming(mut self) -> Self {
+        self.stream = Some(true);
         self
     }
 }

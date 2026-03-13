@@ -1,10 +1,15 @@
 pub mod config;
+pub mod describe;
 pub mod error;
+pub mod events;
 pub mod quality;
 pub mod safety;
+pub mod system_events;
+pub mod telemetry_events;
 pub mod types;
 
 pub use config::Config;
+pub use describe::*;
 pub use error::RootSignalError;
 pub use quality::*;
 pub use safety::*;

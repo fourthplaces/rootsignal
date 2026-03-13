@@ -1,0 +1,1462 @@
+use std::sync::Arc;
+
+use ai_client::Agent;
+use anyhow::Result;
+use chrono::Utc;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
+use uuid::Uuid;
+
+use rootsignal_common::{
+    Entity, ResourceOfferNode, ConditionNode, GatheringNode, GeoPoint, GeoPrecision,
+    HelpRequestNode, Location, Node, NodeMeta, AnnouncementNode, ReviewStatus, ScheduleNode,
+    SensitivityLevel, Severity, ConcernNode, Urgency,
+};
+use rootsignal_common::telemetry_events::TelemetryEvent;
+use serde::de;
+
+
+/// What the LLM returns for each extracted signal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExtractedSignal {
+    /// Signal type: "gathering", "resource", "help_request", "announcement", "concern", or "condition"
+    pub signal_type: String,
+    pub title: String,
+    pub summary: String,
+    /// "general", "elevated", or "sensitive"
+    pub sensitivity: String,
+    /// Latitude if location can be determined
+    pub latitude: Option<f64>,
+    /// Longitude if location can be determined
+    pub longitude: Option<f64>,
+    /// Geo precision: "exact", "neighborhood"
+    pub geo_precision: Option<String>,
+    /// Human-readable location name (e.g. "YWCA Midtown", "Lake Nokomis")
+    pub location_name: Option<String>,
+    /// ISO datetime string for event start time
+    pub starts_at: Option<String>,
+    /// ISO datetime string for event end time
+    pub ends_at: Option<String>,
+    /// URL where the user can take action
+    pub action_url: Option<String>,
+    /// Organizer name (for gatherings)
+    pub organizer: Option<String>,
+    /// Whether this is recurring
+    pub is_recurring: Option<bool>,
+    /// Availability schedule (for Resource signals)
+    pub availability: Option<String>,
+    /// Who is eligible as explicitly stated in the content (for Resource signals)
+    pub eligibility: Option<String>,
+    /// Whether this is an ongoing opportunity
+    pub is_ongoing: Option<bool>,
+    /// Urgency level for HelpRequest signals: "low", "medium", "high", "critical"
+    pub urgency: Option<String>,
+    /// What is needed (for HelpRequest signals)
+    pub what_needed: Option<String>,
+    /// The goal as explicitly stated in the content (for HelpRequest signals)
+    pub stated_goal: Option<String>,
+    /// Core subject in 5 words or fewer (for Concern, Condition, Announcement)
+    pub subject: Option<String>,
+    /// Severity: "low", "medium", "high", "critical" (for Concern, Condition, Announcement)
+    pub severity: Option<String>,
+    /// Category (for Announcement and Concern signals)
+    pub category: Option<String>,
+    /// Effective date for Announcement signals (ISO 8601)
+    pub effective_date: Option<String>,
+    /// Source authority for Announcement signals (e.g. "City of Minneapolis")
+    pub source_authority: Option<String>,
+    /// Best-guess date when this content was published or last updated (ISO 8601).
+    /// Used for staleness filtering — signals older than 1 year are dropped.
+    pub published_at: Option<String>,
+    /// Organizations, groups, or individuals mentioned in the signal
+    pub mentioned_entities: Option<Vec<Entity>>,
+    /// The specific source URL this signal was extracted from (e.g. a specific post URL).
+    /// When extracting from multiple posts, return the URL of the post this signal came from.
+    pub source_url: Option<String>,
+    /// Content item identifier matching the header (e.g. "post_3" for "--- Post 3 ---").
+    /// Used to resolve the permalink in code rather than relying on the LLM to copy URLs.
+    pub source_id: Option<String>,
+    /// What is being opposed (for Concern signals)
+    pub opposing: Option<String>,
+    /// Who or what reported/observed this (for Condition signals)
+    pub observed_by: Option<String>,
+    /// Quantitative reading if the content includes one (for Condition signals)
+    pub measurement: Option<String>,
+    /// Scope of what's affected (for Condition signals)
+    pub affected_scope: Option<String>,
+    /// Up to 3 search queries this signal implies — expand outward from this
+    /// signal to discover related signals from different perspectives.
+    #[serde(default)]
+    pub implied_queries: Vec<String>,
+    /// Resource capabilities this signal requires, prefers, or offers.
+    #[serde(default, deserialize_with = "deserialize_resource_tags")]
+    pub resources: Vec<ResourceTag>,
+    /// 3-5 thematic tags as lowercase-with-hyphens slugs (e.g. "ice-enforcement", "housing-displacement").
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Whether this signal is first-hand (from someone directly affected/involved).
+    /// Only populated for non-entity search/feed sources. None = not assessed.
+    pub is_firsthand: Option<bool>,
+    /// The person, organization, or account that authored/published this content.
+    /// For social posts: the account holder. For org pages: the organization.
+    /// For news: the journalist or publication.
+    pub author_actor: Option<String>,
+    /// RFC 5545 RRULE string for recurring schedules (e.g., "FREQ=WEEKLY;BYDAY=TU").
+    /// For gathering and aid signals with recurring schedules.
+    pub rrule: Option<String>,
+    /// Natural language schedule text from the source (e.g., "Every Tuesday 6-8pm").
+    /// Always include when the source mentions a schedule, even if rrule is also provided.
+    pub schedule_text: Option<String>,
+    /// Explicit dates for irregular schedules as ISO 8601 strings.
+    #[serde(default)]
+    pub explicit_dates: Vec<String>,
+    /// Exception dates to exclude from recurrence as ISO 8601 strings.
+    #[serde(default)]
+    pub exception_dates: Vec<String>,
+    /// IANA timezone for the schedule (e.g., "America/Chicago").
+    pub schedule_timezone: Option<String>,
+}
+
+/// The relationship a signal has with a resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceRole {
+    Requires,
+    Prefers,
+    Offers,
+}
+
+impl ResourceRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ResourceRole::Requires => "requires",
+            ResourceRole::Prefers => "prefers",
+            ResourceRole::Offers => "offers",
+        }
+    }
+}
+
+impl std::fmt::Display for ResourceRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A resource capability extracted from a signal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ResourceTag {
+    /// Canonical slug (e.g. "vehicle", "bilingual-spanish", "legal-expertise").
+    /// Use the seed vocabulary when it fits; otherwise propose a concise noun-phrase slug.
+    pub slug: String,
+    /// The relationship: requires, prefers, or offers.
+    pub role: ResourceRole,
+    /// 0.0–1.0 confidence that this resource is relevant
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
+    /// Optional context (e.g. "10 people", "Saturday mornings", "500 lbs shelf-stable protein")
+    pub context: Option<String>,
+}
+
+fn default_confidence() -> f64 {
+    0.8
+}
+
+/// Deserialize resource tags, silently dropping any with invalid roles.
+/// This prevents a single bad LLM output from losing the entire batch.
+pub fn deserialize_resource_tags<'de, D>(deserializer: D) -> std::result::Result<Vec<ResourceTag>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let values: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    let mut tags = Vec::with_capacity(values.len());
+    for value in values {
+        match serde_json::from_value::<ResourceTag>(value) {
+            Ok(tag) => tags.push(tag),
+            Err(e) => {
+                warn!("Skipping resource tag with invalid role: {e}");
+            }
+        }
+    }
+    Ok(tags)
+}
+
+/// The full extraction response from the LLM.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExtractionResponse {
+    #[serde(default, deserialize_with = "deserialize_signals")]
+    pub signals: Vec<ExtractedSignal>,
+}
+
+/// Handle LLM returning signals as either a proper JSON array or a stringified JSON array.
+fn deserialize_signals<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<ExtractedSignal>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(_) => serde_json::from_value(value).map_err(de::Error::custom),
+        serde_json::Value::String(ref s) => serde_json::from_str(s).map_err(de::Error::custom),
+        serde_json::Value::Null => Ok(Vec::new()),
+        _ => Err(de::Error::custom("signals must be an array or JSON string")),
+    }
+}
+
+// StructuredOutput is auto-implemented via blanket impl for JsonSchema + DeserializeOwned
+
+/// A signal that was extracted by the LLM but rejected by post-processing filters.
+#[derive(Debug, Clone)]
+pub struct RejectedSignal {
+    pub title: String,
+    pub source_url: String,
+    pub reason: String,
+}
+
+/// Result of signal extraction — nodes plus any implied discovery queries.
+#[derive(Default)]
+pub struct ExtractionResult {
+    pub nodes: Vec<Node>,
+    pub implied_queries: Vec<String>,
+    /// Resource tags paired with the signal node UUID they came from.
+    pub resource_tags: Vec<(Uuid, Vec<ResourceTag>)>,
+    /// Thematic tags paired with the signal node UUID they came from.
+    pub signal_tags: Vec<(Uuid, Vec<String>)>,
+    /// How many signals the LLM returned before any filtering.
+    pub raw_signal_count: usize,
+    /// Signals that were extracted but rejected by filters (for audit logging).
+    pub rejected: Vec<RejectedSignal>,
+    /// Schedule nodes paired with the signal node UUID they belong to.
+    pub schedules: Vec<(Uuid, ScheduleNode)>,
+    /// Author actor display names paired with the signal node UUID.
+    /// Used for actor creation on owned sources (social accounts).
+    pub author_actors: Vec<(Uuid, String)>,
+    /// Category classifications paired with the signal node UUID.
+    /// Emitted as CategoryClassified system events by the caller.
+    pub categories: Vec<(Uuid, String)>,
+    /// Content item identifiers paired with signal node UUID (e.g. "post_3").
+    /// Callers use this to resolve permalinks from the original content array.
+    pub source_ids: Vec<(Uuid, String)>,
+    /// SystemLog breadcrumbs from the extraction process.
+    pub logs: Vec<TelemetryEvent>,
+}
+
+// --- SignalExtractor trait ---
+
+#[async_trait::async_trait]
+pub trait SignalExtractor: Send + Sync {
+    async fn extract(&self, content: &str, source_url: &str) -> Result<ExtractionResult>;
+}
+
+pub struct Extractor {
+    ai: Arc<dyn Agent>,
+    system_prompt: String,
+}
+
+impl Extractor {
+    pub fn new(
+        ai: Arc<dyn Agent>,
+        city_name: &str,
+        default_lat: f64,
+        default_lng: f64,
+    ) -> Self {
+        Self::with_tag_vocabulary(ai, city_name, default_lat, default_lng, &[])
+    }
+
+    pub fn with_tag_vocabulary(
+        ai: Arc<dyn Agent>,
+        city_name: &str,
+        default_lat: f64,
+        default_lng: f64,
+        tag_vocabulary: &[String],
+    ) -> Self {
+        let system_prompt =
+            build_system_prompt(city_name, default_lat, default_lng, tag_vocabulary);
+        Self {
+            ai,
+            system_prompt,
+        }
+    }
+
+    /// Create an extractor with a pre-built system prompt (for genome-driven evolution).
+    pub fn with_system_prompt(ai: Arc<dyn Agent>, system_prompt: String) -> Self {
+        Self {
+            ai,
+            system_prompt,
+        }
+    }
+
+    /// Extract signals from page content (internal implementation).
+    async fn extract_impl(&self, content: &str, source_url: &str) -> Result<ExtractionResult> {
+        // Truncate content to avoid token limits
+        let content = if content.len() > 30_000 {
+            let mut end = 30_000;
+            while !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            &content[..end]
+        } else {
+            content
+        };
+
+        let user_prompt = format!(
+            "Extract all signals from this web page.\n\nSource URL: {source_url}\n\n---\n\n{content}"
+        );
+
+        let schema = serde_json::to_value(schemars::schema_for!(ExtractionResponse))?;
+        let raw_json = self.ai.extract_json(&self.system_prompt, &user_prompt, schema).await?;
+
+        let response: ExtractionResponse = match serde_json::from_value(raw_json.clone()) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    source_url,
+                    raw = %raw_json,
+                    error = %e,
+                    "LLM response failed to deserialize"
+                );
+                return Err(e.into());
+            }
+        };
+
+        if response.signals.is_empty() {
+            warn!(
+                source_url,
+                raw = %raw_json,
+                "LLM returned 0 signals"
+            );
+        }
+
+        let result = Self::convert_signals(response, source_url);
+        Ok(result)
+    }
+
+    /// Convert raw LLM extraction output into typed domain nodes.
+    ///
+    /// Pure transformation — no I/O, no LLM. Handles:
+    /// - Junk signal filtering ("unable to extract", "page not found")
+    /// - Non-firsthand signal rejection
+    /// - Sensitivity/severity/urgency string → enum mapping
+    /// - Date parsing (RFC3339 → DateTime<Utc>)
+    /// - Geo precision mapping
+    /// - RRULE validation
+    /// - Tag slugification
+    /// - source_url fallback (signal-level → page-level)
+    pub fn convert_signals(response: ExtractionResponse, source_url: &str) -> ExtractionResult {
+        let raw_signal_count = response.signals.len();
+        let implied_queries: Vec<String> = response
+            .signals
+            .iter()
+            .flat_map(|s| s.implied_queries.iter().cloned())
+            .collect();
+
+        let now = Utc::now();
+        let mut nodes = Vec::new();
+        let mut resource_tags: Vec<(Uuid, Vec<ResourceTag>)> = Vec::new();
+        let mut signal_tags: Vec<(Uuid, Vec<String>)> = Vec::new();
+        let mut rejected: Vec<RejectedSignal> = Vec::new();
+        let mut schedules: Vec<(Uuid, ScheduleNode)> = Vec::new();
+        let mut author_actors: Vec<(Uuid, String)> = Vec::new();
+        let mut categories: Vec<(Uuid, String)> = Vec::new();
+        let mut source_ids: Vec<(Uuid, String)> = Vec::new();
+
+        for signal in response.signals {
+            // Skip junk signals from extraction failures
+            let title_lower = signal.title.to_lowercase();
+            if ["unable to extract", "page not found", "error loading"]
+                .iter()
+                .any(|junk| title_lower.contains(junk))
+            {
+                warn!(
+                    source_url,
+                    title = signal.title,
+                    "Filtered junk signal from extraction"
+                );
+                rejected.push(RejectedSignal {
+                    title: signal.title.clone(),
+                    source_url: source_url.to_string(),
+                    reason: "junk_extraction".to_string(),
+                });
+                continue;
+            }
+
+            // Drop signals flagged as not first-hand (political commentary, not personally affected)
+            if signal.is_firsthand == Some(false) {
+                info!(
+                    source_url,
+                    title = signal.title,
+                    "Dropped non-first-hand signal"
+                );
+                rejected.push(RejectedSignal {
+                    title: signal.title.clone(),
+                    source_url: source_url.to_string(),
+                    reason: "not_firsthand".to_string(),
+                });
+                continue;
+            }
+
+            let sensitivity = match signal.sensitivity.as_str() {
+                "sensitive" => SensitivityLevel::Sensitive,
+                "elevated" => SensitivityLevel::Elevated,
+                _ => SensitivityLevel::General,
+            };
+
+            // LLM-provided lat/lng are unreliable (wrong country). Ignore them;
+            // the geocoder resolves coordinates from the location name.
+            let location: Option<GeoPoint> = None;
+
+            // Use the LLM-returned source_url when present (specific post URL),
+            // falling back to the page-level source_url.
+            let effective_source_url = signal
+                .source_url
+                .as_deref()
+                .filter(|u| !u.is_empty())
+                .unwrap_or(source_url)
+                .to_string();
+
+            let published_at = signal
+                .published_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+
+            let node_id = Uuid::new_v4();
+            let meta = NodeMeta {
+                id: node_id,
+                title: signal.title.clone(),
+                summary: signal.summary.clone(),
+                sensitivity,
+                confidence: 0.0, // Will be computed by QualityScorer
+
+                corroboration_count: 0,
+                locations: {
+                    let mut locs = Vec::new();
+                    if location.is_some() || signal.location_name.is_some() {
+                        let role = match signal.signal_type.as_str() {
+                            "gathering" => Some("venue".to_string()),
+                            "condition" => Some("affected_area".to_string()),
+                            _ => None,
+                        };
+                        locs.push(Location {
+                            point: location,
+                            name: signal.location_name.clone(),
+                            address: None,
+                            role,
+                            timezone: None,
+                        });
+                    }
+                    locs
+                },
+                url: effective_source_url.clone(),
+                extracted_at: now,
+                published_at,
+                last_confirmed_active: now,
+                source_diversity: 1,
+                cause_heat: 0.0,
+                channel_diversity: 1,
+                implied_queries: signal.implied_queries.clone(),
+                review_status: ReviewStatus::Staged,
+                was_corrected: false,
+                corrections: None,
+                rejection_reason: None,
+                mentioned_entities: signal.mentioned_entities.clone().unwrap_or_default(),
+                category: None,
+            };
+
+            let node = match signal.signal_type.as_str() {
+                "gathering" => {
+                    let starts_at = signal
+                        .starts_at
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc));
+                    let ends_at = signal
+                        .ends_at
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc));
+
+                    Node::Gathering(GatheringNode {
+                        meta,
+                        starts_at,
+                        ends_at,
+                        action_url: signal.action_url.unwrap_or(effective_source_url),
+                        organizer: signal.organizer,
+                        is_recurring: false,
+                    })
+                }
+                "resource" => Node::Resource(ResourceOfferNode {
+                    meta,
+                    action_url: signal.action_url.unwrap_or(effective_source_url),
+                    availability: signal.availability,
+                    eligibility: signal.eligibility,
+                    is_ongoing: signal.is_ongoing.unwrap_or(true),
+                }),
+                "help_request" => {
+                    let urgency = match signal.urgency.as_deref() {
+                        Some("high") => Urgency::High,
+                        Some("critical") => Urgency::Critical,
+                        Some("low") => Urgency::Low,
+                        _ => Urgency::Medium,
+                    };
+                    Node::HelpRequest(HelpRequestNode {
+                        meta,
+                        urgency,
+                        what_needed: signal.what_needed,
+                        action_url: signal.action_url,
+                        stated_goal: signal.stated_goal,
+                    })
+                }
+                "announcement" => {
+                    let severity = match signal.severity.as_deref() {
+                        Some("high") => Severity::High,
+                        Some("critical") => Severity::Critical,
+                        Some("low") => Severity::Low,
+                        _ => Severity::Medium,
+                    };
+                    let effective_date = signal
+                        .effective_date
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc));
+
+                    Node::Announcement(AnnouncementNode {
+                        meta,
+                        severity,
+                        subject: signal.subject.clone(),
+                        effective_date,
+                        source_authority: signal.source_authority,
+                        action_url: signal.action_url.clone(),
+                    })
+                }
+                "concern" => {
+                    let severity = match signal.severity.as_deref() {
+                        Some("high") => Severity::High,
+                        Some("critical") => Severity::Critical,
+                        Some("low") => Severity::Low,
+                        _ => Severity::Medium,
+                    };
+                    Node::Concern(ConcernNode {
+                        meta,
+                        severity,
+                        subject: signal.subject.clone(),
+                        opposing: signal.opposing.clone(),
+                        action_url: signal.action_url.clone(),
+                    })
+                }
+                "condition" => {
+                    let severity = match signal.severity.as_deref() {
+                        Some("high") => Severity::High,
+                        Some("critical") => Severity::Critical,
+                        Some("low") => Severity::Low,
+                        _ => Severity::Medium,
+                    };
+                    Node::Condition(ConditionNode {
+                        meta,
+                        severity,
+                        subject: signal.subject.clone(),
+                        observed_by: signal.observed_by.clone(),
+                        measurement: signal.measurement.clone(),
+                        affected_scope: signal.affected_scope.clone(),
+                        action_url: signal.action_url.clone(),
+                    })
+                }
+                other => {
+                    warn!(
+                        signal_type = other,
+                        title = signal.title,
+                        "Unknown signal type, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            // Collect resource tags for this signal
+            if !signal.resources.is_empty() {
+                resource_tags.push((node_id, signal.resources.clone()));
+            }
+
+            // Collect thematic tags for this signal (slugify each tag)
+            if !signal.tags.is_empty() {
+                let slugified: Vec<String> = signal
+                    .tags
+                    .iter()
+                    .map(|t| rootsignal_common::slugify(t))
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !slugified.is_empty() {
+                    signal_tags.push((node_id, slugified));
+                }
+            }
+
+            // Build ScheduleNode for gathering/aid signals with schedule data
+            if signal.rrule.is_some()
+                || signal.schedule_text.is_some()
+                || !signal.explicit_dates.is_empty()
+            {
+                let is_schedule_type = matches!(signal.signal_type.as_str(), "gathering" | "resource");
+                if is_schedule_type {
+                    // Validate RRULE at write time — discard if invalid, keep schedule_text
+                    let validated_rrule = signal.rrule.as_ref().and_then(|rule| {
+                        // Build a minimal RRuleSet string for parsing validation
+                        let dtstart_str = signal.starts_at.as_deref().unwrap_or("20260101T000000Z");
+                        let rrule_str = format!("DTSTART:{dtstart_str}\nRRULE:{rule}");
+                        match rrule_str.parse::<rrule::RRuleSet>() {
+                            Ok(_) => Some(rule.clone()),
+                            Err(e) => {
+                                warn!(
+                                    source_url,
+                                    rrule = rule.as_str(),
+                                    error = %e,
+                                    "Invalid RRULE from extraction, falling back to schedule_text"
+                                );
+                                None
+                            }
+                        }
+                    });
+
+                    let rdates: Vec<chrono::DateTime<Utc>> = signal
+                        .explicit_dates
+                        .iter()
+                        .filter_map(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .collect();
+
+                    let exdates: Vec<chrono::DateTime<Utc>> = signal
+                        .exception_dates
+                        .iter()
+                        .filter_map(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .collect();
+
+                    let dtstart = signal
+                        .starts_at
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc));
+
+                    let dtend = signal
+                        .ends_at
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc));
+
+                    // Only create a ScheduleNode if we have something useful
+                    if validated_rrule.is_some()
+                        || !rdates.is_empty()
+                        || signal.schedule_text.is_some()
+                    {
+                        let schedule = ScheduleNode {
+                            id: Uuid::new_v4(),
+                            rrule: validated_rrule,
+                            rdates,
+                            exdates,
+                            dtstart,
+                            dtend,
+                            timezone: signal.schedule_timezone.clone(),
+                            schedule_text: signal.schedule_text.clone(),
+                            extracted_at: now,
+                        };
+                        schedules.push((node_id, schedule));
+                    }
+                }
+            }
+
+            // Collect author_actor display name for actor creation on owned sources
+            if let Some(ref name) = signal.author_actor {
+                let name = name.trim();
+                if !name.is_empty() {
+                    author_actors.push((node_id, name.to_string()));
+                }
+            }
+
+            // Collect category for CategoryClassified system event
+            if let Some(ref cat) = signal.category {
+                let cat = cat.trim();
+                if !cat.is_empty() {
+                    categories.push((node_id, cat.to_string()));
+                }
+            }
+
+            if let Some(ref sid) = signal.source_id {
+                let sid = sid.trim();
+                if !sid.is_empty() {
+                    source_ids.push((node_id, sid.to_string()));
+                }
+            }
+
+            nodes.push(node);
+        }
+
+        info!(
+            source_url,
+            count = nodes.len(),
+            implied_queries = implied_queries.len(),
+            "Extracted signals"
+        );
+        ExtractionResult {
+            nodes,
+            implied_queries,
+            resource_tags,
+            signal_tags,
+            raw_signal_count,
+            rejected,
+            schedules,
+            author_actors,
+            categories,
+            source_ids,
+            logs: vec![],
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SignalExtractor for Extractor {
+    async fn extract(&self, content: &str, source_url: &str) -> Result<ExtractionResult> {
+        self.extract_impl(content, source_url).await
+    }
+}
+
+pub fn build_system_prompt(
+    city_name: &str,
+    _default_lat: f64,
+    _default_lng: f64,
+    tag_vocabulary: &[String],
+) -> String {
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let concern_cats = crate::infra::util::SIGNAL_CATEGORIES;
+    let tag_vocab_section = if tag_vocabulary.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "**Existing tag vocabulary** (prefer these when they fit; only invent new tags when no existing tag matches):\n`{}`\n\n",
+            tag_vocabulary.join("`, `")
+        )
+    };
+    format!(
+        r#"You are a signal extractor for {city_name}.
+
+Your job: find real problems and the people addressing them. The most valuable signal is a CONCERN (community friction — opposition, disputes, protests, objections) paired with RESPONSES (the gives, needs, events, and notices that address it). A food shelf addressing food insecurity, a cleanup responding to pollution, a legal aid hotline responding to enforcement activity — these concern-response pairs are what gets people engaged in real-world problems.
+
+## Writing Style
+
+Write like a neighbor telling another neighbor what's going on — not a government agency filing a report.
+
+**Titles** (5–10 words): Lead with the need or the action, not the org name.
+- BAD: "Simpson Housing Services Emergency Shelter Program"
+- GOOD: "Warm Beds Open Tonight for Families in Need"
+- BAD: "City Council Meeting Regarding Proposed Rezoning"
+- GOOD: "Neighbors Push Back on Uptown Rezoning Plan"
+
+**Summaries** (2–3 sentences, 250 characters max): Make someone feel why it matters, then tell them what they can do about it. Start with a person or a moment, not an organization name.
+- BAD: "The organization provides food assistance to qualifying individuals through their distribution program on weekday mornings."
+- GOOD: "Families who can't make it to the grocery store can pick up fresh food here every weekday morning — no paperwork, no questions."
+
+**Tone:**
+- Warm but not saccharine
+- Urgent but not panicked
+- Specific but not bureaucratic
+- Assume good intent — people want to help, just make it easy
+
+**Avoid:**
+- Jargon: "wraparound services", "capacity building", "underserved populations", "food insecurity", "intake process"
+- Passive voice: "Services are provided" → "They hand out groceries"
+- Vague calls to action: "Get involved" → "Sign up to drive"
+- Leading with the organization name
+- Operational language that describes how an org works internally
+
+**Formatting:**
+- No em dashes. Use periods. Two short sentences beat one long clause joined by " — ".
+- 250 characters HARD MAX for summaries. If it doesn't fit, cut words — don't compress with punctuation tricks.
+
+**Objectivity:**
+- Stay warm, but report what happened — not what it means. Don't characterize intent ("looked like intimidation") or add dramatic framing. Trust the reader.
+- Don't describe people's bodies. Say who they are (veteran, organizer, parent), not what they look like.
+- Specific calls to action only. If the source has a concrete next step (show up at X, call Y), include it. If not, don't invent a vague one ("watch for updates").
+
+## Signal Types (ranked by value)
+
+**Highest — Concern + Response pairs:**
+- **Concern**: Someone expressed opposition, filed a grievance, or pushed back against something. The act of opposing is the fact being recorded. Has severity, subject, and what is being opposed. NOT a catch-all for complaints about conditions — if the content describes a state of the world (pothole, pollution, outage), that's a Condition. Concern is for social friction: opposition to proposals, disputes between groups, protests, objections filed, community pushback.
+- **Resource**: A free resource, service, or program that people in need can access — food shelves,
+  legal clinics, shelter beds, mutual aid funds, habitat restoration programs. Must be free or
+  publicly available. A business offering paid services is NOT a Resource. Has availability and contact info.
+- **HelpRequest**: Someone directly expressing what they need and how you can help — fundraisers, volunteer drives, donation requests, mutual aid calls, petitions. The content must come from or speak for the person/group who has the need. Must include: (1) a specific need, (2) a way to respond (donate link, signup, contact info). A journalist reporting that communities need help is a Concern, not a HelpRequest.
+- **Gathering**: People coming together in response to a community need or concern — town halls,
+  cleanups, vigils, mutual aid distributions, workshops, solidarity actions. Has time, location,
+  and who's organizing. A press conference or product launch is NOT a Gathering.
+
+**Also valuable — standalone responses with an implicit concern:**
+- A "feed people on Sundays" program implies food insecurity. Extract it as a Resource even without an explicit concern on the page.
+- A river cleanup implies pollution. Extract it as a Gathering.
+
+**Lower priority — routine community activity:**
+- Community calendar events, recurring worship services, social gatherings. Still extract these, but they matter less than signals that point to a real problem someone can help with.
+
+**Context signals:**
+- **Announcement**: An official advisory, policy change, OR community warning about active threats.
+  Community members publicly warning each other about enforcement activity (ICE sightings),
+  environmental hazards, or safety concerns are valid Announcements.
+  These are distinct from rumors — they come from people with first-hand or local knowledge
+  broadcasting publicly to enable protective action. Announcement is the category of last resort —
+  if a signal has tangible utility (Resource, Gathering, HelpRequest) or describes a physical state
+  (Condition) or social friction (Concern), classify it as that instead.
+- **Condition**: A state of the world being described — infrastructure, environment, emergencies, public health, safety. The severity and urgency fields distinguish routine observations from acute events. If the content describes a physical state (pothole, pollution, outage, flood), that's a Condition. If it describes social friction (opposition, protest, dispute), that's a Concern.
+
+If content genuinely contains no community-relevant information, return an empty signals array. But err on the side of extracting — social media posts from community organizations almost always contain actionable signals, even when the format is informal (lists of orgs, calls to action, resource roundups).
+
+## Extracting from News and Crisis Content
+When a page describes a crisis, conflict, or problem, extract BOTH the underlying concern AND the community responses:
+- Social friction, opposition, protests → Concern (always include subject and what is being opposed)
+- Physical conditions, infrastructure, environment → Condition (include subject and observed_by)
+- Legal aid hotlines, know-your-rights resources → Resource
+- Community meetings, workshops, public hearings → Gathering
+- Volunteer calls, donation drives, petitions → HelpRequest
+- Official advisories, policy changes → Announcement
+
+If a page describes only a problem with no actionable response, still extract the Concern or Condition — the system will seek responses separately.
+
+## News Articles vs. Needs
+A news article that reports on a crisis is NOT a Need, even if the situation is urgent.
+HelpRequest requires someone to be directly expressing their own need with a way to respond.
+If a news article simply reports on a problem, extract it as:
+- Concern (if it describes social friction, opposition, or disputes)
+- Condition (if it describes a physical state or environmental issue)
+- Announcement (if it describes a policy change or official action)
+Do NOT classify news reportage as a HelpRequest based on the urgency of the topic alone.
+
+## Sensitivity
+- **sensitive**: Enforcement activity, vulnerable populations, sanctuary networks
+- **elevated**: Organizing, advocacy, political action
+- **general**: Everything else
+
+## Location
+Location is WHERE THIS SIGNAL HAPPENS — not where the author lives, not places
+mentioned as comparisons, not origin stories.
+
+- **About-location, not from-location.** A Minneapolis org posting about their
+  DC conference → location is DC. A national article about a local food shelf →
+  location is the food shelf. "Like what happened in Flint" → Flint is a
+  reference, not a location. "An Italian restaurant on Lake Street" → location
+  is Lake Street, not Italy. "A Somali family opened a shop in Phillips" →
+  location is Phillips, not Somalia.
+- **Resolve relational and organizational references.** "Near the airport" →
+  name the airport. "At the YWCA" → include city ("YWCA Midtown, {city_name}").
+  "On the corner of 38th and Chicago" → "38th & Chicago, {city_name}". "The
+  south side" → "South {city_name}".
+- **Geocodable names.** Include enough geographic context for a geocoding API
+  to find the right place. "{{neighborhood}}, {city_name}" not just
+  "{{neighborhood}}". "Rochester, Minnesota" not just "Rochester".
+- **Neighborhoods and cultural names.** "Uptown", "Phillips", "Over North" →
+  write as "{{name}}, {city_name}".
+- **Diffuse locations.** "Across the metro" or "statewide" → use the region
+  name ("Twin Cities" or "Minnesota"). geo_precision: "region".
+- **No location is fine.** If the signal is geographically neutral — abstract
+  policy, personal reflections, no place mentioned or implied — omit
+  location_name entirely. Do NOT guess.
+- Do NOT provide latitude or longitude — the system geocodes from the name.
+- geo_precision: "exact" for addresses/buildings/intersections, "neighborhood"
+  for area-level, "region" for city/metro-wide
+
+## Timing
+- ISO 8601 datetime strings for start/end times (e.g. "2026-03-15T14:00:00Z")
+- Today's date is {today}. Resolve relative dates: "next Saturday" → the actual date, "March 15" → "2026-03-15T00:00:00Z"
+- If the page has NO parseable date for an event, omit starts_at entirely (null). Do NOT guess.
+- is_ongoing: true for ongoing services
+
+## Schedule / Recurrence (Gathering and Resource signals)
+For gathering and resource signals with recurring schedules, extract structured recurrence data:
+
+- **rrule**: An RFC 5545 RRULE string describing the recurrence pattern.
+  - "Every Tuesday at 7pm" → "FREQ=WEEKLY;BYDAY=TU"
+  - "First Saturday of the month" → "FREQ=MONTHLY;BYDAY=1SA"
+  - "Daily 9am-5pm Monday through Friday" → "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+  - "Every other Thursday" → "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"
+  - Only emit rrule when you can confidently map to a valid RRULE. If unsure, omit it.
+- **schedule_text**: The natural language schedule text exactly as it appears in the source (e.g., "Every Tuesday and Thursday, 6-8pm, except holidays"). Always include when the source mentions a schedule.
+- **explicit_dates**: For irregular schedules that don't fit a pattern, list specific dates as ISO 8601 strings (e.g., ["2026-03-05T19:00:00Z", "2026-03-19T19:00:00Z", "2026-04-02T19:00:00Z"]).
+- **exception_dates**: Dates excluded from the recurrence pattern as ISO 8601 strings (e.g., holiday closures).
+- **schedule_timezone**: IANA timezone if stated or clearly implied (e.g., "America/Chicago"). Omit if unknown.
+
+When the source mentions a recurring schedule, provide the schedule fields above. The schedule_text fallback is always valuable, even when rrule is also provided.
+
+## Publication Date (published_at)
+Set published_at to the ISO 8601 date when this content was originally published.
+Look for: byline dates, "Published on...", article timestamps, post dates.
+- Use the ORIGINAL publication date, not "Updated" or "Modified" dates
+- If the page shows a clear publication date, use it (e.g. "2026-02-20T00:00:00Z")
+- If only a relative date is visible ("2 days ago", "last week"), resolve it against today ({today})
+- If no publication date is visible anywhere in the content, leave published_at null
+- Do NOT use event start times as published_at — published_at is when the page was written, not when an event occurs
+Signals without a published_at may be dropped, so extracting this accurately is important.
+
+## Category (all signal types)
+- category: One of: {concern_cats}. These are guidance, not constraints — propose a new category if none fit.
+  A food shelf is "housing" or "economic", a legal clinic gathering is "immigration", a river cleanup is "environment".
+
+## Type-Specific Fields
+
+For condition_observed, extract these fields ONLY if the source content explicitly states them:
+- subject: Core subject in 5 words or fewer. The what and the where.
+- observed_by: Who/what reported this?
+- measurement: Any quantitative reading.
+- affected_scope: Scope as described.
+
+For concern_raised:
+- subject: Core subject in 5 words or fewer.
+- opposing: What is being opposed, as explicitly stated.
+
+For announcement_shared:
+- subject: Core subject in 5 words or fewer.
+- effective_date: Date something takes effect, only if explicitly stated.
+
+For resource_offered:
+- eligibility: Who can access this, only if explicitly stated.
+
+For help_requested:
+- stated_goal: The goal as explicitly stated in the content.
+
+All types with severity: "low", "medium", "high", "critical"
+
+## Classification Priority
+When content could be multiple types, classify by priority:
+1. **Tangible utility first** — Gathering, Resource, HelpRequest, Condition. If the content describes a physical state, a resource, a need, or a gathering, classify as that even if there's friction layered on top. ("Boil water advisory" → Condition, not Concern, even if people are complaining.)
+2. **Community friction** — Concern. Only when there's nothing more specific underneath the opposition/dispute.
+3. **Last resort** — Announcement. Pure information broadcast with no tangible utility and no friction.
+
+## Bundled Content
+If a page contains multiple distinct signals (e.g., a food shelf listing AND a volunteer call), emit a separate signal for each. Do not bundle unrelated content into one signal. All signals from the same page share the same extraction_id — this is how the system knows they came from the same source.
+
+## Source Identification
+- When extracting from numbered content items (e.g. "--- Post 3 ---", "--- Story 2 ---", "--- Video 1 ---"), set source_id to the item identifier: "post_3", "story_2", "video_1" (type + underscore + number from the header)
+- Do NOT copy URLs into source_url for social posts — the system resolves permalinks from source_id
+- For web page scraping (single-URL contexts without numbered headers), use source_url as before
+
+## Action URLs
+- Include the most relevant action URL (registration, donation, event page)
+- If none exists, use the source page URL
+
+## Author Actor
+Set author_actor to the person, organization, or account that authored/published this content.
+- For social posts: the account holder (e.g. "@MutualAidMpls")
+- For org pages: the organization (e.g. "Simpson Housing Services")
+- For news: the journalist or publication (e.g. "Star Tribune")
+- If unclear or anonymous, leave null.
+
+## Mentioned Entities
+Extract named entities mentioned in each signal as typed objects with name, entity_type, and optional role.
+- entity_type must be one of: "organization", "group", "government_body", "thing"
+- Do NOT extract individual people — no "person" type. People are tracked separately via author_actor.
+- Do NOT extract places — locations are captured through the location fields.
+- Include: nonprofits, city departments, coalitions, community groups, churches, businesses, legislation, programs
+- Exclude: generic references like "the city" or "local officials" unless a specific body is named
+- role: the entity's role in the signal context (e.g. "organizer", "decision_maker", "funder", "provider"). Null if no clear role.
+- Do NOT include the author_actor in mentioned_entities — they are tracked separately
+
+## Contact Information
+Preserve organization phone numbers, emails, and addresses — these are public broadcast information, not private data. Strip only genuinely private individual information (personal cell phones, home addresses, SSNs).
+
+## Resource Capabilities
+
+For HelpRequest, Gathering, and Resource signals, extract the resource capabilities they require, prefer, or offer.
+This enables matching: "I have a car" finds all orgs needing drivers; "I need food" finds all orgs giving food.
+
+**Edge types:**
+- **requires**: Must have this capability to help (HelpRequest/Gathering only)
+- **prefers**: Better if you have it, not required (HelpRequest/Gathering only)
+- **offers**: This is what the signal provides (Resource only)
+
+**Seed vocabulary** (use these slugs when they fit; otherwise propose a concise noun-phrase slug):
+`vehicle`, `bilingual-spanish`, `bilingual-somali`, `bilingual-hmong`, `legal-expertise`,
+`food`, `shelter-space`, `clothing`, `childcare`, `medical-professional`, `mental-health`,
+`physical-labor`, `kitchen-space`, `event-space`, `storage-space`, `technology`,
+`reliable-internet`, `financial-donation`, `skilled-trade`, `administrative`
+
+**Examples:**
+- A volunteer driver program → resources: [{{slug: "vehicle", role: "requires", confidence: 0.95}}]
+- A bilingual legal clinic → resources: [{{slug: "legal-expertise", role: "offers", confidence: 0.9}}, {{slug: "bilingual-spanish", role: "offers", confidence: 0.85}}]
+- Food shelf → resources: [{{slug: "food", role: "offers", confidence: 0.95, context: "emergency groceries, Mon-Fri 9-5"}}]
+- Court date transport needing Spanish speakers → resources: [{{slug: "vehicle", role: "requires", confidence: 0.9}}, {{slug: "bilingual-spanish", role: "prefers", confidence: 0.7}}]
+
+Only include resources when the capability is clear from the content. Omit the resources array for signals with no resource semantics (e.g. Announcements, Concerns).
+
+## THEMATIC TAGS
+
+For each signal, output 3-5 thematic tags as lowercase-with-hyphens slugs.
+Tags describe the themes, issues, and topics the signal relates to.
+{tag_vocab_section}
+**Examples:**
+- An ICE enforcement story → tags: ["ice-enforcement", "immigration", "civil-rights"]
+- A food shelf → tags: ["food-insecurity", "mutual-aid", "hunger"]
+- A housing town hall → tags: ["housing", "governance", "displacement"]
+
+If no thematic tags apply, return an empty tags array.
+
+## First-Hand Classification (is_firsthand)
+
+For each signal, assess whether the content describes concrete local reality or abstract political commentary.
+
+Mark is_firsthand: **true** when the content describes:
+- Concrete events, services, or gatherings at specific times and places
+- Local journalism reporting impacts on specific communities, schools, or neighborhoods
+- Community organizing with actionable details (rallies, petitions, forums, resource centers)
+- People or organizations describing what is happening in their area
+- Event listings from organizers creating community activity
+
+Mark is_firsthand: **false** when the content is:
+- Abstract political opinion with no local specificity
+- National punditry that mentions a city only in passing
+- Social media hot takes expressing a viewpoint without describing concrete local reality
+
+The question is NOT "is the author personally affected?" — a journalist reporting on school closures with specific dates, locations, and community responses is firsthand. The question IS "does this describe concrete reality in a specific place, or is it abstract political commentary?"
+
+Leave is_firsthand null when the source is a known organization or entity page — these are grounded by nature.
+
+## IMPLIED QUERIES (optional — signal quality is always the priority)
+
+For signals with a clear community tension connection, provide up to 3
+implied_queries — searches that would discover RELATED community signals
+by expanding outward from this one.
+
+- A HelpRequest (donations, volunteers, drivers, medical bills, rent
+  help, funeral costs, school supplies, legal aid, shelter, food, or
+  any other expressed need) → search for others expressing the same
+  kind of need nearby (GoFundMe campaigns, mutual aid threads,
+  community posts, neighborhood forums). If one person needs it,
+  others do too.
+- A Resource (food banks, shelters, legal clinics, free clinics, job
+  training, mutual aid networks, or any other service) → search for
+  more of the same kind of resource in the area, and for unmet needs
+  in the population it serves.
+- A Gathering (town halls, protests, rallies, marches, cleanups,
+  vigils, mutual aid distributions, political movements, or any
+  community event) → search for other gatherings around the same
+  issue or cause, who is organizing them, and what concerns are
+  driving people to show up.
+- A Concern → search for who's responding (resources, organizing,
+  legal action), where people are gathering, and what needs people
+  are expressing because of it.
+- A Condition → search for who's observing the same condition, what
+  resources exist to address it, and what community response is
+  emerging.
+- An Announcement about policy or institutional action → search for
+  who is affected, what they need as a result, and how they're
+  organizing in response.
+
+Always include the city name or neighborhood. Target specific organizations,
+services, and events — not news articles.
+
+DO NOT provide implied_queries for routine community gatherings (farmers markets,
+worship services, recurring social gatherings) that have no tension connection.
+Return an empty array for these."#
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_prompt_includes_concern() {
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
+        assert!(
+            prompt.contains("Concern"),
+            "system prompt should mention Concern as a signal type"
+        );
+        assert!(
+            prompt.contains("what is being opposed"),
+            "system prompt should mention 'what is being opposed' for concerns"
+        );
+    }
+
+    #[test]
+    fn concern_type_constructs_node() {
+        let signal = ExtractedSignal {
+            signal_type: "concern".to_string(),
+            title: "Housing crisis".to_string(),
+            summary: "Rent increases displacing families".to_string(),
+            sensitivity: "elevated".to_string(),
+            latitude: None,
+            longitude: None,
+            geo_precision: None,
+            location_name: None,
+            starts_at: None,
+            ends_at: None,
+            action_url: None,
+            organizer: None,
+            is_recurring: None,
+            availability: None,
+            eligibility: None,
+            is_ongoing: None,
+            urgency: None,
+            what_needed: None,
+            stated_goal: None,
+            subject: Some("housing displacement".to_string()),
+            severity: Some("high".to_string()),
+            category: Some("housing".to_string()),
+            effective_date: None,
+            source_authority: None,
+            published_at: None,
+            mentioned_entities: None,
+            opposing: Some("proposed rent increases".to_string()),
+            observed_by: None,
+            measurement: None,
+            affected_scope: None,
+            source_url: None,
+            source_id: None,
+            implied_queries: vec!["affordable housing programs Minneapolis".to_string()],
+            resources: vec![],
+            tags: vec![],
+            is_firsthand: None,
+            author_actor: None,
+            rrule: None,
+            schedule_text: None,
+            explicit_dates: vec![],
+            exception_dates: vec![],
+            schedule_timezone: None,
+        };
+
+        assert_eq!(signal.signal_type, "concern");
+        assert_eq!(
+            signal.opposing.as_deref(),
+            Some("proposed rent increases")
+        );
+        assert_eq!(signal.category.as_deref(), Some("housing"));
+    }
+
+    #[test]
+    fn extractor_drops_llm_coordinates() {
+        let signal = ExtractedSignal {
+            signal_type: "gathering".to_string(),
+            title: "Community Dinner".to_string(),
+            summary: "Weekly dinner in Phillips".to_string(),
+            sensitivity: "general".to_string(),
+            latitude: Some(48.8566),   // Paris lat — wrong!
+            longitude: Some(2.3522),   // Paris lng — wrong!
+            geo_precision: Some("exact".to_string()),
+            location_name: Some("Phillips, Minneapolis".to_string()),
+            starts_at: None,
+            ends_at: None,
+            action_url: None,
+            organizer: None,
+            is_recurring: None,
+            availability: None,
+            eligibility: None,
+            is_ongoing: None,
+            urgency: None,
+            what_needed: None,
+            stated_goal: None,
+            subject: None,
+            severity: None,
+            category: None,
+            effective_date: None,
+            source_authority: None,
+            published_at: None,
+            mentioned_entities: None,
+            opposing: None,
+            observed_by: None,
+            measurement: None,
+            affected_scope: None,
+            source_url: None,
+            source_id: None,
+            implied_queries: vec![],
+            resources: vec![],
+            tags: vec![],
+            is_firsthand: None,
+            author_actor: None,
+            rrule: None,
+            schedule_text: None,
+            explicit_dates: vec![],
+            exception_dates: vec![],
+            schedule_timezone: None,
+        };
+
+        let response = ExtractionResponse { signals: vec![signal] };
+        let result = Extractor::convert_signals(response, "https://example.com/page");
+
+        assert_eq!(result.nodes.len(), 1, "should produce one node");
+        let loc = &result.nodes[0].meta().unwrap().locations[0];
+        assert!(loc.point.is_none(), "LLM-provided coordinates must be dropped");
+        assert_eq!(loc.name.as_deref(), Some("Phillips, Minneapolis"));
+    }
+
+    #[test]
+    fn resource_tag_deserialization() {
+        let json = r#"{"slug":"vehicle","role":"requires","confidence":0.9,"context":"Saturday mornings"}"#;
+        let tag: ResourceTag = serde_json::from_str(json).unwrap();
+        assert_eq!(tag.slug, "vehicle");
+        assert_eq!(tag.role, ResourceRole::Requires);
+        assert!((tag.confidence - 0.9).abs() < f64::EPSILON);
+        assert_eq!(tag.context.as_deref(), Some("Saturday mornings"));
+    }
+
+    #[test]
+    fn resource_tag_default_confidence() {
+        let json = r#"{"slug":"food","role":"offers","context":null}"#;
+        let tag: ResourceTag = serde_json::from_str(json).unwrap();
+        assert_eq!(tag.role, ResourceRole::Offers);
+        assert!((tag.confidence - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn unknown_resource_role_does_not_lose_valid_tags() {
+        let json = r#"[
+            {"slug":"vehicle","role":"requires","confidence":0.9},
+            {"slug":"bad","role":"unknown_role","confidence":0.5},
+            {"slug":"food","role":"offers","confidence":0.8}
+        ]"#;
+        let tags: Vec<ResourceTag> = {
+            let values: Vec<serde_json::Value> = serde_json::from_str(json).unwrap();
+            values
+                .into_iter()
+                .filter_map(|v| serde_json::from_value::<ResourceTag>(v).ok())
+                .collect()
+        };
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].slug, "vehicle");
+        assert_eq!(tags[1].slug, "food");
+    }
+
+    #[test]
+    fn missing_resources_field_deserializes_to_empty_vec() {
+        // When the LLM omits "resources" entirely, serde(default) kicks in
+        // before the custom deserializer — result is an empty vec.
+        let json = r#"{"signal_type":"gathering","title":"Test","summary":"s","sensitivity":"general"}"#;
+        let signal: ExtractedSignal = serde_json::from_str(json).unwrap();
+        assert!(signal.resources.is_empty());
+    }
+
+    #[test]
+    fn missing_availability_is_none_not_placeholder() {
+        use rootsignal_common::{ResourceOfferNode, NodeMeta, ReviewStatus, SensitivityLevel};
+        let meta = NodeMeta {
+            id: uuid::Uuid::new_v4(),
+            title: "Food pantry".to_string(),
+            summary: "Weekly groceries".to_string(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.0,
+            corroboration_count: 0,
+            locations: vec![],
+            url: "https://example.com".to_string(),
+            extracted_at: chrono::Utc::now(),
+            published_at: None,
+            last_confirmed_active: chrono::Utc::now(),
+            source_diversity: 1,
+            cause_heat: 0.0,
+            channel_diversity: 1,
+            implied_queries: vec![],
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
+            mentioned_entities: vec![],
+            category: None,
+        };
+        let aid = ResourceOfferNode {
+            meta,
+            action_url: "https://example.com".to_string(),
+            availability: None,
+            eligibility: None,
+            is_ongoing: true,
+        };
+        assert!(aid.availability.is_none());
+    }
+
+    #[test]
+    fn missing_what_needed_is_none_not_placeholder() {
+        use rootsignal_common::{HelpRequestNode, NodeMeta, ReviewStatus, SensitivityLevel, Urgency};
+        let meta = NodeMeta {
+            id: uuid::Uuid::new_v4(),
+            title: "Volunteers needed".to_string(),
+            summary: "Help at shelter".to_string(),
+            sensitivity: SensitivityLevel::General,
+            confidence: 0.0,
+            corroboration_count: 0,
+            locations: vec![],
+            url: "https://example.com".to_string(),
+            extracted_at: chrono::Utc::now(),
+            published_at: None,
+            last_confirmed_active: chrono::Utc::now(),
+            source_diversity: 1,
+            cause_heat: 0.0,
+            channel_diversity: 1,
+            implied_queries: vec![],
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
+            mentioned_entities: vec![],
+            category: None,
+        };
+        let need = HelpRequestNode {
+            meta,
+            urgency: Urgency::Medium,
+            what_needed: None,
+            action_url: None,
+            stated_goal: None,
+        };
+        assert!(need.what_needed.is_none());
+    }
+
+    #[test]
+    fn extracted_signal_json_with_implied_queries() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "concern",
+                "title": "Immigration enforcement fear",
+                "summary": "ICE raids causing fear",
+                "sensitivity": "sensitive",
+                "severity": "high",
+                "category": "safety",
+                "opposing": "legal defense, emergency housing",
+                "implied_queries": [
+                    "immigration legal aid Minneapolis",
+                    "emergency housing detained immigrants Minneapolis"
+                ]
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.signals.len(), 1);
+        assert_eq!(response.signals[0].implied_queries.len(), 2);
+        assert_eq!(
+            response.signals[0].implied_queries[0],
+            "immigration legal aid Minneapolis"
+        );
+    }
+
+    #[test]
+    fn extracted_signal_json_missing_implied_queries() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "gathering",
+                "title": "Farmers market",
+                "summary": "Weekly farmers market",
+                "sensitivity": "general"
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.signals.len(), 1);
+        assert!(
+            response.signals[0].implied_queries.is_empty(),
+            "Missing implied_queries should default to empty vec"
+        );
+    }
+
+    #[test]
+    fn extracted_signal_json_empty_implied_queries() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "resource",
+                "title": "Food shelf",
+                "summary": "Free groceries",
+                "sensitivity": "general",
+                "implied_queries": []
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert!(response.signals[0].implied_queries.is_empty());
+    }
+
+    #[test]
+    fn extraction_result_collects_queries() {
+        let result = ExtractionResult {
+            nodes: vec![],
+            implied_queries: vec!["query 1".to_string(), "query 2".to_string()],
+            resource_tags: Vec::new(),
+            signal_tags: Vec::new(),
+            raw_signal_count: 0,
+            rejected: Vec::new(),
+            schedules: Vec::new(),
+            author_actors: Vec::new(),
+            categories: Vec::new(),
+            source_ids: Vec::new(),
+            logs: vec![],
+        };
+        assert_eq!(result.implied_queries.len(), 2);
+    }
+
+    #[test]
+    fn extraction_result_default_empty() {
+        let result = ExtractionResult::default();
+        assert!(result.nodes.is_empty());
+        assert!(result.implied_queries.is_empty());
+    }
+
+    #[test]
+    fn system_prompt_includes_implied_queries_instructions() {
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
+        assert!(
+            prompt.contains("IMPLIED QUERIES"),
+            "system prompt should mention IMPLIED QUERIES section"
+        );
+        assert!(
+            prompt.contains("DO NOT provide implied_queries for routine"),
+            "system prompt should warn against routine gathering queries"
+        );
+    }
+
+    #[test]
+    fn system_prompt_includes_resource_instructions() {
+        let prompt = build_system_prompt("Minneapolis", 44.9778, -93.2650, &[]);
+        assert!(
+            prompt.contains("Resource Capabilities"),
+            "should have Resource Capabilities section"
+        );
+        assert!(prompt.contains("vehicle"), "should include seed vocabulary");
+        assert!(
+            prompt.contains("bilingual-spanish"),
+            "should include bilingual seed"
+        );
+        assert!(prompt.contains("requires"), "should mention requires role");
+        assert!(prompt.contains("offers"), "should mention offers role");
+    }
+
+    #[test]
+    fn is_firsthand_false_deserialization() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "concern",
+                "title": "Political commentary",
+                "summary": "Opinion about housing",
+                "sensitivity": "general",
+                "is_firsthand": false
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.signals[0].is_firsthand, Some(false));
+    }
+
+    #[test]
+    fn is_firsthand_true_deserialization() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "help_request",
+                "title": "My family needs help",
+                "summary": "Direct plea for assistance",
+                "sensitivity": "sensitive",
+                "is_firsthand": true
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.signals[0].is_firsthand, Some(true));
+    }
+
+    #[test]
+    fn is_firsthand_missing_is_none() {
+        let json = r#"{
+            "signals": [{
+                "signal_type": "resource",
+                "title": "Food shelf",
+                "summary": "Free groceries",
+                "sensitivity": "general"
+            }]
+        }"#;
+        let response: ExtractionResponse = serde_json::from_str(json).unwrap();
+        assert!(
+            response.signals[0].is_firsthand.is_none(),
+            "Missing is_firsthand should be None, not Some(false)"
+        );
+    }
+}
+

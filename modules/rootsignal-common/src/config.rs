@@ -10,6 +10,8 @@ pub struct Config {
 
     // AI providers
     pub anthropic_api_key: String,
+    pub gemini_api_key: String,
+    pub openai_api_key: String,
     pub voyage_api_key: String,
 
     // Scraping
@@ -58,6 +60,10 @@ pub struct Config {
 
     // Session signing secret (separate from admin_password)
     pub session_secret: String,
+
+    // GitHub (optional — for investigator issue creation)
+    pub github_token: Option<String>,
+    pub github_repo: Option<String>,
 }
 
 impl Config {
@@ -69,6 +75,8 @@ impl Config {
             neo4j_user: required_env("NEO4J_USER"),
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
+            gemini_api_key: env::var("GEMINI_API_KEY").unwrap_or_default(),
+            openai_api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
             serper_api_key: required_env("SERPER_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
@@ -99,6 +107,8 @@ impl Config {
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
             admin_numbers: Vec::new(),
+            github_token: None,
+            github_repo: None,
         }
     }
 
@@ -109,6 +119,8 @@ impl Config {
             neo4j_user: required_env("NEO4J_USER"),
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
+            gemini_api_key: required_env("GEMINI_API_KEY"),
+            openai_api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
             voyage_api_key: required_env("VOYAGE_API_KEY"),
             serper_api_key: required_env("SERPER_API_KEY"),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
@@ -117,11 +129,24 @@ impl Config {
             admin_username: String::new(),
             admin_password: String::new(),
             session_secret: String::new(),
-            region: env::var("REGION").or_else(|_| env::var("CITY")).unwrap_or_else(|_| "twincities".to_string()),
-            region_name: env::var("REGION_NAME").or_else(|_| env::var("CITY_NAME")).ok(),
-            region_lat: env::var("REGION_LAT").or_else(|_| env::var("CITY_LAT")).ok().and_then(|v| v.parse().ok()),
-            region_lng: env::var("REGION_LNG").or_else(|_| env::var("CITY_LNG")).ok().and_then(|v| v.parse().ok()),
-            region_radius_km: env::var("REGION_RADIUS_KM").or_else(|_| env::var("CITY_RADIUS_KM")).ok().and_then(|v| v.parse().ok()),
+            region: env::var("REGION")
+                .or_else(|_| env::var("CITY"))
+                .unwrap_or_else(|_| "twincities".to_string()),
+            region_name: env::var("REGION_NAME")
+                .or_else(|_| env::var("CITY_NAME"))
+                .ok(),
+            region_lat: env::var("REGION_LAT")
+                .or_else(|_| env::var("CITY_LAT"))
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            region_lng: env::var("REGION_LNG")
+                .or_else(|_| env::var("CITY_LNG"))
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            region_radius_km: env::var("REGION_RADIUS_KM")
+                .or_else(|_| env::var("CITY_RADIUS_KM"))
+                .ok()
+                .and_then(|v| v.parse().ok()),
             daily_budget_cents: env::var("DAILY_BUDGET_CENTS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -139,6 +164,8 @@ impl Config {
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
             admin_numbers: Vec::new(),
+            github_token: None,
+            github_repo: None,
         }
     }
 
@@ -149,6 +176,8 @@ impl Config {
             neo4j_user: required_env("NEO4J_USER"),
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: required_env("ANTHROPIC_API_KEY"),
+            gemini_api_key: String::new(),
+            openai_api_key: String::new(),
             voyage_api_key: String::new(),
             serper_api_key: String::new(),
             apify_api_key: String::new(),
@@ -157,7 +186,9 @@ impl Config {
             admin_username: String::new(),
             admin_password: String::new(),
             session_secret: String::new(),
-            region: env::var("REGION").or_else(|_| env::var("CITY")).unwrap_or_else(|_| "twincities".to_string()),
+            region: env::var("REGION")
+                .or_else(|_| env::var("CITY"))
+                .unwrap_or_else(|_| "twincities".to_string()),
             region_name: None,
             region_lat: None,
             region_lng: None,
@@ -174,6 +205,8 @@ impl Config {
             twilio_auth_token: String::new(),
             twilio_service_id: String::new(),
             admin_numbers: Vec::new(),
+            github_token: None,
+            github_repo: None,
         }
     }
 
@@ -192,6 +225,8 @@ impl Config {
             neo4j_user: required_env("NEO4J_USER"),
             neo4j_password: required_env("NEO4J_PASSWORD"),
             anthropic_api_key: env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
+            gemini_api_key: env::var("GEMINI_API_KEY").unwrap_or_default(),
+            openai_api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
             voyage_api_key: env::var("VOYAGE_API_KEY").unwrap_or_default(),
             serper_api_key: env::var("SERPER_API_KEY").unwrap_or_default(),
             apify_api_key: env::var("APIFY_API_KEY").unwrap_or_default(),
@@ -203,7 +238,9 @@ impl Config {
             admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string()),
             admin_password: required_env("ADMIN_PASSWORD"),
             session_secret: env::var("SESSION_SECRET").unwrap_or_default(),
-            region: env::var("REGION").or_else(|_| env::var("CITY")).unwrap_or_else(|_| "twincities".to_string()),
+            region: env::var("REGION")
+                .or_else(|_| env::var("CITY"))
+                .unwrap_or_else(|_| "twincities".to_string()),
             region_name: None,
             region_lat: None,
             region_lng: None,
@@ -219,6 +256,8 @@ impl Config {
             twilio_auth_token: env::var("TWILIO_AUTH_TOKEN").unwrap_or_default(),
             twilio_service_id: env::var("TWILIO_SERVICE_ID").unwrap_or_default(),
             admin_numbers,
+            github_token: env::var("GITHUB_TOKEN").ok(),
+            github_repo: env::var("GITHUB_REPO").ok(),
         }
     }
 }
@@ -231,6 +270,8 @@ impl Config {
             ("NEO4J_USER", &self.neo4j_user),
             ("NEO4J_PASSWORD", &self.neo4j_password),
             ("ANTHROPIC_API_KEY", &self.anthropic_api_key),
+            ("GEMINI_API_KEY", &self.gemini_api_key),
+            ("OPENAI_API_KEY", &self.openai_api_key),
             ("VOYAGE_API_KEY", &self.voyage_api_key),
             ("SERPER_API_KEY", &self.serper_api_key),
             ("APIFY_API_KEY", &self.apify_api_key),
@@ -239,7 +280,19 @@ impl Config {
             if value.is_empty() {
                 tracing::info!("{name} = (empty)");
             } else {
-                tracing::info!("{name} = ({} chars)", value.len());
+                let prefix: String = value.chars().take(15).collect();
+                tracing::info!("{name} = {prefix}... ({} chars)", value.len());
+            }
+        }
+
+        // Optional vars
+        let optional_vars: [(&str, &Option<String>); 1] = [
+            ("GITHUB_TOKEN", &self.github_token),
+        ];
+        for (name, value) in optional_vars {
+            match value {
+                Some(v) => tracing::info!("{name} = ({} chars)", v.len()),
+                None => tracing::info!("{name} = (not set)"),
             }
         }
     }

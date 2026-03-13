@@ -4,13 +4,49 @@ use neo4rs::query;
 use uuid::Uuid;
 
 use rootsignal_common::{
-    fuzz_location, NeedNode, GatheringNode, EvidenceNode, GeoPoint, GeoPrecision, AidNode, Node,
-    NodeMeta, NodeType, NoticeNode, SensitivityLevel, Severity, StoryNode, TensionNode,
-    TensionResponse, Urgency, NEED_EXPIRE_DAYS, CONFIDENCE_DISPLAY_LIMITED, GATHERING_PAST_GRACE_HOURS,
-    FRESHNESS_MAX_DAYS, NOTICE_EXPIRE_DAYS,
+    fuzz_location, ConditionNode, Location, ResourceOfferNode, CitationNode, GatheringNode, GeoPoint,
+    GeoPrecision, HelpRequestNode, Node, NodeMeta, NodeType, AnnouncementNode, ScheduleNode,
+    SensitivityLevel, Severity, ConcernNode,
+    ConcernResponse, Urgency, CONFIDENCE_DISPLAY_LIMITED, FRESHNESS_MAX_DAYS,
+    GATHERING_PAST_GRACE_HOURS, NEED_EXPIRE_DAYS, NOTICE_EXPIRE_DAYS,
 };
-
 use crate::GraphClient;
+use crate::writer::{row_to_source_node, row_datetime_opt_pub, SignalBrief};
+use rootsignal_common::SourceNode;
+
+/// Minimal signal summary for coalesce outcome lookups.
+#[derive(Debug, Clone)]
+pub struct SignalMiniSummary {
+    pub title: String,
+    pub signal_type: String,
+    pub source_url: Option<String>,
+}
+
+/// Pipe-separated location edge types for Cypher MATCH patterns.
+const LOC_EDGES: &str = "HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION";
+
+/// Returns a Cypher EXISTS subquery for bounding-box filtering through Location edges.
+/// Assumes `$min_lat`, `$max_lat`, `$min_lng`, `$max_lng` params are bound.
+fn bbox_exists(node_var: &str) -> String {
+    format!(
+        "EXISTS {{
+           MATCH ({node_var})-[:{LOC_EDGES}]->(l:Location)
+           WHERE l.lat >= $min_lat AND l.lat <= $max_lat
+             AND l.lng >= $min_lng AND l.lng <= $max_lng
+         }}"
+    )
+}
+
+/// Lightweight signal group data for the graph explorer.
+pub struct SignalGroupGraphItem {
+    pub id: Uuid,
+    pub label: String,
+    pub created_at: String,
+    pub member_count: u32,
+    pub centroid_lat: Option<f64>,
+    pub centroid_lng: Option<f64>,
+    pub woven_situation_id: Option<Uuid>,
+}
 
 /// Read-only wrapper for the graph. Used by the web server.
 /// Enforces sensitivity-based coordinate fuzzing, confidence thresholds,
@@ -38,10 +74,10 @@ impl PublicGraphReader {
         let types = node_types.map(|t| t.to_vec()).unwrap_or_else(|| {
             vec![
                 NodeType::Gathering,
-                NodeType::Aid,
-                NodeType::Need,
-                NodeType::Notice,
-                NodeType::Tension,
+                NodeType::Resource,
+                NodeType::HelpRequest,
+                NodeType::Announcement,
+                NodeType::Concern,
             ]
         });
 
@@ -56,24 +92,21 @@ impl PublicGraphReader {
                 let label = node_type_label(*nt);
                 format!(
                     "MATCH (n:{label})
-                     OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
-                     OPTIONAL MATCH (n)<-[:ACTED_IN {{role: 'authored'}}]-(author:Actor)
-                     WHERE n.review_status = 'live'
-                       AND n.lat <> 0.0
-                       AND n.lat >= $min_lat AND n.lat <= $max_lat
-                       AND n.lng >= $min_lng AND n.lng <= $max_lng
+                     WHERE n.review_status = 'accepted'
                        AND n.confidence >= $min_confidence
                        {expiry}
+                       AND {bbox}
+                     OPTIONAL MATCH (n)<-[:ACTED_IN {{role: 'authored'}}]-(author:Actor)
                      RETURN n, labels(n)[0] AS node_label,
-                            coalesce(s.type_diversity, 0) AS _sort_tri,
                             n.cause_heat AS _sort_heat,
                             n.confidence AS _sort_conf,
                             n.last_confirmed_active AS _sort_time,
                             author.location_lat AS author_lat,
                             author.location_lng AS author_lng
-                     ORDER BY _sort_tri DESC, _sort_heat DESC, _sort_conf DESC, _sort_time DESC
+                     ORDER BY _sort_heat DESC, _sort_conf DESC, _sort_time DESC
                      LIMIT 200",
                     expiry = expiry_clause(*nt),
+                    bbox = bbox_exists("n"),
                 )
             })
             .collect();
@@ -88,7 +121,7 @@ impl PublicGraphReader {
             .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Some(node) = row_to_node_by_label(&row) {
                 if passes_display_filter(&node) {
@@ -104,21 +137,21 @@ impl PublicGraphReader {
     pub async fn get_node_detail(
         &self,
         id: Uuid,
-    ) -> Result<Option<(Node, Vec<EvidenceNode>)>, neo4rs::Error> {
+    ) -> Result<Option<(Node, Vec<CitationNode>)>, neo4rs::Error> {
         let id_str = id.to_string();
 
         // Search across all signal types
         for nt in &[
             NodeType::Gathering,
-            NodeType::Aid,
-            NodeType::Need,
-            NodeType::Notice,
-            NodeType::Tension,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
         ] {
             let label = node_type_label(*nt);
             let cypher = format!(
                 "MATCH (n:{label} {{id: $id}})
-                 OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+                 OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
                  OPTIONAL MATCH (n)<-[:ACTED_IN {{role: 'authored'}}]-(author:Actor)
                  RETURN n, collect(ev) AS evidence,
                         author.location_lat AS author_lat,
@@ -126,7 +159,7 @@ impl PublicGraphReader {
             );
 
             let q = query(&cypher).param("id", id_str.as_str());
-            let mut stream = self.client.graph.execute(q).await?;
+            let mut stream = self.client.execute(q).await?;
 
             if let Some(row) = stream.next().await? {
                 if let Some(mut node) = row_to_node(&row, *nt) {
@@ -135,13 +168,25 @@ impl PublicGraphReader {
                     }
 
                     // Derive from_location at query time from authored actor's location
-                    if let (Ok(lat), Ok(lng)) = (row.get::<f64>("author_lat"), row.get::<f64>("author_lng")) {
+                    if let (Ok(lat), Ok(lng)) =
+                        (row.get::<f64>("author_lat"), row.get::<f64>("author_lng"))
+                    {
                         if let Some(meta) = node.meta_mut() {
-                            meta.from_location = Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate });
+                            meta.locations.push(Location {
+                                point: Some(GeoPoint {
+                                    lat,
+                                    lng,
+                                    precision: GeoPrecision::Approximate,
+                                }),
+                                name: None,
+                                address: None,
+                                role: Some("origin".to_string()),
+                                timezone: None,
+                            });
                         }
                     }
 
-                    let evidence = extract_evidence(&row);
+                    let evidence = extract_citation(&row);
                     return Ok(Some((fuzz_node(node), evidence)));
                 }
             }
@@ -160,10 +205,10 @@ impl PublicGraphReader {
         let types = node_types.map(|t| t.to_vec()).unwrap_or_else(|| {
             vec![
                 NodeType::Gathering,
-                NodeType::Aid,
-                NodeType::Need,
-                NodeType::Notice,
-                NodeType::Tension,
+                NodeType::Resource,
+                NodeType::HelpRequest,
+                NodeType::Announcement,
+                NodeType::Concern,
             ]
         });
 
@@ -173,12 +218,11 @@ impl PublicGraphReader {
                 let label = node_type_label(*nt);
                 format!(
                     "MATCH (n:{label})
-                     OPTIONAL MATCH (n)<-[:CONTAINS]-(s:Story)
-                     WHERE n.review_status = 'live'
+                     WHERE n.review_status = 'accepted'
                        AND n.confidence >= $min_confidence
                        {expiry}
-                     RETURN n, labels(n)[0] AS node_label, coalesce(s.type_diversity, 0) AS story_triangulation
-                     ORDER BY story_triangulation DESC, n.cause_heat DESC, n.last_confirmed_active DESC
+                     RETURN n, labels(n)[0] AS node_label
+                     ORDER BY n.cause_heat DESC, n.last_confirmed_active DESC
                      LIMIT $limit",
                     expiry = expiry_clause(*nt),
                 )
@@ -191,29 +235,23 @@ impl PublicGraphReader {
             .param("min_confidence", CONFIDENCE_DISPLAY_LIMITED as f64)
             .param("limit", limit as i64);
 
-        // Carry (node, story_type_diversity) for cross-type sorting
-        let mut ranked: Vec<(Node, i64)> = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut ranked: Vec<Node> = Vec::new();
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            let tri: i64 = row.get("story_triangulation").unwrap_or(0);
             if let Some(node) = row_to_node_by_label(&row) {
                 if passes_display_filter(&node) {
-                    ranked.push((fuzz_node(node), tri));
+                    ranked.push(fuzz_node(node));
                 }
             }
         }
 
-        // Sort: triangulation (story type diversity) first, then cause_heat, then recency
-        ranked.sort_by(|(a, a_tri), (b, b_tri)| {
-            b_tri
-                .cmp(a_tri)
-                .then_with(|| {
-                    let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
-                    let b_heat = b.meta().map(|m| m.cause_heat).unwrap_or(0.0);
-                    b_heat
-                        .partial_cmp(&a_heat)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+        // Sort: cause_heat first, then recency
+        ranked.sort_by(|a, b| {
+            let a_heat = a.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+            let b_heat = b.meta().map(|m| m.cause_heat).unwrap_or(0.0);
+            b_heat
+                .partial_cmp(&a_heat)
+                .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| {
                     let a_time = a.meta().map(|m| m.last_confirmed_active);
                     let b_time = b.meta().map(|m| m.last_confirmed_active);
@@ -222,36 +260,7 @@ impl PublicGraphReader {
         });
 
         ranked.truncate(limit as usize);
-        Ok(ranked.into_iter().map(|(node, _)| node).collect())
-    }
-
-    // --- Story queries ---
-
-    /// Get top stories ordered by energy, with optional status filter.
-    pub async fn top_stories_by_energy(
-        &self,
-        limit: u32,
-        status_filter: Option<&str>,
-    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
-        let cypher = match status_filter {
-            Some(_) => "MATCH (s:Story) WHERE s.review_status = 'live' AND s.status = $status RETURN s ORDER BY s.energy DESC LIMIT $limit",
-            None => "MATCH (s:Story) WHERE s.review_status = 'live' RETURN s ORDER BY s.energy DESC LIMIT $limit",
-        };
-
-        let mut q = query(cypher).param("limit", limit as i64);
-        if let Some(status) = status_filter {
-            q = q.param("status", status);
-        }
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                results.push(story);
-            }
-        }
-
-        Ok(results)
+        Ok(ranked)
     }
 
     /// List recent signals scoped to a geographic bounding box.
@@ -267,10 +276,10 @@ impl PublicGraphReader {
 
         let all_types = [
             NodeType::Gathering,
-            NodeType::Aid,
-            NodeType::Need,
-            NodeType::Notice,
-            NodeType::Tension,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
         ];
 
         let branches: Vec<String> = all_types
@@ -279,12 +288,11 @@ impl PublicGraphReader {
                 let label = node_type_label(*nt);
                 format!(
                     "MATCH (n:{label})
-                     WHERE n.lat <> 0.0
-                       AND n.lat >= $min_lat AND n.lat <= $max_lat
-                       AND n.lng >= $min_lng AND n.lng <= $max_lng
+                     WHERE {bbox}
                      RETURN n, labels(n)[0] AS node_label
                      ORDER BY coalesce(n.cause_heat, 0) DESC, n.last_confirmed_active DESC
-                     LIMIT $limit"
+                     LIMIT $limit",
+                    bbox = bbox_exists("n"),
                 )
             })
             .collect();
@@ -299,7 +307,7 @@ impl PublicGraphReader {
             .param("limit", limit as i64);
 
         let mut all: Vec<Node> = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Some(node) = row_to_node_by_label(&row) {
                 all.push(node);
@@ -323,128 +331,31 @@ impl PublicGraphReader {
         Ok(all)
     }
 
-    /// Top stories by energy, scoped to a geographic bounding box (via story centroid).
-    pub async fn top_stories_in_bbox(
-        &self,
-        lat: f64,
-        lng: f64,
-        radius_km: f64,
-        limit: u32,
-    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
-        let lat_delta = radius_km / 111.0;
-        let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
-
-        let q = query(
-            "MATCH (s:Story)
-             WHERE s.centroid_lat IS NOT NULL
-               AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
-               AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
-             RETURN s
-             ORDER BY s.energy DESC
-             LIMIT $limit",
-        )
-        .param("min_lat", lat - lat_delta)
-        .param("max_lat", lat + lat_delta)
-        .param("min_lng", lng - lng_delta)
-        .param("max_lng", lng + lng_delta)
-        .param("limit", limit as i64);
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                results.push(story);
-            }
-        }
-        Ok(results)
-    }
-
-    /// Get a single story with its constituent signals.
-    pub async fn get_story_with_signals(
-        &self,
-        story_id: Uuid,
-    ) -> Result<Option<(StoryNode, Vec<Node>)>, neo4rs::Error> {
-        // First get the story
-        let q = query("MATCH (s:Story {id: $id}) RETURN s").param("id", story_id.to_string());
-
-        let mut stream = self.client.graph.execute(q).await?;
-        let story = match stream.next().await? {
-            Some(row) => match row_to_story(&row) {
-                Some(s) => s,
-                None => return Ok(None),
-            },
-            None => return Ok(None),
-        };
-
-        // Then get constituent signals
-        let signals = self.get_story_signals(story_id).await?;
-
-        Ok(Some((story, signals)))
-    }
-
-    /// Get the constituent signals for a story.
-    pub async fn get_story_signals(&self, story_id: Uuid) -> Result<Vec<Node>, neo4rs::Error> {
-        let all_types = [
-            NodeType::Gathering,
-            NodeType::Aid,
-            NodeType::Need,
-            NodeType::Notice,
-            NodeType::Tension,
-        ];
-
-        let branches: Vec<String> = all_types
-            .iter()
-            .map(|nt| {
-                let label = node_type_label(*nt);
-                format!(
-                    "MATCH (s:Story {{id: $id}})-[:CONTAINS]->(n:{label})
-                     RETURN n, labels(n)[0] AS node_label
-                     ORDER BY n.confidence DESC"
-                )
-            })
-            .collect();
-
-        let cypher = branches.join("\nUNION ALL\n");
-        let q = query(&cypher).param("id", story_id.to_string());
-
-        let mut signals = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(node) = row_to_node_by_label(&row) {
-                if passes_display_filter(&node) {
-                    signals.push(fuzz_node(node));
-                }
-            }
-        }
-
-        Ok(signals)
-    }
-
     /// Fetch evidence nodes for a signal by ID.
     pub async fn get_signal_evidence(
         &self,
         signal_id: Uuid,
-    ) -> Result<Vec<EvidenceNode>, neo4rs::Error> {
+    ) -> Result<Vec<CitationNode>, neo4rs::Error> {
         let id_str = signal_id.to_string();
 
         for nt in &[
             NodeType::Gathering,
-            NodeType::Aid,
-            NodeType::Need,
-            NodeType::Notice,
-            NodeType::Tension,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
         ] {
             let label = node_type_label(*nt);
             let cypher = format!(
-                "MATCH (n:{label} {{id: $id}})-[:SOURCED_FROM]->(ev:Evidence)
+                "MATCH (n:{label} {{id: $id}})-[:SOURCED_FROM]->(ev:Citation)
                  RETURN collect(ev) AS evidence"
             );
 
             let q = query(&cypher).param("id", id_str.as_str());
-            let mut stream = self.client.graph.execute(q).await?;
+            let mut stream = self.client.execute(q).await?;
 
             if let Some(row) = stream.next().await? {
-                let evidence = extract_evidence(&row);
+                let evidence = extract_citation(&row);
                 if !evidence.is_empty() {
                     return Ok(evidence);
                 }
@@ -452,116 +363,6 @@ impl PublicGraphReader {
         }
 
         Ok(Vec::new())
-    }
-
-    /// Batch query for evidence counts per story.
-    pub async fn story_evidence_counts(
-        &self,
-        story_ids: &[Uuid],
-    ) -> Result<Vec<(Uuid, u32)>, neo4rs::Error> {
-        if story_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let ids: Vec<String> = story_ids.iter().map(|id| id.to_string()).collect();
-        let cypher = "MATCH (s:Story)-[:CONTAINS]->(n)-[:SOURCED_FROM]->(ev:Evidence)
-                      WHERE s.id IN $ids
-                      RETURN s.id AS story_id, count(DISTINCT ev) AS evidence_count";
-
-        let q = query(cypher).param("ids", ids);
-        let mut stream = self.client.graph.execute(q).await?;
-        let mut results = Vec::new();
-
-        while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("story_id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                let cnt: i64 = row.get("evidence_count").unwrap_or(0);
-                results.push((id, cnt as u32));
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Batch-fetch evidence for all signals in a story. Returns (signal_id, Vec<EvidenceNode>) pairs.
-    pub async fn get_story_signal_evidence(
-        &self,
-        story_id: Uuid,
-    ) -> Result<Vec<(Uuid, Vec<EvidenceNode>)>, neo4rs::Error> {
-        let cypher = "MATCH (s:Story {id: $id})-[:CONTAINS]->(n)-[:SOURCED_FROM]->(ev:Evidence)
-             WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
-             RETURN n.id AS signal_id, collect(ev) AS evidence";
-
-        let q = query(cypher).param("id", story_id.to_string());
-        let mut stream = self.client.graph.execute(q).await?;
-        let mut results = Vec::new();
-
-        while let Some(row) = stream.next().await? {
-            let id_str: String = row.get("signal_id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                let evidence = extract_evidence(&row);
-                results.push((id, evidence));
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Batch-fetch response signals for all tensions in a story.
-    /// Returns (tension_id, Vec<response_summary>) pairs.
-    pub async fn get_story_tension_responses(
-        &self,
-        story_id: Uuid,
-    ) -> Result<Vec<(Uuid, Vec<serde_json::Value>)>, neo4rs::Error> {
-        let cypher =
-            "MATCH (s:Story {id: $id})-[:CONTAINS]->(t:Tension)<-[rel:RESPONDS_TO|DRAWN_TO]-(resp)
-             WHERE resp:Aid OR resp:Gathering OR resp:Need
-             RETURN t.id AS tension_id, resp.id AS resp_id, resp.title AS resp_title,
-                    resp.summary AS resp_summary,
-                    labels(resp) AS resp_labels,
-                    rel.match_strength AS match_strength,
-                    rel.explanation AS explanation,
-                    type(rel) AS edge_type,
-                    rel.gathering_type AS gathering_type";
-
-        let q = query(cypher).param("id", story_id.to_string());
-        let mut stream = self.client.graph.execute(q).await?;
-
-        let mut map: std::collections::HashMap<Uuid, Vec<serde_json::Value>> =
-            std::collections::HashMap::new();
-
-        while let Some(row) = stream.next().await? {
-            let tid_str: String = row.get("tension_id").unwrap_or_default();
-            let Ok(tid) = Uuid::parse_str(&tid_str) else {
-                continue;
-            };
-            let rid_str: String = row.get("resp_id").unwrap_or_default();
-            let title: String = row.get("resp_title").unwrap_or_default();
-            let summary: String = row.get("resp_summary").unwrap_or_default();
-            let labels: Vec<String> = row.get("resp_labels").unwrap_or_default();
-            let node_type = labels
-                .iter()
-                .find(|l| *l != "Node")
-                .cloned()
-                .unwrap_or_default();
-            let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
-            let explanation: String = row.get("explanation").unwrap_or_default();
-            let edge_type: String = row.get("edge_type").unwrap_or_default();
-            let gathering_type: Option<String> = row.get::<String>("gathering_type").ok();
-
-            map.entry(tid).or_default().push(serde_json::json!({
-                "id": rid_str,
-                "title": title,
-                "summary": summary,
-                "node_type": node_type,
-                "match_strength": match_strength,
-                "explanation": explanation,
-                "edge_type": edge_type,
-                "gathering_type": gathering_type,
-            }));
-        }
-
-        Ok(map.into_iter().collect())
     }
 
     /// Get a single signal by ID.
@@ -572,52 +373,37 @@ impl PublicGraphReader {
         }
     }
 
-    // --- Story filter queries ---
+    /// Get a signal by ID without display filters or coordinate fuzzing.
+    /// Used by admin endpoints that need to see all signals regardless of
+    /// confidence or staleness.
+    pub async fn get_signal_by_id_unfiltered(&self, id: Uuid) -> Result<Option<Node>, neo4rs::Error> {
+        let id_str = id.to_string();
 
-    /// Get stories filtered by category.
-    pub async fn stories_by_category(
-        &self,
-        category: &str,
-        limit: u32,
-    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Story) WHERE s.review_status = 'live' AND s.category = $category
-             RETURN s ORDER BY s.energy DESC LIMIT $limit",
-        )
-        .param("category", category)
-        .param("limit", limit as i64);
+        for nt in &[
+            NodeType::Gathering,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
+            NodeType::Condition,
+        ] {
+            let label = node_type_label(*nt);
+            let cypher = format!(
+                "MATCH (n:{label} {{id: $id}})
+                 RETURN n, labels(n)[0] AS node_label"
+            );
 
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                results.push(story);
+            let q = query(&cypher).param("id", id_str.as_str());
+            let mut stream = self.client.execute(q).await?;
+
+            if let Some(row) = stream.next().await? {
+                if let Some(node) = row_to_node(&row, *nt) {
+                    return Ok(Some(node));
+                }
             }
         }
-        Ok(results)
-    }
 
-    /// Get stories filtered by arc phase.
-    pub async fn stories_by_arc(
-        &self,
-        arc: &str,
-        limit: u32,
-    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Story) WHERE s.review_status = 'live' AND s.arc = $arc
-             RETURN s ORDER BY s.energy DESC LIMIT $limit",
-        )
-        .param("arc", arc)
-        .param("limit", limit as i64);
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                results.push(story);
-            }
-        }
-        Ok(results)
+        Ok(None)
     }
 
     // --- Actor queries ---
@@ -629,75 +415,28 @@ impl PublicGraphReader {
     ) -> Result<Option<rootsignal_common::ActorNode>, neo4rs::Error> {
         let q = query("MATCH (a:Actor {id: $id}) RETURN a").param("id", actor_id.to_string());
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         if let Some(row) = stream.next().await? {
             return Ok(row_to_actor(&row));
         }
         Ok(None)
     }
 
-    /// Get stories involving an actor (via ACTED_IN -> signals -> CONTAINS <- stories).
-    pub async fn actor_stories(
-        &self,
-        actor_id: Uuid,
-        limit: u32,
-    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (a:Actor {id: $id})-[:ACTED_IN]->(n)<-[:CONTAINS]-(s:Story)
-             WHERE s.review_status = 'live'
-             RETURN DISTINCT s
-             ORDER BY s.energy DESC
-             LIMIT $limit",
-        )
-        .param("id", actor_id.to_string())
-        .param("limit", limit as i64);
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                results.push(story);
-            }
-        }
-        Ok(results)
-    }
-
-    /// Get actors involved in a story.
-    pub async fn actors_for_story(
-        &self,
-        story_id: Uuid,
-    ) -> Result<Vec<rootsignal_common::ActorNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Story {id: $id})-[:CONTAINS]->(n)<-[:ACTED_IN]-(a:Actor)
-             RETURN DISTINCT a",
-        )
-        .param("id", story_id.to_string());
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(actor) = row_to_actor(&row) {
-                results.push(actor);
-            }
-        }
-        Ok(results)
-    }
-
     // --- Tension response queries ---
 
     /// Get Aid/Gathering/Need signals that respond to a tension, with edge metadata.
-    pub async fn tension_responses(
+    pub async fn concern_responses(
         &self,
-        tension_id: Uuid,
-    ) -> Result<Vec<TensionResponse>, neo4rs::Error> {
-        let response_types = [NodeType::Aid, NodeType::Gathering, NodeType::Need];
+        concern_id: Uuid,
+    ) -> Result<Vec<ConcernResponse>, neo4rs::Error> {
+        let response_types = [NodeType::Resource, NodeType::Gathering, NodeType::HelpRequest];
 
         let branches: Vec<String> = response_types
             .iter()
             .map(|nt| {
                 let label = node_type_label(*nt);
                 format!(
-                    "MATCH (t:Tension {{id: $id}})<-[rel:RESPONDS_TO|DRAWN_TO]-(n:{label})
+                    "MATCH (t:Concern {{id: $id}})<-[rel:RESPONDS_TO|DRAWN_TO|EVIDENCE_OF]-(n:{label})
                      RETURN n, labels(n)[0] AS node_label, rel.match_strength AS match_strength, rel.explanation AS explanation
                      ORDER BY n.confidence DESC"
                 )
@@ -705,16 +444,16 @@ impl PublicGraphReader {
             .collect();
 
         let cypher = branches.join("\nUNION ALL\n");
-        let q = query(&cypher).param("id", tension_id.to_string());
+        let q = query(&cypher).param("id", concern_id.to_string());
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Some(node) = row_to_node_by_label(&row) {
                 if passes_display_filter(&node) {
                     let match_strength: f64 = row.get("match_strength").unwrap_or(0.0);
                     let explanation: String = row.get("explanation").unwrap_or_default();
-                    results.push(TensionResponse {
+                    results.push(ConcernResponse {
                         node: fuzz_node(node),
                         match_strength,
                         explanation,
@@ -724,6 +463,23 @@ impl PublicGraphReader {
         }
 
         Ok(results)
+    }
+
+    /// Count EVIDENCE_OF edges on a Tension — a structural measure of how well-grounded it is.
+    pub async fn evidence_of_count(&self, concern_id: Uuid) -> Result<u32, neo4rs::Error> {
+        let q = query(
+            "MATCH (sig)-[:EVIDENCE_OF]->(t:Concern {id: $id})
+             RETURN count(sig) AS cnt",
+        )
+        .param("id", concern_id.to_string());
+
+        let mut stream = self.client.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            Ok(cnt as u32)
+        } else {
+            Ok(0)
+        }
     }
 
     // --- Bounding-box & semantic search queries (for search app) ---
@@ -740,10 +496,10 @@ impl PublicGraphReader {
     ) -> Result<Vec<Node>, neo4rs::Error> {
         let all_types = [
             NodeType::Gathering,
-            NodeType::Aid,
-            NodeType::Need,
-            NodeType::Notice,
-            NodeType::Tension,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
         ];
 
         let branches: Vec<String> = all_types
@@ -752,15 +508,14 @@ impl PublicGraphReader {
                 let label = node_type_label(*nt);
                 format!(
                     "MATCH (n:{label})
-                     WHERE n.lat <> 0.0
-                       AND n.lat >= $min_lat AND n.lat <= $max_lat
-                       AND n.lng >= $min_lng AND n.lng <= $max_lng
-                       AND n.confidence >= $min_confidence
+                     WHERE n.confidence >= $min_confidence
                        {expiry}
+                       AND {bbox}
                      RETURN n, labels(n)[0] AS node_label
                      ORDER BY coalesce(n.cause_heat, 0) DESC, n.confidence DESC
                      LIMIT $limit",
                     expiry = expiry_clause(*nt),
+                    bbox = bbox_exists("n"),
                 )
             })
             .collect();
@@ -776,7 +531,7 @@ impl PublicGraphReader {
             .param("limit", limit as i64);
 
         let mut all: Vec<Node> = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             if let Some(node) = row_to_node_by_label(&row) {
                 if passes_display_filter(&node) {
@@ -796,44 +551,7 @@ impl PublicGraphReader {
         Ok(all)
     }
 
-    /// Find stories within a bounding box (by centroid), sorted by energy.
-    /// Excludes archived stories. Used by the search app when no text query is active.
-    pub async fn stories_in_bounds(
-        &self,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-        limit: u32,
-    ) -> Result<Vec<StoryNode>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Story)
-             WHERE s.review_status = 'live'
-               AND s.centroid_lat IS NOT NULL
-               AND s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
-               AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
-               AND (s.arc IS NULL OR s.arc <> 'archived')
-             RETURN s
-             ORDER BY s.energy DESC
-             LIMIT $limit",
-        )
-        .param("min_lat", min_lat)
-        .param("max_lat", max_lat)
-        .param("min_lng", min_lng)
-        .param("max_lng", max_lng)
-        .param("limit", limit as i64);
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                results.push(story);
-            }
-        }
-        Ok(results)
-    }
-
-    /// Find tensions with < 2 respondents that aren't in any story, within a bounding box.
+    /// Find tensions with < 2 respondents within a bounding box.
     /// Sorted by cause_heat DESC. Used to surface unresponded community needs.
     pub async fn unresponded_tensions_in_bounds(
         &self,
@@ -843,20 +561,18 @@ impl PublicGraphReader {
         max_lng: f64,
         limit: u32,
     ) -> Result<Vec<Node>, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:Tension)
-             WHERE t.review_status = 'live'
-               AND t.lat IS NOT NULL
-               AND t.lat >= $min_lat AND t.lat <= $max_lat
-               AND t.lng >= $min_lng AND t.lng <= $max_lng
-               AND NOT (t)<-[:CONTAINS]-(:Story)
-             OPTIONAL MATCH (t)<-[:RESPONDS_TO|DRAWN_TO]-(r)
+        let bbox = bbox_exists("t");
+        let q = query(&format!(
+            "MATCH (t:Concern)
+             WHERE t.review_status = 'accepted'
+               AND {bbox}
+             OPTIONAL MATCH (t)<-[:RESPONDS_TO|DRAWN_TO|EVIDENCE_OF]-(r)
              WITH t, count(r) AS resp_count
              WHERE resp_count < 2
              RETURN t AS n
              ORDER BY coalesce(t.cause_heat, 0.0) DESC
              LIMIT $limit",
-        )
+        ))
         .param("min_lat", min_lat)
         .param("max_lat", max_lat)
         .param("min_lng", min_lng)
@@ -864,9 +580,9 @@ impl PublicGraphReader {
         .param("limit", limit as i64);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            if let Some(node) = row_to_node(&row, NodeType::Tension) {
+            if let Some(node) = row_to_node(&row, NodeType::Concern) {
                 results.push(fuzz_node(node));
             }
         }
@@ -892,10 +608,10 @@ impl PublicGraphReader {
 
         let index_names = [
             ("Gathering", "gathering_embedding", NodeType::Gathering),
-            ("Aid", "aid_embedding", NodeType::Aid),
-            ("Need", "need_embedding", NodeType::Need),
-            ("Notice", "notice_embedding", NodeType::Notice),
-            ("Tension", "tension_embedding", NodeType::Tension),
+            ("Resource", "aid_embedding", NodeType::Resource),
+            ("HelpRequest", "need_embedding", NodeType::HelpRequest),
+            ("Announcement", "notice_embedding", NodeType::Announcement),
+            ("Concern", "tension_embedding", NodeType::Concern),
         ];
 
         let futures: Vec<_> = index_names
@@ -903,20 +619,18 @@ impl PublicGraphReader {
             .map(|(_label, index_name, nt)| {
                 let nt = *nt;
                 let embedding_vec = embedding_vec.clone();
-                let graph = &self.client.graph;
+                let graph = &self.client;
                 async move {
-                    let cypher =
-                        "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
+                    let bbox = bbox_exists("node");
+                    let cypher = format!("CALL db.index.vector.queryNodes($index_name, $k, $embedding)
                          YIELD node, score
                          WHERE score >= $min_score
-                           AND node.review_status = 'live'
-                           AND node.lat <> 0.0
-                           AND node.lat >= $min_lat AND node.lat <= $max_lat
-                           AND node.lng >= $min_lng AND node.lng <= $max_lng
+                           AND node.review_status = 'accepted'
                            AND node.confidence >= $min_confidence
-                         RETURN node AS n, score";
+                           AND {bbox}
+                         RETURN node AS n, score");
 
-                    let q = query(cypher)
+                    let q = query(&cypher)
                         .param("index_name", *index_name)
                         .param("k", k_per_type)
                         .param("embedding", embedding_vec)
@@ -951,110 +665,9 @@ impl PublicGraphReader {
             scored.extend(result?);
         }
 
-        scored.sort_by(|(_, a), (_, b)| {
-            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(limit as usize);
         Ok(scored)
-    }
-
-    /// Semantic search for stories within a bounding box.
-    /// Stories lack embeddings, so we search signals via KNN and aggregate to parent stories.
-    /// Returns (story, best_signal_score, best_signal_title) tuples sorted by blended score.
-    pub async fn semantic_search_stories_in_bounds(
-        &self,
-        embedding: &[f32],
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-        limit: u32,
-    ) -> Result<Vec<(StoryNode, f64, String)>, neo4rs::Error> {
-        let embedding_vec: Vec<f64> = embedding.iter().map(|&v| v as f64).collect();
-        let k_per_type = 100_i64;
-        let min_score = 0.3_f64;
-
-        // Collect (story_id -> (best_similarity, best_signal_title)) from signal search
-        let mut story_scores: std::collections::HashMap<Uuid, (f64, String)> =
-            std::collections::HashMap::new();
-
-        let index_names = [
-            ("Gathering", "gathering_embedding"),
-            ("Aid", "aid_embedding"),
-            ("Need", "need_embedding"),
-            ("Notice", "notice_embedding"),
-            ("Tension", "tension_embedding"),
-        ];
-
-        for (_label, index_name) in &index_names {
-            let cypher =
-                "CALL db.index.vector.queryNodes($index_name, $k, $embedding)
-                 YIELD node, score
-                 WHERE score >= $min_score
-                   AND node.review_status = 'live'
-                   AND node.lat <> 0.0
-                   AND node.lat >= $min_lat AND node.lat <= $max_lat
-                   AND node.lng >= $min_lng AND node.lng <= $max_lng
-                 WITH node, score
-                 MATCH (s:Story)-[:CONTAINS]->(node)
-                 WHERE s.review_status = 'live'
-                 RETURN s.id AS story_id, score, node.title AS signal_title";
-
-            let q = query(cypher)
-                .param("index_name", *index_name)
-                .param("k", k_per_type)
-                .param("embedding", embedding_vec.clone())
-                .param("min_score", min_score)
-                .param("min_lat", min_lat)
-                .param("max_lat", max_lat)
-                .param("min_lng", min_lng)
-                .param("max_lng", max_lng);
-
-            let mut stream = self.client.graph.execute(q).await?;
-            while let Some(row) = stream.next().await? {
-                let sid_str: String = row.get("story_id").unwrap_or_default();
-                let Ok(sid) = Uuid::parse_str(&sid_str) else {
-                    continue;
-                };
-                let score: f64 = row.get("score").unwrap_or(0.0);
-                let title: String = row.get("signal_title").unwrap_or_default();
-
-                let entry = story_scores.entry(sid).or_insert((0.0, String::new()));
-                if score > entry.0 {
-                    *entry = (score, title);
-                }
-            }
-        }
-
-        if story_scores.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Fetch full story nodes for the matched IDs
-        let story_ids: Vec<String> = story_scores.keys().map(|id| id.to_string()).collect();
-        let q = query(
-            "MATCH (s:Story)
-             WHERE s.review_status = 'live' AND s.id IN $ids
-             RETURN s",
-        )
-        .param("ids", story_ids);
-
-        let mut results: Vec<(StoryNode, f64, String)> = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            if let Some(story) = row_to_story(&row) {
-                if let Some((best_sim, best_title)) = story_scores.get(&story.id) {
-                    let blended = best_sim * 0.6 + story.energy * 0.4;
-                    results.push((story, blended, best_title.clone()));
-                }
-            }
-        }
-
-        results.sort_by(|(_, a, _), (_, b, _)| {
-            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        results.truncate(limit as usize);
-        Ok(results)
     }
 
     // --- Admin/Quality queries (not public-facing, but through reader for safety) ---
@@ -1064,14 +677,14 @@ impl PublicGraphReader {
         let mut counts = Vec::new();
         for nt in &[
             NodeType::Gathering,
-            NodeType::Aid,
-            NodeType::Need,
-            NodeType::Notice,
-            NodeType::Tension,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
         ] {
             let label = node_type_label(*nt);
             let q = query(&format!("MATCH (n:{label}) RETURN count(n) AS cnt"));
-            let mut stream = self.client.graph.execute(q).await?;
+            let mut stream = self.client.execute(q).await?;
             if let Some(row) = stream.next().await? {
                 let cnt: i64 = row.get("cnt").unwrap_or(0);
                 counts.push((*nt, cnt as u64));
@@ -1084,7 +697,7 @@ impl PublicGraphReader {
     pub async fn confidence_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
+            WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
             WITH CASE
                 WHEN n.confidence >= 0.8 THEN 'high (0.8+)'
                 WHEN n.confidence >= 0.6 THEN 'good (0.6-0.8)'
@@ -1095,7 +708,7 @@ impl PublicGraphReader {
             ORDER BY bucket",
         );
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         let mut results = Vec::new();
         while let Some(row) = stream.next().await? {
             let bucket: String = row.get("bucket").unwrap_or_default();
@@ -1109,7 +722,7 @@ impl PublicGraphReader {
     pub async fn freshness_distribution(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
         let q = query(
             "MATCH (n)
-            WHERE n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension
+            WHERE n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition
             WITH (datetime() - n.last_confirmed_active).day AS age_days
             WITH CASE
                 WHEN age_days <= 7 THEN '< 7 days'
@@ -1121,7 +734,7 @@ impl PublicGraphReader {
             ORDER BY bucket",
         );
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         let mut results = Vec::new();
         while let Some(row) = stream.next().await? {
             let bucket: String = row.get("bucket").unwrap_or_default();
@@ -1148,19 +761,19 @@ impl PublicGraphReader {
              WITH date(datetime() - duration('P' + toString(offset) + 'D')) AS day
              OPTIONAL MATCH (e:Gathering) WHERE date(e.extracted_at) = day
              WITH day, count(e) AS events
-             OPTIONAL MATCH (g:Aid) WHERE date(g.extracted_at) = day
+             OPTIONAL MATCH (g:Resource) WHERE date(g.extracted_at) = day
              WITH day, events, count(g) AS gives
-             OPTIONAL MATCH (a:Need) WHERE date(a.extracted_at) = day
+             OPTIONAL MATCH (a:HelpRequest) WHERE date(a.extracted_at) = day
              WITH day, events, gives, count(a) AS needs
-             OPTIONAL MATCH (n:Notice) WHERE date(n.extracted_at) = day
+             OPTIONAL MATCH (n:Announcement) WHERE date(n.extracted_at) = day
              WITH day, events, gives, needs, count(n) AS notices
-             OPTIONAL MATCH (t:Tension) WHERE date(t.extracted_at) = day
+             OPTIONAL MATCH (t:Concern) WHERE date(t.extracted_at) = day
              RETURN toString(day) AS day, events, gives, needs, notices, count(t) AS tensions
              ORDER BY day",
         );
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let day: String = row.get("day").unwrap_or_default();
             let events: i64 = row.get("events").unwrap_or(0);
@@ -1180,86 +793,52 @@ impl PublicGraphReader {
         Ok(results)
     }
 
-    /// Story count grouped by arc (30-day window).
-    pub async fn story_count_by_arc(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Story)
-             WHERE s.review_status = 'live'
-               AND s.last_updated >= datetime() - duration('P30D')
-             RETURN coalesce(s.arc, 'unknown') AS arc, count(s) AS cnt
-             ORDER BY cnt DESC",
-        );
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let arc: String = row.get("arc").unwrap_or_default();
-            let cnt: i64 = row.get("cnt").unwrap_or(0);
-            results.push((arc, cnt as u64));
-        }
-        Ok(results)
-    }
-
-    /// Story count grouped by category (30-day window).
-    pub async fn story_count_by_category(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:Story)
-             WHERE s.review_status = 'live'
-               AND s.last_updated >= datetime() - duration('P30D')
-             RETURN coalesce(s.category, 'uncategorized') AS category, count(s) AS cnt
-             ORDER BY cnt DESC",
-        );
-
-        let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
-        while let Some(row) = stream.next().await? {
-            let category: String = row.get("category").unwrap_or_default();
-            let cnt: i64 = row.get("cnt").unwrap_or(0);
-            results.push((category, cnt as u64));
-        }
-        Ok(results)
-    }
-
-    /// Total story count.
-    pub async fn story_count(&self) -> Result<u64, neo4rs::Error> {
-        let q = query("MATCH (s:Story) WHERE s.review_status = 'live' RETURN count(s) AS cnt");
-        let mut stream = self.client.graph.execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let cnt: i64 = row.get("cnt").unwrap_or(0);
-            return Ok(cnt as u64);
-        }
-        Ok(0)
-    }
-
     /// Total actor count.
     pub async fn actor_count(&self) -> Result<u64, neo4rs::Error> {
         let q = query("MATCH (a:Actor) RETURN count(a) AS cnt");
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         if let Some(row) = stream.next().await? {
             let cnt: i64 = row.get("cnt").unwrap_or(0);
             return Ok(cnt as u64);
         }
         Ok(0)
+    }
+
+    /// Lightweight batch fetch: signal ID → (title, signal_type, source_url).
+    pub async fn signal_summaries_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, SignalMiniSummary>, neo4rs::Error> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let cypher = "UNWIND $ids AS sid
+            MATCH (n) WHERE n.id = sid
+              AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+            OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type, s.url AS source_url";
+        let q = neo4rs::query(cypher).param("ids", ids.to_vec());
+        let mut stream = self.client.execute(q).await?;
+        let mut map = std::collections::HashMap::new();
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            map.insert(id, SignalMiniSummary {
+                title: row.get("title").unwrap_or_default(),
+                signal_type: row.get("signal_type").unwrap_or_default(),
+                source_url: row.get("source_url").ok(),
+            });
+        }
+        Ok(map)
     }
 
     // --- Batch queries for DataLoaders ---
 
-    /// Get a single story by ID (without signals).
-    pub async fn get_story_by_id(&self, id: Uuid) -> Result<Option<StoryNode>, neo4rs::Error> {
-        let q = query("MATCH (s:Story {id: $id}) WHERE s.review_status = 'live' RETURN s").param("id", id.to_string());
-        let mut stream = self.client.graph.execute(q).await?;
-        match stream.next().await? {
-            Some(row) => Ok(row_to_story(&row)),
-            None => Ok(None),
-        }
-    }
-
-    /// Batch-fetch evidence for multiple signal IDs. Returns map of signal_id -> Vec<EvidenceNode>.
-    pub async fn batch_evidence_by_signal_ids(
+    /// Batch-fetch evidence for multiple signal IDs. Returns map of signal_id -> Vec<CitationNode>.
+    pub async fn batch_citation_by_signal_ids(
         &self,
         ids: &[Uuid],
-    ) -> Result<std::collections::HashMap<Uuid, Vec<EvidenceNode>>, neo4rs::Error> {
-        let mut map: std::collections::HashMap<Uuid, Vec<EvidenceNode>> =
+    ) -> Result<std::collections::HashMap<Uuid, Vec<CitationNode>>, neo4rs::Error> {
+        let mut map: std::collections::HashMap<Uuid, Vec<CitationNode>> =
             std::collections::HashMap::new();
 
         if ids.is_empty() {
@@ -1267,18 +846,114 @@ impl PublicGraphReader {
         }
 
         let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
-        let cypher = "MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
-             WHERE n.id IN $ids AND (n:Gathering OR n:Aid OR n:Need OR n:Notice OR n:Tension)
+        let cypher = "MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
+             WHERE n.id IN $ids AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
              RETURN n.id AS signal_id, collect(ev) AS evidence";
 
         let q = query(cypher).param("ids", id_strs);
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
 
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("signal_id").unwrap_or_default();
             if let Ok(id) = Uuid::parse_str(&id_str) {
-                let evidence = extract_evidence(&row);
+                let evidence = extract_citation(&row);
                 map.insert(id, evidence);
+            }
+        }
+
+        Ok(map)
+    }
+
+    /// Batch-fetch schedules for multiple signal IDs. Returns map of signal_id -> ScheduleNode.
+    pub async fn batch_schedules_by_signal_ids(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, ScheduleNode>, neo4rs::Error> {
+        let mut map: std::collections::HashMap<Uuid, ScheduleNode> =
+            std::collections::HashMap::new();
+
+        if ids.is_empty() {
+            return Ok(map);
+        }
+
+        let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let cypher = "MATCH (n)-[:HAS_SCHEDULE]->(s:Schedule)
+             WHERE n.id IN $ids AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+             RETURN n.id AS signal_id, s";
+
+        let q = query(cypher).param("ids", id_strs);
+        let mut stream = self.client.execute(q).await?;
+
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("signal_id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                let s: neo4rs::Node = match row.get("s") {
+                    Ok(n) => n,
+                    Err(_) => continue,
+                };
+                let schedule_id_str: String = s.get("id").unwrap_or_default();
+                let schedule_id = match Uuid::parse_str(&schedule_id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let rrule: String = s.get("rrule").unwrap_or_default();
+                let timezone: String = s.get("timezone").unwrap_or_default();
+                let schedule_text: String = s.get("schedule_text").unwrap_or_default();
+
+                let dtstart = parse_optional_datetime_prop(&s, "dtstart");
+                let dtend = parse_optional_datetime_prop(&s, "dtend");
+                let extracted_at = parse_datetime_prop(&s, "extracted_at");
+
+                // Parse rdates/exdates arrays of datetime strings
+                let rdates_raw: Vec<String> = s.get("rdates").unwrap_or_default();
+                let exdates_raw: Vec<String> = s.get("exdates").unwrap_or_default();
+                let rdates: Vec<DateTime<Utc>> = rdates_raw
+                    .iter()
+                    .filter_map(|d| {
+                        DateTime::parse_from_rfc3339(d)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .or_else(|| {
+                                NaiveDateTime::parse_from_str(d, "%Y-%m-%dT%H:%M:%S%.f")
+                                    .ok()
+                                    .map(|n| n.and_utc())
+                            })
+                    })
+                    .collect();
+                let exdates: Vec<DateTime<Utc>> = exdates_raw
+                    .iter()
+                    .filter_map(|d| {
+                        DateTime::parse_from_rfc3339(d)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .or_else(|| {
+                                NaiveDateTime::parse_from_str(d, "%Y-%m-%dT%H:%M:%S%.f")
+                                    .ok()
+                                    .map(|n| n.and_utc())
+                            })
+                    })
+                    .collect();
+
+                let schedule = ScheduleNode {
+                    id: schedule_id,
+                    rrule: if rrule.is_empty() { None } else { Some(rrule) },
+                    rdates,
+                    exdates,
+                    dtstart,
+                    dtend,
+                    timezone: if timezone.is_empty() {
+                        None
+                    } else {
+                        Some(timezone)
+                    },
+                    schedule_text: if schedule_text.is_empty() {
+                        None
+                    } else {
+                        Some(schedule_text)
+                    },
+                    extracted_at,
+                };
+                map.insert(id, schedule);
             }
         }
 
@@ -1304,7 +979,7 @@ impl PublicGraphReader {
              RETURN n.id AS signal_id, a";
 
         let q = query(cypher).param("ids", id_strs);
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
 
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("signal_id").unwrap_or_default();
@@ -1318,32 +993,50 @@ impl PublicGraphReader {
         Ok(map)
     }
 
-    /// Batch-fetch the parent story for multiple signal IDs. Returns map of signal_id -> StoryNode.
-    pub async fn batch_story_by_signal_ids(
+    pub async fn batch_entities_by_signal_ids(
         &self,
         ids: &[Uuid],
-    ) -> Result<std::collections::HashMap<Uuid, StoryNode>, neo4rs::Error> {
-        let mut map: std::collections::HashMap<Uuid, StoryNode> = std::collections::HashMap::new();
+    ) -> Result<std::collections::HashMap<Uuid, Vec<rootsignal_common::types::Entity>>, neo4rs::Error>
+    {
+        use rootsignal_common::types::EntityType;
+
+        let mut map: std::collections::HashMap<Uuid, Vec<rootsignal_common::types::Entity>> =
+            std::collections::HashMap::new();
 
         if ids.is_empty() {
             return Ok(map);
         }
 
         let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
-        let cypher = "MATCH (s:Story)-[:CONTAINS]->(n)
-             WHERE s.review_status = 'live' AND n.id IN $ids
-             RETURN n.id AS signal_id, s";
-
-        let q = query(cypher).param("ids", id_strs);
-        let mut stream = self.client.graph.execute(q).await?;
+        let q = query(
+            "MATCH (e:Entity)-[r:MENTIONED_IN]->(n)
+             WHERE n.id IN $ids
+             RETURN n.id AS signal_id, e.name AS name, e.entity_type AS entity_type, r.role AS role",
+        )
+        .param("ids", id_strs);
+        let mut stream = self.client.execute(q).await?;
 
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("signal_id").unwrap_or_default();
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                if let Some(story) = row_to_story(&row) {
-                    map.insert(id, story);
-                }
-            }
+            let Ok(id) = Uuid::parse_str(&id_str) else {
+                continue;
+            };
+            let name: String = row.get("name").unwrap_or_default();
+            let et_str: String = row.get("entity_type").unwrap_or_default();
+            let role: String = row.get("role").unwrap_or_default();
+
+            let entity_type = match et_str.as_str() {
+                "Group" => EntityType::Group,
+                "GovernmentBody" => EntityType::GovernmentBody,
+                "Thing" => EntityType::Thing,
+                _ => EntityType::Organization,
+            };
+
+            map.entry(id).or_default().push(rootsignal_common::types::Entity {
+                name,
+                entity_type,
+                role: if role.is_empty() { None } else { Some(role) },
+            });
         }
 
         Ok(map)
@@ -1378,26 +1071,22 @@ impl PublicGraphReader {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
 
-        // Find all Need/Gathering nodes linked to ANY of the requested resources
-        let cypher = "MATCH (r:Resource)<-[e:REQUIRES|PREFERS]-(s)
+        let bbox = bbox_exists("n");
+        let cypher = format!("MATCH (r:Resource)<-[e:REQUIRES|PREFERS]-(n)
              WHERE r.slug IN $slugs
-               AND (s:Need OR s:Gathering)
-               AND s.confidence >= $min_confidence
-               AND (
-                   (s.lat IS NOT NULL AND s.lat >= $min_lat AND s.lat <= $max_lat
-                    AND s.lng >= $min_lng AND s.lng <= $max_lng)
-                   OR s.lat IS NULL
-               )
-             WITH s, collect({slug: r.slug, type: type(e)}) AS matched_resources
-             OPTIONAL MATCH (s)-[:REQUIRES]->(all_req:Resource)
-             OPTIONAL MATCH (s)-[:PREFERS]->(all_pref:Resource)
-             RETURN s,
+               AND (n:HelpRequest OR n:Gathering)
+               AND n.confidence >= $min_confidence
+               AND ({bbox} OR NOT EXISTS {{ MATCH (n)-[:{LOC_EDGES}]->(:Location) }})
+             WITH n, collect({{slug: r.slug, type: type(e)}}) AS matched_resources
+             OPTIONAL MATCH (n)-[:REQUIRES]->(all_req:Resource)
+             OPTIONAL MATCH (n)-[:PREFERS]->(all_pref:Resource)
+             RETURN n,
                     matched_resources,
                     collect(DISTINCT all_req.slug) AS all_requires,
-                    collect(DISTINCT all_pref.slug) AS all_prefers";
+                    collect(DISTINCT all_pref.slug) AS all_prefers");
 
         let slug_strings: Vec<String> = slugs.iter().map(|s| s.to_string()).collect();
-        let q = query(cypher)
+        let q = query(&cypher)
             .param("slugs", slug_strings)
             .param("min_lat", lat - lat_delta)
             .param("max_lat", lat + lat_delta)
@@ -1408,11 +1097,11 @@ impl PublicGraphReader {
         let slug_set: std::collections::HashSet<&str> = slugs.iter().map(|s| s.as_str()).collect();
         let mut matches = Vec::new();
 
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             // Try to parse as Need or Gathering
-            let node =
-                row_to_node(&row, NodeType::Need).or_else(|| row_to_node(&row, NodeType::Gathering));
+            let node = row_to_node(&row, NodeType::HelpRequest)
+                .or_else(|| row_to_node(&row, NodeType::Gathering));
 
             let Some(node) = node else { continue };
             if !passes_display_filter(&node) {
@@ -1477,18 +1166,15 @@ impl PublicGraphReader {
         let lat_delta = radius_km / 111.0;
         let lng_delta = radius_km / (111.0 * lat.to_radians().cos());
 
-        let cypher = "MATCH (r:Resource {slug: $slug})<-[:OFFERS]-(s:Aid)
-             WHERE s.confidence >= $min_confidence
-               AND (
-                   (s.lat IS NOT NULL AND s.lat >= $min_lat AND s.lat <= $max_lat
-                    AND s.lng >= $min_lng AND s.lng <= $max_lng)
-                   OR s.lat IS NULL
-               )
-             RETURN s
-             ORDER BY s.cause_heat DESC, s.confidence DESC
-             LIMIT $limit";
+        let bbox = bbox_exists("n");
+        let cypher = format!("MATCH (r:Resource {{slug: $slug}})<-[:OFFERS]-(n:Resource)
+             WHERE n.confidence >= $min_confidence
+               AND ({bbox} OR NOT EXISTS {{ MATCH (n)-[:{LOC_EDGES}]->(:Location) }})
+             RETURN n
+             ORDER BY n.cause_heat DESC, n.confidence DESC
+             LIMIT $limit");
 
-        let q = query(cypher)
+        let q = query(&cypher)
             .param("slug", slug)
             .param("min_lat", lat - lat_delta)
             .param("max_lat", lat + lat_delta)
@@ -1498,9 +1184,9 @@ impl PublicGraphReader {
             .param("limit", limit as i64);
 
         let mut results = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
-            if let Some(node) = row_to_node(&row, NodeType::Aid) {
+            if let Some(node) = row_to_node(&row, NodeType::Resource) {
                 if passes_display_filter(&node) {
                     results.push(ResourceMatch {
                         node: fuzz_node(node),
@@ -1532,7 +1218,7 @@ impl PublicGraphReader {
         .param("limit", limit as i64);
 
         let mut resources = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let id = match Uuid::parse_str(&id_str) {
@@ -1556,16 +1242,16 @@ impl PublicGraphReader {
     pub async fn resource_gap_analysis(&self) -> Result<Vec<ResourceGap>, neo4rs::Error> {
         let q = query(
             "MATCH (r:Resource)
-             OPTIONAL MATCH (r)<-[:REQUIRES]-()
-             WITH r, count(*) AS req_count
-             OPTIONAL MATCH (r)<-[:OFFERS]-()
+             OPTIONAL MATCH (r)<-[:REQUIRES]-(rq)
+             WITH r, count(rq) AS req_count
+             OPTIONAL MATCH (r)<-[:OFFERS]-(of)
              RETURN r.slug AS slug, r.name AS name,
-                    req_count AS requires_count, count(*) AS offers_count
-             ORDER BY (toInteger(req_count) - count(*)) DESC",
+                    req_count AS requires_count, count(of) AS offers_count
+             ORDER BY (toInteger(req_count) - count(of)) DESC",
         );
 
         let mut gaps = Vec::new();
-        let mut stream = self.client.graph.execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let requires_count = row.get::<i64>("requires_count").unwrap_or(0) as u32;
             let offers_count = row.get::<i64>("offers_count").unwrap_or(0) as u32;
@@ -1614,7 +1300,35 @@ impl PublicGraphReader {
             q = q.param("status", status.to_string());
         }
 
-        let mut stream = self.client.inner().execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
+        let mut results = Vec::new();
+
+        while let Some(row) = stream.next().await? {
+            if let Ok(n) = row.get::<neo4rs::Node>("v") {
+                results.push(ValidationIssueRow::from_neo4j_node(&n));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// List validation issues that target a specific node (signal/source) by its UUID.
+    pub async fn list_validation_issues_for_target(
+        &self,
+        target_id: &str,
+        limit: i64,
+    ) -> Result<Vec<ValidationIssueRow>, neo4rs::Error> {
+        let q = neo4rs::query(
+            "MATCH (v:ValidationIssue)
+             WHERE v.target_id = $target_id
+             RETURN v
+             ORDER BY v.created_at DESC
+             LIMIT $limit",
+        )
+        .param("target_id", target_id.to_string())
+        .param("limit", limit);
+
+        let mut stream = self.client.execute(q).await?;
         let mut results = Vec::new();
 
         while let Some(row) = stream.next().await? {
@@ -1645,13 +1359,15 @@ impl PublicGraphReader {
         )
         .param("region", region.to_string());
 
-        let mut stream = self.client.inner().execute(q).await?;
+        let mut stream = self.client.execute(q).await?;
 
         let mut total_open = 0i64;
         let mut total_resolved = 0i64;
         let mut total_dismissed = 0i64;
-        let mut count_by_type: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-        let mut count_by_severity: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut count_by_type: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        let mut count_by_severity: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
 
         while let Some(row) = stream.next().await? {
             total_open = row.get::<i64>("total_open").unwrap_or(0);
@@ -1677,6 +1393,301 @@ impl PublicGraphReader {
             count_by_severity: count_by_severity.into_iter().collect(),
         })
     }
+
+    /// Global validation issue summary (all regions, for admin dashboard).
+    pub async fn validation_issue_summary_global(
+        &self,
+    ) -> Result<ValidationIssueSummary, neo4rs::Error> {
+        let q = neo4rs::query(
+            "MATCH (v:ValidationIssue)
+             RETURN
+               sum(CASE WHEN v.status = 'open' THEN 1 ELSE 0 END) AS total_open,
+               sum(CASE WHEN v.status = 'resolved' THEN 1 ELSE 0 END) AS total_resolved,
+               sum(CASE WHEN v.status = 'dismissed' THEN 1 ELSE 0 END) AS total_dismissed,
+               v.issue_type AS issue_type,
+               v.severity AS severity,
+               v.status AS status,
+               count(v) AS cnt",
+        );
+
+        let mut stream = self.client.execute(q).await?;
+
+        let mut total_open = 0i64;
+        let mut total_resolved = 0i64;
+        let mut total_dismissed = 0i64;
+        let mut count_by_type: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        let mut count_by_severity: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+
+        while let Some(row) = stream.next().await? {
+            total_open = row.get::<i64>("total_open").unwrap_or(0);
+            total_resolved = row.get::<i64>("total_resolved").unwrap_or(0);
+            total_dismissed = row.get::<i64>("total_dismissed").unwrap_or(0);
+            let issue_type: String = row.get("issue_type").unwrap_or_default();
+            let severity: String = row.get("severity").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+
+            if !issue_type.is_empty() {
+                *count_by_type.entry(issue_type).or_insert(0) += cnt;
+            }
+            if !severity.is_empty() {
+                *count_by_severity.entry(severity).or_insert(0) += cnt;
+            }
+        }
+
+        Ok(ValidationIssueSummary {
+            total_open,
+            total_resolved,
+            total_dismissed,
+            count_by_type: count_by_type.into_iter().collect(),
+            count_by_severity: count_by_severity.into_iter().collect(),
+        })
+    }
+
+    /// Fetch a single source by UUID.
+    pub async fn source_by_id(&self, id: &Uuid) -> Result<Option<SourceNode>, neo4rs::Error> {
+        let cypher = "MATCH (s:Source {id: $id})
+            RETURN s.id AS id, s.canonical_key AS canonical_key,
+                   s.canonical_value AS canonical_value, s.url AS url,
+                   s.discovery_method AS discovery_method,
+                   s.created_at AS created_at, s.last_scraped AS last_scraped,
+                   s.last_produced_signal AS last_produced_signal,
+                   s.signals_produced AS signals_produced,
+                   s.signals_corroborated AS signals_corroborated,
+                   s.consecutive_empty_runs AS consecutive_empty_runs,
+                   s.active AS active, s.gap_context AS gap_context,
+                   s.weight AS weight, s.cadence_hours AS cadence_hours,
+                   s.avg_signals_per_scrape AS avg_signals_per_scrape,
+                   s.quality_penalty AS quality_penalty,
+                   s.source_role AS source_role,
+                   s.scrape_count AS scrape_count,
+                   s.cw_page AS cw_page, s.cw_feed AS cw_feed,
+                   s.cw_media AS cw_media, s.cw_discussion AS cw_discussion,
+                   s.cw_events AS cw_events";
+
+        let q = query(cypher).param("id", id.to_string());
+        let mut stream = self.client.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row_to_source_node(&row))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Fetch recent signals linked to an actor via ACTED_IN.
+    pub async fn signals_for_actor(&self, actor_id: &Uuid) -> Result<Vec<SignalBrief>, neo4rs::Error> {
+        let cypher = "MATCH (a:Actor {id: $id})-[rel:ACTED_IN]->(n)-[:PRODUCED_BY]->(s:Source)
+            OPTIONAL MATCH (n)-[:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
+                   n.confidence AS confidence, n.extracted_at AS extracted_at,
+                   s.url AS source_url_from_source, n.review_status AS review_status,
+                   l.name AS location_name, n.published_at AS published_at,
+                   rel.role AS role
+            ORDER BY n.extracted_at DESC
+            LIMIT 50";
+
+        let q = query(cypher).param("id", actor_id.to_string());
+        let mut signals = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            signals.push(SignalBrief {
+                id,
+                title: row.get("title").unwrap_or_default(),
+                signal_type: row.get("signal_type").unwrap_or_default(),
+                confidence: row.get::<f64>("confidence").unwrap_or(0.0) as f32,
+                extracted_at: {
+                    let raw: Option<String> = row.get("extracted_at").ok();
+                    raw.and_then(|s| {
+                        chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                            .ok()
+                            .map(|n| n.and_utc())
+                    })
+                },
+                url: row.get("source_url_from_source").unwrap_or_default(),
+                review_status: row.get("review_status").unwrap_or_else(|_| "staged".to_string()),
+                location_name: row.get("location_name").ok(),
+                published_at: row_datetime_opt_pub(&row, "published_at"),
+            });
+        }
+        Ok(signals)
+    }
+
+    /// Fetch distinct actors linked to signals from a source, with per-source signal counts.
+    pub async fn actors_for_source(&self, source_id: &Uuid) -> Result<Vec<(rootsignal_common::ActorNode, u32)>, neo4rs::Error> {
+        let cypher = "MATCH (a:Actor)-[:ACTED_IN]->(n)-[:PRODUCED_BY]->(s:Source {id: $id})
+            RETURN a, count(DISTINCT n) AS source_signal_count
+            ORDER BY source_signal_count DESC
+            LIMIT 50";
+
+        let q = query(cypher).param("id", source_id.to_string());
+        let mut results = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(actor) = row_to_actor(&row) {
+                let count: i64 = row.get("source_signal_count").unwrap_or(0);
+                results.push((actor, count as u32));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Fetch recent signals produced by a source.
+    pub async fn signals_for_source(&self, source_id: &Uuid) -> Result<Vec<SignalBrief>, neo4rs::Error> {
+        let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
+            WHERE n.review_status IN ['staged', 'accepted']
+            OPTIONAL MATCH (n)-[:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
+                   n.confidence AS confidence, n.extracted_at AS extracted_at,
+                   s.url AS source_url_from_source, n.review_status AS review_status,
+                   l.name AS location_name, n.published_at AS published_at
+            ORDER BY n.extracted_at DESC
+            LIMIT 50";
+
+        let q = query(cypher).param("id", source_id.to_string());
+        let mut signals = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            signals.push(SignalBrief {
+                id,
+                title: row.get("title").unwrap_or_default(),
+                signal_type: row.get("signal_type").unwrap_or_default(),
+                confidence: row.get::<f64>("confidence").unwrap_or(0.0) as f32,
+                extracted_at: row_datetime_opt_pub(&row, "extracted_at"),
+                url: row.get("source_url_from_source").unwrap_or_default(),
+                review_status: row.get("review_status").unwrap_or_default(),
+                location_name: row.get("location_name").ok(),
+                published_at: row_datetime_opt_pub(&row, "published_at"),
+            });
+        }
+        Ok(signals)
+    }
+
+    /// Fetch signals created by a specific scout run.
+    pub async fn signals_for_run(&self, run_id: &str, limit: i64) -> Result<(Vec<SignalBrief>, i64), neo4rs::Error> {
+        let count_cypher = "MATCH (n) WHERE n.scout_run_id = $run_id
+            AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+            RETURN count(n) AS cnt";
+        let cq = query(count_cypher).param("run_id", run_id);
+        let mut cs = self.client.execute(cq).await?;
+        let total = if let Some(row) = cs.next().await? {
+            row.get::<i64>("cnt").unwrap_or(0)
+        } else {
+            0
+        };
+
+        let cypher = "MATCH (n) WHERE n.scout_run_id = $run_id
+            AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+            OPTIONAL MATCH (n)-[:HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION]->(l:Location)
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type,
+                   n.confidence AS confidence, n.extracted_at AS extracted_at,
+                   n.url AS url, n.review_status AS review_status,
+                   l.name AS location_name, n.published_at AS published_at
+            ORDER BY n.confidence DESC
+            LIMIT $limit";
+        let q = query(cypher).param("run_id", run_id).param("limit", limit);
+        let mut signals = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            signals.push(SignalBrief {
+                id,
+                title: row.get("title").unwrap_or_default(),
+                signal_type: row.get("signal_type").unwrap_or_default(),
+                confidence: row.get::<f64>("confidence").unwrap_or(0.0) as f32,
+                extracted_at: row_datetime_opt_pub(&row, "extracted_at"),
+                url: row.get("url").unwrap_or_default(),
+                review_status: row.get("review_status").unwrap_or_default(),
+                location_name: row.get("location_name").ok(),
+                published_at: row_datetime_opt_pub(&row, "published_at"),
+            });
+        }
+        Ok((signals, total))
+    }
+
+    pub async fn signal_count_for_source(&self, source_id: &Uuid) -> Result<i64, neo4rs::Error> {
+        let cypher = "MATCH (n)-[:PRODUCED_BY]->(s:Source {id: $id})
+            WHERE n.review_status IN ['staged', 'accepted']
+            RETURN count(n) AS cnt";
+
+        let q = query(cypher).param("id", source_id.to_string());
+        let mut stream = self.client.execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get::<i64>("cnt").unwrap_or(0))
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Fetch the LINKED_FROM neighbourhood around a source for the discovery tree.
+    /// Returns (nodes, edges) where edges are (child_id, parent_id) pairs.
+    pub async fn discovery_tree(
+        &self,
+        source_id: &Uuid,
+    ) -> Result<(Vec<DiscoveryTreeRow>, Vec<(String, String)>), neo4rs::Error> {
+        let cypher = "
+            MATCH (root:Source {id: $id})
+            OPTIONAL MATCH (root)-[:LINKED_FROM*1..3]->(ancestor:Source)
+            OPTIONAL MATCH (child:Source)-[:LINKED_FROM]->(root)
+            WITH root,
+                 COLLECT(DISTINCT ancestor) AS ancestors,
+                 COLLECT(DISTINCT child) AS children
+            UNWIND (ancestors + [root] + children) AS node
+            WITH DISTINCT node
+            OPTIONAL MATCH (node)-[:LINKED_FROM]->(parent:Source)
+            RETURN node.id AS id, node.canonical_value AS canonical_value,
+                   node.discovery_method AS discovery_method, node.active AS active,
+                   node.signals_produced AS signals_produced,
+                   parent.id AS parent_id";
+
+        let q = query(cypher).param("id", source_id.to_string());
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            if id.is_empty() || !seen.insert(id.clone()) {
+                continue;
+            }
+            nodes.push(DiscoveryTreeRow {
+                id: id.clone(),
+                canonical_value: row.get("canonical_value").unwrap_or_default(),
+                discovery_method: row.get("discovery_method").unwrap_or_default(),
+                active: row.get("active").unwrap_or(true),
+                signals_produced: row.get::<i64>("signals_produced").unwrap_or(0) as u32,
+            });
+            let parent_id: String = row.get("parent_id").unwrap_or_default();
+            if !parent_id.is_empty() {
+                edges.push((id, parent_id));
+            }
+        }
+        Ok((nodes, edges))
+    }
+}
+
+/// Row from the discovery tree query.
+#[derive(Debug, Clone)]
+pub struct DiscoveryTreeRow {
+    pub id: String,
+    pub canonical_value: String,
+    pub discovery_method: String,
+    pub active: bool,
+    pub signals_produced: u32,
 }
 
 /// A row from the ValidationIssue query.
@@ -1706,12 +1717,24 @@ impl ValidationIssueRow {
             suggested_action: n.get("suggested_action").unwrap_or_default(),
             status: n.get("status").unwrap_or_default(),
             created_at: n.get::<String>("created_at").ok().and_then(|s| {
-                DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))
-                    .or_else(|| NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f").ok().map(|d| d.and_utc()))
+                DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&Utc))
+                    .or_else(|| {
+                        NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                            .ok()
+                            .map(|d| d.and_utc())
+                    })
             }),
             resolved_at: n.get::<String>("resolved_at").ok().and_then(|s| {
-                DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))
-                    .or_else(|| NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f").ok().map(|d| d.and_utc()))
+                DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&Utc))
+                    .or_else(|| {
+                        NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                            .ok()
+                            .map(|d| d.and_utc())
+                    })
             }),
         }
     }
@@ -1775,11 +1798,12 @@ fn parse_row_datetime(row: &neo4rs::Row, key: &str) -> DateTime<Utc> {
 pub fn node_type_label(nt: NodeType) -> &'static str {
     match nt {
         NodeType::Gathering => "Gathering",
-        NodeType::Aid => "Aid",
-        NodeType::Need => "Need",
-        NodeType::Notice => "Notice",
-        NodeType::Tension => "Tension",
-        NodeType::Evidence => "Evidence",
+        NodeType::Resource => "Resource",
+        NodeType::HelpRequest => "HelpRequest",
+        NodeType::Announcement => "Announcement",
+        NodeType::Concern => "Concern",
+        NodeType::Condition => "Condition",
+        NodeType::Citation => "Citation",
     }
 }
 
@@ -1787,11 +1811,12 @@ pub fn node_type_label(nt: NodeType) -> &'static str {
 fn label_to_node_type(label: &str) -> Option<NodeType> {
     match label {
         "Gathering" => Some(NodeType::Gathering),
-        "Aid" => Some(NodeType::Aid),
-        "Need" => Some(NodeType::Need),
-        "Notice" => Some(NodeType::Notice),
-        "Tension" => Some(NodeType::Tension),
-        "Evidence" => Some(NodeType::Evidence),
+        "Resource" => Some(NodeType::Resource),
+        "HelpRequest" => Some(NodeType::HelpRequest),
+        "Announcement" => Some(NodeType::Announcement),
+        "Concern" => Some(NodeType::Concern),
+        "Condition" => Some(NodeType::Condition),
+        "Citation" => Some(NodeType::Citation),
         _ => None,
     }
 }
@@ -1805,7 +1830,17 @@ pub(crate) fn row_to_node_by_label(row: &neo4rs::Row) -> Option<Node> {
     // Derive from_location at query time from authored actor's location
     if let (Ok(lat), Ok(lng)) = (row.get::<f64>("author_lat"), row.get::<f64>("author_lng")) {
         if let Some(meta) = node.meta_mut() {
-            meta.from_location = Some(GeoPoint { lat, lng, precision: GeoPrecision::Approximate });
+            meta.locations.push(Location {
+                point: Some(GeoPoint {
+                    lat,
+                    lng,
+                    precision: GeoPrecision::Approximate,
+                }),
+                name: None,
+                address: None,
+                role: Some("origin".to_string()),
+                timezone: None,
+            });
         }
     }
     Some(node)
@@ -1825,31 +1860,37 @@ pub(crate) fn expiry_clause(nt: NodeType) -> String {
              END)",
             grace = GATHERING_PAST_GRACE_HOURS,
         ),
-        NodeType::Need => format!(
+        NodeType::HelpRequest => format!(
             "AND datetime(n.extracted_at) >= datetime() - duration('P{days}D')",
             days = NEED_EXPIRE_DAYS,
         ),
-        NodeType::Aid => format!(
+        NodeType::Resource => format!(
             "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
             days = FRESHNESS_MAX_DAYS,
         ),
-        NodeType::Notice => format!(
-            "AND datetime(n.extracted_at) >= datetime() - duration('P{days}D')",
+        NodeType::Announcement => format!(
+            "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
             days = NOTICE_EXPIRE_DAYS,
         ),
-        NodeType::Tension => format!(
+        NodeType::Concern => format!(
             "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
             days = FRESHNESS_MAX_DAYS,
         ),
-        NodeType::Evidence => String::new(),
+        NodeType::Condition => format!(
+            "AND datetime(n.last_confirmed_active) >= datetime() - duration('P{days}D')",
+            days = FRESHNESS_MAX_DAYS,
+        ),
+        NodeType::Citation => String::new(),
     }
 }
 
 /// Apply sensitivity-based coordinate fuzzing to a node.
 pub(crate) fn fuzz_node(mut node: Node) -> Node {
     if let Some(meta) = node_meta_mut(&mut node) {
-        if let Some(ref mut loc) = meta.about_location {
-            *loc = fuzz_location(*loc, meta.sensitivity);
+        if let Some(first) = meta.locations.first_mut() {
+            if let Some(ref mut pt) = first.point {
+                *pt = fuzz_location(*pt, meta.sensitivity);
+            }
         }
     }
     node
@@ -1858,11 +1899,12 @@ pub(crate) fn fuzz_node(mut node: Node) -> Node {
 fn node_meta_mut(node: &mut Node) -> Option<&mut NodeMeta> {
     match node {
         Node::Gathering(n) => Some(&mut n.meta),
-        Node::Aid(n) => Some(&mut n.meta),
-        Node::Need(n) => Some(&mut n.meta),
-        Node::Notice(n) => Some(&mut n.meta),
-        Node::Tension(n) => Some(&mut n.meta),
-        Node::Evidence(_) => None,
+        Node::Resource(n) => Some(&mut n.meta),
+        Node::HelpRequest(n) => Some(&mut n.meta),
+        Node::Announcement(n) => Some(&mut n.meta),
+        Node::Concern(n) => Some(&mut n.meta),
+        Node::Condition(n) => Some(&mut n.meta),
+        Node::Citation(_) => None,
     }
 }
 
@@ -1889,15 +1931,15 @@ pub(crate) fn passes_display_filter(node: &Node) -> bool {
     }
 
     // Need-specific: expire after NEED_EXPIRE_DAYS
-    if matches!(node, Node::Need(_)) {
+    if matches!(node, Node::HelpRequest(_)) {
         if (now - meta.extracted_at).num_days() > NEED_EXPIRE_DAYS {
             return false;
         }
     }
 
-    // Notice-specific: expire after NOTICE_EXPIRE_DAYS
-    if matches!(node, Node::Notice(_)) {
-        if (now - meta.extracted_at).num_days() > NOTICE_EXPIRE_DAYS {
+    // Notice-specific: expire after NOTICE_EXPIRE_DAYS (based on last_confirmed_active)
+    if matches!(node, Node::Announcement(_)) {
+        if (now - meta.last_confirmed_active).num_days() > NOTICE_EXPIRE_DAYS {
             return false;
         }
     }
@@ -1930,21 +1972,19 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         _ => SensitivityLevel::General,
     };
     let confidence: f64 = n.get("confidence").unwrap_or(0.5);
-    let freshness_score: f64 = n.get("freshness_score").unwrap_or(0.5);
     let corroboration_count: i64 = n.get("corroboration_count").unwrap_or(0);
-    let source_url: String = n.get("source_url").unwrap_or_default();
-    // Parse location from point
-    let location = parse_location(&n);
+    let url: String = n.get("url").unwrap_or_default();
 
     // Parse timestamps
     let extracted_at = parse_datetime_prop(&n, "extracted_at");
-    let content_date = parse_optional_datetime_prop(&n, "content_date");
+    let published_at = parse_optional_datetime_prop(&n, "published_at");
     let last_confirmed_active = parse_datetime_prop(&n, "last_confirmed_active");
 
     let source_diversity: i64 = n.get("source_diversity").unwrap_or(1);
-    let external_ratio: f64 = n.get("external_ratio").unwrap_or(0.0);
     let cause_heat: f64 = n.get("cause_heat").unwrap_or(0.0);
     let channel_diversity: i64 = n.get("channel_diversity").unwrap_or(1);
+
+    let category: Option<String> = n.get("category").ok().filter(|s: &String| !s.is_empty());
 
     let meta = NodeMeta {
         id,
@@ -1952,29 +1992,51 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
         summary,
         sensitivity,
         confidence: confidence as f32,
-        freshness_score: freshness_score as f32,
         corroboration_count: corroboration_count as u32,
-        about_location: location,
-        about_location_name: {
-            let name: String = n.get("location_name").unwrap_or_default();
-            if name.is_empty() {
-                None
+        locations: {
+            let json_str: String = n.get("locations_json").unwrap_or_default();
+            if json_str.is_empty() {
+                Vec::new()
             } else {
-                Some(name)
+                serde_json::from_str::<Vec<Location>>(&json_str).unwrap_or_default()
             }
         },
-        from_location: None,
-        source_url,
+        url,
         extracted_at,
-        content_date,
+        published_at,
         last_confirmed_active,
         source_diversity: source_diversity as u32,
-        external_ratio: external_ratio as f32,
         cause_heat,
         channel_diversity: channel_diversity as u32,
-        mentioned_actors: Vec::new(),
         implied_queries: Vec::new(),
-        author_actor: None,
+        review_status: {
+            let s: String = n.get("review_status").unwrap_or_default();
+            match s.as_str() {
+                "accepted" => rootsignal_common::ReviewStatus::Accepted,
+                "rejected" => rootsignal_common::ReviewStatus::Rejected,
+                "corrected" => rootsignal_common::ReviewStatus::Corrected,
+                _ => rootsignal_common::ReviewStatus::Staged,
+            }
+        },
+        was_corrected: n.get("was_corrected").unwrap_or(false),
+        corrections: {
+            let c: String = n.get("corrections").unwrap_or_default();
+            if c.is_empty() {
+                None
+            } else {
+                Some(c)
+            }
+        },
+        rejection_reason: {
+            let r: String = n.get("rejection_reason").unwrap_or_default();
+            if r.is_empty() {
+                None
+            } else {
+                Some(r)
+            }
+        },
+        mentioned_entities: vec![],
+        category,
     };
 
     match node_type {
@@ -2010,12 +2072,13 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 is_recurring,
             }))
         }
-        NodeType::Aid => {
+        NodeType::Resource => {
             let action_url: String = n.get("action_url").unwrap_or_default();
             let availability: String = n.get("availability").unwrap_or_default();
+            let eligibility: String = n.get("eligibility").unwrap_or_default();
             let is_ongoing: bool = n.get("is_ongoing").unwrap_or(false);
 
-            Some(Node::Aid(AidNode {
+            Some(Node::Resource(ResourceOfferNode {
                 meta,
                 action_url,
                 availability: if availability.is_empty() {
@@ -2023,10 +2086,15 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 } else {
                     Some(availability)
                 },
+                eligibility: if eligibility.is_empty() {
+                    None
+                } else {
+                    Some(eligibility)
+                },
                 is_ongoing,
             }))
         }
-        NodeType::Need => {
+        NodeType::HelpRequest => {
             let urgency_str: String = n.get("urgency").unwrap_or_default();
             let urgency = match urgency_str.as_str() {
                 "high" => Urgency::High,
@@ -2036,9 +2104,9 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
             };
             let what_needed: String = n.get("what_needed").unwrap_or_default();
             let action_url: String = n.get("action_url").unwrap_or_default();
-            let goal: String = n.get("goal").unwrap_or_default();
+            let stated_goal: String = n.get("stated_goal").unwrap_or_default();
 
-            Some(Node::Need(NeedNode {
+            Some(Node::HelpRequest(HelpRequestNode {
                 meta,
                 urgency,
                 what_needed: if what_needed.is_empty() {
@@ -2051,10 +2119,10 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 } else {
                     Some(action_url)
                 },
-                goal: if goal.is_empty() { None } else { Some(goal) },
+                stated_goal: if stated_goal.is_empty() { None } else { Some(stated_goal) },
             }))
         }
-        NodeType::Notice => {
+        NodeType::Announcement => {
             let severity_str: String = n.get("severity").unwrap_or_default();
             let severity = match severity_str.as_str() {
                 "high" => Severity::High,
@@ -2062,7 +2130,7 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 "low" => Severity::Low,
                 _ => Severity::Medium,
             };
-            let category: String = n.get("category").unwrap_or_default();
+            let subject: String = n.get("subject").unwrap_or_default();
             let effective_date_str: String = n.get("effective_date").unwrap_or_default();
             let effective_date = if effective_date_str.is_empty() {
                 None
@@ -2076,15 +2144,17 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                             .map(|naive| naive.and_utc())
                     })
             };
+            // Legacy property from pre-refactor correction events — no active write path,
+            // but historical data may still carry it. Gracefully defaults to empty.
             let source_authority: String = n.get("source_authority").unwrap_or_default();
 
-            Some(Node::Notice(NoticeNode {
+            Some(Node::Announcement(AnnouncementNode {
                 meta,
                 severity,
-                category: if category.is_empty() {
+                subject: if subject.is_empty() {
                     None
                 } else {
-                    Some(category)
+                    Some(subject)
                 },
                 effective_date,
                 source_authority: if source_authority.is_empty() {
@@ -2092,9 +2162,10 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 } else {
                     Some(source_authority)
                 },
+                action_url: None,
             }))
         }
-        NodeType::Tension => {
+        NodeType::Concern => {
             let severity_str: String = n.get("severity").unwrap_or_default();
             let severity = match severity_str.as_str() {
                 "high" => Severity::High,
@@ -2102,39 +2173,50 @@ pub fn row_to_node(row: &neo4rs::Row, node_type: NodeType) -> Option<Node> {
                 "low" => Severity::Low,
                 _ => Severity::Medium,
             };
-            let category: String = n.get("category").unwrap_or_default();
-            let what_would_help: String = n.get("what_would_help").unwrap_or_default();
+            let subject: String = n.get("subject").unwrap_or_default();
+            let opposing: String = n.get("opposing").unwrap_or_default();
 
-            Some(Node::Tension(TensionNode {
+            Some(Node::Concern(ConcernNode {
                 meta,
                 severity,
-                category: if category.is_empty() {
+                subject: if subject.is_empty() {
                     None
                 } else {
-                    Some(category)
+                    Some(subject)
                 },
-                what_would_help: if what_would_help.is_empty() {
+                opposing: if opposing.is_empty() {
                     None
                 } else {
-                    Some(what_would_help)
+                    Some(opposing)
                 },
+                action_url: None,
             }))
         }
-        NodeType::Evidence => None,
-    }
-}
+        NodeType::Condition => {
+            let severity_str: String = n.get("severity").unwrap_or_default();
+            let severity = match severity_str.as_str() {
+                "high" => Severity::High,
+                "critical" => Severity::Critical,
+                "low" => Severity::Low,
+                _ => Severity::Medium,
+            };
+            let subject: String = n.get("subject").unwrap_or_default();
+            let observed_by: String = n.get("observed_by").unwrap_or_default();
+            let measurement: String = n.get("measurement").unwrap_or_default();
+            let affected_scope: String = n.get("affected_scope").unwrap_or_default();
 
-pub fn parse_location(n: &neo4rs::Node) -> Option<GeoPoint> {
-    let lat: f64 = n.get("lat").ok()?;
-    let lng: f64 = n.get("lng").ok()?;
-    if lat == 0.0 && lng == 0.0 {
-        return None;
+            Some(Node::Condition(ConditionNode {
+                meta,
+                severity,
+                subject: if subject.is_empty() { None } else { Some(subject) },
+                observed_by: if observed_by.is_empty() { None } else { Some(observed_by) },
+                measurement: if measurement.is_empty() { None } else { Some(measurement) },
+                affected_scope: if affected_scope.is_empty() { None } else { Some(affected_scope) },
+                action_url: None,
+            }))
+        }
+        NodeType::Citation => None,
     }
-    Some(GeoPoint {
-        lat,
-        lng,
-        precision: GeoPrecision::Exact,
-    })
 }
 
 fn parse_optional_datetime_prop(n: &neo4rs::Node, prop: &str) -> Option<DateTime<Utc>> {
@@ -2166,10 +2248,10 @@ pub fn parse_datetime_prop(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
     Utc::now()
 }
 
-pub(crate) fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
+pub(crate) fn extract_citation(row: &neo4rs::Row) -> Vec<CitationNode> {
     // Evidence nodes come as a collected list, sorted by confidence descending
     let nodes: Vec<neo4rs::Node> = row.get("evidence").unwrap_or_default();
-    let mut evidence: Vec<EvidenceNode> = nodes
+    let mut evidence: Vec<CitationNode> = nodes
         .into_iter()
         .filter_map(|n| {
             let id_str: String = n.get("id").ok()?;
@@ -2190,7 +2272,7 @@ pub(crate) fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
                 _ => None,
             };
 
-            Some(EvidenceNode {
+            Some(CitationNode {
                 id,
                 source_url,
                 retrieved_at,
@@ -2205,7 +2287,7 @@ pub(crate) fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
                 } else {
                     Some(relevance)
                 },
-                evidence_confidence: if ev_conf > 0.0 {
+                confidence: if ev_conf > 0.0 {
                     Some(ev_conf as f32)
                 } else {
                     None
@@ -2215,133 +2297,11 @@ pub(crate) fn extract_evidence(row: &neo4rs::Row) -> Vec<EvidenceNode> {
         })
         .collect();
     evidence.sort_by(|a, b| {
-        let ca = a.evidence_confidence.unwrap_or(0.0);
-        let cb = b.evidence_confidence.unwrap_or(0.0);
+        let ca = a.confidence.unwrap_or(0.0);
+        let cb = b.confidence.unwrap_or(0.0);
         cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
     });
     evidence
-}
-
-pub fn row_to_story(row: &neo4rs::Row) -> Option<StoryNode> {
-    let n: neo4rs::Node = row.get("s").ok()?;
-
-    let id_str: String = n.get("id").ok()?;
-    let id = Uuid::parse_str(&id_str).ok()?;
-
-    let headline: String = n.get("headline").unwrap_or_default();
-    let summary: String = n.get("summary").unwrap_or_default();
-    let signal_count: i64 = n.get("signal_count").unwrap_or(0);
-    let first_seen = parse_story_datetime(&n, "first_seen");
-    let last_updated = parse_story_datetime(&n, "last_updated");
-    let velocity: f64 = n.get("velocity").unwrap_or(0.0);
-    let energy: f64 = n.get("energy").unwrap_or(0.0);
-
-    let centroid_lat: Option<f64> = n.get("centroid_lat").ok();
-    let centroid_lng: Option<f64> = n.get("centroid_lng").ok();
-
-    let dominant_type: String = n.get("dominant_type").unwrap_or_default();
-    let sensitivity: String = n
-        .get("sensitivity")
-        .unwrap_or_else(|_| "general".to_string());
-    let source_count: i64 = n.get("source_count").unwrap_or(0);
-    let entity_count: i64 = n.get("entity_count").unwrap_or(0);
-    let type_diversity: i64 = n.get("type_diversity").unwrap_or(0);
-    let source_domains: Vec<String> = n.get("source_domains").unwrap_or_default();
-    let corroboration_depth: i64 = n.get("corroboration_depth").unwrap_or(0);
-    let status: String = n.get("status").unwrap_or_else(|_| "emerging".to_string());
-
-    let arc: Option<String> = n
-        .get("arc")
-        .ok()
-        .and_then(|s: String| if s.is_empty() { None } else { Some(s) });
-    let category: Option<String> =
-        n.get("category")
-            .ok()
-            .and_then(|s: String| if s.is_empty() { None } else { Some(s) });
-    let lede: Option<String> =
-        n.get("lede")
-            .ok()
-            .and_then(|s: String| if s.is_empty() { None } else { Some(s) });
-    let narrative: Option<String> =
-        n.get("narrative")
-            .ok()
-            .and_then(|s: String| if s.is_empty() { None } else { Some(s) });
-    let action_guidance: Option<String> =
-        n.get("action_guidance")
-            .ok()
-            .and_then(|s: String| if s.is_empty() { None } else { Some(s) });
-
-    let cause_heat: f64 = n.get("cause_heat").unwrap_or(0.0);
-    let ask_count: i64 = n.get("ask_count").unwrap_or(0);
-    let give_count: i64 = n.get("give_count").unwrap_or(0);
-    let event_count: i64 = n.get("event_count").unwrap_or(0);
-    let drawn_to_count: i64 = n.get("drawn_to_count").unwrap_or(0);
-    let gap_score: i64 = n.get("gap_score").unwrap_or(0);
-    let gap_velocity: f64 = n.get("gap_velocity").unwrap_or(0.0);
-
-    // Centroid fuzzing for sensitive stories
-    let (centroid_lat, centroid_lng) = match (centroid_lat, centroid_lng) {
-        (Some(lat), Some(lng)) if sensitivity == "sensitive" || sensitivity == "elevated" => {
-            let radius = if sensitivity == "sensitive" {
-                0.05 // ~5km
-            } else {
-                0.005 // ~500m
-            };
-            let fuzzed_lat = (lat / radius).round() * radius;
-            let fuzzed_lng = (lng / radius).round() * radius;
-            (Some(fuzzed_lat), Some(fuzzed_lng))
-        }
-        other => other,
-    };
-
-    Some(StoryNode {
-        id,
-        headline,
-        summary,
-        signal_count: signal_count as u32,
-        first_seen,
-        last_updated,
-        velocity,
-        energy,
-        centroid_lat,
-        centroid_lng,
-        dominant_type,
-        sensitivity,
-        source_count: source_count as u32,
-        entity_count: entity_count as u32,
-        type_diversity: type_diversity as u32,
-        source_domains,
-        corroboration_depth: corroboration_depth as u32,
-        status,
-        arc,
-        category,
-        lede,
-        narrative,
-        action_guidance,
-        cause_heat,
-        ask_count: ask_count as u32,
-        give_count: give_count as u32,
-        event_count: event_count as u32,
-        drawn_to_count: drawn_to_count as u32,
-        gap_score: gap_score as i32,
-        gap_velocity,
-        channel_diversity: {
-            let cd: i64 = n.get("channel_diversity").unwrap_or(1);
-            cd as u32
-        },
-    })
-}
-
-pub fn parse_story_datetime(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
-    if let Ok(s) = n.get::<String>(prop) {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(&s) {
-            return dt.with_timezone(&Utc);
-        }
-        if let Ok(naive) = NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f") {
-            return naive.and_utc();
-        }
-    }
-    Utc::now()
 }
 
 fn parse_evidence_datetime(n: &neo4rs::Node, prop: &str) -> DateTime<Utc> {
@@ -2370,16 +2330,17 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         "coalition" => rootsignal_common::ActorType::Coalition,
         _ => rootsignal_common::ActorType::Organization,
     };
-    let entity_id: String = n.get("entity_id").unwrap_or_default();
+    let canonical_key: String = n.get("canonical_key").unwrap_or_default();
     let domains: Vec<String> = n.get("domains").unwrap_or_default();
     let social_urls: Vec<String> = n.get("social_urls").unwrap_or_default();
     let description: String = n.get("description").unwrap_or_default();
     let signal_count: i64 = n.get("signal_count").unwrap_or(0);
-    let first_seen = parse_story_datetime(&n, "first_seen");
-    let last_active = parse_story_datetime(&n, "last_active");
+    let first_seen = parse_datetime_prop(&n, "first_seen");
+    let last_active = parse_datetime_prop(&n, "last_active");
     let typical_roles: Vec<String> = n.get("typical_roles").unwrap_or_default();
 
     let bio: Option<String> = n.get("bio").ok();
+    let external_url: Option<String> = n.get("external_url").ok().filter(|u: &String| !u.is_empty());
     let location_lat: Option<f64> = n.get("location_lat").ok();
     let location_lng: Option<f64> = n.get("location_lng").ok();
     let location_name_entity: Option<String> = n.get("location_name").ok();
@@ -2388,7 +2349,7 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         id,
         name,
         actor_type,
-        entity_id,
+        canonical_key,
         domains,
         social_urls,
         description,
@@ -2397,6 +2358,7 @@ pub(crate) fn row_to_actor(row: &neo4rs::Row) -> Option<rootsignal_common::Actor
         last_active,
         typical_roles,
         bio,
+        external_url,
         location_lat,
         location_lng,
         location_name: location_name_entity,
@@ -2412,7 +2374,7 @@ impl PublicGraphReader {
         &self,
         id: &Uuid,
     ) -> Result<Option<rootsignal_common::SituationNode>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
 
         let q = query(
             "MATCH (s:Situation {id: $id})
@@ -2437,14 +2399,14 @@ impl PublicGraphReader {
         limit: u32,
         arc_filter: Option<&str>,
     ) -> Result<Vec<rootsignal_common::SituationNode>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
 
-        let arc_clause = match arc_filter {
-            Some(arc) => format!("AND s.arc = '{arc}'"),
-            None => String::new(),
+        let (arc_clause, arc_param): (&str, Option<&str>) = match arc_filter {
+            Some(arc) => ("AND s.arc = $arc", Some(arc)),
+            None => ("", None),
         };
 
-        let q = query(&format!(
+        let mut q = query(&format!(
             "MATCH (s:Situation)
              WHERE s.centroid_lat >= $min_lat AND s.centroid_lat <= $max_lat
                AND s.centroid_lng >= $min_lng AND s.centroid_lng <= $max_lng
@@ -2458,6 +2420,10 @@ impl PublicGraphReader {
         .param("min_lng", min_lng)
         .param("max_lng", max_lng)
         .param("limit", limit as i64);
+
+        if let Some(arc) = arc_param {
+            q = q.param("arc", arc);
+        }
 
         let mut stream = g.execute(q).await?;
         let mut results = Vec::new();
@@ -2475,7 +2441,7 @@ impl PublicGraphReader {
         arc: &str,
         limit: u32,
     ) -> Result<Vec<rootsignal_common::SituationNode>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
 
         let q = query(
             "MATCH (s:Situation {arc: $arc})
@@ -2501,7 +2467,7 @@ impl PublicGraphReader {
         &self,
         limit: u32,
     ) -> Result<Vec<rootsignal_common::SituationNode>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
 
         let q = query(
             "MATCH (s:Situation)
@@ -2521,6 +2487,77 @@ impl PublicGraphReader {
         Ok(results)
     }
 
+    /// Fetch all signal groups with centroid coordinates derived from member signals.
+    pub async fn signal_groups_with_centroids(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<SignalGroupGraphItem>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(
+            "MATCH (g:SignalGroup)
+             OPTIONAL MATCH (sig)-[:MEMBER_OF]->(g)
+             WITH g,
+                  count(sig) AS member_count,
+                  avg(sig.lat) AS centroid_lat,
+                  avg(sig.lng) AS centroid_lng
+             OPTIONAL MATCH (g)-[:WOVEN_INTO]->(sit:Situation)
+             RETURN g.id AS id, g.label AS label,
+                    toString(g.created_at) AS created_at,
+                    member_count, centroid_lat, centroid_lng,
+                    sit.id AS woven_situation_id
+             ORDER BY member_count DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let Ok(id) = Uuid::parse_str(&id_str) else { continue };
+            let woven_str: Option<String> = row.get("woven_situation_id").ok();
+            results.push(SignalGroupGraphItem {
+                id,
+                label: row.get("label").unwrap_or_default(),
+                created_at: row.get("created_at").unwrap_or_default(),
+                member_count: row.get::<i64>("member_count").unwrap_or(0) as u32,
+                centroid_lat: row.get("centroid_lat").ok(),
+                centroid_lng: row.get("centroid_lng").ok(),
+                woven_situation_id: woven_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            });
+        }
+        Ok(results)
+    }
+
+    /// Fetch MEMBER_OF edges between signals and signal groups.
+    pub async fn signal_group_member_edges(
+        &self,
+        group_ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
+        if group_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let g = &self.client;
+        let id_strings: Vec<String> = group_ids.iter().map(|id| id.to_string()).collect();
+        let q = query(
+            "MATCH (sig)-[:MEMBER_OF]->(g:SignalGroup)
+             WHERE g.id IN $group_ids
+             RETURN sig.id AS signal_id, g.id AS group_id",
+        )
+        .param("group_ids", id_strings);
+
+        let mut edges = Vec::new();
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let sid_str: String = row.get("signal_id").unwrap_or_default();
+            let gid_str: String = row.get("group_id").unwrap_or_default();
+            if let (Ok(sid), Ok(gid)) = (Uuid::parse_str(&sid_str), Uuid::parse_str(&gid_str)) {
+                edges.push((sid, gid));
+            }
+        }
+        Ok(edges)
+    }
+
     /// Fetch dispatches for a situation, ordered by creation time.
     pub async fn dispatches_for_situation(
         &self,
@@ -2528,7 +2565,7 @@ impl PublicGraphReader {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<rootsignal_common::DispatchNode>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
 
         let q = query(
             "MATCH (s:Situation {id: $id})-[:HAS_DISPATCH]->(d:Dispatch)
@@ -2551,15 +2588,66 @@ impl PublicGraphReader {
         Ok(results)
     }
 
-    /// Fetch situations that a signal evidences (many-to-many via EVIDENCES).
+    /// Total situation count.
+    pub async fn situation_count(&self) -> Result<u64, neo4rs::Error> {
+        let g = &self.client;
+        let q = query("MATCH (s:Situation) RETURN count(s) AS cnt");
+        let mut stream = g.execute(q).await?;
+        match stream.next().await? {
+            Some(row) => {
+                let cnt: i64 = row.get("cnt").unwrap_or(0);
+                Ok(cnt as u64)
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Situation count grouped by arc.
+    pub async fn situation_count_by_arc(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(
+            "MATCH (s:Situation)
+             RETURN s.arc AS arc, count(s) AS cnt
+             ORDER BY cnt DESC",
+        );
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let arc: String = row.get("arc").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            results.push((arc, cnt as u64));
+        }
+        Ok(results)
+    }
+
+    /// Situation count grouped by category.
+    pub async fn situation_count_by_category(&self) -> Result<Vec<(String, u64)>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(
+            "MATCH (s:Situation)
+             WHERE s.category IS NOT NULL
+             RETURN s.category AS cat, count(s) AS cnt
+             ORDER BY cnt DESC",
+        );
+        let mut stream = g.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let cat: String = row.get("cat").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+            results.push((cat, cnt as u64));
+        }
+        Ok(results)
+    }
+
+    /// Fetch situations that a signal evidences (many-to-many via PART_OF).
     pub async fn situations_for_signal(
         &self,
         signal_id: &Uuid,
     ) -> Result<Vec<rootsignal_common::SituationNode>, neo4rs::Error> {
-        let g = &self.client.graph;
+        let g = &self.client;
 
         let q = query(
-            "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+            "MATCH (sig)-[:PART_OF]->(s:Situation)
              WHERE sig.id = $signal_id
              RETURN s
              ORDER BY s.temperature DESC",
@@ -2575,20 +2663,89 @@ impl PublicGraphReader {
         }
         Ok(results)
     }
+
+    /// Fetch member signals assigned to a situation (via PART_OF edges).
+    /// Returns full typed signal nodes for CTA cards on the situation page.
+    pub async fn signals_for_situation(
+        &self,
+        situation_id: &Uuid,
+        limit: u32,
+    ) -> Result<Vec<Node>, neo4rs::Error> {
+        let all_types = [
+            NodeType::Gathering,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
+            NodeType::Condition,
+        ];
+
+        let branches: Vec<String> = all_types
+            .iter()
+            .map(|nt| {
+                let label = node_type_label(*nt);
+                format!(
+                    "MATCH (n:{label})-[:PART_OF]->(s:Situation {{id: $id}})
+                     RETURN n, labels(n)[0] AS node_label
+                     ORDER BY n.extracted_at DESC
+                     LIMIT $limit"
+                )
+            })
+            .collect();
+
+        let cypher = branches.join("\nUNION ALL\n");
+
+        let q = query(&cypher)
+            .param("id", situation_id.to_string())
+            .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node_by_label(&row) {
+                results.push(node);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Return all edges connected to a node as (direction, edge_type, other_label) tuples.
+    pub async fn edges_for_node(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<(String, String, String)>, neo4rs::Error> {
+        let q = query(
+            "MATCH (n {id: $id})-[r]-(other)
+             RETURN type(r) AS rel_type,
+                    CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END AS direction,
+                    coalesce(other.title, other.headline, other.name, other.canonical_value, other.canonical_address, other.id, 'unknown') AS other_label
+             LIMIT 50",
+        )
+        .param("id", node_id.to_string());
+
+        let mut stream = self.client.execute(q).await?;
+        let mut results = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let direction: String = row.get("direction").unwrap_or_default();
+            let rel_type: String = row.get("rel_type").unwrap_or_default();
+            let other_label: String = row.get("other_label").unwrap_or_default();
+            results.push((direction, rel_type, other_label));
+        }
+        Ok(results)
+    }
 }
 
 /// Parse a Situation node from a neo4rs Row.
-fn row_to_situation(
-    row: &neo4rs::Row,
-    key: &str,
-) -> Option<rootsignal_common::SituationNode> {
+fn row_to_situation(row: &neo4rs::Row, key: &str) -> Option<rootsignal_common::SituationNode> {
     let n: neo4rs::Node = row.get(key).ok()?;
     let id_str: String = n.get("id").ok()?;
     let id = Uuid::parse_str(&id_str).ok()?;
     let headline: String = n.get("headline").unwrap_or_default();
     let lede: String = n.get("lede").unwrap_or_default();
     let arc_str: String = n.get("arc").unwrap_or_default();
-    let arc: rootsignal_common::SituationArc = arc_str.parse().unwrap_or(rootsignal_common::SituationArc::Emerging);
+    let arc: rootsignal_common::SituationArc = arc_str
+        .parse()
+        .unwrap_or(rootsignal_common::SituationArc::Emerging);
 
     let temperature: f64 = n.get("temperature").unwrap_or(0.0);
     let tension_heat: f64 = n.get("tension_heat").unwrap_or(0.0);
@@ -2598,19 +2755,24 @@ fn row_to_situation(
     let clarity_need: f64 = n.get("clarity_need").unwrap_or(0.0);
 
     let clarity_str: String = n.get("clarity").unwrap_or_default();
-    let clarity: rootsignal_common::Clarity = clarity_str.parse().unwrap_or(rootsignal_common::Clarity::Fuzzy);
+    let clarity: rootsignal_common::Clarity = clarity_str
+        .parse()
+        .unwrap_or(rootsignal_common::Clarity::Fuzzy);
 
     let centroid_lat: Option<f64> = n.get("centroid_lat").ok();
     let centroid_lng: Option<f64> = n.get("centroid_lng").ok();
-    let location_name: Option<String> = n.get("location_name").ok().filter(|s: &String| !s.is_empty());
+    let location_name: Option<String> = n
+        .get("location_name")
+        .ok()
+        .filter(|s: &String| !s.is_empty());
 
     let structured_state: String = n.get("structured_state").unwrap_or_default();
 
     let signal_count: i64 = n.get("signal_count").unwrap_or(0);
     let tension_count: i64 = n.get("tension_count").unwrap_or(0);
     let dispatch_count: i64 = n.get("dispatch_count").unwrap_or(0);
-    let first_seen = parse_story_datetime(&n, "first_seen");
-    let last_updated = parse_story_datetime(&n, "last_updated");
+    let first_seen = parse_datetime_prop(&n, "first_seen");
+    let last_updated = parse_datetime_prop(&n, "last_updated");
 
     let sensitivity_str: String = n.get("sensitivity").unwrap_or_default();
     let sensitivity = match sensitivity_str.as_str() {
@@ -2620,6 +2782,7 @@ fn row_to_situation(
     };
 
     let category: Option<String> = n.get("category").ok().filter(|s: &String| !s.is_empty());
+    let briefing_body: Option<String> = n.get("briefing_body").ok().filter(|s: &String| !s.is_empty());
 
     Some(rootsignal_common::SituationNode {
         id,
@@ -2644,14 +2807,12 @@ fn row_to_situation(
         last_updated,
         sensitivity,
         category,
+        briefing_body,
     })
 }
 
 /// Parse a Dispatch node from a neo4rs Row.
-fn row_to_dispatch(
-    row: &neo4rs::Row,
-    key: &str,
-) -> Option<rootsignal_common::DispatchNode> {
+fn row_to_dispatch(row: &neo4rs::Row, key: &str) -> Option<rootsignal_common::DispatchNode> {
     let n: neo4rs::Node = row.get(key).ok()?;
     let id_str: String = n.get("id").ok()?;
     let id = Uuid::parse_str(&id_str).ok()?;
@@ -2665,12 +2826,14 @@ fn row_to_dispatch(
         .filter_map(|s| Uuid::parse_str(s).ok())
         .collect();
 
-    let created_at = parse_story_datetime(&n, "created_at");
+    let created_at = parse_datetime_prop(&n, "created_at");
     let dispatch_type_str: String = n.get("dispatch_type").unwrap_or_default();
-    let dispatch_type: rootsignal_common::DispatchType =
-        dispatch_type_str.parse().unwrap_or(rootsignal_common::DispatchType::Update);
+    let dispatch_type: rootsignal_common::DispatchType = dispatch_type_str
+        .parse()
+        .unwrap_or(rootsignal_common::DispatchType::Update);
 
-    let supersedes_str: Option<String> = n.get("supersedes").ok().filter(|s: &String| !s.is_empty());
+    let supersedes_str: Option<String> =
+        n.get("supersedes").ok().filter(|s: &String| !s.is_empty());
     let supersedes = supersedes_str.and_then(|s| Uuid::parse_str(&s).ok());
 
     let flagged_for_review: bool = n.get("flagged_for_review").unwrap_or(false);
@@ -2690,3 +2853,4 @@ fn row_to_dispatch(
         fidelity_score,
     })
 }
+

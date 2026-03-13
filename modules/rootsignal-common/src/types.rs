@@ -6,176 +6,129 @@ use uuid::Uuid;
 
 use crate::safety::SensitivityLevel;
 
-// --- Geo Types ---
+// --- Re-exports from rootsignal-world ---
+pub use rootsignal_world::types::{
+    haversine_km, ActorType, ChannelType, DiscoveryMethod, EdgeType, Entity, EntityType, GeoPoint,
+    GeoPrecision, NodeType, Reference, Relationship, Severity, SocialPlatform, SourceRole, Tone,
+    Urgency,
+};
+pub use rootsignal_world::values::{Location, Schedule};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GeoPrecision {
-    Exact,
-    Neighborhood,
-    Approximate,
-    Region,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct GeoPoint {
-    pub lat: f64,
-    pub lng: f64,
-    pub precision: GeoPrecision,
-}
-
-/// Haversine great-circle distance between two lat/lng points in kilometers.
-pub fn haversine_km(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
-    const EARTH_RADIUS_KM: f64 = 6371.0;
-    let d_lat = (lat2 - lat1).to_radians();
-    let d_lng = (lng2 - lng1).to_radians();
-    let lat1_r = lat1.to_radians();
-    let lat2_r = lat2.to_radians();
-
-    let a = (d_lat / 2.0).sin().powi(2) + lat1_r.cos() * lat2_r.cos() * (d_lng / 2.0).sin().powi(2);
-    let c = 2.0 * a.sqrt().asin();
-    EARTH_RADIUS_KM * c
-}
-
-// --- Enums ---
+// --- Situation Types (system clustering model, not world facts) ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum Urgency {
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Severity {
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeType {
-    Gathering,
-    Aid,
-    Need,
-    Notice,
-    Tension,
-    Evidence,
-}
-
-impl std::fmt::Display for NodeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NodeType::Gathering => write!(f, "Gathering"),
-            NodeType::Aid => write!(f, "Aid"),
-            NodeType::Need => write!(f, "Need"),
-            NodeType::Notice => write!(f, "Notice"),
-            NodeType::Tension => write!(f, "Tension"),
-            NodeType::Evidence => write!(f, "Evidence"),
-        }
-    }
-}
-
-// --- Story Synthesis Types ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum StoryArc {
+pub enum SituationArc {
     Emerging,
-    Growing,
-    Stable,
-    Fading,
-    Resurgent,
+    Developing,
+    Active,
+    Cooling,
+    Cold,
 }
 
-impl std::fmt::Display for StoryArc {
+impl std::fmt::Display for SituationArc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StoryArc::Emerging => write!(f, "emerging"),
-            StoryArc::Growing => write!(f, "growing"),
-            StoryArc::Stable => write!(f, "stable"),
-            StoryArc::Fading => write!(f, "fading"),
-            StoryArc::Resurgent => write!(f, "resurgent"),
+            SituationArc::Emerging => write!(f, "emerging"),
+            SituationArc::Developing => write!(f, "developing"),
+            SituationArc::Active => write!(f, "active"),
+            SituationArc::Cooling => write!(f, "cooling"),
+            SituationArc::Cold => write!(f, "cold"),
+        }
+    }
+}
+
+impl std::str::FromStr for SituationArc {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "emerging" => Ok(Self::Emerging),
+            "developing" => Ok(Self::Developing),
+            "active" => Ok(Self::Active),
+            "cooling" => Ok(Self::Cooling),
+            "cold" => Ok(Self::Cold),
+            other => Err(format!("unknown SituationArc: {other}")),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum StoryCategory {
-    Resource,
-    Gathering,
-    Crisis,
-    Governance,
-    Stewardship,
-    Community,
-    Environment,
+pub enum Clarity {
+    Fuzzy,
+    Sharpening,
+    Sharp,
 }
 
-impl std::fmt::Display for StoryCategory {
+impl std::fmt::Display for Clarity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StoryCategory::Resource => write!(f, "resource"),
-            StoryCategory::Gathering => write!(f, "gathering"),
-            StoryCategory::Crisis => write!(f, "crisis"),
-            StoryCategory::Governance => write!(f, "governance"),
-            StoryCategory::Stewardship => write!(f, "stewardship"),
-            StoryCategory::Community => write!(f, "community"),
-            StoryCategory::Environment => write!(f, "environment"),
+            Clarity::Fuzzy => write!(f, "fuzzy"),
+            Clarity::Sharpening => write!(f, "sharpening"),
+            Clarity::Sharp => write!(f, "sharp"),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionGuidance {
-    pub guidance: String,
-    pub action_urls: Vec<String>,
+impl std::str::FromStr for Clarity {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "fuzzy" => Ok(Self::Fuzzy),
+            "sharpening" => Ok(Self::Sharpening),
+            "sharp" => Ok(Self::Sharp),
+            other => Err(format!("unknown Clarity: {other}")),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorySynthesis {
-    pub headline: String,
-    pub lede: String,
-    pub narrative: String,
-    pub action_guidance: Vec<ActionGuidance>,
-    pub key_entities: Vec<String>,
-    pub category: StoryCategory,
-    pub arc: StoryArc,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchType {
+    Update,
+    Emergence,
+    Split,
+    Merge,
+    Reactivation,
+    Correction,
+}
+
+impl std::fmt::Display for DispatchType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DispatchType::Update => write!(f, "update"),
+            DispatchType::Emergence => write!(f, "emergence"),
+            DispatchType::Split => write!(f, "split"),
+            DispatchType::Merge => write!(f, "merge"),
+            DispatchType::Reactivation => write!(f, "reactivation"),
+            DispatchType::Correction => write!(f, "correction"),
+        }
+    }
+}
+
+impl std::str::FromStr for DispatchType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "update" => Ok(Self::Update),
+            "emergence" => Ok(Self::Emergence),
+            "split" => Ok(Self::Split),
+            "merge" => Ok(Self::Merge),
+            "reactivation" => Ok(Self::Reactivation),
+            "correction" => Ok(Self::Correction),
+            other => Err(format!("unknown DispatchType: {other}")),
+        }
+    }
 }
 
 // --- Actor Types ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ActorType {
-    Organization,
-    Individual,
-    GovernmentBody,
-    Coalition,
-}
-
-impl std::fmt::Display for ActorType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ActorType::Organization => write!(f, "organization"),
-            ActorType::Individual => write!(f, "individual"),
-            ActorType::GovernmentBody => write!(f, "government_body"),
-            ActorType::Coalition => write!(f, "coalition"),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActorNode {
     pub id: Uuid,
     pub name: String,
     pub actor_type: ActorType,
-    pub entity_id: String,
+    pub canonical_key: String,
     pub domains: Vec<String>,
     pub social_urls: Vec<String>,
     pub description: String,
@@ -186,6 +139,8 @@ pub struct ActorNode {
     // --- Actor profile fields (populated when actor has linked social accounts) ---
     /// Actor bio / description for LLM context.
     pub bio: Option<String>,
+    /// External URL from the actor's social profile (e.g. linktree, website).
+    pub external_url: Option<String>,
     /// Pinned location latitude.
     pub location_lat: Option<f64>,
     /// Pinned location longitude.
@@ -207,6 +162,15 @@ pub struct ActorContext {
     pub location_lat: Option<f64>,
     pub location_lng: Option<f64>,
     pub discovery_depth: u32,
+}
+
+/// Platform-agnostic profile metadata fetched from a social source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileSnapshot {
+    pub bio: Option<String>,
+    pub external_url: Option<String>,
+    pub display_name: Option<String>,
+    pub follower_count: Option<u64>,
 }
 
 /// A social account mentioned in a post from a known actor.
@@ -233,28 +197,22 @@ pub struct NodeMeta {
     pub summary: String,
     pub sensitivity: SensitivityLevel,
     pub confidence: f32,
-    pub freshness_score: f32,
     pub corroboration_count: u32,
-    /// The canonical query/map field — where the content is ABOUT.
-    /// At write time: content location if extracted, else falls back to from_location.
-    pub about_location: Option<GeoPoint>,
-    /// Human-readable content location name.
-    pub about_location_name: Option<String>,
-    /// Actor's location — provenance for where the signal was posted FROM.
+    /// Typed locations: each has optional point, name, address, and role.
+    /// Primary (about) location has role=None or "venue"; origin has role="origin".
     #[serde(default)]
-    pub from_location: Option<GeoPoint>,
-    pub source_url: String,
+    pub locations: Vec<Location>,
+    #[serde(alias = "source_url")]
+    pub url: String,
     pub extracted_at: DateTime<Utc>,
     /// When the content was actually published/updated (from LLM extraction, RSS pub_date, or social published_at).
     /// Falls back to `extracted_at` when unavailable.
     #[serde(default)]
-    pub content_date: Option<DateTime<Utc>>,
+    pub published_at: Option<DateTime<Utc>>,
     pub last_confirmed_active: DateTime<Utc>,
     /// Number of unique entity sources (orgs/domains) that have evidence for this signal.
     pub source_diversity: u32,
-    /// Fraction of evidence from sources other than the signal's originating entity (0.0-1.0).
-    pub external_ratio: f32,
-    /// Cross-story cause heat: how much independent community attention exists in this signal's
+    /// Cause heat: how much independent community attention exists in this signal's
     /// semantic neighborhood (0.0–1.0). A food shelf Need rises when the housing crisis is trending.
     pub cause_heat: f64,
     /// Implied search queries from this signal for expansion discovery.
@@ -263,12 +221,69 @@ pub struct NodeMeta {
     /// Number of distinct channel types with external entity evidence (1-4).
     #[serde(default = "default_channel_diversity")]
     pub channel_diversity: u32,
-    /// Organizations/groups mentioned in this signal (extracted by LLM, used for Actor resolution)
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mentioned_actors: Vec<String>,
-    /// The actor that authored/published this signal's source content.
+    #[serde(default)]
+    pub review_status: ReviewStatus,
+    #[serde(default)]
+    pub was_corrected: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author_actor: Option<String>,
+    pub corrections: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_reason: Option<String>,
+    /// Typed entities mentioned in the extracted signal content.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentioned_entities: Vec<Entity>,
+    /// Thematic domain classification (housing, safety, health, etc.).
+    /// Written by CategoryClassified system event, not set during extraction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+impl NodeMeta {
+    /// Primary "about" location — the place the signal content is about.
+    /// Prefers role=None or role="venue", falls back to first location.
+    pub fn about_location(&self) -> Option<&Location> {
+        self.locations
+            .iter()
+            .find(|l| l.role.is_none() || l.role.as_deref() == Some("venue"))
+            .or_else(|| self.locations.first())
+    }
+
+    pub fn about_point(&self) -> Option<&GeoPoint> {
+        self.about_location().and_then(|l| l.point.as_ref())
+    }
+
+    pub fn about_location_name(&self) -> Option<&str> {
+        self.about_location().and_then(|l| l.name.as_deref())
+    }
+
+    /// Origin location — where the signal was posted FROM (actor's location).
+    pub fn from_location(&self) -> Option<&Location> {
+        self.locations
+            .iter()
+            .find(|l| l.role.as_deref() == Some("origin"))
+    }
+
+    pub fn from_point(&self) -> Option<&GeoPoint> {
+        self.from_location().and_then(|l| l.point.as_ref())
+    }
+
+    /// Flat list of entity names — backward compat for callers that just need names.
+    pub fn mentioned_entity_names(&self) -> Vec<&str> {
+        self.mentioned_entities
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStatus {
+    #[default]
+    Staged,
+    Accepted,
+    Rejected,
+    Corrected,
 }
 
 // --- Signal Node Types ---
@@ -284,50 +299,87 @@ pub struct GatheringNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AidNode {
+pub struct ResourceOfferNode {
     pub meta: NodeMeta,
     pub action_url: String,
     pub availability: Option<String>,
+    pub eligibility: Option<String>,
     pub is_ongoing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NeedNode {
+pub struct HelpRequestNode {
     pub meta: NodeMeta,
     pub urgency: Urgency,
     pub what_needed: Option<String>,
     pub action_url: Option<String>,
-    pub goal: Option<String>,
+    pub stated_goal: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoticeNode {
+pub struct AnnouncementNode {
     pub meta: NodeMeta,
     pub severity: Severity,
-    pub category: Option<String>,
+    /// 5-word topic subject for the announcement.
+    pub subject: Option<String>,
     pub effective_date: Option<DateTime<Utc>>,
     pub source_authority: Option<String>,
+    pub action_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TensionNode {
+pub struct ConcernNode {
     pub meta: NodeMeta,
     pub severity: Severity,
-    pub category: Option<String>,
-    pub what_would_help: Option<String>,
+    /// The core subject of the friction in plain terms.
+    pub subject: Option<String>,
+    /// What is being opposed, as explicitly stated in the content.
+    pub opposing: Option<String>,
+    pub action_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvidenceNode {
+pub struct ConditionNode {
+    pub meta: NodeMeta,
+    pub severity: Severity,
+    /// The core subject in plain terms, for search/retrieval.
+    pub subject: Option<String>,
+    /// Who or what reported/observed this condition.
+    pub observed_by: Option<String>,
+    /// Quantitative reading if the content includes one.
+    pub measurement: Option<String>,
+    /// Scope of what's affected as stated in the content.
+    pub affected_scope: Option<String>,
+    pub action_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CitationNode {
     pub id: Uuid,
     pub source_url: String,
     pub retrieved_at: DateTime<Utc>,
     pub content_hash: String,
     pub snippet: Option<String>,
     pub relevance: Option<String>,
-    pub evidence_confidence: Option<f32>,
+    /// Stored as `evidence_confidence` in Neo4j and event payloads (immutable schema).
+    pub confidence: Option<f32>,
     #[serde(default)]
     pub channel_type: Option<ChannelType>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleNode {
+    pub id: Uuid,
+    pub rrule: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rdates: Vec<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exdates: Vec<DateTime<Utc>>,
+    pub dtstart: Option<DateTime<Utc>>,
+    pub dtend: Option<DateTime<Utc>>,
+    pub timezone: Option<String>,
+    pub schedule_text: Option<String>,
+    pub extracted_at: DateTime<Utc>,
 }
 
 // --- Sum type ---
@@ -336,121 +388,74 @@ pub struct EvidenceNode {
 #[serde(tag = "node_type")]
 pub enum Node {
     Gathering(GatheringNode),
-    Aid(AidNode),
-    Need(NeedNode),
-    Notice(NoticeNode),
-    Tension(TensionNode),
-    Evidence(EvidenceNode),
+    Resource(ResourceOfferNode),
+    HelpRequest(HelpRequestNode),
+    Announcement(AnnouncementNode),
+    Concern(ConcernNode),
+    Condition(ConditionNode),
+    Citation(CitationNode),
 }
 
 impl Node {
     pub fn node_type(&self) -> NodeType {
         match self {
             Node::Gathering(_) => NodeType::Gathering,
-            Node::Aid(_) => NodeType::Aid,
-            Node::Need(_) => NodeType::Need,
-            Node::Notice(_) => NodeType::Notice,
-            Node::Tension(_) => NodeType::Tension,
-            Node::Evidence(_) => NodeType::Evidence,
+            Node::Resource(_) => NodeType::Resource,
+            Node::HelpRequest(_) => NodeType::HelpRequest,
+            Node::Announcement(_) => NodeType::Announcement,
+            Node::Concern(_) => NodeType::Concern,
+            Node::Condition(_) => NodeType::Condition,
+            Node::Citation(_) => NodeType::Citation,
         }
     }
 
     pub fn id(&self) -> Uuid {
         match self {
             Node::Gathering(n) => n.meta.id,
-            Node::Aid(n) => n.meta.id,
-            Node::Need(n) => n.meta.id,
-            Node::Notice(n) => n.meta.id,
-            Node::Tension(n) => n.meta.id,
-            Node::Evidence(n) => n.id,
+            Node::Resource(n) => n.meta.id,
+            Node::HelpRequest(n) => n.meta.id,
+            Node::Announcement(n) => n.meta.id,
+            Node::Concern(n) => n.meta.id,
+            Node::Condition(n) => n.meta.id,
+            Node::Citation(n) => n.id,
         }
     }
 
     pub fn meta(&self) -> Option<&NodeMeta> {
         match self {
             Node::Gathering(n) => Some(&n.meta),
-            Node::Aid(n) => Some(&n.meta),
-            Node::Need(n) => Some(&n.meta),
-            Node::Notice(n) => Some(&n.meta),
-            Node::Tension(n) => Some(&n.meta),
-            Node::Evidence(_) => None,
+            Node::Resource(n) => Some(&n.meta),
+            Node::HelpRequest(n) => Some(&n.meta),
+            Node::Announcement(n) => Some(&n.meta),
+            Node::Concern(n) => Some(&n.meta),
+            Node::Condition(n) => Some(&n.meta),
+            Node::Citation(_) => None,
         }
     }
 
     pub fn meta_mut(&mut self) -> Option<&mut NodeMeta> {
         match self {
             Node::Gathering(n) => Some(&mut n.meta),
-            Node::Aid(n) => Some(&mut n.meta),
-            Node::Need(n) => Some(&mut n.meta),
-            Node::Notice(n) => Some(&mut n.meta),
-            Node::Tension(n) => Some(&mut n.meta),
-            Node::Evidence(_) => None,
+            Node::Resource(n) => Some(&mut n.meta),
+            Node::HelpRequest(n) => Some(&mut n.meta),
+            Node::Announcement(n) => Some(&mut n.meta),
+            Node::Concern(n) => Some(&mut n.meta),
+            Node::Condition(n) => Some(&mut n.meta),
+            Node::Citation(_) => None,
         }
     }
 
     pub fn title(&self) -> &str {
         match self {
             Node::Gathering(n) => &n.meta.title,
-            Node::Aid(n) => &n.meta.title,
-            Node::Need(n) => &n.meta.title,
-            Node::Notice(n) => &n.meta.title,
-            Node::Tension(n) => &n.meta.title,
-            Node::Evidence(n) => &n.source_url,
+            Node::Resource(n) => &n.meta.title,
+            Node::HelpRequest(n) => &n.meta.title,
+            Node::Announcement(n) => &n.meta.title,
+            Node::Concern(n) => &n.meta.title,
+            Node::Condition(n) => &n.meta.title,
+            Node::Citation(n) => &n.source_url,
         }
     }
-}
-
-// --- Story Node ---
-
-/// A cluster of related signals that form an emergent story.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoryNode {
-    pub id: Uuid,
-    pub headline: String,
-    pub summary: String,
-    pub signal_count: u32,
-    pub first_seen: DateTime<Utc>,
-    pub last_updated: DateTime<Utc>,
-    pub velocity: f64,
-    pub energy: f64,
-    pub centroid_lat: Option<f64>,
-    pub centroid_lng: Option<f64>,
-    pub dominant_type: String,
-    pub sensitivity: String,
-    pub source_count: u32,
-    pub entity_count: u32,
-    pub type_diversity: u32,
-    pub source_domains: Vec<String>,
-    pub corroboration_depth: u32,
-    pub status: String, // "emerging" or "confirmed"
-    // M2: Story synthesis fields
-    pub arc: Option<String>,
-    pub category: Option<String>,
-    pub lede: Option<String>,
-    pub narrative: Option<String>,
-    pub action_guidance: Option<String>, // JSON string of Vec<ActionGuidance>
-    // Story pipeline consolidation fields
-    pub cause_heat: f64,
-    pub ask_count: u32,
-    pub give_count: u32,
-    pub event_count: u32,
-    pub drawn_to_count: u32,
-    pub gap_score: i32,
-    pub gap_velocity: f64,
-    pub channel_diversity: u32,
-}
-
-/// A snapshot of a story's signal and entity counts at a point in time, used for velocity tracking.
-/// Velocity is driven by entity_count growth (not raw signal count) to resist single-source flooding.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClusterSnapshot {
-    pub id: Uuid,
-    pub story_id: Uuid,
-    pub signal_count: u32,
-    pub entity_count: u32,
-    pub ask_count: u32,
-    pub give_count: u32,
-    pub run_at: DateTime<Utc>,
 }
 
 // --- Scout Scope (geographic context for a scout run) ---
@@ -479,111 +484,75 @@ impl ScoutScope {
     }
 }
 
+// --- RegionNode (persistent geographic area to watch) ---
 
-// --- Scout Task (ephemeral unit of work for the scout swarm) ---
-
-/// How a scout task was created.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ScoutTaskSource {
-    /// Seeded from config/env vars
-    Manual,
-    /// Created by signal clustering (feedback loop)
-    Beacon,
-    /// Created by Driver A (user search demand aggregation)
-    DriverA,
-    /// Created by Driver B (global news scanning)
-    DriverB,
-}
-
-impl std::fmt::Display for ScoutTaskSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Manual => write!(f, "manual"),
-            Self::Beacon => write!(f, "beacon"),
-            Self::DriverA => write!(f, "driver_a"),
-            Self::DriverB => write!(f, "driver_b"),
-        }
-    }
-}
-
-impl std::str::FromStr for ScoutTaskSource {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "manual" => Ok(Self::Manual),
-            "beacon" => Ok(Self::Beacon),
-            "driver_a" => Ok(Self::DriverA),
-            "driver_b" => Ok(Self::DriverB),
-            other => Err(format!("unknown ScoutTaskSource: {other}")),
-        }
-    }
-}
-
-/// Status of a scout task in the queue.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ScoutTaskStatus {
-    Pending,
-    Running,
-    Completed,
-    Cancelled,
-}
-
-impl std::fmt::Display for ScoutTaskStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Running => write!(f, "running"),
-            Self::Completed => write!(f, "completed"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
-impl std::str::FromStr for ScoutTaskStatus {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "pending" => Ok(Self::Pending),
-            "running" => Ok(Self::Running),
-            "completed" => Ok(Self::Completed),
-            "cancelled" => Ok(Self::Cancelled),
-            other => Err(format!("unknown ScoutTaskStatus: {other}")),
-        }
-    }
-}
-
-/// An ephemeral unit of work for the scout swarm.
-/// Each task owns its own phase_status (idle → running_bootstrap → ... → complete).
-/// Tasks are one-shot and append-only — if a run fails, create a new task rather than retrying.
+/// A persistent geographic region that scouts watch.
+/// Regions can nest: a parent region (e.g. "US") CONTAINS child regions (e.g. "Portland").
+/// Leaf regions have sources and can bootstrap/scrape/weave.
+/// Parent regions define a larger scope and can only weave (reading signals from all contained area).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScoutTask {
+pub struct RegionNode {
     pub id: Uuid,
+    pub name: String,
     pub center_lat: f64,
     pub center_lng: f64,
     pub radius_km: f64,
-    pub context: String,
     pub geo_terms: Vec<String>,
-    pub priority: f64,
-    pub source: ScoutTaskSource,
-    pub status: ScoutTaskStatus,
+    pub is_leaf: bool,
     pub created_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    /// Workflow phase status: "idle", "running_bootstrap", "bootstrap_complete", etc.
-    #[serde(default = "default_phase_status")]
-    pub phase_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_status: Option<String>,
 }
 
-fn default_phase_status() -> String {
-    "idle".to_string()
-}
+/// Backward-compatible alias during migration.
+pub type Region = RegionNode;
 
-impl From<&ScoutTask> for ScoutScope {
-    fn from(task: &ScoutTask) -> Self {
+impl From<&RegionNode> for ScoutScope {
+    fn from(region: &RegionNode) -> Self {
         ScoutScope {
-            center_lat: task.center_lat,
-            center_lng: task.center_lng,
-            radius_km: task.radius_km,
-            name: task.context.clone(),
+            center_lat: region.center_lat,
+            center_lng: region.center_lng,
+            radius_km: region.radius_km,
+            name: region.name.clone(),
+        }
+    }
+}
+
+// --- Flow Type (independent scout workflow operations) ---
+
+/// Independent scout workflow operations. Each flow produces its own Run.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FlowType {
+    /// Discover sources for a region (web search, news, social)
+    Bootstrap,
+    /// Scrape all watched sources in a region, extract + classify signals (auto-bootstraps if empty)
+    Scrape,
+    /// Cross-signal synthesis: concern↔response linking, actor dedup, situation building
+    Weave,
+    /// Scrape specific source(s), no region context needed
+    ScoutSource,
+}
+
+impl std::fmt::Display for FlowType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bootstrap => write!(f, "bootstrap"),
+            Self::Scrape => write!(f, "scrape"),
+            Self::Weave => write!(f, "weave"),
+            Self::ScoutSource => write!(f, "scout_source"),
+        }
+    }
+}
+
+impl std::str::FromStr for FlowType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "bootstrap" => Ok(Self::Bootstrap),
+            "scrape" => Ok(Self::Scrape),
+            "weave" => Ok(Self::Weave),
+            "scout_source" => Ok(Self::ScoutSource),
+            other => Err(format!("unknown FlowType: {other}")),
         }
     }
 }
@@ -591,7 +560,6 @@ impl From<&ScoutTask> for ScoutScope {
 // --- Demand Signal (raw user search telemetry for Driver A) ---
 
 /// A raw demand signal recorded from a user search.
-/// Aggregated into ScoutTasks by the interval loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DemandSignal {
     pub id: Uuid,
@@ -790,17 +758,26 @@ impl Channels {
 
     /// Only the page channel.
     pub fn page() -> Self {
-        Self { page: true, ..Default::default() }
+        Self {
+            page: true,
+            ..Default::default()
+        }
     }
 
     /// Only the feed channel.
     pub fn feed() -> Self {
-        Self { feed: true, ..Default::default() }
+        Self {
+            feed: true,
+            ..Default::default()
+        }
     }
 
     /// Only the media channel.
     pub fn media() -> Self {
-        Self { media: true, ..Default::default() }
+        Self {
+            media: true,
+            ..Default::default()
+        }
     }
 
     pub fn with_page(mut self) -> Self {
@@ -820,6 +797,84 @@ impl Channels {
 
     pub fn is_empty(&self) -> bool {
         !self.page && !self.feed && !self.media && !self.discussion && !self.events
+    }
+}
+
+// --- Channel Weights (per-source priority for each content channel) ---
+
+/// Per-source weights controlling which content channels to fetch and how
+/// aggressively. Weight 0.0 = off, > 0.0 = on. Higher values may drive
+/// fetch limits in the future.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelWeights {
+    pub page: f64,
+    pub feed: f64,
+    pub media: f64,
+    pub discussion: f64,
+    pub events: f64,
+}
+
+impl Default for ChannelWeights {
+    fn default() -> Self {
+        Self {
+            page: 0.0,
+            feed: 0.0,
+            media: 0.0,
+            discussion: 0.0,
+            events: 0.0,
+        }
+    }
+}
+
+impl ChannelWeights {
+    pub fn default_for(strategy: &ScrapingStrategy) -> Self {
+        match strategy {
+            ScrapingStrategy::WebPage | ScrapingStrategy::HtmlListing { .. } => Self {
+                page: 1.0,
+                ..Default::default()
+            },
+            ScrapingStrategy::Rss => Self {
+                feed: 1.0,
+                ..Default::default()
+            },
+            ScrapingStrategy::Social(_) => Self {
+                feed: 1.0,
+                ..Default::default()
+            },
+            ScrapingStrategy::WebQuery => Self::default(),
+        }
+    }
+
+    pub fn to_channels(&self) -> Channels {
+        Channels {
+            page: self.page > 0.0,
+            feed: self.feed > 0.0,
+            media: self.media > 0.0,
+            discussion: self.discussion > 0.0,
+            events: self.events > 0.0,
+        }
+    }
+
+    pub fn get(&self, channel: &str) -> f64 {
+        match channel {
+            "page" => self.page,
+            "feed" => self.feed,
+            "media" => self.media,
+            "discussion" => self.discussion,
+            "events" => self.events,
+            _ => 0.0,
+        }
+    }
+
+    pub fn set(&mut self, channel: &str, value: f64) {
+        match channel {
+            "page" => self.page = value,
+            "feed" => self.feed = value,
+            "media" => self.media = value,
+            "discussion" => self.discussion = value,
+            "events" => self.events = value,
+            _ => {}
+        }
     }
 }
 
@@ -844,6 +899,8 @@ pub struct ArchivedPage {
     pub markdown: String,
     pub title: Option<String>,
     pub links: Vec<String>,
+    #[serde(default)]
+    pub published_at: Option<DateTime<Utc>>,
 }
 
 /// A fetched RSS/Atom feed.
@@ -970,17 +1027,6 @@ pub fn content_hash(content: &str) -> u64 {
 
 // --- Scraping Strategy (computed from URL, never stored) ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SocialPlatform {
-    Instagram,
-    Facebook,
-    Reddit,
-    Twitter,
-    TikTok,
-    Bluesky,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrapingStrategy {
     WebQuery,
@@ -1004,8 +1050,11 @@ pub fn scraping_strategy(value: &str) -> ScrapingStrategy {
     if lower.contains("instagram.com") {
         return ScrapingStrategy::Social(SocialPlatform::Instagram);
     }
-    if lower.contains("facebook.com") {
+    if lower.contains("facebook.com") && is_facebook_page_url(value) {
         return ScrapingStrategy::Social(SocialPlatform::Facebook);
+    }
+    if lower.contains("facebook.com") {
+        return ScrapingStrategy::WebPage;
     }
     if lower.contains("reddit.com") {
         return ScrapingStrategy::Social(SocialPlatform::Reddit);
@@ -1038,6 +1087,93 @@ pub fn scraping_strategy(value: &str) -> ScrapingStrategy {
         return ScrapingStrategy::Rss;
     }
     ScrapingStrategy::WebPage
+}
+
+impl std::fmt::Display for ScrapingStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScrapingStrategy::WebQuery => write!(f, "web_query"),
+            ScrapingStrategy::WebPage => write!(f, "web_page"),
+            ScrapingStrategy::Rss => write!(f, "rss"),
+            ScrapingStrategy::Social(p) => {
+                let label = match p {
+                    SocialPlatform::Instagram => "instagram",
+                    SocialPlatform::Facebook => "facebook",
+                    SocialPlatform::Reddit => "reddit",
+                    SocialPlatform::Twitter => "twitter",
+                    SocialPlatform::TikTok => "tiktok",
+                    SocialPlatform::Bluesky => "bluesky",
+                };
+                write!(f, "social:{label}")
+            }
+            ScrapingStrategy::HtmlListing { link_pattern } => {
+                write!(f, "html_listing:{link_pattern}")
+            }
+        }
+    }
+}
+
+/// Returns true if a Facebook URL points to a page or group homepage
+/// (not an individual post, photo, event, etc.).
+pub fn is_facebook_page_url(url: &str) -> bool {
+    let path = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .skip(1) // skip domain
+        .collect::<Vec<_>>();
+
+    match path.as_slice() {
+        // facebook.com/<slug> or facebook.com/<slug>/
+        [slug] | [slug, ""] if is_valid_fb_slug(slug) => true,
+        // facebook.com/groups/<name> or facebook.com/groups/<name>/
+        ["groups", name] | ["groups", name, ""] if !name.is_empty() => true,
+        // facebook.com/pg/<slug> (legacy page URL)
+        ["pg", slug] | ["pg", slug, ""] if is_valid_fb_slug(slug) => true,
+        _ => false,
+    }
+}
+
+/// A valid Facebook slug is non-empty, doesn't start with reserved path
+/// segments, and doesn't look like a numeric post ID.
+fn is_valid_fb_slug(slug: &str) -> bool {
+    let slug = slug.trim_end_matches('/');
+    if slug.is_empty() {
+        return false;
+    }
+    let reserved = [
+        "photo",
+        "photos",
+        "video",
+        "videos",
+        "events",
+        "posts",
+        "story",
+        "stories",
+        "watch",
+        "marketplace",
+        "gaming",
+        "login",
+        "help",
+        "settings",
+        "messages",
+        "notifications",
+        "bookmarks",
+        "pages",
+        "groups",
+        "profile.php",
+        "permalink.php",
+        "share",
+    ];
+    if reserved.contains(&slug.to_lowercase().as_str()) {
+        return false;
+    }
+    // Pure numeric = post/object ID, not a page slug
+    if slug.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    true
 }
 
 /// Compute a canonical value from a source's raw value (URL or query text).
@@ -1087,84 +1223,6 @@ pub fn canonical_value(value: &str) -> String {
     value.to_string()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DiscoveryMethod {
-    /// From initial seed list
-    Curated,
-    /// LLM gap analysis identified a gap and suggested this
-    GapAnalysis,
-    /// Extracted from signal content (org mentioned but not tracked)
-    SignalReference,
-    /// Discovered via topic/hashtag search on social platforms
-    HashtagDiscovery,
-    /// Generated during cold start bootstrap
-    ColdStart,
-    /// Discovered from tension-seeded follow-up queries
-    TensionSeed,
-    /// Submitted by a human via the submission endpoint
-    HumanSubmission,
-    /// Expanded from implied queries on extracted signals
-    SignalExpansion,
-    /// Social account linked to a known actor
-    ActorAccount,
-    /// Discovered via a known actor's social graph
-    SocialGraphFollow,
-    /// Discovered as an outbound link on a scraped page
-    LinkedFrom,
-}
-
-impl std::fmt::Display for DiscoveryMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DiscoveryMethod::Curated => write!(f, "curated"),
-            DiscoveryMethod::GapAnalysis => write!(f, "gap_analysis"),
-            DiscoveryMethod::SignalReference => write!(f, "signal_reference"),
-            DiscoveryMethod::HashtagDiscovery => write!(f, "hashtag_discovery"),
-            DiscoveryMethod::ColdStart => write!(f, "cold_start"),
-            DiscoveryMethod::TensionSeed => write!(f, "tension_seed"),
-            DiscoveryMethod::HumanSubmission => write!(f, "human_submission"),
-            DiscoveryMethod::SignalExpansion => write!(f, "signal_expansion"),
-            DiscoveryMethod::ActorAccount => write!(f, "actor_account"),
-            DiscoveryMethod::SocialGraphFollow => write!(f, "social_graph_follow"),
-            DiscoveryMethod::LinkedFrom => write!(f, "linked_from"),
-        }
-    }
-}
-
-/// What kind of signals a source tends to surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceRole {
-    /// Surfaces problems (forums, complaint boards, news).
-    Tension,
-    /// Surfaces responses (nonprofits, service directories, event calendars).
-    Response,
-    /// Produces both tensions and responses (general community pages, social media).
-    #[default]
-    Mixed,
-}
-
-impl std::fmt::Display for SourceRole {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SourceRole::Tension => write!(f, "tension"),
-            SourceRole::Response => write!(f, "response"),
-            SourceRole::Mixed => write!(f, "mixed"),
-        }
-    }
-}
-
-impl SourceRole {
-    pub fn from_str_loose(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "tension" => SourceRole::Tension,
-            "response" => SourceRole::Response,
-            _ => SourceRole::Mixed,
-        }
-    }
-}
-
 /// An ephemeral pin — a one-shot instruction to scrape a source at a location.
 /// Created during bootstrap or mid-run discovery, consumed after the scout run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1210,6 +1268,14 @@ pub struct SourceNode {
     pub source_role: SourceRole,
     /// Number of times this source has been scraped (independent of signal count).
     pub scrape_count: u32,
+    /// Number of child sources discovered via link promotion from this source's pages.
+    pub sources_discovered: u32,
+    /// canonical_key of the source whose pages linked to this one.
+    #[serde(default)]
+    pub discovered_from_key: Option<String>,
+    /// Per-channel fetch weights. 0.0 = off, > 0.0 = on.
+    #[serde(default)]
+    pub channel_weights: ChannelWeights,
 }
 
 impl SourceNode {
@@ -1223,6 +1289,8 @@ impl SourceNode {
         source_role: SourceRole,
         gap_context: Option<String>,
     ) -> Self {
+        let value = url.as_deref().unwrap_or(&canonical_value);
+        let channel_weights = ChannelWeights::default_for(&scraping_strategy(value));
         Self {
             id: Uuid::new_v4(),
             canonical_key,
@@ -1243,6 +1311,9 @@ impl SourceNode {
             quality_penalty: 1.0,
             source_role,
             scrape_count: 0,
+            sources_discovered: 0,
+            discovered_from_key: None,
+            channel_weights,
         }
     }
 
@@ -1271,35 +1342,6 @@ pub struct BlockedSource {
 }
 
 // --- Channel Types ---
-
-/// The type of channel a piece of evidence came through.
-/// Used for channel diversity scoring — cross-channel corroboration is
-/// epistemologically stronger than same-channel repetition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelType {
-    Press,
-    Social,
-    DirectAction,
-    CommunityMedia,
-}
-
-impl ChannelType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ChannelType::Press => "press",
-            ChannelType::Social => "social",
-            ChannelType::DirectAction => "direct_action",
-            ChannelType::CommunityMedia => "community_media",
-        }
-    }
-}
-
-impl std::fmt::Display for ChannelType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
 
 /// Classify a URL into a channel type based on domain patterns.
 /// No LLM needed — pure pattern matching.
@@ -1369,7 +1411,7 @@ fn default_channel_diversity() -> u32 {
 /// Used across scout (corroboration) and graph (clustering) crates.
 #[derive(Debug, Clone)]
 pub struct EntityMappingOwned {
-    pub entity_id: String,
+    pub canonical_key: String,
     pub domains: Vec<String>,
     pub instagram: Vec<String>,
     pub facebook: Vec<String>,
@@ -1377,31 +1419,31 @@ pub struct EntityMappingOwned {
 }
 
 /// Resolve a source URL to its parent entity ID using entity mappings.
-/// Returns the entity_id if matched, otherwise extracts the domain as a fallback entity.
+/// Returns the canonical_key if matched, otherwise extracts the domain as a fallback entity.
 pub fn resolve_entity(url: &str, mappings: &[EntityMappingOwned]) -> String {
     let domain = extract_domain(url);
 
     for mapping in mappings {
         for d in &mapping.domains {
             if domain.contains(d.as_str()) {
-                return mapping.entity_id.clone();
+                return mapping.canonical_key.clone();
             }
         }
         for ig in &mapping.instagram {
             if url.contains(&format!("instagram.com/{ig}")) {
-                return mapping.entity_id.clone();
+                return mapping.canonical_key.clone();
             }
         }
         for fb in &mapping.facebook {
             if url.contains(fb.as_str()) {
-                return mapping.entity_id.clone();
+                return mapping.canonical_key.clone();
             }
         }
         for r in &mapping.reddit {
             if url.contains(&format!("reddit.com/user/{r}"))
                 || url.contains(&format!("reddit.com/u/{r}"))
             {
-                return mapping.entity_id.clone();
+                return mapping.canonical_key.clone();
             }
         }
     }
@@ -1423,47 +1465,12 @@ pub fn extract_domain(url: &str) -> String {
 
 // --- Response Mapping Result ---
 
-/// A signal that responds to a Tension, with edge metadata.
+/// A signal that responds to a Concern, with edge metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TensionResponse {
+pub struct ConcernResponse {
     pub node: Node,
     pub match_strength: f64,
     pub explanation: String,
-}
-
-// --- Edge Types ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EdgeType {
-    /// Signal -> Evidence (provenance)
-    SourcedFrom,
-    /// Story -> Signal (membership)
-    Contains,
-    /// Aid/Gathering/Need -> Tension (feedback loop). Properties: match_strength, explanation
-    RespondsTo,
-    /// Actor -> Signal (participation). Properties: role
-    ActedIn,
-    /// Story -> Story (evolution)
-    EvolvedFrom,
-    /// Signal <-> Signal (clustering). Properties: weight
-    SimilarTo,
-    /// Submission -> Source (human submission)
-    SubmittedFor,
-    /// Aid/Gathering/Need -> Tension (community formation / gathering). Properties: match_strength, explanation, gathering_type
-    DrawnTo,
-    /// Signal -> Place (gathering venue)
-    GathersAt,
-    /// Signal/Story -> Tag (thematic tag)
-    Tagged,
-    /// Story -> Tag (admin suppressed an auto-aggregated tag)
-    SuppressedTag,
-    /// Need/Gathering -> Resource (must have this capability to help). Properties: confidence, quantity, notes
-    Requires,
-    /// Need/Gathering -> Resource (better if you have it, not required). Properties: confidence
-    Prefers,
-    /// Aid -> Resource (this is what we provide). Properties: confidence, capacity
-    Offers,
 }
 
 // --- TextEmbedder trait (shared across crates) ---
@@ -1474,112 +1481,15 @@ pub trait TextEmbedder: Send + Sync {
     async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
 }
 
+// --- EmbeddingLookup trait (get-or-compute cache interface) ---
+
+#[async_trait::async_trait]
+pub trait EmbeddingLookup: Send + Sync {
+    /// Get an embedding for the given text. Cache hit = instant. Miss = compute + store.
+    async fn get(&self, text: &str) -> Result<Vec<f32>>;
+}
+
 // --- Situation Types ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SituationArc {
-    Emerging,
-    Developing,
-    Active,
-    Cooling,
-    Cold,
-}
-
-impl std::fmt::Display for SituationArc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SituationArc::Emerging => write!(f, "emerging"),
-            SituationArc::Developing => write!(f, "developing"),
-            SituationArc::Active => write!(f, "active"),
-            SituationArc::Cooling => write!(f, "cooling"),
-            SituationArc::Cold => write!(f, "cold"),
-        }
-    }
-}
-
-impl std::str::FromStr for SituationArc {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "emerging" => Ok(Self::Emerging),
-            "developing" => Ok(Self::Developing),
-            "active" => Ok(Self::Active),
-            "cooling" => Ok(Self::Cooling),
-            "cold" => Ok(Self::Cold),
-            other => Err(format!("unknown SituationArc: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Clarity {
-    Fuzzy,
-    Sharpening,
-    Sharp,
-}
-
-impl std::fmt::Display for Clarity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Clarity::Fuzzy => write!(f, "fuzzy"),
-            Clarity::Sharpening => write!(f, "sharpening"),
-            Clarity::Sharp => write!(f, "sharp"),
-        }
-    }
-}
-
-impl std::str::FromStr for Clarity {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "fuzzy" => Ok(Self::Fuzzy),
-            "sharpening" => Ok(Self::Sharpening),
-            "sharp" => Ok(Self::Sharp),
-            other => Err(format!("unknown Clarity: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DispatchType {
-    Update,
-    Emergence,
-    Split,
-    Merge,
-    Reactivation,
-    Correction,
-}
-
-impl std::fmt::Display for DispatchType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DispatchType::Update => write!(f, "update"),
-            DispatchType::Emergence => write!(f, "emergence"),
-            DispatchType::Split => write!(f, "split"),
-            DispatchType::Merge => write!(f, "merge"),
-            DispatchType::Reactivation => write!(f, "reactivation"),
-            DispatchType::Correction => write!(f, "correction"),
-        }
-    }
-}
-
-impl std::str::FromStr for DispatchType {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "update" => Ok(Self::Update),
-            "emergence" => Ok(Self::Emergence),
-            "split" => Ok(Self::Split),
-            "merge" => Ok(Self::Merge),
-            "reactivation" => Ok(Self::Reactivation),
-            "correction" => Ok(Self::Correction),
-            other => Err(format!("unknown DispatchType: {other}")),
-        }
-    }
-}
 
 /// A living situation: a root cause + affected population + place.
 /// Organizational layer on top of the signal graph.
@@ -1614,6 +1524,7 @@ pub struct SituationNode {
     pub last_updated: DateTime<Utc>,
     pub sensitivity: SensitivityLevel,
     pub category: Option<String>,
+    pub briefing_body: Option<String>,
 }
 
 /// An atomic dispatch in a situation's living narrative thread.
@@ -1644,52 +1555,58 @@ mod tests {
             summary: "Test summary".to_string(),
             sensitivity: SensitivityLevel::General,
             confidence: 0.8,
-            freshness_score: 1.0,
             corroboration_count: 0,
-            about_location: None,
-            about_location_name: None,
-            from_location: None,
-            source_url: "https://example.com".to_string(),
+            locations: vec![],
+            url: "https://example.com".to_string(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
-            external_ratio: 0.0,
             cause_heat: 0.0,
             channel_diversity: 1,
-            mentioned_actors: vec![],
-            author_actor: None,
             implied_queries: vec![],
+            review_status: ReviewStatus::Staged,
+            was_corrected: false,
+            corrections: None,
+            rejection_reason: None,
+            mentioned_entities: vec![],
+            category: None,
         }
     }
 
     #[test]
-    fn tension_node_has_all_fields() {
-        let t = TensionNode {
-            meta: test_meta(),
+    fn concern_node_has_all_fields() {
+        let mut meta = test_meta();
+        meta.category = Some("housing".to_string());
+        let c = ConcernNode {
+            meta,
             severity: Severity::High,
-            category: Some("housing".to_string()),
-            what_would_help: Some("affordable housing policy".to_string()),
+            subject: Some("opposition highway expansion Midway".to_string()),
+            opposing: Some("proposed rezoning of 2100 Hennepin".to_string()),
         };
-        assert_eq!(t.severity, Severity::High);
-        assert_eq!(t.category.as_deref(), Some("housing"));
+        assert_eq!(c.severity, Severity::High);
+        assert_eq!(c.meta.category.as_deref(), Some("housing"));
         assert_eq!(
-            t.what_would_help.as_deref(),
-            Some("affordable housing policy")
+            c.subject.as_deref(),
+            Some("opposition highway expansion Midway")
+        );
+        assert_eq!(
+            c.opposing.as_deref(),
+            Some("proposed rezoning of 2100 Hennepin")
         );
     }
 
     #[test]
-    fn tension_node_optional_fields_default_none() {
-        let t = TensionNode {
+    fn concern_node_optional_fields_default_none() {
+        let c = ConcernNode {
             meta: test_meta(),
             severity: Severity::Medium,
-            category: None,
-            what_would_help: None,
+            subject: None,
+            opposing: None,
         };
-        assert_eq!(t.severity, Severity::Medium);
-        assert!(t.category.is_none());
-        assert!(t.what_would_help.is_none());
+        assert_eq!(c.severity, Severity::Medium);
+        assert!(c.meta.category.is_none());
+        assert!(c.subject.is_none());
     }
 
     #[test]
@@ -1752,34 +1669,82 @@ mod tests {
 
     #[test]
     fn channel_type_social_platforms() {
-        assert_eq!(channel_type("https://www.reddit.com/r/Minneapolis/comments/abc"), ChannelType::Social);
-        assert_eq!(channel_type("https://facebook.com/lakestreetstories"), ChannelType::Social);
-        assert_eq!(channel_type("https://www.instagram.com/p/abc123"), ChannelType::Social);
-        assert_eq!(channel_type("https://x.com/user/status/123"), ChannelType::Social);
-        assert_eq!(channel_type("https://nextdoor.com/post/123"), ChannelType::Social);
+        assert_eq!(
+            channel_type("https://www.reddit.com/r/Minneapolis/comments/abc"),
+            ChannelType::Social
+        );
+        assert_eq!(
+            channel_type("https://facebook.com/lakestreetstories"),
+            ChannelType::Social
+        );
+        assert_eq!(
+            channel_type("https://www.instagram.com/p/abc123"),
+            ChannelType::Social
+        );
+        assert_eq!(
+            channel_type("https://x.com/user/status/123"),
+            ChannelType::Social
+        );
+        assert_eq!(
+            channel_type("https://nextdoor.com/post/123"),
+            ChannelType::Social
+        );
     }
 
     #[test]
     fn channel_type_direct_action() {
-        assert_eq!(channel_type("https://www.gofundme.com/f/help-family"), ChannelType::DirectAction);
-        assert_eq!(channel_type("https://www.eventbrite.com/e/community-event-123"), ChannelType::DirectAction);
-        assert_eq!(channel_type("https://www.volunteermatch.org/search/opp123"), ChannelType::DirectAction);
-        assert_eq!(channel_type("https://www.change.org/p/petition-name"), ChannelType::DirectAction);
+        assert_eq!(
+            channel_type("https://www.gofundme.com/f/help-family"),
+            ChannelType::DirectAction
+        );
+        assert_eq!(
+            channel_type("https://www.eventbrite.com/e/community-event-123"),
+            ChannelType::DirectAction
+        );
+        assert_eq!(
+            channel_type("https://www.volunteermatch.org/search/opp123"),
+            ChannelType::DirectAction
+        );
+        assert_eq!(
+            channel_type("https://www.change.org/p/petition-name"),
+            ChannelType::DirectAction
+        );
     }
 
     #[test]
     fn channel_type_community_media() {
-        assert_eq!(channel_type("https://example.com/feed"), ChannelType::CommunityMedia);
-        assert_eq!(channel_type("https://example.com/rss"), ChannelType::CommunityMedia);
-        assert_eq!(channel_type("https://patch.com/minnesota/minneapolis/story"), ChannelType::CommunityMedia);
-        assert_eq!(channel_type("https://swnewsmedia.com/article/123"), ChannelType::CommunityMedia);
+        assert_eq!(
+            channel_type("https://example.com/feed"),
+            ChannelType::CommunityMedia
+        );
+        assert_eq!(
+            channel_type("https://example.com/rss"),
+            ChannelType::CommunityMedia
+        );
+        assert_eq!(
+            channel_type("https://patch.com/minnesota/minneapolis/story"),
+            ChannelType::CommunityMedia
+        );
+        assert_eq!(
+            channel_type("https://swnewsmedia.com/article/123"),
+            ChannelType::CommunityMedia
+        );
     }
 
     #[test]
     fn channel_type_press_default() {
-        assert_eq!(channel_type("https://startribune.com/article/123"), ChannelType::Press);
-        assert_eq!(channel_type("https://www.mprnews.org/story/abc"), ChannelType::Press);
-        assert_eq!(channel_type("https://citycouncil.gov/minutes"), ChannelType::Press);
+        assert_eq!(
+            channel_type("https://startribune.com/article/123"),
+            ChannelType::Press
+        );
+        assert_eq!(
+            channel_type("https://www.mprnews.org/story/abc"),
+            ChannelType::Press
+        );
+        assert_eq!(
+            channel_type("https://citycouncil.gov/minutes"),
+            ChannelType::Press
+        );
     }
 
     #[test]
@@ -1850,10 +1815,7 @@ mod tests {
 
     #[test]
     fn canonical_value_x_com() {
-        assert_eq!(
-            canonical_value("https://x.com/johndoe"),
-            "x.com/johndoe"
-        );
+        assert_eq!(canonical_value("https://x.com/johndoe"), "x.com/johndoe");
     }
 
     #[test]
@@ -1874,10 +1836,7 @@ mod tests {
     #[test]
     fn canonical_value_twitter_strips_at() {
         // @ prefix should be stripped
-        assert_eq!(
-            canonical_value("https://x.com/@handle"),
-            "x.com/handle"
-        );
+        assert_eq!(canonical_value("https://x.com/@handle"), "x.com/handle");
     }
 
     // --- TikTok ---
@@ -2112,7 +2071,13 @@ mod tests {
 
     #[test]
     fn channels_serde_roundtrip() {
-        let ch = Channels { page: true, feed: false, media: true, discussion: false, events: true };
+        let ch = Channels {
+            page: true,
+            feed: false,
+            media: true,
+            discussion: false,
+            events: true,
+        };
         let json = serde_json::to_string(&ch).unwrap();
         let deserialized: Channels = serde_json::from_str(&json).unwrap();
         assert_eq!(ch, deserialized);
@@ -2120,11 +2085,65 @@ mod tests {
 
     #[test]
     fn channels_literal_construction() {
-        let ch = Channels { feed: true, media: true, ..Default::default() };
+        let ch = Channels {
+            feed: true,
+            media: true,
+            ..Default::default()
+        };
         assert!(!ch.page);
         assert!(ch.feed);
         assert!(ch.media);
         assert!(!ch.discussion);
         assert!(!ch.events);
     }
+
+    // --- Facebook classification tests ---
+
+    #[test]
+    fn facebook_page_homepage_routes_to_social() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/lakestreetstories"),
+            ScrapingStrategy::Social(SocialPlatform::Facebook)
+        );
+    }
+
+    #[test]
+    fn facebook_group_routes_to_social() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/groups/mpls-mutual-aid"),
+            ScrapingStrategy::Social(SocialPlatform::Facebook)
+        );
+    }
+
+    #[test]
+    fn facebook_post_url_routes_to_webpage() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/lakestreetstories/posts/123456"),
+            ScrapingStrategy::WebPage
+        );
+    }
+
+    #[test]
+    fn facebook_event_url_routes_to_webpage() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/events/123456"),
+            ScrapingStrategy::WebPage
+        );
+    }
+
+    #[test]
+    fn facebook_photo_url_routes_to_webpage() {
+        assert_eq!(
+            scraping_strategy("https://www.facebook.com/photo/123456"),
+            ScrapingStrategy::WebPage
+        );
+    }
+
+    #[test]
+    fn scraping_strategy_display_formats() {
+        assert_eq!(format!("{}", ScrapingStrategy::WebPage), "web_page");
+        assert_eq!(format!("{}", ScrapingStrategy::WebQuery), "web_query");
+        assert_eq!(format!("{}", ScrapingStrategy::Rss), "rss");
+    }
 }
+

@@ -1,207 +1,174 @@
-import { useQuery } from "@apollo/client";
+import { useEffect } from "react";
+import { useQuery, NetworkStatus } from "@apollo/client";
+import { Link } from "react-router";
 import { ADMIN_DASHBOARD } from "@/graphql/queries";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  AreaChart,
-  Area,
-} from "recharts";
+import { PipelineCards } from "@/components/dashboard/PipelineCards";
+import { BudgetSummary } from "@/components/dashboard/BudgetSummary";
+import { QualityScorecard } from "@/components/dashboard/QualityScorecard";
+import { DomainCountCard } from "@/components/dashboard/DomainCountCard";
+import { HottestConcernsTable } from "@/components/dashboard/HottestConcernsTable";
 
-const COLORS = ["#8b5cf6", "#06b6d4", "#f59e0b", "#10b981", "#ef4444", "#ec4899"];
+interface AdminDashboardData {
+  adminDashboard: {
+    pipelineStatus: {
+      runId: string;
+      region: string;
+      flowType: string;
+      status: string;
+      startedAt: string;
+      finishedAt: string | null;
+      error: string | null;
+    }[];
+    errorCount: number;
+    budgetSpentCents: number;
+    budgetLimitCents: number;
+    signalsMissingCategory: number;
+    signalsWithoutLocation: number;
+    orphanedSignals: number;
+    validationSummary: {
+      totalOpen: number;
+      countBySeverity: { label: string; count: number }[];
+    };
+    countByType: { signalType: string; count: number }[];
+    situationCount: number;
+    hottestConcerns: {
+      id: string;
+      title: string;
+      category: string | null;
+      causeHeat: number;
+      corroborationCount: number;
+    }[];
+  };
+}
+
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-1 h-4 rounded-full bg-zinc-500" />
+      <h2 className="text-sm font-medium tracking-wide uppercase text-muted-foreground">{title}</h2>
+    </div>
+  );
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  Gathering: "Gatherings",
+  Resource: "Resources",
+  HelpRequest: "Help Requests",
+  Announcement: "Announcements",
+  Concern: "Concerns",
+  Condition: "Conditions",
+};
 
 export function DashboardPage() {
-  const region = "twincities";
-  const { data, loading } = useQuery(ADMIN_DASHBOARD, {
-    variables: { region },
-  });
+  const { data, loading, error, networkStatus, startPolling, stopPolling, refetch } =
+    useQuery<AdminDashboardData>(ADMIN_DASHBOARD, {
+      pollInterval: 30_000,
+      errorPolicy: "all",
+      fetchPolicy: "cache-and-network",
+      notifyOnNetworkStatusChange: true,
+    });
 
-  if (loading) return <p className="text-muted-foreground">Loading dashboard...</p>;
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState === "hidden") stopPolling();
+      else {
+        refetch();
+        startPolling(30_000);
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [startPolling, stopPolling, refetch]);
+
+  const initialLoading = loading && !data;
+  const refreshing = networkStatus === NetworkStatus.poll;
+
+  if (initialLoading) return <p className="text-muted-foreground">Loading dashboard...</p>;
 
   const d = data?.adminDashboard;
   if (!d) return <p className="text-muted-foreground">No data</p>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Dashboard</h1>
-      </div>
+    <div className={`space-y-8 ${refreshing ? "opacity-90" : ""}`}>
+      <h1 className="text-xl font-semibold">Dashboard</h1>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-        {[
-          { label: "Signals", value: d.totalSignals },
-          { label: "Stories", value: d.totalStories },
-          { label: "Actors", value: d.totalActors },
-          { label: "Sources", value: d.activeSources },
-          { label: "Tensions", value: d.totalTensions },
-          {
-            label: "Scout",
-            value: d.scoutStatuses.find((s: { regionSlug: string }) => s.regionSlug === region)?.running
-              ? "Running"
-              : "Idle",
-          },
-        ].map((stat) => (
-          <div key={stat.label} className="rounded-lg border border-border p-4">
-            <p className="text-xs text-muted-foreground">{stat.label}</p>
-            <p className="text-2xl font-semibold mt-1">{stat.value}</p>
-          </div>
-        ))}
-      </div>
+      {error && data && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2 text-sm text-amber-400">
+          Data may be stale — {error.message}
+        </div>
+      )}
 
-      {/* Signal volume chart */}
-      <div className="rounded-lg border border-border p-4">
-        <h2 className="text-sm font-medium mb-4">Signal Volume (7 day)</h2>
-        <ResponsiveContainer width="100%" height={200}>
-          <AreaChart data={d.signalVolumeByDay}>
-            <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Area type="monotone" dataKey="gatherings" stackId="1" fill="#8b5cf6" stroke="#8b5cf6" />
-            <Area type="monotone" dataKey="aids" stackId="1" fill="#06b6d4" stroke="#06b6d4" />
-            <Area type="monotone" dataKey="needs" stackId="1" fill="#f59e0b" stroke="#f59e0b" />
-            <Area type="monotone" dataKey="notices" stackId="1" fill="#10b981" stroke="#10b981" />
-            <Area type="monotone" dataKey="tensions" stackId="1" fill="#ef4444" stroke="#ef4444" />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+      {/* Section 1: System Health */}
+      <section className="space-y-3">
+        <SectionHeader title="System Health" />
+        <PipelineCards statuses={d.pipelineStatus} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Link
+            to="/events"
+            className={`rounded-lg border p-4 hover:bg-accent/50 transition-colors focus-visible:ring-2 ring-ring ${
+              d.errorCount > 0 ? "border-l-2 border-l-red-500/60 border-border" : "border-border"
+            }`}
+          >
+            <p className="text-sm font-medium">Errors (24h)</p>
+            <p className="text-2xl font-semibold tabular-nums mt-1">{d.errorCount}</p>
+          </Link>
+          <BudgetSummary spentCents={d.budgetSpentCents} limitCents={d.budgetLimitCents} />
+        </div>
+      </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Type distribution */}
-        <div className="rounded-lg border border-border p-4">
-          <h2 className="text-sm font-medium mb-4">By Type</h2>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie
-                data={d.countByType}
-                dataKey="count"
-                nameKey="signalType"
-                cx="50%"
-                cy="50%"
-                outerRadius={80}
-                label={({ signalType }: { signalType: string }) => signalType}
+      {/* Section 2: Data Quality */}
+      <section className="space-y-3">
+        <SectionHeader title="Data Quality" />
+        <div className="grid grid-cols-2 gap-3">
+          <QualityScorecard label="Missing category" count={d.signalsMissingCategory} />
+          <QualityScorecard label="Without location" count={d.signalsWithoutLocation} />
+          <QualityScorecard label="Orphaned signals" count={d.orphanedSignals} />
+          <Link
+            to="/findings"
+            className="rounded-lg border border-border p-4 text-left hover:bg-accent/50 transition-colors focus-visible:ring-2 ring-ring group"
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">Validation issues</p>
+              <span
+                className={`text-xs ${d.validationSummary.totalOpen === 0 ? "text-emerald-500" : d.validationSummary.totalOpen <= 10 ? "text-amber-500" : "text-red-500"}`}
+                aria-hidden="true"
               >
-                {d.countByType.map((_: unknown, i: number) => (
-                  <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+                {d.validationSummary.totalOpen === 0 ? "●" : d.validationSummary.totalOpen <= 10 ? "▲" : "■"}
+              </span>
+            </div>
+            <p className="text-2xl font-semibold tabular-nums mt-1">
+              {d.validationSummary.totalOpen}
+            </p>
+            <p className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-1">
+              View details →
+            </p>
+          </Link>
         </div>
+      </section>
 
-        {/* Story arcs */}
+      {/* Section 3: Graph Overview */}
+      <section className="space-y-3">
+        <SectionHeader title="Graph Overview" />
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          <DomainCountCard label="Situations" count={d.situationCount} to="/situations" />
+          {d.countByType.map((t) => (
+            <DomainCountCard
+              key={t.signalType}
+              label={TYPE_LABELS[t.signalType] ?? t.signalType}
+              count={t.count}
+              to={`/data?tab=signals&type=${t.signalType}`}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* Hottest Concerns */}
+      <section className="space-y-3">
+        <SectionHeader title="Hottest Concerns" />
         <div className="rounded-lg border border-border p-4">
-          <h2 className="text-sm font-medium mb-4">Story Arcs</h2>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={d.storyCountByArc} layout="vertical">
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="label" tick={{ fontSize: 11 }} width={100} />
-              <Tooltip />
-              <Bar dataKey="count" fill="#8b5cf6" />
-            </BarChart>
-          </ResponsiveContainer>
+          <HottestConcernsTable concerns={d.hottestConcerns} />
         </div>
-      </div>
-
-      {/* Unmet tensions table */}
-      <div className="rounded-lg border border-border p-4">
-        <h2 className="text-sm font-medium mb-4">Unmet Tensions</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="pb-2 font-medium">Title</th>
-                <th className="pb-2 font-medium">Severity</th>
-                <th className="pb-2 font-medium">Category</th>
-                <th className="pb-2 font-medium">What Would Help</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.unmetTensions.map(
-                (t: { title: string; severity: string; category: string; whatWouldHelp: string }, i: number) => (
-                  <tr key={i} className="border-b border-border/50">
-                    <td className="py-2">{t.title}</td>
-                    <td className="py-2">{t.severity}</td>
-                    <td className="py-2">{t.category}</td>
-                    <td className="py-2 text-muted-foreground">{t.whatWouldHelp}</td>
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Source performance */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-lg border border-border p-4">
-          <h2 className="text-sm font-medium mb-4">Top Sources</h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="pb-2 font-medium">Source</th>
-                <th className="pb-2 font-medium">Signals</th>
-                <th className="pb-2 font-medium">Weight</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.topSources.map((s: { name: string; signals: number; weight: number }, i: number) => (
-                <tr key={i} className="border-b border-border/50">
-                  <td className="py-1.5 truncate max-w-[200px]">{s.name}</td>
-                  <td className="py-1.5">{s.signals}</td>
-                  <td className="py-1.5">{s.weight.toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="rounded-lg border border-border p-4">
-          <h2 className="text-sm font-medium mb-4">Bottom Sources</h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="pb-2 font-medium">Source</th>
-                <th className="pb-2 font-medium">Signals</th>
-                <th className="pb-2 font-medium">Empty</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.bottomSources.map(
-                (s: { name: string; signals: number; emptyRuns: number }, i: number) => (
-                  <tr key={i} className="border-b border-border/50">
-                    <td className="py-1.5 truncate max-w-[200px]">{s.name}</td>
-                    <td className="py-1.5">{s.signals}</td>
-                    <td className="py-1.5">{s.emptyRuns}</td>
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Extraction yield */}
-      <div className="rounded-lg border border-border p-4">
-        <h2 className="text-sm font-medium mb-4">Extraction Yield</h2>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={d.extractionYield}>
-            <XAxis dataKey="sourceLabel" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Bar dataKey="extracted" fill="#8b5cf6" name="Extracted" />
-            <Bar dataKey="survived" fill="#06b6d4" name="Survived" />
-            <Bar dataKey="corroborated" fill="#10b981" name="Corroborated" />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+      </section>
     </div>
   );
 }

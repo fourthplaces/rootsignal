@@ -1,92 +1,77 @@
-use neo4rs::query;
+use sqlx::PgPool;
 use tracing::info;
-
-use rootsignal_graph::GraphClient;
 
 use crate::types::ValidationIssue;
 
-/// Manages ValidationIssue nodes in the graph.
+/// Manages validation issues in Postgres.
 pub struct IssueStore {
-    client: GraphClient,
+    pool: PgPool,
 }
 
 impl IssueStore {
-    pub fn new(client: GraphClient) -> Self {
-        Self { client }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 
-    /// Create a ValidationIssue node, but only if no open issue already exists
+    /// Create a validation issue, but only if no open issue already exists
     /// for the same target_id and issue_type. Returns true if a new issue was created.
-    pub async fn create_if_new(&self, issue: &ValidationIssue) -> Result<bool, neo4rs::Error> {
+    pub async fn create_if_new(&self, issue: &ValidationIssue) -> Result<bool, sqlx::Error> {
         // Check for existing open issue with same target + type
-        let check = query(
-            "MATCH (v:ValidationIssue {target_id: $target_id, issue_type: $issue_type})
-             WHERE v.status = 'open'
-             RETURN v.id AS id
-             LIMIT 1",
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM validation_issues
+                WHERE target_id = $1 AND issue_type = $2 AND status = 'open'
+            )",
         )
-        .param("target_id", issue.target_id.to_string())
-        .param("issue_type", issue.issue_type.to_string());
+        .bind(issue.target_id)
+        .bind(issue.issue_type.to_string())
+        .fetch_one(&self.pool)
+        .await?;
 
-        let mut stream = self.client.inner().execute(check).await?;
-        if let Some(_) = stream.next().await? {
-            // Existing open issue — skip
+        if exists {
             return Ok(false);
         }
 
-        // Create new issue
-        let ts = rootsignal_graph::writer::format_datetime_pub(&issue.created_at);
-
-        let create = query(
-            "CREATE (v:ValidationIssue {
-                id: $id,
-                region: $region,
-                issue_type: $issue_type,
-                severity: $severity,
-                target_id: $target_id,
-                target_label: $target_label,
-                description: $description,
-                suggested_action: $suggested_action,
-                status: $status,
-                created_at: datetime($created_at)
-            })",
+        sqlx::query(
+            "INSERT INTO validation_issues
+                (id, region, issue_type, severity, target_id, target_label,
+                 description, suggested_action, status, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
-        .param("id", issue.id.to_string())
-        .param("region", issue.region.clone())
-        .param("issue_type", issue.issue_type.to_string())
-        .param("severity", issue.severity.to_string())
-        .param("target_id", issue.target_id.to_string())
-        .param("target_label", issue.target_label.clone())
-        .param("description", issue.description.clone())
-        .param("suggested_action", issue.suggested_action.clone())
-        .param("status", issue.status.to_string())
-        .param("created_at", ts);
+        .bind(issue.id)
+        .bind(&issue.region)
+        .bind(issue.issue_type.to_string())
+        .bind(issue.severity.to_string())
+        .bind(issue.target_id)
+        .bind(&issue.target_label)
+        .bind(&issue.description)
+        .bind(&issue.suggested_action)
+        .bind(issue.status.to_string())
+        .bind(issue.created_at)
+        .execute(&self.pool)
+        .await?;
 
-        self.client.inner().run(create).await?;
         Ok(true)
     }
 
     /// Auto-expire open issues older than 30 days.
     /// Returns the number of issues expired.
-    pub async fn expire_stale_issues(&self) -> Result<u64, neo4rs::Error> {
-        let q = query(
-            "MATCH (v:ValidationIssue)
-             WHERE v.status = 'open'
-               AND v.created_at < datetime() - duration('P30D')
-             SET v.status = 'resolved',
-                 v.resolved_at = datetime(),
-                 v.resolution = 'auto-expired after 30 days'
-             RETURN count(v) AS expired",
-        );
+    pub async fn expire_stale_issues(&self) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE validation_issues
+             SET status = 'resolved',
+                 resolved_at = now(),
+                 resolution = 'auto-expired after 30 days'
+             WHERE status = 'open'
+               AND created_at < now() - interval '30 days'",
+        )
+        .execute(&self.pool)
+        .await?;
 
-        let mut stream = self.client.inner().execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let expired: i64 = row.get("expired").unwrap_or(0);
-            if expired > 0 {
-                info!(expired, "Auto-expired stale ValidationIssue nodes");
-            }
-            return Ok(expired as u64);
+        let expired = result.rows_affected();
+        if expired > 0 {
+            info!(expired, "Auto-expired stale validation issues");
         }
-        Ok(0)
+        Ok(expired)
     }
 }

@@ -60,7 +60,7 @@ Events expire on their date. Fundraisers expire on end date or 60 days. Ongoing 
 ## Build Order
 
 1. `rootsignal-common` — shared types, safety types, config
-2. `rootsignal-graph` — Memgraph wrapper, schema, PublicGraphReader, GraphWriter
+2. `rootsignal-graph` — Memgraph wrapper, schema, PublicGraphReader, GraphStore
 3. Extraction + embedding pipeline in rootsignal-scout
 4. Scout agent (Serper + Firecrawl + extraction + dedup + graph writes)
 5. Web interface (axum + askama, map + list + detail)

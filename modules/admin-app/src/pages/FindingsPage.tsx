@@ -5,6 +5,7 @@ import {
   SUPERVISOR_SUMMARY,
 } from "@/graphql/queries";
 import { DISMISS_FINDING } from "@/graphql/mutations";
+import { useRegion } from "@/contexts/RegionContext";
 
 const SEVERITY_COLORS: Record<string, string> = {
   error: "bg-red-500/10 text-red-400 border-red-500/20",
@@ -120,7 +121,7 @@ type Summary = {
 };
 
 export function FindingsPage() {
-  const region = "twincities";
+  const { regionName: region } = useRegion();
   const [statusFilter, setStatusFilter] = useState<string | undefined>(
     undefined,
   );
@@ -131,7 +132,7 @@ export function FindingsPage() {
 
   const { data: summaryData, refetch: refetchSummary } = useQuery(
     SUPERVISOR_SUMMARY,
-    { variables: { region } },
+    { variables: { region }, skip: !region },
   );
 
   const {
@@ -140,6 +141,7 @@ export function FindingsPage() {
     refetch: refetchFindings,
   } = useQuery(SUPERVISOR_FINDINGS, {
     variables: { region, status: statusFilter, limit: 200 },
+    skip: !region,
   });
 
   const [dismissFinding] = useMutation(DISMISS_FINDING);
