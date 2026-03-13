@@ -32,9 +32,9 @@ export function ClusterDetailPage() {
     <div className="space-y-6 max-w-4xl">
       {/* Breadcrumb */}
       <nav className="text-sm text-muted-foreground">
-        <Link to="/workflows" className="hover:text-foreground">Workflows</Link>
+        <Link to="/clusters" className="hover:text-foreground">Clusters</Link>
         <span className="mx-2">/</span>
-        <span>Cluster</span>
+        <span>{cluster.label}</span>
       </nav>
 
       {/* Header */}
@@ -71,7 +71,7 @@ export function ClusterDetailPage() {
         <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-sm">
           <span className="text-green-400">Woven into </span>
           <Link
-            to={`/situations`}
+            to={`/situations/${cluster.wovenSituationId}`}
             className="text-green-400 hover:underline font-medium"
           >
             Situation {cluster.wovenSituationId.slice(0, 8)}
