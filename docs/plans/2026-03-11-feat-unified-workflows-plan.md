@@ -568,7 +568,7 @@ loop {
 
 ---
 
-### Phase 5: Flow-type-scoped busy checks
+### Phase 5: Flow-type-scoped busy checks ✅
 
 **Goal:** Unblock chain orchestration by allowing different flow types to run concurrently for the same region.
 
@@ -625,7 +625,7 @@ Use `ANY($2)` with an array to handle bootstrap↔scout mutual blocking: `is_reg
 
 ---
 
-### Phase 6: Chain orchestration
+### Phase 6: Chain orchestration ✅
 
 **Goal:** Scout → coalesce → weave runs automatically as parent→child chain.
 
@@ -683,7 +683,7 @@ After `settle()` returns for a coalesce run:
 
 ---
 
-### Phase 7: Workflows admin UI
+### Phase 7: Workflows admin UI ✅
 
 **Goal:** Replace Scout page with Workflows page. Two tabs: Runs, Schedules. Flow-type-aware run detail.
 

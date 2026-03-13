@@ -78,6 +78,33 @@ export const CANCEL_RUN = gql`
   }
 `;
 
+export const CREATE_SCHEDULE = gql`
+  mutation CreateSchedule($flowType: String!, $scope: String!, $cadenceSeconds: Int!, $regionId: String) {
+    createSchedule(flowType: $flowType, scope: $scope, cadenceSeconds: $cadenceSeconds, regionId: $regionId) {
+      success
+      message
+    }
+  }
+`;
+
+export const TOGGLE_SCHEDULE = gql`
+  mutation ToggleSchedule($scheduleId: String!, $enabled: Boolean!) {
+    toggleSchedule(scheduleId: $scheduleId, enabled: $enabled) {
+      success
+      message
+    }
+  }
+`;
+
+export const DELETE_SCHEDULE = gql`
+  mutation DeleteSchedule($scheduleId: String!) {
+    deleteSchedule(scheduleId: $scheduleId) {
+      success
+      message
+    }
+  }
+`;
+
 export const CREATE_REGION = gql`
   mutation CreateRegion($name: String!) {
     createRegion(name: $name) {

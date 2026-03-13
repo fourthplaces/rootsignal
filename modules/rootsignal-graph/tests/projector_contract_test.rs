@@ -1006,6 +1006,9 @@ fn build_all_events() -> Vec<Event> {
             address: Some("Minneapolis, Minnesota, United States".into()),
             precision: "approximate".into(),
             timezone: Some("America/Chicago".into()),
+            city: Some("Minneapolis".into()),
+            state: Some("Minnesota".into()),
+            country_code: Some("US".into()),
         }),
         // Signal groups (coalescing)
         Event::System(SystemEvent::GroupCreated {

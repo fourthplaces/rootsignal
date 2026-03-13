@@ -178,6 +178,7 @@ async fn different_location_names_converge_to_one_canonical_node() {
             address: Some(canonical_address.clone()),
             precision: "approximate".to_string(),
             timezone: Some("America/Chicago".to_string()),
+            city: None, state: None, country_code: None,
         });
 
         let plan = projector.plan(&persisted(&event, 100));
@@ -273,6 +274,7 @@ async fn different_canonical_addresses_stay_separate() {
         address: Some(test_loc(tag, "Portland, Oregon, United States")),
         precision: "approximate".to_string(),
         timezone: Some("America/Los_Angeles".to_string()),
+        city: None, state: None, country_code: None,
     });
     let plan = projector.plan(&persisted(&e1, 200));
     projector.execute(plan).await.unwrap();
@@ -286,6 +288,7 @@ async fn different_canonical_addresses_stay_separate() {
         address: Some(test_loc(tag, "Portland, Maine, United States")),
         precision: "approximate".to_string(),
         timezone: Some("America/New_York".to_string()),
+        city: None, state: None, country_code: None,
     });
     let plan = projector.plan(&persisted(&e2, 201));
     projector.execute(plan).await.unwrap();
@@ -348,6 +351,7 @@ async fn signal_with_multiple_locations_each_converge_independently() {
         address: Some(test_loc(tag, "Minneapolis, Minnesota, United States")),
         precision: "approximate".to_string(),
         timezone: Some("America/Chicago".to_string()),
+        city: None, state: None, country_code: None,
     });
     let plan = projector.plan(&persisted(&e1, 300));
     projector.execute(plan).await.unwrap();
@@ -361,6 +365,7 @@ async fn signal_with_multiple_locations_each_converge_independently() {
         address: Some(test_loc(tag, "Saint Paul, Minnesota, United States")),
         precision: "approximate".to_string(),
         timezone: Some("America/Chicago".to_string()),
+        city: None, state: None, country_code: None,
     });
     let plan = projector.plan(&persisted(&e2, 301));
     projector.execute(plan).await.unwrap();

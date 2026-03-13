@@ -20,6 +20,14 @@ use causal::reactor_queue::ReactorQueue;
 use rootsignal_scout::domains::lifecycle::events::LifecycleEvent;
 use rootsignal_scout::workflows::ScoutDeps;
 
+/// Options for automatic chain orchestration (scout → coalesce → weave).
+#[derive(Clone, Default)]
+pub struct ChainOpts {
+    pub parent_run_id: Option<String>,
+    pub schedule_id: Option<String>,
+    pub chain: bool,
+}
+
 /// Holds `Arc<ScoutDeps>`. Spawns causal engines in tokio tasks.
 /// Cancellation goes through Postgres (seesaw_cancellations table).
 #[derive(Clone)]
@@ -99,6 +107,12 @@ impl ScoutRunner {
 
     /// Spawn a scrape flow for a region: auto-bootstraps if no sources, then scrapes + extracts.
     pub async fn run_scrape(&self, region_id: &str, scope: &ScoutScope) {
+        self.run_scrape_with_chain(region_id, scope, ChainOpts::default()).await;
+    }
+
+    /// Spawn a scrape flow with optional chain orchestration.
+    pub async fn run_scrape_with_chain(&self, region_id: &str, scope: &ScoutScope, chain: ChainOpts) {
+        let runner = self.clone();
         let deps = self.deps.clone();
         let region_id = region_id.to_string();
         let scope = scope.clone();
@@ -107,7 +121,7 @@ impl ScoutRunner {
             &deps.pg_pool, deps.daily_budget_cents,
         ).await;
 
-        info!(region_id = region_id.as_str(), %run_id, "Spawning scrape flow");
+        info!(region_id = region_id.as_str(), %run_id, chain = chain.chain, "Spawning scrape flow");
 
         tokio::spawn(async move {
             let run_scope = RunScope::Region(scope.clone());
@@ -121,8 +135,8 @@ impl ScoutRunner {
                     flow_type: "scrape".into(),
                     source_ids: None,
                     task_id: std::env::var("FLY_MACHINE_ID").ok(),
-                    parent_run_id: None,
-                    schedule_id: None,
+                    parent_run_id: chain.parent_run_id,
+                    schedule_id: chain.schedule_id,
                     run_at: None,
                 })
                 .correlation_id(run_id)
@@ -131,14 +145,25 @@ impl ScoutRunner {
 
             if let Err(e) = result {
                 warn!(region_id = region_id.as_str(), error = %e, "Scrape flow failed");
-            } else {
-                info!(region_id = region_id.as_str(), "Scrape flow completed");
+                return;
+            }
+
+            info!(region_id = region_id.as_str(), "Scrape flow completed");
+
+            // Chain: scout → coalesce (if enabled and succeeded)
+            if chain.chain {
+                runner.maybe_chain_coalesce(&region_id, &scope, &run_id.to_string()).await;
             }
         });
     }
 
     /// Spawn a weave flow for a region: situation weaving as independent workflow.
     pub async fn run_weave(&self, region_id: &str, scope: &ScoutScope) {
+        self.run_weave_with_chain(region_id, scope, ChainOpts::default()).await;
+    }
+
+    /// Spawn a weave flow with optional chain orchestration.
+    pub async fn run_weave_with_chain(&self, region_id: &str, scope: &ScoutScope, chain: ChainOpts) {
         let deps = self.deps.clone();
         let region_id = region_id.to_string();
         let scope = scope.clone();
@@ -158,8 +183,8 @@ impl ScoutRunner {
                     budget_cents: budget,
                     region_id: Some(region_id.clone()),
                     task_id: std::env::var("FLY_MACHINE_ID").ok(),
-                    parent_run_id: None,
-                    schedule_id: None,
+                    parent_run_id: chain.parent_run_id,
+                    schedule_id: chain.schedule_id,
                     run_at: None,
                 })
                 .correlation_id(run_id)
@@ -215,6 +240,117 @@ impl ScoutRunner {
                 info!(region_id = region_id.as_str(), "Coalesce flow completed");
             }
         });
+    }
+
+    /// Spawn a region-scoped coalesce flow (no seed signal) — used by chain orchestration.
+    pub async fn run_coalesce_for_region(&self, region_id: &str, scope: &ScoutScope, chain: ChainOpts) {
+        let runner = self.clone();
+        let deps = self.deps.clone();
+        let region_id = region_id.to_string();
+        let scope = scope.clone();
+        let run_id = uuid::Uuid::new_v4();
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, deps.daily_budget_cents,
+        ).await;
+
+        info!(region_id = region_id.as_str(), %run_id, chain = chain.chain, "Spawning region coalesce flow");
+
+        tokio::spawn(async move {
+            let engine = deps.build_coalesce_engine(&scope, run_id);
+            let result = engine
+                .emit(LifecycleEvent::CoalesceRequested {
+                    run_id,
+                    region: scope.clone(),
+                    seed_signal_id: None,
+                    budget_cents: budget,
+                    region_id: Some(region_id.clone()),
+                    task_id: std::env::var("FLY_MACHINE_ID").ok(),
+                    parent_run_id: chain.parent_run_id,
+                    schedule_id: chain.schedule_id,
+                    run_at: None,
+                })
+                .correlation_id(run_id)
+                .settled()
+                .await;
+
+            if let Err(e) = result {
+                warn!(region_id = region_id.as_str(), error = %e, "Region coalesce flow failed");
+                return;
+            }
+
+            info!(region_id = region_id.as_str(), "Region coalesce flow completed");
+
+            // Chain: coalesce → weave (if enabled and succeeded)
+            if chain.chain {
+                runner.maybe_chain_weave(&region_id, &scope, &run_id.to_string()).await;
+            }
+        });
+    }
+
+    // --- Chain orchestration helpers ---
+    // Projection writes complete within the dispatch cycle before settle() returns.
+    // If seesaw moves to async projections, this assumption breaks.
+
+    async fn maybe_chain_coalesce(&self, region_id: &str, scope: &ScoutScope, parent_run_id: &str) {
+        let pool = &self.deps.pg_pool;
+
+        let succeeded = crate::db::scout_run::run_succeeded(pool, parent_run_id)
+            .await
+            .unwrap_or(false);
+        if !succeeded {
+            info!(parent_run_id, "Scrape run did not succeed — skipping coalesce chain");
+            return;
+        }
+
+        let already_has_child = crate::db::scout_run::has_child_run(pool, parent_run_id, "coalesce")
+            .await
+            .unwrap_or(false);
+        if already_has_child {
+            info!(parent_run_id, "Coalesce child already exists — skipping");
+            return;
+        }
+
+        info!(parent_run_id, "Chaining: scout → coalesce");
+        self.run_coalesce_for_region(
+            region_id,
+            scope,
+            ChainOpts {
+                parent_run_id: Some(parent_run_id.to_string()),
+                schedule_id: None,
+                chain: true,
+            },
+        ).await;
+    }
+
+    async fn maybe_chain_weave(&self, region_id: &str, scope: &ScoutScope, parent_run_id: &str) {
+        let pool = &self.deps.pg_pool;
+
+        let succeeded = crate::db::scout_run::run_succeeded(pool, parent_run_id)
+            .await
+            .unwrap_or(false);
+        if !succeeded {
+            info!(parent_run_id, "Coalesce run did not succeed — skipping weave chain");
+            return;
+        }
+
+        let already_has_child = crate::db::scout_run::has_child_run(pool, parent_run_id, "weave")
+            .await
+            .unwrap_or(false);
+        if already_has_child {
+            info!(parent_run_id, "Weave child already exists — skipping");
+            return;
+        }
+
+        info!(parent_run_id, "Chaining: coalesce → weave");
+        self.run_weave_with_chain(
+            region_id,
+            scope,
+            ChainOpts {
+                parent_run_id: Some(parent_run_id.to_string()),
+                schedule_id: None,
+                chain: false, // weave is the end of the chain
+            },
+        ).await;
     }
 
     /// Spawn a scout-source flow: scrape specific sources, with optional region context.
@@ -507,12 +643,193 @@ impl ScoutRunner {
     ) {
         tokio::spawn(async move {
             let interval = std::time::Duration::from_secs(15 * 60);
-            // Small initial delay so the server finishes starting up
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
             loop {
                 self.process_scheduled_scrapes(&graph).await;
                 tokio::time::sleep(interval).await;
+            }
+        });
+    }
+
+    /// Poll `schedules` table for due recurring schedules and trigger runs.
+    ///
+    /// Uses `FOR UPDATE SKIP LOCKED` claim-process-complete cycle.
+    /// Emits `ScheduleTriggered` before the entry event to prevent duplicate
+    /// runs on partial failure (transactional outbox ordering).
+    pub async fn process_schedules(&self, graph: &rootsignal_graph::GraphStore) {
+        let rows = match sqlx::query_as::<_, ScheduleRow>(
+            "SELECT schedule_id, flow_type, scope, cadence_seconds, region_id \
+             FROM schedules \
+             WHERE enabled = true \
+               AND deleted_at IS NULL \
+               AND next_run_at <= now() \
+             ORDER BY next_run_at ASC \
+             FOR UPDATE SKIP LOCKED \
+             LIMIT 20",
+        )
+        .fetch_all(&self.deps.pg_pool)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "Failed to query due schedules");
+                return;
+            }
+        };
+
+        if rows.is_empty() {
+            return;
+        }
+
+        info!(count = rows.len(), "Processing due schedules");
+
+        for row in rows {
+            let run_id = uuid::Uuid::new_v4();
+
+            // 1. Emit ScheduleTriggered FIRST — advances next_run_at to prevent duplicates
+            let engine = match self.deps.build_infra_engine(run_id) {
+                Some(e) => e,
+                None => {
+                    warn!("Cannot build infra engine for schedule trigger");
+                    continue;
+                }
+            };
+
+            if let Err(e) = engine
+                .emit(rootsignal_scout::domains::scheduling::events::SchedulingEvent::ScheduleTriggered {
+                    schedule_id: row.schedule_id.clone(),
+                    run_id: run_id.to_string(),
+                })
+                .correlation_id(run_id)
+                .settled()
+                .await
+            {
+                warn!(schedule_id = row.schedule_id.as_str(), error = %e, "Failed to emit ScheduleTriggered");
+                continue;
+            }
+
+            // 2. Then trigger the actual run based on flow_type
+            let should_chain = row.scope.get("chain").and_then(|v| v.as_bool()).unwrap_or(false);
+            let chain_opts = ChainOpts {
+                parent_run_id: None,
+                schedule_id: Some(row.schedule_id.clone()),
+                chain: should_chain,
+            };
+
+            match row.flow_type.as_str() {
+                "scrape" | "scout_source" => {
+                    self.trigger_schedule_scrape(&row, graph, run_id, &row.schedule_id).await;
+                }
+                "weave" => {
+                    if let Some(region) = self.resolve_region(&row.region_id, graph).await {
+                        let scope = ScoutScope::from(&region);
+                        self.run_weave_with_chain(&region.id.to_string(), &scope, chain_opts).await;
+                    } else {
+                        warn!(schedule_id = row.schedule_id.as_str(), "Weave schedule has no valid region");
+                    }
+                }
+                "coalesce" => {
+                    if let Some(region) = self.resolve_region(&row.region_id, graph).await {
+                        let scope = ScoutScope::from(&region);
+                        self.run_coalesce_for_region(&region.id.to_string(), &scope, chain_opts).await;
+                    } else {
+                        warn!(schedule_id = row.schedule_id.as_str(), "Coalesce schedule has no valid region");
+                    }
+                }
+                "bootstrap" => {
+                    if let Some(region) = self.resolve_region(&row.region_id, graph).await {
+                        let scope = ScoutScope::from(&region);
+                        self.run_bootstrap(&region.id.to_string(), &scope).await;
+                    } else {
+                        warn!(schedule_id = row.schedule_id.as_str(), "Bootstrap schedule has no valid region");
+                    }
+                }
+                other => {
+                    warn!(schedule_id = row.schedule_id.as_str(), flow_type = other, "Unknown schedule flow_type");
+                }
+            }
+        }
+    }
+
+    async fn trigger_schedule_scrape(
+        &self,
+        row: &ScheduleRow,
+        graph: &rootsignal_graph::GraphStore,
+        _run_id: uuid::Uuid,
+        schedule_id: &str,
+    ) {
+        // Parse source_ids from scope
+        let source_id_strings: Vec<String> = row.scope["source_ids"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        if source_id_strings.is_empty() {
+            warn!(schedule_id, "Schedule scrape has no source_ids in scope");
+            return;
+        }
+
+        let uuids: Vec<uuid::Uuid> = source_id_strings
+            .iter()
+            .filter_map(|id| uuid::Uuid::parse_str(id).ok())
+            .collect();
+
+        let sources = match graph.get_sources_by_ids(&uuids).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(schedule_id, error = %e, "Failed to load sources for schedule");
+                return;
+            }
+        };
+
+        if sources.is_empty() {
+            warn!(schedule_id, "No valid sources found for schedule");
+            return;
+        }
+
+        for sid in &source_id_strings {
+            if crate::db::scout_run::is_source_busy(&self.deps.pg_pool, sid)
+                .await
+                .unwrap_or(false)
+            {
+                info!(schedule_id, source_id = sid.as_str(), "Schedule deferred — source busy");
+                return;
+            }
+        }
+
+        let region = graph
+            .get_region_for_source(&source_id_strings[0])
+            .await
+            .unwrap_or(None);
+
+        self.run_scout_source(&source_id_strings, sources, region).await;
+    }
+
+    async fn resolve_region(
+        &self,
+        region_id: &Option<String>,
+        graph: &rootsignal_graph::GraphStore,
+    ) -> Option<rootsignal_common::RegionNode> {
+        let id = region_id.as_deref()?;
+        graph.get_region(id).await.ok().flatten()
+    }
+
+    /// Start a unified background loop that processes both scheduled scrapes and recurring schedules.
+    pub fn start_schedule_loop(
+        self,
+        graph: rootsignal_graph::GraphStore,
+    ) {
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+            loop {
+                // Process legacy one-shot scheduled scrapes
+                self.process_scheduled_scrapes(&graph).await;
+                // Process recurring schedules
+                self.process_schedules(&graph).await;
+
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             }
         });
     }
@@ -523,6 +840,16 @@ struct ScheduledScrapeRow {
     id: uuid::Uuid,
     scope_type: String,
     scope_data: serde_json::Value,
+}
+
+#[derive(sqlx::FromRow)]
+struct ScheduleRow {
+    schedule_id: String,
+    flow_type: String,
+    scope: serde_json::Value,
+    #[allow(dead_code)]
+    cadence_seconds: i32,
+    region_id: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]

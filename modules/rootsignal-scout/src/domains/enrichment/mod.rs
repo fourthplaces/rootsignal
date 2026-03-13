@@ -315,6 +315,9 @@ pub mod reactors {
                         address: result.address,
                         precision: result.precision,
                         timezone: result.timezone,
+                        city: result.city,
+                        state: result.state,
+                        country_code: result.country_code,
                     });
                 }
                 Ok(None) => {
@@ -327,6 +330,127 @@ pub mod reactors {
         }
 
         Ok(out)
+    }
+
+    // ---------------------------------------------------------------
+    // Discover regions: reactive, fires on LocationGeocoded to create
+    // city/state/country Regions from Mapbox context hierarchy
+    // ---------------------------------------------------------------
+
+    fn has_region_context(event: &SystemEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+        matches!(event, SystemEvent::LocationGeocoded { city, state, country_code, .. }
+            if city.is_some() || state.is_some() || country_code.is_some()
+        )
+    }
+
+    #[reactor(on = SystemEvent, id = "enrichment:discover_regions", filter = has_region_context)]
+    async fn discover_regions(
+        event: SystemEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let (city, state, country_code) = match &event {
+            SystemEvent::LocationGeocoded { city, state, country_code, .. } => {
+                (city.clone(), state.clone(), country_code.clone())
+            }
+            _ => return Ok(Events::new()),
+        };
+
+        let deps = ctx.deps();
+        let graph = match deps.graph.as_deref() {
+            Some(g) => g,
+            None => return Ok(Events::new()),
+        };
+        let geocoder = match deps.geocoder.as_deref() {
+            Some(g) => g,
+            None => return Ok(Events::new()),
+        };
+
+        let mut out = Events::new();
+
+        // Build region candidates from most specific to least.
+        // Each level: (name, search_query, scale, radius_km)
+        let mut candidates: Vec<(String, String, &str, f64)> = Vec::new();
+
+        if let Some(ref country) = country_code {
+            candidates.push((
+                country_name_from_code(country),
+                country_name_from_code(country),
+                "country",
+                2500.0,
+            ));
+        }
+        if let Some(ref st) = state {
+            let search = match &country_code {
+                Some(cc) => format!("{st}, {}", country_name_from_code(cc)),
+                None => st.clone(),
+            };
+            candidates.push((st.clone(), search, "state", 500.0));
+        }
+        if let Some(ref c) = city {
+            let search = match (&state, &country_code) {
+                (Some(st), _) => format!("{c}, {st}"),
+                (None, Some(cc)) => format!("{c}, {}", country_name_from_code(cc)),
+                _ => c.clone(),
+            };
+            candidates.push((c.clone(), search, "city", 25.0));
+        }
+
+        // Track parent IDs for nesting
+        let mut parent_id: Option<Uuid> = None;
+
+        for (name, search_query, scale, radius_km) in &candidates {
+            if graph.region_exists_by_name(name).await.unwrap_or(false) {
+                // Still track as parent for nesting even if it already exists
+                parent_id = None; // We don't know its ID — projector handles CONTAINS by name
+                continue;
+            }
+
+            match geocoder.geocode(search_query, None, None).await {
+                Ok(Some(result)) => {
+                    let region_id = Uuid::new_v4();
+                    ctx.logger.info(&format!(
+                        "Discovered {} region '{}' at ({:.4}, {:.4})",
+                        scale, name, result.lat, result.lng
+                    ));
+                    out.push(SystemEvent::RegionDiscovered {
+                        region_id,
+                        name: name.clone(),
+                        center_lat: result.lat,
+                        center_lng: result.lng,
+                        radius_km: *radius_km,
+                        city: city.clone(),
+                        state: state.clone(),
+                        country_code: country_code.clone(),
+                        scale: scale.to_string(),
+                        parent_region_id: parent_id,
+                    });
+                    parent_id = Some(region_id);
+                }
+                Ok(None) => {
+                    ctx.logger.warn(&format!("No geocoding result for region '{search_query}'"));
+                }
+                Err(e) => {
+                    ctx.logger.warn(&format!("Geocoding failed for region '{search_query}': {e}"));
+                }
+            }
+        }
+
+        Ok(out)
+    }
+}
+
+fn country_name_from_code(code: &str) -> String {
+    match code {
+        "US" => "United States".to_string(),
+        "CA" => "Canada".to_string(),
+        "GB" => "United Kingdom".to_string(),
+        "AU" => "Australia".to_string(),
+        "NZ" => "New Zealand".to_string(),
+        "DE" => "Germany".to_string(),
+        "FR" => "France".to_string(),
+        "JP" => "Japan".to_string(),
+        "MX" => "Mexico".to_string(),
+        other => other.to_string(),
     }
 }
 

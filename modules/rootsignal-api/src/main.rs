@@ -333,8 +333,8 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             resume_runner.resume_incomplete_runs().await;
         });
-        // Background loop: process due scheduled scrapes every 15 minutes
-        runner.clone().start_scheduled_scrapes_loop(
+        // Background loop: process due schedules + legacy scheduled scrapes
+        runner.clone().start_schedule_loop(
             GraphStore::new(client.clone()),
         );
         runner

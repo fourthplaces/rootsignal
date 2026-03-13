@@ -545,6 +545,34 @@ pub enum SystemEvent {
         precision: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timezone: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        city: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        country_code: Option<String>,
+    },
+
+    // -----------------------------------------------------------------------
+    // Region auto-discovery — created from Mapbox geographic hierarchy
+    // -----------------------------------------------------------------------
+    RegionDiscovered {
+        region_id: Uuid,
+        name: String,
+        center_lat: f64,
+        center_lng: f64,
+        radius_km: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        city: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        country_code: Option<String>,
+        /// Geographic scale: "city", "state", or "country"
+        scale: String,
+        /// ID of the parent region (state for city, country for state)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_region_id: Option<Uuid>,
     },
 
     // -----------------------------------------------------------------------

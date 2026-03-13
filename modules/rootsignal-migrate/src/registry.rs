@@ -45,5 +45,7 @@ pub fn migrations() -> Vec<Migration> {
         sql("040_source_ids_gin_index",        include_str!("../migrations/040_source_ids_gin_index.sql")),
         sql("041_rename_scout_runs_to_runs",   include_str!("../migrations/041_rename_scout_runs_to_runs.sql")),
         sql("042_runs_workflow_columns",        include_str!("../migrations/042_runs_workflow_columns.sql")),
+        sql("043_schedules",                     include_str!("../migrations/043_schedules.sql")),
+        sql("044_runs_busy_check_index",         include_str!("../migrations/044_runs_busy_check_index.sql")),
     ]
 }

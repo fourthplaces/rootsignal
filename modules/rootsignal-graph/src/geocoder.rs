@@ -19,6 +19,9 @@ pub struct GeocodingResult {
     pub address: Option<String>,
     pub precision: String,
     pub timezone: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub country_code: Option<String>,
 }
 
 #[async_trait]
@@ -71,6 +74,31 @@ struct MapboxProperties {
     full_address: Option<String>,
     place_formatted: Option<String>,
     feature_type: Option<String>,
+    #[serde(default)]
+    context: Option<MapboxContext>,
+}
+
+/// Mapbox v6 context: geographic hierarchy for a geocoded feature.
+#[derive(Deserialize, Default)]
+struct MapboxContext {
+    place: Option<MapboxContextEntry>,
+    region: Option<MapboxContextRegion>,
+    country: Option<MapboxContextCountry>,
+}
+
+#[derive(Deserialize)]
+struct MapboxContextEntry {
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MapboxContextRegion {
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MapboxContextCountry {
+    country_code: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -170,12 +198,26 @@ impl GeocodingLookup for MapboxGeocoder {
                 .or_else(|| f.properties.place_formatted.clone());
             let timezone = timezone_from_coords(lat, lng);
 
+            let ctx = f.properties.context.as_ref();
+            let city = ctx
+                .and_then(|c| c.place.as_ref())
+                .and_then(|p| p.name.clone());
+            let state = ctx
+                .and_then(|c| c.region.as_ref())
+                .and_then(|r| r.name.clone());
+            let country_code = ctx
+                .and_then(|c| c.country.as_ref())
+                .and_then(|c| c.country_code.clone());
+
             GeocodingResult {
                 lat,
                 lng,
                 address,
                 precision: precision.to_string(),
                 timezone,
+                city,
+                state,
+                country_code,
             }
         });
 
@@ -258,6 +300,9 @@ mod tests {
                 address: Some("Lake Harriet Bandshell, Minneapolis, MN".to_string()),
                 precision: "exact".to_string(),
                 timezone: Some("America/Chicago".to_string()),
+                city: Some("Minneapolis".to_string()),
+                state: Some("Minnesota".to_string()),
+                country_code: Some("US".to_string()),
             });
 
         let result = geocoder.geocode("Lake Harriet Bandshell", None, None).await.unwrap();
@@ -287,6 +332,9 @@ mod tests {
                 address: Some("Minneapolis, MN".to_string()),
                 precision: "approximate".to_string(),
                 timezone: Some("America/Chicago".to_string()),
+                city: Some("Minneapolis".to_string()),
+                state: Some("Minnesota".to_string()),
+                country_code: Some("US".to_string()),
             }));
         }
 

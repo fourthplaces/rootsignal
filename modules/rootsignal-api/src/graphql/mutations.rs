@@ -284,6 +284,7 @@ impl MutationRoot {
             geo_terms,
             is_leaf: true,
             created_at: chrono::Utc::now(),
+            review_status: None,
         };
 
         writer
@@ -359,7 +360,7 @@ impl MutationRoot {
     async fn run_bootstrap(&self, ctx: &Context<'_>, region_id: String) -> Result<ScoutResult> {
         let (runner, region) = load_region_for_flow(ctx, &region_id).await?;
         if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
-            if crate::db::scout_run::is_region_busy(pool, &region_id).await.unwrap_or(false) {
+            if crate::db::scout_run::is_region_busy(pool, &region_id, &["bootstrap", "scrape"]).await.unwrap_or(false) {
                 return Ok(ScoutResult { success: false, message: Some(format!("Region {} is busy", region.name)) });
             }
         }
@@ -376,7 +377,7 @@ impl MutationRoot {
     async fn run_scrape(&self, ctx: &Context<'_>, region_id: String) -> Result<ScoutResult> {
         let (runner, region) = load_region_for_flow(ctx, &region_id).await?;
         if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
-            if crate::db::scout_run::is_region_busy(pool, &region_id).await.unwrap_or(false) {
+            if crate::db::scout_run::is_region_busy(pool, &region_id, &["scrape", "bootstrap"]).await.unwrap_or(false) {
                 return Ok(ScoutResult { success: false, message: Some(format!("Region {} is busy", region.name)) });
             }
         }
@@ -393,7 +394,7 @@ impl MutationRoot {
     async fn run_weave(&self, ctx: &Context<'_>, region_id: String) -> Result<ScoutResult> {
         let (runner, region) = load_region_for_flow(ctx, &region_id).await?;
         if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
-            if crate::db::scout_run::is_region_busy(pool, &region_id).await.unwrap_or(false) {
+            if crate::db::scout_run::is_region_busy(pool, &region_id, &["weave"]).await.unwrap_or(false) {
                 return Ok(ScoutResult { success: false, message: Some(format!("Region {} is busy", region.name)) });
             }
         }
@@ -456,24 +457,50 @@ impl MutationRoot {
         let signal_uuid = Uuid::parse_str(&signal_id)
             .map_err(|_| async_graphql::Error::new("Invalid signal ID"))?;
 
+        // 1. Source provenance chain: Signal←SCRAPE_PRODUCED←Source←WATCHES←Region
         let region = writer
             .get_region_for_signal(&signal_id)
             .await
             .unwrap_or(None);
 
-        let (region_id, scope) = match region {
-            Some(r) => {
-                let rid = r.id.to_string();
-                let scope = ScoutScope::from(&r);
-                (rid, scope)
-            }
-            None => {
-                return Ok(ScoutResult {
-                    success: false,
-                    message: Some("Signal has no region".into()),
-                })
+        let (region_id, scope) = if let Some(r) = region {
+            (r.id.to_string(), ScoutScope::from(&r))
+        } else {
+            // 2. Spatial fallback: find containing region from signal's geocoded location
+            let regions = writer
+                .get_regions_for_signal_by_location(&signal_id)
+                .await
+                .unwrap_or_default();
+
+            if let Some(r) = regions.first() {
+                (r.id.to_string(), ScoutScope::from(r))
+            } else {
+                // 3. Transient scope from signal's own coordinates
+                match writer.get_signal_location(&signal_id).await.unwrap_or(None) {
+                    Some((lat, lng)) => {
+                        let scope = ScoutScope {
+                            center_lat: lat,
+                            center_lng: lng,
+                            radius_km: 25.0,
+                            name: format!("signal-{}", &signal_id[..8.min(signal_id.len())]),
+                        };
+                        (Uuid::new_v4().to_string(), scope)
+                    }
+                    None => {
+                        return Ok(ScoutResult {
+                            success: false,
+                            message: Some("Signal has no region or location".into()),
+                        })
+                    }
+                }
             }
         };
+
+        if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
+            if crate::db::scout_run::is_region_busy(pool, &region_id, &["coalesce"]).await.unwrap_or(false) {
+                return Ok(ScoutResult { success: false, message: Some("Region already has a coalesce running".into()) });
+            }
+        }
 
         runner
             .run_coalesce_signal(&region_id, &scope, signal_uuid)
@@ -500,6 +527,96 @@ impl MutationRoot {
                 message: Some(format!("No active run found for {run_id}")),
             })
         }
+    }
+
+    /// Create a recurring schedule.
+    #[graphql(guard = "AdminGuard")]
+    async fn create_schedule(
+        &self,
+        ctx: &Context<'_>,
+        flow_type: String,
+        scope: String,
+        cadence_seconds: u32,
+        region_id: Option<String>,
+    ) -> Result<ScoutResult> {
+        use rootsignal_scout::domains::scheduling::events::SchedulingEvent;
+
+        let (engine, run_id) = require_engine(ctx)?;
+        let schedule_id = Uuid::new_v4().to_string();
+        let scope_json: serde_json::Value = serde_json::from_str(&scope)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid scope JSON: {e}")))?;
+
+        engine
+            .emit(SchedulingEvent::ScheduleCreated {
+                schedule_id: schedule_id.clone(),
+                flow_type,
+                scope: scope_json,
+                cadence_seconds: cadence_seconds as u64,
+                region_id,
+            })
+            .correlation_id(run_id)
+            .settled()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to create schedule: {e}")))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Schedule {schedule_id} created")),
+        })
+    }
+
+    /// Toggle a schedule enabled/disabled.
+    #[graphql(guard = "AdminGuard")]
+    async fn toggle_schedule(
+        &self,
+        ctx: &Context<'_>,
+        schedule_id: String,
+        enabled: bool,
+    ) -> Result<ScoutResult> {
+        use rootsignal_scout::domains::scheduling::events::SchedulingEvent;
+
+        let (engine, run_id) = require_engine(ctx)?;
+
+        engine
+            .emit(SchedulingEvent::ScheduleToggled {
+                schedule_id: schedule_id.clone(),
+                enabled,
+            })
+            .correlation_id(run_id)
+            .settled()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to toggle schedule: {e}")))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Schedule {schedule_id} {}", if enabled { "enabled" } else { "disabled" })),
+        })
+    }
+
+    /// Soft-delete a schedule.
+    #[graphql(guard = "AdminGuard")]
+    async fn delete_schedule(
+        &self,
+        ctx: &Context<'_>,
+        schedule_id: String,
+    ) -> Result<ScoutResult> {
+        use rootsignal_scout::domains::scheduling::events::SchedulingEvent;
+
+        let (engine, run_id) = require_engine(ctx)?;
+
+        engine
+            .emit(SchedulingEvent::ScheduleDeleted {
+                schedule_id: schedule_id.clone(),
+            })
+            .correlation_id(run_id)
+            .settled()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to delete schedule: {e}")))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Schedule {schedule_id} deleted")),
+        })
     }
 
     /// Public source submission (rate-limited, no auth required).

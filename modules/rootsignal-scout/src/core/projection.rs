@@ -474,6 +474,103 @@ pub fn scheduled_scrapes_projection() -> Projection<ScoutEngineDeps> {
     )
 }
 
+/// Projection: persist schedule lifecycle events to the `schedules` table.
+pub fn schedules_projection() -> Projection<ScoutEngineDeps> {
+    project("schedules_projection").then(
+        move |event: AnyEvent, ctx: Context<ScoutEngineDeps>| async move {
+            let Some(sched) = event.downcast_ref::<SchedulingEvent>() else {
+                return Ok(());
+            };
+
+            let deps = ctx.deps();
+            let Some(pool) = &deps.pg_pool else {
+                return Ok(());
+            };
+
+            match sched {
+                SchedulingEvent::ScheduleCreated {
+                    schedule_id,
+                    flow_type,
+                    scope,
+                    cadence_seconds,
+                    region_id,
+                } => {
+                    let next_run_at = Utc::now()
+                        + chrono::Duration::seconds(*cadence_seconds as i64);
+                    sqlx::query(
+                        "INSERT INTO schedules (schedule_id, flow_type, scope, cadence_seconds, region_id, next_run_at, created_at) \
+                         VALUES ($1, $2, $3, $4, $5, $6, now()) \
+                         ON CONFLICT (schedule_id) DO NOTHING",
+                    )
+                    .bind(schedule_id)
+                    .bind(flow_type)
+                    .bind(scope)
+                    .bind(*cadence_seconds as i32)
+                    .bind(region_id.as_deref())
+                    .bind(next_run_at)
+                    .execute(pool)
+                    .await?;
+                    info!(schedule_id, flow_type, cadence_seconds, "Schedule created");
+                }
+                SchedulingEvent::ScheduleToggled {
+                    schedule_id,
+                    enabled,
+                } => {
+                    if *enabled {
+                        // Skip to future — no catch-up storm
+                        sqlx::query(
+                            "UPDATE schedules SET enabled = true, \
+                             next_run_at = now() + (cadence_seconds || ' seconds')::interval \
+                             WHERE schedule_id = $1",
+                        )
+                        .bind(schedule_id)
+                        .execute(pool)
+                        .await?;
+                    } else {
+                        sqlx::query(
+                            "UPDATE schedules SET enabled = false, next_run_at = NULL \
+                             WHERE schedule_id = $1",
+                        )
+                        .bind(schedule_id)
+                        .execute(pool)
+                        .await?;
+                    }
+                    info!(schedule_id, enabled, "Schedule toggled");
+                }
+                SchedulingEvent::ScheduleTriggered {
+                    schedule_id,
+                    run_id,
+                } => {
+                    sqlx::query(
+                        "UPDATE schedules SET last_run_id = $2, \
+                         next_run_at = now() + (cadence_seconds || ' seconds')::interval \
+                         WHERE schedule_id = $1",
+                    )
+                    .bind(schedule_id)
+                    .bind(run_id)
+                    .execute(pool)
+                    .await?;
+                    info!(schedule_id, run_id, "Schedule triggered");
+                }
+                SchedulingEvent::ScheduleDeleted { schedule_id } => {
+                    sqlx::query(
+                        "UPDATE schedules SET deleted_at = now(), enabled = false, next_run_at = NULL \
+                         WHERE schedule_id = $1",
+                    )
+                    .bind(schedule_id)
+                    .execute(pool)
+                    .await?;
+                    info!(schedule_id, "Schedule deleted");
+                }
+                // ScrapeScheduled handled by scheduled_scrapes_projection
+                SchedulingEvent::ScrapeScheduled { .. } => {}
+            }
+
+            Ok(())
+        },
+    )
+}
+
 /// Test-only handler: capture every event into a shared Vec for inspection.
 ///
 /// Only registered when `ScoutEngineDeps.captured_events` is Some.

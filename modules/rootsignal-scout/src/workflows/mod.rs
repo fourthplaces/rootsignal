@@ -195,6 +195,41 @@ impl ScoutDeps {
     }
 
     // -----------------------------------------------------------------
+    // Infrastructure engine (projections only, no domain handlers)
+    // -----------------------------------------------------------------
+
+    /// Build a minimal engine for emitting infrastructure events (e.g. schedule triggers).
+    ///
+    /// Has the store + projections but no domain handlers — purely for persisting
+    /// scheduling events so projections update the schedules table.
+    pub fn build_infra_engine(&self, run_id: Uuid) -> Option<ScoutEngine> {
+        use crate::core::projection;
+
+        let store = Arc::new(crate::core::postgres_store::PostgresStore::new(
+            self.pg_pool.clone(),
+            run_id,
+        ));
+        let mut deps = ScoutEngineDeps::new(
+            Arc::new(crate::store::build_signal_reader(self.graph_client.clone())),
+            Arc::new(crate::infra::embedder::Embedder::new(&self.voyage_api_key)),
+            run_id,
+        );
+        deps.pg_pool = Some(self.pg_pool.clone());
+
+        let engine = causal::Engine::new(deps)
+            .with_store(store)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .with_projection(projection::scheduled_scrapes_projection())
+            .with_projection(projection::schedules_projection())
+            .with_projection(projection::runs_projection());
+
+        Some(engine)
+    }
+
+    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
 

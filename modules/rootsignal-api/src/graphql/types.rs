@@ -1146,6 +1146,39 @@ impl From<crate::db::scheduled_scrapes::ScheduledScrapeRow> for ScheduledScrape 
     }
 }
 
+// --- Schedules ---
+
+#[derive(SimpleObject)]
+pub struct Schedule {
+    pub schedule_id: String,
+    pub flow_type: String,
+    pub scope: String,
+    pub cadence_seconds: i32,
+    pub enabled: bool,
+    pub last_run_id: Option<String>,
+    pub next_run_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub region_id: Option<String>,
+}
+
+impl From<crate::db::models::schedule::ScheduleRow> for Schedule {
+    fn from(row: crate::db::models::schedule::ScheduleRow) -> Self {
+        Self {
+            schedule_id: row.schedule_id,
+            flow_type: row.flow_type,
+            scope: row.scope.to_string(),
+            cadence_seconds: row.cadence_seconds,
+            enabled: row.enabled,
+            last_run_id: row.last_run_id,
+            next_run_at: row.next_run_at,
+            deleted_at: row.deleted_at,
+            created_at: row.created_at,
+            region_id: row.region_id,
+        }
+    }
+}
+
 // --- Situation types ---
 
 #[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]

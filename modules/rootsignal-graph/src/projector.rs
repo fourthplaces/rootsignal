@@ -2892,6 +2892,9 @@ impl GraphProjector {
                 address,
                 precision,
                 timezone,
+                city,
+                state,
+                country_code,
             } => {
                 let canonical_address = address.as_deref().unwrap_or("").to_string();
                 let normalized_name = location_name.trim().to_lowercase();
@@ -2907,11 +2910,17 @@ impl GraphProjector {
                                    canonical.normalized_name = $normalized_name,
                                    canonical.precision = $precision,
                                    canonical.timezone = $timezone,
+                                   canonical.city = $city,
+                                   canonical.state = $state,
+                                   canonical.country_code = $country_code,
                                    canonical.geocoded = true
                      ON MATCH SET canonical.lat = $lat, canonical.lng = $lng,
                                   canonical.lat_bucket = $lat_bucket, canonical.lng_bucket = $lng_bucket,
                                   canonical.precision = $precision,
                                   canonical.timezone = $timezone,
+                                  canonical.city = $city,
+                                  canonical.state = $state,
+                                  canonical.country_code = $country_code,
                                   canonical.geocoded = true",
                 )
                 .param("canonical_address", canonical_address.as_str())
@@ -2922,7 +2931,10 @@ impl GraphProjector {
                 .param("location_name", location_name.as_str())
                 .param("normalized_name", normalized_name.as_str())
                 .param("precision", precision.as_str())
-                .param("timezone", timezone.as_deref().unwrap_or(""));
+                .param("timezone", timezone.as_deref().unwrap_or(""))
+                .param("city", city.as_deref().unwrap_or(""))
+                .param("state", state.as_deref().unwrap_or(""))
+                .param("country_code", country_code.as_deref().unwrap_or(""));
 
                 // Step 2: Find un-geocoded stub by normalized_name and merge into canonical.
                 // Only targets stubs (no canonical_address yet) to avoid merging
@@ -2961,6 +2973,63 @@ impl GraphProjector {
 
                 debug!(signal_id = %signal_id, location = location_name, "LocationGeocoded projected");
                 Plan::applied(vec![Op::Run(merge_q), Op::Run(merge_stub_q), Op::Run(redirect_q)])
+            }
+
+            // ---------------------------------------------------------
+            // Region auto-discovery — MERGE Region + CONTAINS nesting
+            // ---------------------------------------------------------
+            SystemEvent::RegionDiscovered {
+                region_id,
+                name,
+                center_lat,
+                center_lng,
+                radius_km,
+                city,
+                state,
+                country_code,
+                scale,
+                parent_region_id,
+            } => {
+                let merge_q = query(
+                    "MERGE (r:Region {name: $name})
+                     ON CREATE SET r.id = $id,
+                                   r.center_lat = $lat,
+                                   r.center_lng = $lng,
+                                   r.radius_km = $radius_km,
+                                   r.review_status = 'discovered',
+                                   r.is_leaf = true,
+                                   r.created_at = datetime(),
+                                   r.city = $city,
+                                   r.state = $state,
+                                   r.country_code = $country_code,
+                                   r.scale = $scale,
+                                   r.geo_terms = [$name]",
+                )
+                .param("name", name.as_str())
+                .param("id", region_id.to_string())
+                .param("lat", center_lat)
+                .param("lng", center_lng)
+                .param("radius_km", radius_km)
+                .param("city", city.as_deref().unwrap_or(""))
+                .param("state", state.as_deref().unwrap_or(""))
+                .param("country_code", country_code.as_deref().unwrap_or(""))
+                .param("scale", scale.as_str());
+
+                let mut ops = vec![Op::Run(merge_q)];
+
+                // CONTAINS nesting: parent_region_id links to parent discovered in same batch
+                if let Some(parent_id) = parent_region_id {
+                    let nest_q = query(
+                        "MATCH (p:Region {id: $parent_id}), (c:Region {name: $child_name})
+                         MERGE (p)-[:CONTAINS]->(c)",
+                    )
+                    .param("parent_id", parent_id.to_string())
+                    .param("child_name", name.as_str());
+                    ops.push(Op::Run(nest_q));
+                }
+
+                debug!(name = name, scale = scale, "RegionDiscovered projected");
+                Plan::applied(ops)
             }
 
             // ---------------------------------------------------------

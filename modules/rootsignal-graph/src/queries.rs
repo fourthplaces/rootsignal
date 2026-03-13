@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use rootsignal_common::events::{CauseHeatScore, SimilarityEdge, SystemEvent};
-use rootsignal_common::{ActorNode, NodeType, PinNode, SourceNode};
+use rootsignal_common::{ActorNode, NodeType, PinNode, Region, SourceNode};
 
 use crate::situation_temperature::TemperatureComponents;
 use crate::writer::{
@@ -305,6 +305,18 @@ pub trait GraphQueries: Send + Sync {
 
     /// Batch-fetch signal details by ID for LLM tool results.
     async fn get_signal_details(&self, ids: &[Uuid]) -> Result<Vec<SignalDetail>>;
+
+    // --- Signal location & spatial region lookup ---
+
+    /// Get the geocoded location (lat/lng) for a signal via its Location node.
+    async fn get_signal_location(&self, signal_id: &str) -> Result<Option<(f64, f64)>>;
+
+    /// Find regions that spatially contain a signal's geocoded location.
+    /// Returns regions sorted by radius ascending (most specific first).
+    async fn get_regions_for_signal_by_location(&self, signal_id: &str) -> Result<Vec<Region>>;
+
+    /// Check if a Region with the given name already exists.
+    async fn region_exists_by_name(&self, name: &str) -> Result<bool>;
 }
 
 // --- GraphReader implementation ---
@@ -815,5 +827,17 @@ impl GraphQueries for crate::writer::GraphReader {
             }
         }
         Ok(results)
+    }
+
+    async fn get_signal_location(&self, signal_id: &str) -> Result<Option<(f64, f64)>> {
+        Ok(self.get_signal_location(signal_id).await?)
+    }
+
+    async fn get_regions_for_signal_by_location(&self, signal_id: &str) -> Result<Vec<Region>> {
+        Ok(self.get_regions_for_signal_by_location(signal_id).await?)
+    }
+
+    async fn region_exists_by_name(&self, name: &str) -> Result<bool> {
+        Ok(self.region_exists_by_name(name).await?)
     }
 }

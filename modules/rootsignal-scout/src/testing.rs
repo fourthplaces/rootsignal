@@ -2459,6 +2459,15 @@ impl GraphQueries for MockGraphQueries {
     async fn get_signal_details(&self, ids: &[Uuid]) -> Result<Vec<rootsignal_graph::SignalDetail>> {
         Ok(self.signal_details.iter().filter(|d| ids.contains(&d.id)).cloned().collect())
     }
+    async fn get_signal_location(&self, _signal_id: &str) -> Result<Option<(f64, f64)>> {
+        Ok(None)
+    }
+    async fn get_regions_for_signal_by_location(&self, _signal_id: &str) -> Result<Vec<rootsignal_common::Region>> {
+        Ok(vec![])
+    }
+    async fn region_exists_by_name(&self, _name: &str) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 // ---------------------------------------------------------------------------

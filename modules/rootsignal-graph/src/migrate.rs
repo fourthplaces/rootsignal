@@ -114,6 +114,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     g.run(query("CREATE CONSTRAINT region_id IF NOT EXISTS FOR (r:Region) REQUIRE r.id IS UNIQUE")).await?;
     g.run(query("CREATE INDEX region_is_leaf IF NOT EXISTS FOR (r:Region) ON (r.is_leaf)")).await?;
+    g.run(query("CREATE INDEX region_name IF NOT EXISTS FOR (r:Region) ON (r.name)")).await?;
 
     info!("Region constraints and indexes created");
 
@@ -206,6 +207,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     g.run(query("CREATE INDEX location_lat_lng IF NOT EXISTS FOR (l:Location) ON (l.lat, l.lng)")).await?;
     g.run(query("CREATE INDEX location_normalized_name IF NOT EXISTS FOR (l:Location) ON (l.normalized_name)")).await?;
+    g.run(query("CREATE INDEX location_canonical_address IF NOT EXISTS FOR (l:Location) ON (l.canonical_address)")).await?;
 
     // ── Data migrations (idempotent) ─────────────────────────────────────
 

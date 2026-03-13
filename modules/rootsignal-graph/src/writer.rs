@@ -500,7 +500,8 @@ impl GraphReader {
              RETURN r.id AS id, r.name AS name,
                     r.center_lat AS center_lat, r.center_lng AS center_lng,
                     r.radius_km AS radius_km, r.geo_terms AS geo_terms,
-                    r.is_leaf AS is_leaf, r.created_at AS created_at",
+                    r.is_leaf AS is_leaf, r.created_at AS created_at,
+                    r.review_status AS review_status",
         )
         .param("id", id);
 
@@ -519,7 +520,8 @@ impl GraphReader {
              RETURN r.id AS id, r.name AS name,
                     r.center_lat AS center_lat, r.center_lng AS center_lng,
                     r.radius_km AS radius_km, r.geo_terms AS geo_terms,
-                    r.is_leaf AS is_leaf, r.created_at AS created_at
+                    r.is_leaf AS is_leaf, r.created_at AS created_at,
+                    r.review_status AS review_status
              LIMIT 1",
         )
         .param("id", source_id);
@@ -539,7 +541,8 @@ impl GraphReader {
              RETURN r.id AS id, r.name AS name,
                     r.center_lat AS center_lat, r.center_lng AS center_lng,
                     r.radius_km AS radius_km, r.geo_terms AS geo_terms,
-                    r.is_leaf AS is_leaf, r.created_at AS created_at
+                    r.is_leaf AS is_leaf, r.created_at AS created_at,
+                    r.review_status AS review_status
              LIMIT 1",
         )
         .param("id", signal_id);
@@ -549,6 +552,73 @@ impl GraphReader {
             Ok(Some(row_to_region(&row)))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Get the geocoded location for a signal (lat/lng from its Location node).
+    pub async fn get_signal_location(&self, signal_id: &str) -> Result<Option<(f64, f64)>, neo4rs::Error> {
+        let q = query(&format!(
+            "MATCH (s {{id: $id}})-[:{LOC_EDGES}]->(l:Location)
+             WHERE l.geocoded = true AND l.lat IS NOT NULL AND l.lng IS NOT NULL
+             RETURN l.lat AS lat, l.lng AS lng
+             LIMIT 1",
+        ))
+        .param("id", signal_id);
+
+        let mut stream = self.client().execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let lat: f64 = row.get("lat").unwrap_or(0.0);
+            let lng: f64 = row.get("lng").unwrap_or(0.0);
+            Ok(Some((lat, lng)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Find regions that spatially contain a signal's geocoded location.
+    /// Returns regions sorted by radius ascending (most specific first).
+    pub async fn get_regions_for_signal_by_location(&self, signal_id: &str) -> Result<Vec<Region>, neo4rs::Error> {
+        let (sig_lat, sig_lng) = match self.get_signal_location(signal_id).await? {
+            Some(loc) => loc,
+            None => return Ok(vec![]),
+        };
+
+        let q = query(
+            "MATCH (r:Region)
+             RETURN r.id AS id, r.name AS name,
+                    r.center_lat AS center_lat, r.center_lng AS center_lng,
+                    r.radius_km AS radius_km, r.geo_terms AS geo_terms,
+                    r.is_leaf AS is_leaf, r.created_at AS created_at,
+                    r.review_status AS review_status",
+        );
+
+        let mut stream = self.client().execute(q).await?;
+        let mut regions = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let region = row_to_region(&row);
+            let dist = rootsignal_common::haversine_km(sig_lat, sig_lng, region.center_lat, region.center_lng);
+            if dist <= region.radius_km {
+                regions.push(region);
+            }
+        }
+
+        regions.sort_by(|a, b| a.radius_km.partial_cmp(&b.radius_km).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(regions)
+    }
+
+    /// Check if a Region with the given name already exists.
+    pub async fn region_exists_by_name(&self, name: &str) -> Result<bool, neo4rs::Error> {
+        let q = query(
+            "OPTIONAL MATCH (r:Region {name: $name})
+             RETURN count(r) > 0 AS exists",
+        )
+        .param("name", name);
+
+        let mut stream = self.client().execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            Ok(row.get("exists").unwrap_or(false))
+        } else {
+            Ok(false)
         }
     }
 
@@ -563,7 +633,8 @@ impl GraphReader {
              RETURN r.id AS id, r.name AS name,
                     r.center_lat AS center_lat, r.center_lng AS center_lng,
                     r.radius_km AS radius_km, r.geo_terms AS geo_terms,
-                    r.is_leaf AS is_leaf, r.created_at AS created_at
+                    r.is_leaf AS is_leaf, r.created_at AS created_at,
+                    r.review_status AS review_status
              ORDER BY r.name
              LIMIT $limit"
         } else {
@@ -571,7 +642,8 @@ impl GraphReader {
              RETURN r.id AS id, r.name AS name,
                     r.center_lat AS center_lat, r.center_lng AS center_lng,
                     r.radius_km AS radius_km, r.geo_terms AS geo_terms,
-                    r.is_leaf AS is_leaf, r.created_at AS created_at
+                    r.is_leaf AS is_leaf, r.created_at AS created_at,
+                    r.review_status AS review_status
              ORDER BY r.name
              LIMIT $limit"
         };
@@ -598,7 +670,8 @@ impl GraphReader {
                  r.radius_km = $radius_km,
                  r.geo_terms = $geo_terms,
                  r.is_leaf = $is_leaf,
-                 r.created_at = datetime($created_at)",
+                 r.created_at = datetime($created_at),
+                 r.review_status = $review_status",
         )
         .param("id", region.id.to_string())
         .param("name", region.name.as_str())
@@ -607,6 +680,7 @@ impl GraphReader {
         .param("radius_km", region.radius_km)
         .param("geo_terms", region.geo_terms.clone())
         .param("is_leaf", region.is_leaf)
+        .param("review_status", region.review_status.as_deref().unwrap_or(""))
         .param("created_at", format_datetime(&region.created_at));
 
         self.client().run(q).await?;
@@ -4610,6 +4684,7 @@ pub fn row_to_source_node(row: &neo4rs::Row) -> Option<SourceNode> {
 /// Parse a neo4rs Row (with aliased columns) into a Region.
 pub fn row_to_region(row: &neo4rs::Row) -> Region {
     let id_str: String = row.get("id").unwrap_or_default();
+    let review_status: Option<String> = row.get("review_status").ok().filter(|s: &String| !s.is_empty());
 
     Region {
         id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::nil()),
@@ -4620,6 +4695,7 @@ pub fn row_to_region(row: &neo4rs::Row) -> Region {
         geo_terms: row.get("geo_terms").unwrap_or_default(),
         is_leaf: row.get("is_leaf").unwrap_or(true),
         created_at: row_datetime_opt(row, "created_at").unwrap_or_else(Utc::now),
+        review_status,
     }
 }
 

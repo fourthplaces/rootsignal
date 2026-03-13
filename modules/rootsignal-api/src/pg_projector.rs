@@ -1,6 +1,6 @@
 //! Postgres read-model projector for replay.
 //!
-//! Owns the `runs` and `scheduled_scrapes` projected tables in a
+//! Owns the `runs`, `scheduled_scrapes`, and `schedules` projected tables in a
 //! separate database. `prepare()` creates the database if needed, ensures
 //! the schema, and truncates for a clean rebuild. `project_batch()` then
 //! populates them by matching on `event_type` strings from `PersistedEvent`.
@@ -56,6 +56,23 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_scrapes_pending
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_scrapes_unique_pending
     ON scheduled_scrapes (scope_type, scope_data)
     WHERE completed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS schedules (
+    schedule_id    TEXT        PRIMARY KEY,
+    flow_type      TEXT        NOT NULL,
+    scope          JSONB       NOT NULL DEFAULT '{}',
+    cadence_seconds INTEGER    NOT NULL,
+    enabled        BOOLEAN     NOT NULL DEFAULT true,
+    last_run_id    TEXT,
+    next_run_at    TIMESTAMPTZ,
+    deleted_at     TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    region_id      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedules_due
+    ON schedules(next_run_at)
+    WHERE enabled = true AND deleted_at IS NULL;
 "#;
 
 pub struct PostgresProjector {
@@ -73,7 +90,7 @@ impl PostgresProjector {
     /// Call this once before replay starts.
     pub async fn prepare(&self) -> Result<()> {
         sqlx::raw_sql(SCHEMA_DDL).execute(&self.pool).await?;
-        sqlx::query("TRUNCATE runs, scheduled_scrapes")
+        sqlx::query("TRUNCATE runs, scheduled_scrapes, schedules")
             .execute(&self.pool)
             .await?;
         info!("Projection database ready (tables created, truncated)");
@@ -261,6 +278,90 @@ impl PostgresProjector {
                         .execute(&mut *tx)
                         .await?;
                     }
+                }
+
+                "scheduling:schedule_created" => {
+                    let p = &event.payload;
+                    let schedule_id = p["schedule_id"].as_str().unwrap_or_default();
+                    let flow_type = p["flow_type"].as_str().unwrap_or_default();
+                    let empty_obj = serde_json::Value::Object(Default::default());
+                    let scope = p.get("scope").unwrap_or(&empty_obj);
+                    let cadence_seconds = p["cadence_seconds"].as_u64().unwrap_or(0) as i32;
+                    let region_id = p["region_id"].as_str();
+                    let next_run_at = event.created_at
+                        + chrono::Duration::seconds(cadence_seconds as i64);
+
+                    sqlx::query(
+                        "INSERT INTO schedules (schedule_id, flow_type, scope, cadence_seconds, region_id, next_run_at, created_at) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                         ON CONFLICT (schedule_id) DO NOTHING",
+                    )
+                    .bind(schedule_id)
+                    .bind(flow_type)
+                    .bind(scope)
+                    .bind(cadence_seconds)
+                    .bind(region_id)
+                    .bind(next_run_at)
+                    .bind(event.created_at)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                "scheduling:schedule_toggled" => {
+                    let p = &event.payload;
+                    let schedule_id = p["schedule_id"].as_str().unwrap_or_default();
+                    let enabled = p["enabled"].as_bool().unwrap_or(false);
+
+                    if enabled {
+                        sqlx::query(
+                            "UPDATE schedules SET enabled = true, \
+                             next_run_at = $2 + (cadence_seconds || ' seconds')::interval \
+                             WHERE schedule_id = $1",
+                        )
+                        .bind(schedule_id)
+                        .bind(event.created_at)
+                        .execute(&mut *tx)
+                        .await?;
+                    } else {
+                        sqlx::query(
+                            "UPDATE schedules SET enabled = false, next_run_at = NULL \
+                             WHERE schedule_id = $1",
+                        )
+                        .bind(schedule_id)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                "scheduling:schedule_triggered" => {
+                    let p = &event.payload;
+                    let schedule_id = p["schedule_id"].as_str().unwrap_or_default();
+                    let run_id = p["run_id"].as_str().unwrap_or_default();
+
+                    sqlx::query(
+                        "UPDATE schedules SET last_run_id = $2, \
+                         next_run_at = $3 + (cadence_seconds || ' seconds')::interval \
+                         WHERE schedule_id = $1",
+                    )
+                    .bind(schedule_id)
+                    .bind(run_id)
+                    .bind(event.created_at)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                "scheduling:schedule_deleted" => {
+                    let p = &event.payload;
+                    let schedule_id = p["schedule_id"].as_str().unwrap_or_default();
+
+                    sqlx::query(
+                        "UPDATE schedules SET deleted_at = $2, enabled = false, next_run_at = NULL \
+                         WHERE schedule_id = $1",
+                    )
+                    .bind(schedule_id)
+                    .bind(event.created_at)
+                    .execute(&mut *tx)
+                    .await?;
                 }
 
                 _ => {}

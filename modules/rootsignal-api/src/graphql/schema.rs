@@ -312,15 +312,24 @@ impl QueryRoot {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
         let pub_reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
 
+        // Resolve region name → ID for scoped busy check
+        let region_id = {
+            let regions = writer.list_regions(None, 100).await.unwrap_or_default();
+            regions.into_iter().find(|r| r.name == region).map(|r| r.id.to_string())
+        };
+
         let is_running_fut = async {
-            if let Some(pool) = pool {
+            if let (Some(pool), Some(rid)) = (pool, &region_id) {
                 let (running,): (bool,) = sqlx::query_as(
                     "SELECT EXISTS(
                          SELECT 1 FROM runs
-                         WHERE finished_at IS NULL
+                         WHERE region_id = $1
+                           AND finished_at IS NULL
+                           AND cancelled_at IS NULL
                            AND started_at >= now() - interval '30 minutes'
                      )",
                 )
+                .bind(rid)
                 .fetch_one(pool)
                 .await?;
                 Ok::<bool, sqlx::Error>(running)
@@ -713,15 +722,29 @@ impl QueryRoot {
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
 
+        // Resolve region slug/name → ID for scoped busy check
+        let region_id = {
+            // Try by ID first, then by name
+            if let Ok(Some(r)) = writer.get_region(&region_slug).await {
+                Some(r.id.to_string())
+            } else {
+                let regions = writer.list_regions(None, 100).await.unwrap_or_default();
+                regions.into_iter().find(|r| r.name == region_slug).map(|r| r.id.to_string())
+            }
+        };
+
         let is_running_fut = async {
-            if let Some(pool) = pool {
+            if let (Some(pool), Some(rid)) = (pool, &region_id) {
                 let (running,): (bool,) = sqlx::query_as(
                     "SELECT EXISTS(
                          SELECT 1 FROM runs
-                         WHERE finished_at IS NULL
+                         WHERE region_id = $1
+                           AND finished_at IS NULL
+                           AND cancelled_at IS NULL
                            AND started_at >= now() - interval '30 minutes'
                      )",
                 )
+                .bind(rid)
                 .fetch_one(pool)
                 .await?;
                 Ok::<bool, sqlx::Error>(running)
@@ -891,6 +914,30 @@ impl QueryRoot {
         .map_err(|e| async_graphql::Error::new(format!("Failed to query scheduled scrapes: {e}")))?;
 
         Ok(rows.into_iter().map(ScheduledScrape::from).collect())
+    }
+
+    /// List recurring schedules.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_schedules(
+        &self,
+        ctx: &Context<'_>,
+        active_only: Option<bool>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Schedule>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let limit = limit.unwrap_or(50).min(200);
+
+        let rows: Vec<crate::db::models::schedule::ScheduleRow> = if active_only.unwrap_or(true) {
+            crate::db::models::schedule::list_active(pool, limit).await
+        } else {
+            crate::db::models::schedule::list_all(pool, limit).await
+        }
+        .map_err(|e| async_graphql::Error::new(format!("Failed to query schedules: {e}")))?;
+
+        Ok(rows.into_iter().map(Schedule::from).collect())
     }
 
     /// List events that touched a specific graph node.
@@ -2040,14 +2087,52 @@ impl ScoutRun {
             })
             .unwrap_or_default()
     }
+    async fn parent_run_id(&self) -> Option<&str> {
+        self.row.parent_run_id.as_deref()
+    }
+    async fn schedule_id(&self) -> Option<&str> {
+        self.row.schedule_id.as_deref()
+    }
+    async fn run_at(&self) -> Option<DateTime<Utc>> {
+        self.row.run_at
+    }
+    async fn error(&self) -> Option<&str> {
+        self.row.error.as_deref()
+    }
+    async fn cancelled_at(&self) -> Option<DateTime<Utc>> {
+        self.row.cancelled_at
+    }
     async fn started_at(&self) -> DateTime<Utc> {
         self.row.started_at
     }
     async fn finished_at(&self) -> Option<DateTime<Utc>> {
         self.row.finished_at
     }
+    /// Derived status: cancelled > failed > completed > running.
+    /// Every row in `runs` has `started_at` set on creation, so all
+    /// unfinished rows are "running". Deferred-run support would add
+    /// a "scheduled" branch here.
+    async fn status(&self) -> &str {
+        if self.row.cancelled_at.is_some() {
+            "cancelled"
+        } else if self.row.error.is_some() {
+            "failed"
+        } else if self.row.finished_at.is_some() {
+            "completed"
+        } else {
+            "running"
+        }
+    }
     async fn stats(&self) -> ScoutRunStats {
         ScoutRunStats::from(&self.row.stats)
+    }
+    /// Child runs spawned from this run (chain orchestration).
+    async fn child_runs(&self, ctx: &Context<'_>) -> Result<Vec<ScoutRun>> {
+        let pool = get_pool(ctx)?;
+        let rows = crate::db::scout_run::list_children(pool, &self.row.run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load child runs: {e}")))?;
+        Ok(rows.into_iter().map(ScoutRun::from).collect())
     }
 
     async fn signal_count(&self, ctx: &Context<'_>) -> Result<u32> {

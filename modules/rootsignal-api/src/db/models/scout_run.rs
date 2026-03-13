@@ -60,6 +60,11 @@ pub struct ScoutRunRow {
     pub flow_type: Option<String>,
     pub source_ids: Option<serde_json::Value>,
     pub scope: Option<serde_json::Value>,
+    pub parent_run_id: Option<String>,
+    pub schedule_id: Option<String>,
+    pub run_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+    pub cancelled_at: Option<DateTime<Utc>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +77,8 @@ pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<V
     let rows = sqlx::query(
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
-               region_id, flow_type, source_ids, scope
+               region_id, flow_type, source_ids, scope,
+               parent_run_id, schedule_id, run_at, error, cancelled_at
         FROM runs
         WHERE region = $1
         ORDER BY started_at DESC
@@ -93,7 +99,8 @@ pub async fn list_by_source_id(pool: &PgPool, source_id: &str, limit: u32) -> Re
     let rows = sqlx::query(
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
-               region_id, flow_type, source_ids, scope
+               region_id, flow_type, source_ids, scope,
+               parent_run_id, schedule_id, run_at, error, cancelled_at
         FROM runs
         WHERE source_ids @> $1::jsonb
         ORDER BY started_at DESC
@@ -166,7 +173,8 @@ pub async fn list_recent(pool: &PgPool, limit: u32) -> Result<Vec<ScoutRunRow>> 
     let rows = sqlx::query(
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
-               region_id, flow_type, source_ids, scope
+               region_id, flow_type, source_ids, scope,
+               parent_run_id, schedule_id, run_at, error, cancelled_at
         FROM runs
         ORDER BY started_at DESC
         LIMIT $1
@@ -183,7 +191,8 @@ pub async fn find_by_id(pool: &PgPool, run_id: &str) -> Result<Option<ScoutRunRo
     let row = sqlx::query(
         r#"
         SELECT run_id, region, started_at, finished_at, stats,
-               region_id, flow_type, source_ids, scope
+               region_id, flow_type, source_ids, scope,
+               parent_run_id, schedule_id, run_at, error, cancelled_at
         FROM runs
         WHERE run_id = $1
         "#,
@@ -193,6 +202,25 @@ pub async fn find_by_id(pool: &PgPool, run_id: &str) -> Result<Option<ScoutRunRo
     .await?;
 
     Ok(row.as_ref().map(row_to_scout_run))
+}
+
+/// List child runs for a given parent run.
+pub async fn list_children(pool: &PgPool, parent_run_id: &str) -> Result<Vec<ScoutRunRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT run_id, region, started_at, finished_at, stats,
+               region_id, flow_type, source_ids, scope,
+               parent_run_id, schedule_id, run_at, error, cancelled_at
+        FROM runs
+        WHERE parent_run_id = $1
+        ORDER BY started_at ASC
+        "#,
+    )
+    .bind(parent_run_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.iter().map(row_to_scout_run).collect())
 }
 
 /// List events for a run from the unified event store, ordered by sequence number.
@@ -440,17 +468,20 @@ pub async fn count_events_by_variant(
 // Busy checks (uses runs as implicit lock)
 // ---------------------------------------------------------------------------
 
-/// Check if a region has a running (non-stale) scout run.
-pub async fn is_region_busy(pool: &PgPool, region_id: &str) -> Result<bool> {
+/// Check if a region has a running (non-stale) run of the given flow types.
+pub async fn is_region_busy(pool: &PgPool, region_id: &str, flow_types: &[&str]) -> Result<bool> {
     let (busy,): (bool,) = sqlx::query_as(
         "SELECT EXISTS(
              SELECT 1 FROM runs
              WHERE region_id = $1
+               AND flow_type = ANY($2)
                AND finished_at IS NULL
+               AND cancelled_at IS NULL
                AND started_at >= now() - interval '30 minutes'
          )",
     )
     .bind(region_id)
+    .bind(flow_types)
     .fetch_one(pool)
     .await?;
     Ok(busy)
@@ -470,6 +501,43 @@ pub async fn is_source_busy(pool: &PgPool, source_id: &str) -> Result<bool> {
     .fetch_one(pool)
     .await?;
     Ok(busy)
+}
+
+// ---------------------------------------------------------------------------
+// Chain orchestration helpers
+// ---------------------------------------------------------------------------
+
+/// Check if a run completed successfully (has finished_at, no error, not cancelled).
+pub async fn run_succeeded(pool: &PgPool, run_id: &str) -> Result<bool> {
+    let (ok,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS(
+             SELECT 1 FROM runs
+             WHERE run_id = $1
+               AND finished_at IS NOT NULL
+               AND error IS NULL
+               AND cancelled_at IS NULL
+         )",
+    )
+    .bind(run_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(ok)
+}
+
+/// Check if a parent run already has a child of the given flow_type.
+pub async fn has_child_run(pool: &PgPool, parent_run_id: &str, flow_type: &str) -> Result<bool> {
+    let (exists,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS(
+             SELECT 1 FROM runs
+             WHERE parent_run_id = $1
+               AND flow_type = $2
+         )",
+    )
+    .bind(parent_run_id)
+    .bind(flow_type)
+    .fetch_one(pool)
+    .await?;
+    Ok(exists)
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,6 +1107,11 @@ fn row_to_scout_run(r: &sqlx::postgres::PgRow) -> ScoutRunRow {
         flow_type: r.get("flow_type"),
         source_ids: r.get("source_ids"),
         scope: r.get("scope"),
+        parent_run_id: r.get("parent_run_id"),
+        schedule_id: r.get("schedule_id"),
+        run_at: r.get("run_at"),
+        error: r.get("error"),
+        cancelled_at: r.get("cancelled_at"),
     }
 }
 

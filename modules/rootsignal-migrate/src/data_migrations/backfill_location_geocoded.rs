@@ -175,6 +175,9 @@ pub fn run(ctx: &MigrateContext) -> BoxFuture<Result<()>> {
                     "address": result.address,
                     "precision": result.precision,
                     "timezone": result.timezone,
+                    "city": result.city,
+                    "state": result.state,
+                    "country_code": result.country_code,
                 });
 
                 sqlx::query(

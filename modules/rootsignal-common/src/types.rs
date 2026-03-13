@@ -500,6 +500,8 @@ pub struct RegionNode {
     pub geo_terms: Vec<String>,
     pub is_leaf: bool,
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_status: Option<String>,
 }
 
 /// Backward-compatible alias during migration.

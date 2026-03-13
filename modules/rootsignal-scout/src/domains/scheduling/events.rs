@@ -14,6 +14,32 @@ pub enum SchedulingEvent {
         run_after: DateTime<Utc>,
         reason: String,
     },
+
+    /// A recurring schedule was created.
+    ScheduleCreated {
+        schedule_id: String,
+        flow_type: String,
+        scope: serde_json::Value,
+        cadence_seconds: u64,
+        region_id: Option<String>,
+    },
+
+    /// A schedule was enabled or disabled.
+    ScheduleToggled {
+        schedule_id: String,
+        enabled: bool,
+    },
+
+    /// A schedule fired and spawned a run.
+    ScheduleTriggered {
+        schedule_id: String,
+        run_id: String,
+    },
+
+    /// A schedule was soft-deleted.
+    ScheduleDeleted {
+        schedule_id: String,
+    },
 }
 
 /// What to re-scrape: specific sources or an entire region.

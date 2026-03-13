@@ -117,12 +117,24 @@ export function ScoutRunDetailPage() {
         <div className="flex items-center gap-3">
           <Link to="/workflows" className="text-muted-foreground hover:text-foreground text-sm">Workflows</Link>
           <span className="text-muted-foreground">/</span>
+          {run.parentRunId && (
+            <>
+              <Link to={`/workflows/${run.parentRunId}`} className="text-blue-400 hover:underline font-mono text-sm">{run.parentRunId.slice(0, 8)}</Link>
+              <span className="text-muted-foreground">/</span>
+            </>
+          )}
           <h1 className="text-sm font-semibold font-mono">{run.runId.slice(0, 8)}</h1>
           {run.flowType && (
             <span className="text-xs px-2 py-0.5 rounded border border-border bg-muted">{run.flowType}</span>
           )}
-          {!run.finishedAt && (
-            <span className="text-xs px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/30">running</span>
+          {run.status && (
+            <span className={`text-xs px-2 py-0.5 rounded border ${
+              run.status === "running" ? "bg-amber-500/10 text-amber-400 border-amber-500/30" :
+              run.status === "completed" ? "bg-green-500/10 text-green-400 border-green-500/30" :
+              run.status === "failed" ? "bg-red-500/10 text-red-400 border-red-500/30" :
+              run.status === "cancelled" ? "bg-muted text-muted-foreground border-border" :
+              "bg-blue-500/10 text-blue-400 border-blue-500/30"
+            }`}>{run.status}</span>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -141,13 +153,42 @@ export function ScoutRunDetailPage() {
         </div>
       </div>
 
-      {/* Timestamps */}
-      <div className="flex gap-6 text-xs text-muted-foreground">
+      {/* Timestamps + error */}
+      <div className="flex flex-wrap gap-6 text-xs text-muted-foreground">
         <span>Started: {formatTs(run.startedAt)}</span>
         {run.finishedAt && <span>Finished: {formatTs(run.finishedAt)}</span>}
         <span>Duration: {duration}</span>
         <span>Region: {run.region}</span>
+        {run.scheduleId && <span>Schedule: <span className="font-mono">{run.scheduleId.slice(0, 8)}</span></span>}
       </div>
+      {run.error && (
+        <div className="text-xs px-3 py-2 rounded border border-red-500/30 bg-red-500/5 text-red-400">{run.error}</div>
+      )}
+
+      {/* Child runs (chain) */}
+      {run.childRuns?.length > 0 && (
+        <div className="space-y-1">
+          <h2 className="text-xs font-semibold text-muted-foreground">Chain</h2>
+          <div className="flex gap-2">
+            {run.childRuns.map((child: { runId: string; flowType: string; status: string }) => (
+              <Link
+                key={child.runId}
+                to={`/workflows/${child.runId}`}
+                className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted flex items-center gap-2"
+              >
+                <span className="text-blue-400 font-mono">{child.runId.slice(0, 8)}</span>
+                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">{child.flowType}</span>
+                <span className={
+                  child.status === "completed" ? "text-green-400" :
+                  child.status === "running" ? "text-amber-400" :
+                  child.status === "failed" ? "text-red-400" :
+                  "text-muted-foreground"
+                }>{child.status}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">

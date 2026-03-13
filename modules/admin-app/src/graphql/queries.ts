@@ -352,18 +352,11 @@ export const ADMIN_SCOUT_RUNS = gql`
       sources { id label }
       startedAt
       finishedAt
-      stats {
-        urlsScraped
-        urlsUnchanged
-        urlsFailed
-        signalsExtracted
-        signalsDeduplicated
-        signalsStored
-        socialMediaPosts
-        expansionQueriesCollected
-        expansionSourcesCreated
-        handlerFailures
-      }
+      status
+      error
+      cancelledAt
+      parentRunId
+      scheduleId
     }
   }
 `;
@@ -394,8 +387,16 @@ export const ADMIN_SCOUT_RUN = gql`
     adminScoutRun(runId: $runId) {
       runId
       region
+      regionId
+      flowType
+      sources { id label }
       startedAt
       finishedAt
+      status
+      error
+      cancelledAt
+      parentRunId
+      scheduleId
       stats {
         urlsScraped
         urlsUnchanged
@@ -407,6 +408,13 @@ export const ADMIN_SCOUT_RUN = gql`
         expansionQueriesCollected
         expansionSourcesCreated
         handlerFailures
+      }
+      childRuns {
+        runId
+        flowType
+        status
+        startedAt
+        finishedAt
       }
     }
   }
@@ -543,6 +551,23 @@ export const ADMIN_SCHEDULED_SCRAPES = gql`
       reason
       createdAt
       completedAt
+    }
+  }
+`;
+
+export const ADMIN_SCHEDULES = gql`
+  query AdminSchedules($activeOnly: Boolean, $limit: Int) {
+    adminSchedules(activeOnly: $activeOnly, limit: $limit) {
+      scheduleId
+      flowType
+      scope
+      cadenceSeconds
+      enabled
+      lastRunId
+      nextRunAt
+      deletedAt
+      createdAt
+      regionId
     }
   }
 `;

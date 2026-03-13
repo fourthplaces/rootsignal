@@ -168,6 +168,7 @@ pub fn build_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStor
     engine = engine.with_projection(projection::runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
     engine = engine.with_projection(projection::scheduled_scrapes_projection());
+    engine = engine.with_projection(projection::schedules_projection());
 
     // Test-only: register capture handler when sink is provided
     if let Some(sink) = capture_sink {
@@ -235,6 +236,7 @@ pub fn build_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgr
     engine = engine.with_projection(projection::runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
     engine = engine.with_projection(projection::scheduled_scrapes_projection());
+    engine = engine.with_projection(projection::schedules_projection());
 
     if let Some(sink) = capture_sink {
         engine = engine.with_reactor(projection::capture_handler(sink));
@@ -337,6 +339,7 @@ pub fn build_infra_only_engine(
         .with_projection(projection::runs_projection())
         .with_projection(projection::system_log_projection())
         .with_projection(projection::scheduled_scrapes_projection())
+        .with_projection(projection::schedules_projection())
 }
 
 /// Build a news-scan engine: NewsScanRequested → scan RSS → extract signals.
@@ -381,6 +384,7 @@ pub fn build_news_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<Postgre
     engine = engine.with_projection(projection::runs_projection());
     engine = engine.with_projection(projection::system_log_projection());
     engine = engine.with_projection(projection::scheduled_scrapes_projection());
+    engine = engine.with_projection(projection::schedules_projection());
 
     if let Some(sink) = capture_sink {
         engine = engine.with_reactor(projection::capture_handler(sink));
