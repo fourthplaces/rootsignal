@@ -125,6 +125,7 @@ pub async fn weave_batch(
             signal_count: Some(0),
             narrative_embedding: Some(narrative_emb),
             causal_embedding: Some(causal_emb),
+            briefing_body: None,
         });
         stats.situations_created += 1;
     }

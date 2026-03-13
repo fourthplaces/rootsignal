@@ -1524,6 +1524,7 @@ pub struct SituationNode {
     pub last_updated: DateTime<Utc>,
     pub sensitivity: SensitivityLevel,
     pub category: Option<String>,
+    pub briefing_body: Option<String>,
 }
 
 /// An atomic dispatch in a situation's living narrative thread.

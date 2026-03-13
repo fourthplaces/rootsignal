@@ -1164,6 +1164,7 @@ export const SITUATION_DETAIL = gql`
       lastUpdated
       sensitivity
       category
+      briefingBody
       dispatches(limit: 100) {
         id
         body
@@ -1174,6 +1175,9 @@ export const SITUATION_DETAIL = gql`
         flaggedForReview
         flagReason
         fidelityScore
+      }
+      signals(limit: 50) {
+        ${SIGNAL_FIELDS}
       }
     }
   }

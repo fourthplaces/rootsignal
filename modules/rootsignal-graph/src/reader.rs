@@ -37,6 +37,17 @@ fn bbox_exists(node_var: &str) -> String {
     )
 }
 
+/// Lightweight signal group data for the graph explorer.
+pub struct SignalGroupGraphItem {
+    pub id: Uuid,
+    pub label: String,
+    pub created_at: String,
+    pub member_count: u32,
+    pub centroid_lat: Option<f64>,
+    pub centroid_lng: Option<f64>,
+    pub woven_situation_id: Option<Uuid>,
+}
+
 /// Read-only wrapper for the graph. Used by the web server.
 /// Enforces sensitivity-based coordinate fuzzing, confidence thresholds,
 /// freshness filtering, and corroboration requirements for sensitive signals.
@@ -2425,6 +2436,77 @@ impl PublicGraphReader {
         Ok(results)
     }
 
+    /// Fetch all signal groups with centroid coordinates derived from member signals.
+    pub async fn signal_groups_with_centroids(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<SignalGroupGraphItem>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(
+            "MATCH (g:SignalGroup)
+             OPTIONAL MATCH (sig)-[:MEMBER_OF]->(g)
+             WITH g,
+                  count(sig) AS member_count,
+                  avg(sig.lat) AS centroid_lat,
+                  avg(sig.lng) AS centroid_lng
+             OPTIONAL MATCH (g)-[:WOVEN_INTO]->(sit:Situation)
+             RETURN g.id AS id, g.label AS label,
+                    toString(g.created_at) AS created_at,
+                    member_count, centroid_lat, centroid_lng,
+                    sit.id AS woven_situation_id
+             ORDER BY member_count DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let Ok(id) = Uuid::parse_str(&id_str) else { continue };
+            let woven_str: Option<String> = row.get("woven_situation_id").ok();
+            results.push(SignalGroupGraphItem {
+                id,
+                label: row.get("label").unwrap_or_default(),
+                created_at: row.get("created_at").unwrap_or_default(),
+                member_count: row.get::<i64>("member_count").unwrap_or(0) as u32,
+                centroid_lat: row.get("centroid_lat").ok(),
+                centroid_lng: row.get("centroid_lng").ok(),
+                woven_situation_id: woven_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            });
+        }
+        Ok(results)
+    }
+
+    /// Fetch MEMBER_OF edges between signals and signal groups.
+    pub async fn signal_group_member_edges(
+        &self,
+        group_ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, Uuid)>, neo4rs::Error> {
+        if group_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let g = &self.client;
+        let id_strings: Vec<String> = group_ids.iter().map(|id| id.to_string()).collect();
+        let q = query(
+            "MATCH (sig)-[:MEMBER_OF]->(g:SignalGroup)
+             WHERE g.id IN $group_ids
+             RETURN sig.id AS signal_id, g.id AS group_id",
+        )
+        .param("group_ids", id_strings);
+
+        let mut edges = Vec::new();
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let sid_str: String = row.get("signal_id").unwrap_or_default();
+            let gid_str: String = row.get("group_id").unwrap_or_default();
+            if let (Ok(sid), Ok(gid)) = (Uuid::parse_str(&sid_str), Uuid::parse_str(&gid_str)) {
+                edges.push((sid, gid));
+            }
+        }
+        Ok(edges)
+    }
+
     /// Fetch dispatches for a situation, ordered by creation time.
     pub async fn dispatches_for_situation(
         &self,
@@ -2531,6 +2613,51 @@ impl PublicGraphReader {
         Ok(results)
     }
 
+    /// Fetch member signals assigned to a situation (via PART_OF edges).
+    /// Returns full typed signal nodes for CTA cards on the situation page.
+    pub async fn signals_for_situation(
+        &self,
+        situation_id: &Uuid,
+        limit: u32,
+    ) -> Result<Vec<Node>, neo4rs::Error> {
+        let all_types = [
+            NodeType::Gathering,
+            NodeType::Resource,
+            NodeType::HelpRequest,
+            NodeType::Announcement,
+            NodeType::Concern,
+            NodeType::Condition,
+        ];
+
+        let branches: Vec<String> = all_types
+            .iter()
+            .map(|nt| {
+                let label = node_type_label(*nt);
+                format!(
+                    "MATCH (n:{label})-[:PART_OF]->(s:Situation {{id: $id}})
+                     RETURN n, labels(n)[0] AS node_label
+                     ORDER BY n.extracted_at DESC
+                     LIMIT $limit"
+                )
+            })
+            .collect();
+
+        let cypher = branches.join("\nUNION ALL\n");
+
+        let q = query(&cypher)
+            .param("id", situation_id.to_string())
+            .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = self.client.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            if let Some(node) = row_to_node_by_label(&row) {
+                results.push(node);
+            }
+        }
+        Ok(results)
+    }
+
     /// Return all edges connected to a node as (direction, edge_type, other_label) tuples.
     pub async fn edges_for_node(
         &self,
@@ -2604,6 +2731,7 @@ fn row_to_situation(row: &neo4rs::Row, key: &str) -> Option<rootsignal_common::S
     };
 
     let category: Option<String> = n.get("category").ok().filter(|s: &String| !s.is_empty());
+    let briefing_body: Option<String> = n.get("briefing_body").ok().filter(|s: &String| !s.is_empty());
 
     Some(rootsignal_common::SituationNode {
         id,
@@ -2628,6 +2756,7 @@ fn row_to_situation(row: &neo4rs::Row, key: &str) -> Option<rootsignal_common::S
         last_updated,
         sensitivity,
         category,
+        briefing_body,
     })
 }
 

@@ -522,6 +522,85 @@ impl CachedReader {
             }
         }
 
+        // --- Collect signal groups (clusters) --- queried from Neo4j, not cached
+        let want_groups = type_set.contains("SignalGroup");
+        let mut group_ids: Vec<Uuid> = Vec::new();
+        if want_groups {
+            let groups = self.neo4j_reader.signal_groups_with_centroids(500).await?;
+            for group in &groups {
+                if has_bounds {
+                    if let (Some(lat), Some(lng)) = (group.centroid_lat, group.centroid_lng) {
+                        if lat < min_lat.unwrap()
+                            || lat > max_lat.unwrap()
+                            || lng < min_lng.unwrap()
+                            || lng > max_lng.unwrap()
+                        {
+                            continue;
+                        }
+                    }
+                }
+
+                total_count += 1;
+                if nodes.len() < limit as usize {
+                    group_ids.push(group.id);
+                    nodes.push(GraphNodeItem {
+                        id: group.id,
+                        node_type: "SignalGroup".to_string(),
+                        label: group.label.clone(),
+                        lat: group.centroid_lat,
+                        lng: group.centroid_lng,
+                        confidence: None,
+                        metadata: serde_json::json!({
+                            "memberCount": group.member_count,
+                            "createdAt": group.created_at,
+                            "wovenSituationId": group.woven_situation_id.map(|id| id.to_string()),
+                        })
+                        .to_string(),
+                    });
+                    node_ids.insert(group.id);
+                }
+            }
+        }
+
+        // --- Collect situations --- queried from Neo4j, not cached
+        if type_set.contains("Situation") {
+            let situations = self.neo4j_reader.situations(500).await?;
+            for sit in &situations {
+                if has_bounds {
+                    if let (Some(lat), Some(lng)) = (sit.centroid_lat, sit.centroid_lng) {
+                        if lat < min_lat.unwrap()
+                            || lat > max_lat.unwrap()
+                            || lng < min_lng.unwrap()
+                            || lng > max_lng.unwrap()
+                        {
+                            continue;
+                        }
+                    }
+                }
+
+                total_count += 1;
+                if nodes.len() < limit as usize {
+                    nodes.push(GraphNodeItem {
+                        id: sit.id,
+                        node_type: "Situation".to_string(),
+                        label: sit.headline.clone(),
+                        lat: sit.centroid_lat,
+                        lng: sit.centroid_lng,
+                        confidence: None,
+                        metadata: serde_json::json!({
+                            "arc": format!("{:?}", sit.arc),
+                            "temperature": sit.temperature,
+                            "signalCount": sit.signal_count,
+                            "dispatchCount": sit.dispatch_count,
+                            "locationName": sit.location_name,
+                        })
+                        .to_string(),
+                    });
+                    node_ids.insert(sit.id);
+                }
+            }
+        }
+
         // --- Extract edges where both endpoints are in node_ids ---
         let mut edges: Vec<GraphEdgeItem> = Vec::new();
 
@@ -604,6 +683,38 @@ impl CachedReader {
                     target_id: loc_id,
                     edge_type: le.edge_type.clone(),
                 });
+            }
+        }
+
+        // Signal → SignalGroup (MemberOf) + SignalGroup → Situation (WovenInto)
+        if want_groups && !group_ids.is_empty() {
+            let member_edges = self.neo4j_reader.signal_group_member_edges(&group_ids).await?;
+            for (signal_id, group_id) in member_edges {
+                if node_ids.contains(&signal_id) && node_ids.contains(&group_id) {
+                    edges.push(GraphEdgeItem {
+                        source_id: signal_id,
+                        target_id: group_id,
+                        edge_type: "MemberOf".to_string(),
+                    });
+                }
+            }
+
+            // WovenInto edges from visible groups to visible situations
+            for node in &nodes {
+                if node.node_type == "SignalGroup" {
+                    let meta: serde_json::Value = serde_json::from_str(&node.metadata).unwrap_or_default();
+                    if let Some(sit_id_str) = meta["wovenSituationId"].as_str() {
+                        if let Ok(sit_id) = Uuid::parse_str(sit_id_str) {
+                            if node_ids.contains(&sit_id) {
+                                edges.push(GraphEdgeItem {
+                                    source_id: node.id,
+                                    target_id: sit_id,
+                                    edge_type: "WovenInto".to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
 

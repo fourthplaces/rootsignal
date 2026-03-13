@@ -406,6 +406,7 @@ async fn source_boost_replay_does_not_compound_weight() {
                     signal_count: None,
                     narrative_embedding: None,
                     causal_embedding: None,
+                    briefing_body: None,
                 }),
             ),
             stored(

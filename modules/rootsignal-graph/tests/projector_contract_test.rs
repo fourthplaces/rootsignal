@@ -786,6 +786,7 @@ fn build_all_events() -> Vec<Event> {
             signal_count: None,
             narrative_embedding: None,
             causal_embedding: None,
+            briefing_body: None,
         }),
         Event::System(SystemEvent::SituationChanged {
             situation_id: id,

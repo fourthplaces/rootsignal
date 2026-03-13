@@ -1673,6 +1673,7 @@ impl GraphProjector {
                 signal_count,
                 narrative_embedding,
                 causal_embedding,
+                briefing_body,
             } => {
                 let q = query(
                     "MERGE (s:Situation {id: $id})
@@ -1731,7 +1732,12 @@ impl GraphProjector {
                 if let Some(ref ce) = causal_embedding {
                     let vals: Vec<f64> = ce.iter().map(|v| *v as f64).collect();
                     let q = query("MATCH (s:Situation {id: $id}) SET s.causal_embedding = $v")
-                        .param("id", id_str).param("v", vals);
+                        .param("id", id_str.clone()).param("v", vals);
+                    ops.push(Op::Run(q));
+                }
+                if let Some(ref bb) = briefing_body {
+                    let q = query("MATCH (s:Situation {id: $id}) SET s.briefing_body = $v")
+                        .param("id", id_str).param("v", bb.as_str());
                     ops.push(Op::Run(q));
                 }
 

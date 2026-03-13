@@ -14,6 +14,8 @@ const TYPE_COLORS: Record<string, string> = {
   Actor: "#ec4899",
   Location: "#14b8a6",
   Citation: "#6b7280",
+  SignalGroup: "#f97316",
+  Situation: "#06b6d4",
 };
 
 type GraphMapNode = {
@@ -163,6 +165,8 @@ export function GraphMap({
             "Concern", TYPE_COLORS.Concern!,
             "Actor", TYPE_COLORS.Actor!,
             "Location", TYPE_COLORS.Location!,
+            "SignalGroup", TYPE_COLORS.SignalGroup!,
+            "Situation", TYPE_COLORS.Situation!,
             "#6b7280",
           ],
           "circle-radius": 7,

@@ -17,6 +17,7 @@ use crate::infra::embedder::TextEmbedder;
 struct ClusterNarrative {
     headline: String,
     lede: String,
+    briefing_body: String,
     structured_state: serde_json::Value,
 }
 
@@ -26,8 +27,8 @@ struct DeltaDispatch {
 }
 
 const SYSTEM_PROMPT: &str = "\
-You are a local-news analyst. Given a cluster label and member signals, \
-produce a concise situation summary.";
+You are a caring neighbor briefing your community about a developing local situation. \
+Write in a warm, direct, action-oriented tone. No bureaucratic language.";
 
 fn build_first_weave_prompt(label: &str, signals: &[WeaveSignal]) -> String {
     let signal_list: Vec<String> = signals
@@ -41,6 +42,12 @@ fn build_first_weave_prompt(label: &str, signals: &[WeaveSignal]) -> String {
          Produce JSON with:\n\
          - \"headline\": one sentence capturing the situation\n\
          - \"lede\": 2-3 sentences of context\n\
+         - \"briefing_body\": a 3-5 paragraph narrative in markdown covering:\n\
+           1. What's happening (the core situation)\n\
+           2. How people are responding (who's organizing, what's underway)\n\
+           3. What's needed (explicit asks — e.g. \"volunteers needed for X\")\n\
+           Write as if explaining to a neighbor. Be warm, direct, action-oriented.\n\
+           Use **bold** for key details.\n\
          - \"structured_state\": {{\"root_cause_thesis\": \"...\", \"key_actors\": [...], \"status\": \"emerging\"}}",
         count = signals.len(),
         signals = signal_list.join("\n"),
@@ -171,6 +178,7 @@ async fn first_weave(
         signal_count: Some(signals.len() as u32),
         narrative_embedding: Some(narrative_emb),
         causal_embedding,
+        briefing_body: Some(narrative.briefing_body),
     });
 
     events.push(SystemEvent::GroupWovenIntoSituation {

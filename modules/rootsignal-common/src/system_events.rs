@@ -289,6 +289,8 @@ pub enum SystemEvent {
         narrative_embedding: Option<Vec<f32>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         causal_embedding: Option<Vec<f32>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        briefing_body: Option<String>,
     },
 
     SituationChanged {

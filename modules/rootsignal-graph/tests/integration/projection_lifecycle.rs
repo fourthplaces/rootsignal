@@ -258,6 +258,7 @@ async fn situation_identified_creates_node() {
                 signal_count: Some(3),
                 narrative_embedding: None,
                 causal_embedding: None,
+                briefing_body: None,
             }),
         )],
     )
@@ -302,6 +303,7 @@ async fn signal_assigned_creates_part_of_edge() {
                     signal_count: None,
                     narrative_embedding: None,
                     causal_embedding: None,
+                    briefing_body: None,
                 }),
             ),
             stored(
@@ -368,6 +370,7 @@ async fn situation_changed_updates_properties() {
                     signal_count: None,
                     narrative_embedding: None,
                     causal_embedding: None,
+                    briefing_body: None,
                 }),
             ),
             stored(
@@ -429,6 +432,7 @@ async fn signal_assigned_twice_does_not_double_count() {
             signal_count: None,
             narrative_embedding: None,
             causal_embedding: None,
+            briefing_body: None,
         }),
     );
 
@@ -495,6 +499,7 @@ async fn dispatch_created_twice_does_not_double_count() {
             signal_count: None,
             narrative_embedding: None,
             causal_embedding: None,
+            briefing_body: None,
         }),
     );
 
@@ -679,6 +684,7 @@ async fn dispatch_created_with_edges() {
                     signal_count: None,
                     narrative_embedding: None,
                     causal_embedding: None,
+                    briefing_body: None,
                 }),
             ),
             stored(
@@ -758,6 +764,7 @@ async fn dispatch_supersedes_creates_edge() {
                     signal_count: None,
                     narrative_embedding: None,
                     causal_embedding: None,
+                    briefing_body: None,
                 }),
             ),
             stored(

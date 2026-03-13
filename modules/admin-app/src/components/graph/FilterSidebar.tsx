@@ -12,6 +12,8 @@ const NODE_TYPE_OPTIONS = [
   { key: "Actor", label: "Actor", color: "#ec4899" },
   { key: "Location", label: "Location", color: "#14b8a6" },
   { key: "Citation", label: "Citation", color: "#6b7280" },
+  { key: "SignalGroup", label: "Cluster", color: "#f97316" },
+  { key: "Situation", label: "Situation", color: "#06b6d4" },
 ] as const;
 
 type NodeMetadata = {

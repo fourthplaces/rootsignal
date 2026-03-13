@@ -1309,6 +1309,9 @@ impl GqlSituation {
     async fn category(&self) -> Option<&str> {
         self.0.category.as_deref()
     }
+    async fn briefing_body(&self) -> Option<&str> {
+        self.0.briefing_body.as_deref()
+    }
 
     async fn tags(&self, ctx: &Context<'_>) -> Result<Vec<GqlTag>> {
         let loader = ctx.data_unchecked::<DataLoader<TagsBySituationLoader>>();
@@ -1329,6 +1332,20 @@ impl GqlSituation {
             .dispatches_for_situation(&self.0.id, limit.min(100), offset)
             .await?;
         Ok(dispatches.into_iter().map(GqlDispatch).collect())
+    }
+
+    /// Member signals assigned to this situation (via PART_OF edges).
+    async fn signals(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(default = 50)] limit: u32,
+    ) -> Result<Vec<GqlSignal>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let nodes = reader
+            .signals_for_situation(&self.0.id, limit.min(100))
+            .await?;
+        Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 }
 
