@@ -400,29 +400,50 @@ impl ScoutRunner {
     }
 
     /// Cancel a running run via Postgres.
+    ///
+    /// Two-phase: cooperative cancellation for live engines, then direct
+    /// mark-as-cancelled for stuck runs whose engine already exited.
     pub async fn cancel_run(&self, run_id: &str) -> bool {
         let run_uuid = match uuid::Uuid::parse_str(run_id) {
             Ok(u) => u,
             Err(_) => return false,
         };
 
-        match sqlx::query(
+        // Phase 1: cooperative cancel — seesaw polls this table during settle()
+        let cooperative = match sqlx::query(
             "INSERT INTO seesaw_cancellations (correlation_id) VALUES ($1) ON CONFLICT DO NOTHING",
         )
         .bind(run_uuid)
         .execute(&self.deps.pg_pool)
         .await
         {
-            Ok(r) => {
-                if r.rows_affected() > 0 {
-                    info!(run_id, "Cancellation inserted");
-                    true
-                } else {
-                    false
-                }
-            }
+            Ok(r) => r.rows_affected() > 0,
             Err(e) => {
                 warn!(run_id, error = %e, "Failed to insert cancellation");
+                false
+            }
+        };
+
+        if cooperative {
+            info!(run_id, "Cancellation inserted");
+            return true;
+        }
+
+        // Phase 2: force-close stuck runs whose engine already exited
+        match sqlx::query(
+            "UPDATE runs SET cancelled_at = now(), finished_at = COALESCE(finished_at, now()) WHERE run_id = $1 AND cancelled_at IS NULL",
+        )
+        .bind(run_id)
+        .execute(&self.deps.pg_pool)
+        .await
+        {
+            Ok(r) if r.rows_affected() > 0 => {
+                info!(run_id, "Stuck run force-cancelled");
+                true
+            }
+            Ok(_) => false,
+            Err(e) => {
+                warn!(run_id, error = %e, "Failed to force-cancel run");
                 false
             }
         }
