@@ -19,6 +19,7 @@ use rootsignal_common::SourceNode;
 pub struct SignalMiniSummary {
     pub title: String,
     pub signal_type: String,
+    pub source_url: Option<String>,
 }
 
 /// Pipe-separated location edge types for Cypher MATCH patterns.
@@ -792,7 +793,7 @@ impl PublicGraphReader {
         Ok(0)
     }
 
-    /// Lightweight batch fetch: signal ID → (title, signal_type).
+    /// Lightweight batch fetch: signal ID → (title, signal_type, source_url).
     pub async fn signal_summaries_by_ids(
         &self,
         ids: &[String],
@@ -803,7 +804,8 @@ impl PublicGraphReader {
         let cypher = "UNWIND $ids AS sid
             MATCH (n) WHERE n.id = sid
               AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type";
+            OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(s:Source)
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type, s.url AS source_url";
         let q = neo4rs::query(cypher).param("ids", ids.to_vec());
         let mut stream = self.client.execute(q).await?;
         let mut map = std::collections::HashMap::new();
@@ -812,6 +814,7 @@ impl PublicGraphReader {
             map.insert(id, SignalMiniSummary {
                 title: row.get("title").unwrap_or_default(),
                 signal_type: row.get("signal_type").unwrap_or_default(),
+                source_url: row.get("source_url").ok(),
             });
         }
         Ok(map)

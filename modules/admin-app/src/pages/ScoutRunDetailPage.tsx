@@ -4,6 +4,15 @@ import { useQuery } from "@apollo/client";
 import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_OUTCOMES, ADMIN_COALESCE_RUN_OUTCOMES } from "@/graphql/queries";
 import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 
+const SIGNAL_TYPE_COLORS: Record<string, string> = {
+  Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  Resource: "bg-green-500/10 text-green-400 border-green-500/20",
+  HelpRequest: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  Announcement: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  Concern: "bg-red-500/10 text-red-400 border-red-500/20",
+  Condition: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+};
+
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline break-all">
@@ -283,7 +292,10 @@ function CoalesceOutcomes({ runId }: { runId: string }) {
                 <Link to={`/signals/${row.signalId}`} className="text-blue-400 hover:underline">{v ?? "untitled"}</Link>
               )},
               { key: "signalType", label: "Type", render: (v: string) => v ? (
-                <span className="px-2 py-0.5 rounded text-xs border border-border bg-muted">{v}</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs border ${SIGNAL_TYPE_COLORS[v] ?? "bg-muted text-muted-foreground border-border"}`}>{v}</span>
+              ) : null },
+              { key: "sourceUrl", label: "Source", render: (v: string) => v ? (
+                <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink>
               ) : null },
               { key: "groupLabel", label: "Group" },
               { key: "confidence", label: "Confidence", render: (v: number) => `${(v * 100).toFixed(0)}%` },

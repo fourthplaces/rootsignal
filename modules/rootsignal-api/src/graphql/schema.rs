@@ -2727,6 +2727,7 @@ struct OutcomeSignalGrouped {
     confidence: f64,
     signal_title: Option<String>,
     signal_type: Option<String>,
+    source_url: Option<String>,
     group_label: Option<String>,
 }
 
@@ -2843,6 +2844,7 @@ impl CoalesceRunOutcomes {
                     confidence: json_f64(&r.data, "confidence").unwrap_or(0.0),
                     signal_title: info.map(|i| i.title.clone()),
                     signal_type: info.map(|i| i.signal_type.clone()),
+                    source_url: info.and_then(|i| i.source_url.clone()),
                     group_label: group_labels.get(&gid).cloned(),
                     group_id: gid,
                 }

@@ -514,7 +514,7 @@ export const ADMIN_COALESCE_RUN_OUTCOMES = gql`
         total
       }
       signalsGrouped(limit: 100) {
-        items { signalId groupId confidence signalTitle signalType groupLabel }
+        items { signalId groupId confidence signalTitle signalType sourceUrl groupLabel }
         total
       }
       groupsRefined(limit: 50) {
