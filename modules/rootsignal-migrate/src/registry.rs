@@ -49,5 +49,6 @@ pub fn migrations() -> Vec<Migration> {
         sql("043_schedules",                     include_str!("../migrations/043_schedules.sql")),
         sql("044_runs_busy_check_index",         include_str!("../migrations/044_runs_busy_check_index.sql")),
         data("045_backfill_region_discovered", backfill_region_discovered::plan, backfill_region_discovered::run),
+        sql("046_schedule_backoff",              include_str!("../migrations/046_schedule_backoff.sql")),
     ]
 }

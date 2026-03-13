@@ -143,7 +143,7 @@ function InlineCadenceEditor({
   );
 }
 
-function AddScheduleRow({
+function AddScheduleButton({
   entityType,
   entityId,
   regionId,
@@ -167,19 +167,15 @@ function AddScheduleRow({
     (f) => !existingFlowTypes.has(f.key)
   );
 
-  if (!open) {
-    return availableFlows.length > 0 ? (
-      <button
-        onClick={() => {
-          setFlowType(availableFlows[0]!.key);
-          setOpen(true);
-        }}
-        className="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-      >
-        + Add
-      </button>
-    ) : null;
-  }
+  if (availableFlows.length === 0) return null;
+
+  const handleOpen = () => {
+    setFlowType(availableFlows[0]!.key);
+    setCadenceValue(24);
+    setCadenceUnit(3600);
+    setChain(false);
+    setOpen(true);
+  };
 
   const handleCreate = async () => {
     await createSchedule({
@@ -191,62 +187,92 @@ function AddScheduleRow({
       },
     });
     setOpen(false);
-    setChain(false);
     onCreated();
   };
 
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <select
-        value={flowType}
-        onChange={(e) => setFlowType(e.target.value)}
-        className="px-2 py-1 rounded-md border border-input bg-background text-xs"
+    <>
+      <button
+        onClick={handleOpen}
+        className="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
       >
-        {availableFlows.map((f) => (
-          <option key={f.key} value={f.key}>{f.label}</option>
-        ))}
-      </select>
-      <input
-        type="number"
-        min={1}
-        value={cadenceValue}
-        onChange={(e) => setCadenceValue(Number(e.target.value))}
-        className="w-16 px-2 py-1 rounded-md border border-input bg-background text-xs tabular-nums"
-      />
-      <select
-        value={cadenceUnit}
-        onChange={(e) => setCadenceUnit(Number(e.target.value))}
-        className="px-2 py-1 rounded-md border border-input bg-background text-xs"
-      >
-        {CADENCE_UNITS.map((u) => (
-          <option key={u.seconds} value={u.seconds}>{u.label}</option>
-        ))}
-      </select>
-      {entityType === "region" && (
-        <label className="flex items-center gap-1 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={chain}
-            onChange={(e) => setChain(e.target.checked)}
-            className="rounded border-input"
-          />
-          Chain
-        </label>
+        + Add
+      </button>
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
+          onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}
+        >
+          <div className="w-80 rounded-lg border border-border bg-background p-5 shadow-xl space-y-4">
+            <h4 className="text-sm font-medium">Add Schedule</h4>
+
+            <label className="block space-y-1">
+              <span className="text-xs text-muted-foreground">Flow type</span>
+              <select
+                value={flowType}
+                onChange={(e) => setFlowType(e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-sm"
+              >
+                {availableFlows.map((f) => (
+                  <option key={f.key} value={f.key}>{f.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block space-y-1">
+              <span className="text-xs text-muted-foreground">Cadence</span>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={cadenceValue}
+                  onChange={(e) => setCadenceValue(Number(e.target.value))}
+                  className="w-20 px-2.5 py-1.5 rounded-md border border-input bg-background text-sm tabular-nums"
+                />
+                <select
+                  value={cadenceUnit}
+                  onChange={(e) => setCadenceUnit(Number(e.target.value))}
+                  className="flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-sm"
+                >
+                  {CADENCE_UNITS.map((u) => (
+                    <option key={u.seconds} value={u.seconds}>{u.label}</option>
+                  ))}
+                </select>
+              </div>
+            </label>
+
+            {entityType === "region" && (
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={chain}
+                  onChange={(e) => setChain(e.target.checked)}
+                  className="rounded border-input"
+                />
+                Chain subsequent flows
+              </label>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setOpen(false)}
+                className="text-xs px-3 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={loading}
+                className="text-xs px-3 py-1.5 rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
+              >
+                {loading ? "Creating..." : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
-      <button
-        onClick={handleCreate}
-        disabled={loading}
-        className="text-xs px-2.5 py-1 rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
-      >
-        {loading ? "Creating..." : "Create"}
-      </button>
-      <button
-        onClick={() => setOpen(false)}
-        className="text-xs px-2 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground"
-      >
-        Cancel
-      </button>
-    </div>
+    </>
   );
 }
 
@@ -369,7 +395,7 @@ export function SchedulesPanel({
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">Schedules</h3>
-        <AddScheduleRow
+        <AddScheduleButton
           entityType={entityType}
           entityId={entityId}
           regionId={regionId}

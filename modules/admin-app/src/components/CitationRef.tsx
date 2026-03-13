@@ -16,7 +16,6 @@ export function CitationRef(props: JSX.IntrinsicElements["span"] & { kind?: stri
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
 
-  // Close on click outside
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -53,6 +52,7 @@ export function CitationRef(props: JSX.IntrinsicElements["span"] & { kind?: stri
 
   const { number, signal } = entry;
   const typeLabel = TYPE_LABELS[signal.__typename] ?? "Signal";
+  const sourceUrl = signal.actionUrl || signal.url;
 
   return (
     <span ref={ref} className="relative inline" {...rest}>
@@ -77,9 +77,9 @@ export function CitationRef(props: JSX.IntrinsicElements["span"] & { kind?: stri
               {signal.summary}
             </span>
           )}
-          {signal.actionUrl && (
+          {sourceUrl && (
             <a
-              href={signal.actionUrl}
+              href={sourceUrl}
               target="_blank"
               rel="noreferrer"
               className="text-blue-400 hover:underline text-[11px]"

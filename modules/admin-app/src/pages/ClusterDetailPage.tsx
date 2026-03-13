@@ -1,10 +1,78 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
-import { ADMIN_CLUSTER_DETAIL } from "@/graphql/queries";
+import { ADMIN_CLUSTER_DETAIL, ADMIN_SCOUT_RUNS } from "@/graphql/queries";
 import { WEAVE_CLUSTER, FEED_GROUP } from "@/graphql/mutations";
 import { DataTable, type Column } from "@/components/DataTable";
 import { SchedulesPanel } from "@/components/SchedulesPanel";
+
+const formatDate = (d: string) =>
+  new Date(d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const STATUS_COLORS: Record<string, string> = {
+  running: "text-amber-400",
+  completed: "text-green-400",
+  failed: "text-red-400",
+  cancelled: "text-muted-foreground",
+};
+
+type ClusterRun = {
+  runId: string;
+  flowType: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  status: string;
+  parentRunId: string | null;
+};
+
+const runColumns: Column<ClusterRun>[] = [
+  {
+    key: "runId",
+    label: "Run",
+    render: (r) => (
+      <Link to={`/workflows/${r.runId}`} className="text-blue-400 hover:underline font-mono text-xs">
+        {r.runId.slice(0, 8)}
+      </Link>
+    ),
+  },
+  {
+    key: "flowType",
+    label: "Flow",
+    render: (r) =>
+      r.flowType ? (
+        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{r.flowType}</span>
+      ) : null,
+  },
+  {
+    key: "startedAt",
+    label: "Started",
+    render: (r) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(r.startedAt)}</span>,
+  },
+  {
+    key: "status",
+    label: "Status",
+    render: (r) => (
+      <span className={`text-xs ${STATUS_COLORS[r.status] ?? "text-muted-foreground"}`}>
+        {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
+      </span>
+    ),
+  },
+  {
+    key: "chain",
+    label: "Chain",
+    render: (r) =>
+      r.parentRunId ? (
+        <Link to={`/workflows/${r.parentRunId}`} className="text-blue-400 hover:underline font-mono text-xs" title="Parent run">
+          {r.parentRunId.slice(0, 8)}
+        </Link>
+      ) : null,
+  },
+];
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
   Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -74,6 +142,10 @@ export function ClusterDetailPage() {
   const [feed, { loading: feeding }] = useMutation(FEED_GROUP);
   const [weaveMsg, setWeaveMsg] = useState<string | null>(null);
   const [feedMsg, setFeedMsg] = useState<string | null>(null);
+  const { data: runsData, loading: runsLoading } = useQuery(ADMIN_SCOUT_RUNS, {
+    variables: { region: id, limit: 20 },
+  });
+  const runs: ClusterRun[] = runsData?.adminRuns ?? [];
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
@@ -162,6 +234,18 @@ export function ClusterDetailPage() {
 
       {/* Schedules */}
       <SchedulesPanel entityType="cluster" entityId={id!} />
+
+      {/* Runs */}
+      <div>
+        <h2 className="text-sm font-medium mb-3">Runs</h2>
+        <DataTable<ClusterRun>
+          columns={runColumns}
+          data={runs}
+          getRowKey={(r: ClusterRun) => r.runId}
+          loading={runsLoading}
+          emptyMessage="No runs for this cluster yet."
+        />
+      </div>
 
       {/* Members table */}
       <div>

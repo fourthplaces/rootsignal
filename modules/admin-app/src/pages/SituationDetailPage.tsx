@@ -5,6 +5,9 @@ import { DataTable, type Column } from "@/components/DataTable";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
+import remarkAnnotations from "@/lib/remarkAnnotations";
+import { CitationProvider, useCitations } from "@/components/CitationContext";
+import { CitationRef } from "@/components/CitationRef";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -160,6 +163,22 @@ const briefingComponents: Components = {
   blockquote: ({ children }) => <blockquote className="border-l-2 border-border pl-3 my-3 text-muted-foreground italic text-sm">{children}</blockquote>,
   hr: () => <hr className="my-5 border-border" />,
 };
+
+const annotatedBriefingComponents: Components & Record<string, unknown> = {
+  ...briefingComponents,
+  citation: CitationRef,
+};
+
+function SynthesisIndicator() {
+  const { totalCitations, totalSources } = useCitations();
+  if (totalCitations === 0) return null;
+  return (
+    <p className="text-[11px] text-muted-foreground mb-3">
+      Synthesized from {totalCitations} signal{totalCitations !== 1 ? "s" : ""}
+      {totalSources > 0 && <> across {totalSources} source{totalSources !== 1 ? "s" : ""}</>}
+    </p>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -385,11 +404,14 @@ export function SituationDetailPage() {
 
       {/* Briefing narrative */}
       {s.briefingBody ? (
-        <div className="rounded-lg border border-border p-5">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={briefingComponents}>
-            {s.briefingBody}
-          </ReactMarkdown>
-        </div>
+        <CitationProvider signals={signals} briefingBody={s.briefingBody}>
+          <div className="rounded-lg border border-border p-5">
+            <SynthesisIndicator />
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkAnnotations]} components={annotatedBriefingComponents}>
+              {s.briefingBody}
+            </ReactMarkdown>
+          </div>
+        </CitationProvider>
       ) : (
         <div className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground">
           <p>{s.lede}</p>
