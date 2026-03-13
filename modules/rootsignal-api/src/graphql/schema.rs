@@ -892,6 +892,16 @@ impl QueryRoot {
         Ok(ScoutRunOutcomes { run_id })
     }
 
+    /// Get outcome-focused data for a coalesce run (groups created, signals grouped, refinements).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_coalesce_run_outcomes(
+        &self,
+        _ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<CoalesceRunOutcomes> {
+        Ok(CoalesceRunOutcomes { run_id })
+    }
+
     /// List scheduled scrapes (pending or recent).
     #[graphql(guard = "AdminGuard")]
     async fn admin_scheduled_scrapes(
@@ -2696,6 +2706,194 @@ impl ScoutRunOutcomes {
             items,
             total: count_handler + count_fetch + count_extract,
         })
+    }
+}
+
+// ========== Coalesce Run Outcomes (lazy field resolvers) ==========
+
+#[derive(SimpleObject)]
+struct OutcomeGroupCreated {
+    group_id: String,
+    label: String,
+    queries: Vec<String>,
+    seed_signal_id: Option<String>,
+    member_count: i64,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeSignalGrouped {
+    signal_id: String,
+    group_id: String,
+    confidence: f64,
+    signal_title: Option<String>,
+    signal_type: Option<String>,
+    group_label: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeGroupRefined {
+    group_id: String,
+    queries: Vec<String>,
+    group_label: Option<String>,
+}
+
+#[derive(SimpleObject)]
+#[graphql(concrete(name = "OutcomePageGroupCreated", params(OutcomeGroupCreated)))]
+#[graphql(concrete(name = "OutcomePageSignalGrouped", params(OutcomeSignalGrouped)))]
+#[graphql(concrete(name = "OutcomePageGroupRefined", params(OutcomeGroupRefined)))]
+struct CoalesceOutcomePage<T: async_graphql::OutputType> {
+    items: Vec<T>,
+    total: i64,
+}
+
+struct CoalesceRunOutcomes {
+    run_id: String,
+}
+
+#[Object]
+impl CoalesceRunOutcomes {
+    async fn groups_created(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<CoalesceOutcomePage<OutcomeGroupCreated>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "group_created")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "group_created", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Count members per group from signal_added_to_group events in this run
+        let member_rows = list_events_by_variant(pool, &self.run_id, "signal_added_to_group", 500)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let mut member_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for r in &member_rows {
+            if let Some(gid) = json_str(&r.data, "group_id") {
+                *member_counts.entry(gid).or_default() += 1;
+            }
+        }
+
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                let gid = json_str(&r.data, "group_id").unwrap_or_default();
+                let queries = r.data.get("queries")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                OutcomeGroupCreated {
+                    member_count: member_counts.get(&gid).copied().unwrap_or(0),
+                    group_id: gid,
+                    label: json_str(&r.data, "label").unwrap_or_default(),
+                    queries,
+                    seed_signal_id: json_str(&r.data, "seed_signal_id"),
+                }
+            })
+            .collect();
+        Ok(CoalesceOutcomePage { items, total })
+    }
+
+    async fn signals_grouped(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<CoalesceOutcomePage<OutcomeSignalGrouped>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(100).min(500) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "signal_added_to_group")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "signal_added_to_group", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Build group_id → label lookup from group_created events in same run
+        let group_rows = list_events_by_variant(pool, &self.run_id, "group_created", 200)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let group_labels: std::collections::HashMap<String, String> = group_rows
+            .iter()
+            .filter_map(|r| {
+                let gid = json_str(&r.data, "group_id")?;
+                let label = json_str(&r.data, "label")?;
+                Some((gid, label))
+            })
+            .collect();
+
+        // Fetch signal titles from Neo4j
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let signal_ids: Vec<String> = rows.iter()
+            .filter_map(|r| json_str(&r.data, "signal_id"))
+            .collect();
+        let signal_info = reader.signal_summaries_by_ids(&signal_ids).await.unwrap_or_default();
+
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                let sid = json_str(&r.data, "signal_id").unwrap_or_default();
+                let gid = json_str(&r.data, "group_id").unwrap_or_default();
+                let info = signal_info.get(&sid);
+                OutcomeSignalGrouped {
+                    signal_id: sid,
+                    confidence: json_f64(&r.data, "confidence").unwrap_or(0.0),
+                    signal_title: info.map(|i| i.title.clone()),
+                    signal_type: info.map(|i| i.signal_type.clone()),
+                    group_label: group_labels.get(&gid).cloned(),
+                    group_id: gid,
+                }
+            })
+            .collect();
+        Ok(CoalesceOutcomePage { items, total })
+    }
+
+    async fn groups_refined(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<CoalesceOutcomePage<OutcomeGroupRefined>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "group_queries_refined")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "group_queries_refined", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Lookup group labels from group_created events
+        let group_rows = list_events_by_variant(pool, &self.run_id, "group_created", 200)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let group_labels: std::collections::HashMap<String, String> = group_rows
+            .iter()
+            .filter_map(|r| {
+                let gid = json_str(&r.data, "group_id")?;
+                let label = json_str(&r.data, "label")?;
+                Some((gid, label))
+            })
+            .collect();
+
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                let gid = json_str(&r.data, "group_id").unwrap_or_default();
+                let queries = r.data.get("queries")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                OutcomeGroupRefined {
+                    group_label: group_labels.get(&gid).cloned(),
+                    group_id: gid,
+                    queries,
+                }
+            })
+            .collect();
+        Ok(CoalesceOutcomePage { items, total })
     }
 }
 

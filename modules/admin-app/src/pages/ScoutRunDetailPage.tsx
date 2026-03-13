@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery } from "@apollo/client";
-import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_OUTCOMES } from "@/graphql/queries";
+import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_OUTCOMES, ADMIN_COALESCE_RUN_OUTCOMES } from "@/graphql/queries";
 import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -74,6 +74,251 @@ function ShowingCount({ shown, total }: { shown: number; total: number }) {
   return <p className="text-xs text-muted-foreground mt-1">Showing {shown} of {total}</p>;
 }
 
+// ─── Scout outcomes ─────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ScoutOutcomes({ runId, stats }: { runId: string; stats: any }) {
+  const { data: outcomesData, loading } = useQuery(ADMIN_SCOUT_RUN_OUTCOMES, {
+    variables: { runId },
+  });
+  const outcomes = outcomesData?.adminScoutRunOutcomes;
+
+  return (
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+        <StatCard label="URLs Scraped" value={stats.urlsScraped} />
+        <StatCard label="Signals Extracted" value={stats.signalsExtracted} />
+        <StatCard label="Signals Stored" value={stats.signalsStored} />
+        <StatCard label="Deduplicated" value={stats.signalsDeduplicated} />
+        <StatCard label="Sources Discovered" value={stats.expansionSourcesCreated} />
+        <StatCard label="Expansion Queries" value={stats.expansionQueriesCollected} />
+        {stats.handlerFailures > 0 && (
+          <StatCard label="Failures" value={stats.handlerFailures} warn />
+        )}
+      </div>
+
+      {loading ? (
+        <p className="text-muted-foreground text-sm">Loading outcomes...</p>
+      ) : outcomes ? (
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <SectionHeader title="Sources Scraped" total={outcomes.sourcesScraped.total} />
+            <OutcomeTable
+              columns={[
+                { key: "canonicalKey", label: "Source", render: (v: string, row: { sourceId: string }) =>
+                  row.sourceId
+                    ? <Link to={`/sources/${row.sourceId}`} className="text-blue-400 hover:underline font-mono">{truncate(v, 60)}</Link>
+                    : <span className="font-mono">{truncate(v, 60)}</span>
+                },
+                { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 50)}</ExternalLink> : null },
+                { key: "signalsProduced", label: "Signals" },
+              ]}
+              rows={outcomes.sourcesScraped.items}
+            />
+            <ShowingCount shown={outcomes.sourcesScraped.items.length} total={outcomes.sourcesScraped.total} />
+          </div>
+
+          <div className="space-y-2">
+            <SectionHeader title="Signals Created" total={outcomes.signalsCreated.total} />
+            <OutcomeTable
+              columns={[
+                { key: "nodeType", label: "Type", render: (v: string) => (
+                  <span className="px-2 py-0.5 rounded text-xs border border-border bg-muted">{v}</span>
+                )},
+                { key: "title", label: "Title", render: (v: string, row: { nodeId: string }) => (
+                  <Link to={`/signals/${row.nodeId}`} className="text-blue-400 hover:underline">{v ?? "untitled"}</Link>
+                )},
+                { key: "confidence", label: "Confidence", render: (v: number | null) => v != null ? `${(v * 100).toFixed(0)}%` : "" },
+                { key: "url", label: "Source", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+              ]}
+              rows={outcomes.signalsCreated.items}
+            />
+            <ShowingCount shown={outcomes.signalsCreated.items.length} total={outcomes.signalsCreated.total} />
+          </div>
+
+          {outcomes.dedupMatches.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Dedup Matches" total={outcomes.dedupMatches.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "nodeType", label: "Type" },
+                  { key: "title", label: "Title" },
+                  { key: "similarity", label: "Similarity", render: (v: number | null) => v != null ? `${(v * 100).toFixed(0)}%` : "" },
+                  { key: "existingId", label: "Existing Signal", render: (v: string) => v ? (
+                    <Link to={`/signals/${v}`} className="text-blue-400 hover:underline font-mono text-xs">{v.slice(0, 8)}</Link>
+                  ) : null },
+                ]}
+                rows={outcomes.dedupMatches.items}
+              />
+              <ShowingCount shown={outcomes.dedupMatches.items.length} total={outcomes.dedupMatches.total} />
+            </div>
+          )}
+
+          {outcomes.rejections.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Rejections" total={outcomes.rejections.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "title", label: "Title" },
+                  { key: "reason", label: "Reason", render: (v: string) => <span className="text-red-400">{v}</span> },
+                ]}
+                rows={outcomes.rejections.items}
+              />
+              <ShowingCount shown={outcomes.rejections.items.length} total={outcomes.rejections.total} />
+            </div>
+          )}
+
+          {outcomes.sourcesDiscovered.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Sources Discovered" total={outcomes.sourcesDiscovered.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "canonicalKey", label: "Source", render: (v: string, row: { sourceId: string }) =>
+                    row.sourceId
+                      ? <Link to={`/sources/${row.sourceId}`} className="text-blue-400 hover:underline font-mono">{truncate(v, 50)}</Link>
+                      : <span className="font-mono">{truncate(v, 50)}</span>
+                  },
+                  { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+                  { key: "discoveryMethod", label: "Method" },
+                  { key: "gapContext", label: "Gap Context", render: (v: string) => v ? <span className="text-muted-foreground">{truncate(v, 40)}</span> : null },
+                ]}
+                rows={outcomes.sourcesDiscovered.items}
+              />
+              <ShowingCount shown={outcomes.sourcesDiscovered.items.length} total={outcomes.sourcesDiscovered.total} />
+            </div>
+          )}
+
+          {outcomes.expansionQueries.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Expansion Queries" total={outcomes.expansionQueries.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "query", label: "Query" },
+                  { key: "sourceUrl", label: "Source", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+                ]}
+                rows={outcomes.expansionQueries.items}
+              />
+              <ShowingCount shown={outcomes.expansionQueries.items.length} total={outcomes.expansionQueries.total} />
+            </div>
+          )}
+
+          {outcomes.failures.total > 0 && (
+            <div className="space-y-2">
+              <SectionHeader title="Failures" total={outcomes.failures.total} />
+              <OutcomeTable
+                columns={[
+                  { key: "variant", label: "Type", render: (v: string) => (
+                    <span className="px-2 py-0.5 rounded text-xs border border-red-500/30 bg-red-500/10 text-red-400">{v}</span>
+                  )},
+                  { key: "handlerId", label: "Handler", render: (v: string) => v ? <span className="font-mono">{v}</span> : null },
+                  { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
+                  { key: "error", label: "Error", render: (v: string) => <span className="text-red-400">{truncate(v, 80)}</span> },
+                ]}
+                rows={outcomes.failures.items}
+              />
+              <ShowingCount shown={outcomes.failures.items.length} total={outcomes.failures.total} />
+            </div>
+          )}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+// ─── Coalesce outcomes ──────────────────────────────────────────────
+
+function CoalesceOutcomes({ runId }: { runId: string }) {
+  const { data, loading } = useQuery(ADMIN_COALESCE_RUN_OUTCOMES, {
+    variables: { runId },
+  });
+  const outcomes = data?.adminCoalesceRunOutcomes;
+
+  if (loading) return <p className="text-muted-foreground text-sm">Loading outcomes...</p>;
+  if (!outcomes) return null;
+
+  return (
+    <div className="space-y-6">
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <StatCard label="Groups Created" value={outcomes.groupsCreated.total} />
+        <StatCard label="Signals Grouped" value={outcomes.signalsGrouped.total} />
+        <StatCard label="Groups Refined" value={outcomes.groupsRefined.total} />
+      </div>
+
+      {/* Groups Created */}
+      {outcomes.groupsCreated.total > 0 && (
+        <div className="space-y-2">
+          <SectionHeader title="Groups Created" total={outcomes.groupsCreated.total} />
+          <div className="space-y-3">
+            {outcomes.groupsCreated.items.map((g: { groupId: string; label: string; queries: string[]; seedSignalId: string | null; memberCount: number }) => (
+              <div key={g.groupId} className="rounded-lg border border-border p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium">{g.label}</h3>
+                  <span className="text-xs text-muted-foreground tabular-nums">{g.memberCount} signals</span>
+                </div>
+                {g.seedSignalId && (
+                  <p className="text-xs text-muted-foreground">
+                    Seed: <Link to={`/signals/${g.seedSignalId}`} className="text-blue-400 hover:underline font-mono">{g.seedSignalId.slice(0, 8)}</Link>
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-1.5">
+                  {g.queries.map((q, i) => (
+                    <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{q}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <ShowingCount shown={outcomes.groupsCreated.items.length} total={outcomes.groupsCreated.total} />
+        </div>
+      )}
+
+      {/* Signals Grouped */}
+      {outcomes.signalsGrouped.total > 0 && (
+        <div className="space-y-2">
+          <SectionHeader title="Signals Grouped" total={outcomes.signalsGrouped.total} />
+          <OutcomeTable
+            columns={[
+              { key: "signalTitle", label: "Signal", render: (v: string, row: { signalId: string }) => (
+                <Link to={`/signals/${row.signalId}`} className="text-blue-400 hover:underline">{v ?? "untitled"}</Link>
+              )},
+              { key: "signalType", label: "Type", render: (v: string) => v ? (
+                <span className="px-2 py-0.5 rounded text-xs border border-border bg-muted">{v}</span>
+              ) : null },
+              { key: "groupLabel", label: "Group" },
+              { key: "confidence", label: "Confidence", render: (v: number) => `${(v * 100).toFixed(0)}%` },
+            ]}
+            rows={outcomes.signalsGrouped.items}
+          />
+          <ShowingCount shown={outcomes.signalsGrouped.items.length} total={outcomes.signalsGrouped.total} />
+        </div>
+      )}
+
+      {/* Groups Refined */}
+      {outcomes.groupsRefined.total > 0 && (
+        <div className="space-y-2">
+          <SectionHeader title="Groups Refined" total={outcomes.groupsRefined.total} />
+          <div className="space-y-3">
+            {outcomes.groupsRefined.items.map((g: { groupId: string; queries: string[]; groupLabel: string | null }) => (
+              <div key={g.groupId} className="rounded-lg border border-border p-4 space-y-2">
+                <h3 className="text-sm font-medium">{g.groupLabel ?? g.groupId.slice(0, 8)}</h3>
+                <div className="flex flex-wrap gap-1.5">
+                  {g.queries.map((q, i) => (
+                    <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{q}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <ShowingCount shown={outcomes.groupsRefined.items.length} total={outcomes.groupsRefined.total} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main detail page ───────────────────────────────────────────────
+
 export function ScoutRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const [investigating, setInvestigating] = useState(false);
@@ -83,17 +328,12 @@ export function ScoutRunDetailPage() {
     skip: !runId,
   });
 
-  const { data: outcomesData, loading: outcomesLoading } = useQuery(ADMIN_SCOUT_RUN_OUTCOMES, {
-    variables: { runId: runId ?? "" },
-    skip: !runId,
-  });
-
   const run = data?.adminScoutRun;
 
   if (loading) return <p className="text-muted-foreground">Loading run...</p>;
   if (!run) return <p className="text-muted-foreground">Run not found.</p>;
 
-  const outcomes = outcomesData?.adminScoutRunOutcomes;
+  const isCoalesce = run.flowType === "coalesce";
 
   const duration = (() => {
     if (!run.finishedAt) return "running";
@@ -190,151 +430,12 @@ export function ScoutRunDetailPage() {
         </div>
       )}
 
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-        <StatCard label="URLs Scraped" value={run.stats.urlsScraped} />
-        <StatCard label="Signals Extracted" value={run.stats.signalsExtracted} />
-        <StatCard label="Signals Stored" value={run.stats.signalsStored} />
-        <StatCard label="Deduplicated" value={run.stats.signalsDeduplicated} />
-        <StatCard label="Sources Discovered" value={run.stats.expansionSourcesCreated} />
-        <StatCard label="Expansion Queries" value={run.stats.expansionQueriesCollected} />
-        {run.stats.handlerFailures > 0 && (
-          <StatCard label="Failures" value={run.stats.handlerFailures} warn />
-        )}
-      </div>
-
-      {/* Outcome sections */}
-      {outcomesLoading ? (
-        <p className="text-muted-foreground text-sm">Loading outcomes...</p>
-      ) : outcomes ? (
-        <div className="space-y-6">
-          {/* Sources Scraped */}
-          <div className="space-y-2">
-            <SectionHeader title="Sources Scraped" total={outcomes.sourcesScraped.total} />
-            <OutcomeTable
-              columns={[
-                { key: "canonicalKey", label: "Source", render: (v: string, row: { sourceId: string }) =>
-                  row.sourceId
-                    ? <Link to={`/sources/${row.sourceId}`} className="text-blue-400 hover:underline font-mono">{truncate(v, 60)}</Link>
-                    : <span className="font-mono">{truncate(v, 60)}</span>
-                },
-                { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 50)}</ExternalLink> : null },
-                { key: "signalsProduced", label: "Signals" },
-              ]}
-              rows={outcomes.sourcesScraped.items}
-            />
-            <ShowingCount shown={outcomes.sourcesScraped.items.length} total={outcomes.sourcesScraped.total} />
-          </div>
-
-          {/* Signals Created */}
-          <div className="space-y-2">
-            <SectionHeader title="Signals Created" total={outcomes.signalsCreated.total} />
-            <OutcomeTable
-              columns={[
-                { key: "nodeType", label: "Type", render: (v: string) => (
-                  <span className="px-2 py-0.5 rounded text-xs border border-border bg-muted">{v}</span>
-                )},
-                { key: "title", label: "Title", render: (v: string, row: { nodeId: string }) => (
-                  <Link to={`/signals/${row.nodeId}`} className="text-blue-400 hover:underline">{v ?? "untitled"}</Link>
-                )},
-                { key: "confidence", label: "Confidence", render: (v: number | null) => v != null ? `${(v * 100).toFixed(0)}%` : "" },
-                { key: "url", label: "Source", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
-              ]}
-              rows={outcomes.signalsCreated.items}
-            />
-            <ShowingCount shown={outcomes.signalsCreated.items.length} total={outcomes.signalsCreated.total} />
-          </div>
-
-          {/* Dedup Matches */}
-          {outcomes.dedupMatches.total > 0 && (
-            <div className="space-y-2">
-              <SectionHeader title="Dedup Matches" total={outcomes.dedupMatches.total} />
-              <OutcomeTable
-                columns={[
-                  { key: "nodeType", label: "Type" },
-                  { key: "title", label: "Title" },
-                  { key: "similarity", label: "Similarity", render: (v: number | null) => v != null ? `${(v * 100).toFixed(0)}%` : "" },
-                  { key: "existingId", label: "Existing Signal", render: (v: string) => v ? (
-                    <Link to={`/signals/${v}`} className="text-blue-400 hover:underline font-mono text-xs">{v.slice(0, 8)}</Link>
-                  ) : null },
-                ]}
-                rows={outcomes.dedupMatches.items}
-              />
-              <ShowingCount shown={outcomes.dedupMatches.items.length} total={outcomes.dedupMatches.total} />
-            </div>
-          )}
-
-          {/* Rejections */}
-          {outcomes.rejections.total > 0 && (
-            <div className="space-y-2">
-              <SectionHeader title="Rejections" total={outcomes.rejections.total} />
-              <OutcomeTable
-                columns={[
-                  { key: "title", label: "Title" },
-                  { key: "reason", label: "Reason", render: (v: string) => <span className="text-red-400">{v}</span> },
-                ]}
-                rows={outcomes.rejections.items}
-              />
-              <ShowingCount shown={outcomes.rejections.items.length} total={outcomes.rejections.total} />
-            </div>
-          )}
-
-          {/* Sources Discovered */}
-          {outcomes.sourcesDiscovered.total > 0 && (
-            <div className="space-y-2">
-              <SectionHeader title="Sources Discovered" total={outcomes.sourcesDiscovered.total} />
-              <OutcomeTable
-                columns={[
-                  { key: "canonicalKey", label: "Source", render: (v: string, row: { sourceId: string }) =>
-                    row.sourceId
-                      ? <Link to={`/sources/${row.sourceId}`} className="text-blue-400 hover:underline font-mono">{truncate(v, 50)}</Link>
-                      : <span className="font-mono">{truncate(v, 50)}</span>
-                  },
-                  { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
-                  { key: "discoveryMethod", label: "Method" },
-                  { key: "gapContext", label: "Gap Context", render: (v: string) => v ? <span className="text-muted-foreground">{truncate(v, 40)}</span> : null },
-                ]}
-                rows={outcomes.sourcesDiscovered.items}
-              />
-              <ShowingCount shown={outcomes.sourcesDiscovered.items.length} total={outcomes.sourcesDiscovered.total} />
-            </div>
-          )}
-
-          {/* Expansion Queries */}
-          {outcomes.expansionQueries.total > 0 && (
-            <div className="space-y-2">
-              <SectionHeader title="Expansion Queries" total={outcomes.expansionQueries.total} />
-              <OutcomeTable
-                columns={[
-                  { key: "query", label: "Query" },
-                  { key: "sourceUrl", label: "Source", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
-                ]}
-                rows={outcomes.expansionQueries.items}
-              />
-              <ShowingCount shown={outcomes.expansionQueries.items.length} total={outcomes.expansionQueries.total} />
-            </div>
-          )}
-
-          {/* Failures */}
-          {outcomes.failures.total > 0 && (
-            <div className="space-y-2">
-              <SectionHeader title="Failures" total={outcomes.failures.total} />
-              <OutcomeTable
-                columns={[
-                  { key: "variant", label: "Type", render: (v: string) => (
-                    <span className="px-2 py-0.5 rounded text-xs border border-red-500/30 bg-red-500/10 text-red-400">{v}</span>
-                  )},
-                  { key: "handlerId", label: "Handler", render: (v: string) => v ? <span className="font-mono">{v}</span> : null },
-                  { key: "url", label: "URL", render: (v: string) => v ? <ExternalLink href={v}>{truncate(v, 40)}</ExternalLink> : null },
-                  { key: "error", label: "Error", render: (v: string) => <span className="text-red-400">{truncate(v, 80)}</span> },
-                ]}
-                rows={outcomes.failures.items}
-              />
-              <ShowingCount shown={outcomes.failures.items.length} total={outcomes.failures.total} />
-            </div>
-          )}
-        </div>
-      ) : null}
+      {/* Flow-type-specific outcomes */}
+      {isCoalesce ? (
+        <CoalesceOutcomes runId={run.runId} />
+      ) : (
+        <ScoutOutcomes runId={run.runId} stats={run.stats} />
+      )}
 
       {/* Investigation drawer */}
       {investigating && runId && (

@@ -506,6 +506,25 @@ export const ADMIN_SCOUT_RUN_OUTCOMES = gql`
   }
 `;
 
+export const ADMIN_COALESCE_RUN_OUTCOMES = gql`
+  query AdminCoalesceRunOutcomes($runId: String!) {
+    adminCoalesceRunOutcomes(runId: $runId) {
+      groupsCreated(limit: 50) {
+        items { groupId label queries seedSignalId memberCount }
+        total
+      }
+      signalsGrouped(limit: 100) {
+        items { signalId groupId confidence signalTitle signalType groupLabel }
+        total
+      }
+      groupsRefined(limit: 50) {
+        items { groupId queries groupLabel }
+        total
+      }
+    }
+  }
+`;
+
 export const SUPERVISOR_FINDINGS = gql`
   query SupervisorFindings($region: String!, $status: String, $limit: Int) {
     supervisorFindings(region: $region, status: $status, limit: $limit) {

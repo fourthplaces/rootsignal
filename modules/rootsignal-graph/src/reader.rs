@@ -14,6 +14,13 @@ use crate::GraphClient;
 use crate::writer::{row_to_source_node, row_datetime_opt_pub, SignalBrief};
 use rootsignal_common::SourceNode;
 
+/// Minimal signal summary for coalesce outcome lookups.
+#[derive(Debug, Clone)]
+pub struct SignalMiniSummary {
+    pub title: String,
+    pub signal_type: String,
+}
+
 /// Pipe-separated location edge types for Cypher MATCH patterns.
 const LOC_EDGES: &str = "HELD_AT|AVAILABLE_AT|NEEDED_AT|RELEVANT_TO|AFFECTS|OBSERVED_AT|REFERENCES_LOCATION";
 
@@ -783,6 +790,31 @@ impl PublicGraphReader {
             return Ok(cnt as u64);
         }
         Ok(0)
+    }
+
+    /// Lightweight batch fetch: signal ID → (title, signal_type).
+    pub async fn signal_summaries_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, SignalMiniSummary>, neo4rs::Error> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let cypher = "UNWIND $ids AS sid
+            MATCH (n) WHERE n.id = sid
+              AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
+            RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type";
+        let q = neo4rs::query(cypher).param("ids", ids.to_vec());
+        let mut stream = self.client.execute(q).await?;
+        let mut map = std::collections::HashMap::new();
+        while let Some(row) = stream.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            map.insert(id, SignalMiniSummary {
+                title: row.get("title").unwrap_or_default(),
+                signal_type: row.get("signal_type").unwrap_or_default(),
+            });
+        }
+        Ok(map)
     }
 
     // --- Batch queries for DataLoaders ---
