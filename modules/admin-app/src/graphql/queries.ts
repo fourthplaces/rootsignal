@@ -496,6 +496,28 @@ export const ADMIN_COALESCE_RUN_OUTCOMES = gql`
   }
 `;
 
+export const ADMIN_CLUSTER_WEAVE_RUN_OUTCOMES = gql`
+  query AdminClusterWeaveRunOutcomes($runId: String!) {
+    adminClusterWeaveRunOutcomes(runId: $runId) {
+      situation {
+        situationId
+        groupId
+        headline
+        lede
+        briefingBody
+        structuredState
+        signalCount
+        isReweave
+      }
+      dispatch {
+        dispatchId
+        body
+        signalCount
+      }
+    }
+  }
+`;
+
 export const SUPERVISOR_FINDINGS = gql`
   query SupervisorFindings($region: String!, $status: String, $limit: Int) {
     supervisorFindings(region: $region, status: $status, limit: $limit) {

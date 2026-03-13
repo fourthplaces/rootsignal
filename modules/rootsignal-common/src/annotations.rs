@@ -86,12 +86,12 @@ pub fn strip_invalid_signal_citations(body: &str, valid_ids: &HashSet<Uuid>) -> 
         if ann.kind != "signal" {
             continue;
         }
-        let parsed = match Uuid::parse_str(&ann.identifier) {
-            Ok(id) => id,
-            Err(_) => continue, // not a valid UUID — leave it alone
+        let should_strip = match Uuid::parse_str(&ann.identifier) {
+            Ok(id) => !valid_ids.contains(&id),
+            Err(_) => true, // not a valid UUID (truncated/malformed) — strip it
         };
 
-        if !valid_ids.contains(&parsed) {
+        if should_strip {
             if let Some(pos) = result.rfind(&ann.raw) {
                 result.replace_range(pos..pos + ann.raw.len(), "");
                 stripped += 1;
@@ -203,10 +203,10 @@ mod tests {
 
         let (cleaned, stripped) = strip_invalid_signal_citations(body, &valid_set);
 
-        // [signal:not-a-uuid] has an invalid UUID so strip_invalid_signal_citations
-        // only processes parseable UUIDs — non-parseable ones are left alone
-        assert_eq!(stripped, 0);
+        // [signal:not-a-uuid] has an invalid UUID — stripped (truncated/malformed)
+        assert_eq!(stripped, 1);
         assert!(cleaned.contains("[actor:someone]"));
+        assert!(!cleaned.contains("[signal:not-a-uuid]"));
     }
 
     #[test]

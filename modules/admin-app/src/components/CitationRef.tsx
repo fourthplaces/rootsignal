@@ -42,8 +42,9 @@ export function CitationRef(props: JSX.IntrinsicElements["span"] & { kind?: stri
           [?]
         </sup>
         {open && (
-          <span className="absolute z-50 bottom-full left-0 mb-1 w-56 rounded border border-border bg-background shadow-lg p-3 text-xs text-muted-foreground">
-            Source no longer available
+          <span className="absolute z-50 bottom-full left-0 mb-1 w-72 rounded border border-border bg-background shadow-lg p-3 text-xs text-muted-foreground">
+            <span className="block mb-1">Signal not found in this situation&rsquo;s signal list.</span>
+            <span className="block font-mono text-[10px] text-muted-foreground/60 break-all">{identifier}</span>
           </span>
         )}
       </span>

@@ -867,6 +867,16 @@ impl QueryRoot {
         Ok(CoalesceRunOutcomes { run_id })
     }
 
+    /// Get outcome-focused data for a cluster_weave run (situation created/updated, dispatch).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_cluster_weave_run_outcomes(
+        &self,
+        _ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<ClusterWeaveRunOutcomes> {
+        Ok(ClusterWeaveRunOutcomes { run_id })
+    }
+
     /// Get a cluster (SignalGroup) with its member signals and woven status.
     #[graphql(guard = "AdminGuard")]
     async fn admin_cluster_detail(
@@ -2951,6 +2961,137 @@ impl CoalesceRunOutcomes {
             })
             .collect();
         Ok(CoalesceOutcomePage { items, total })
+    }
+}
+
+// ========== Cluster Weave Run Outcomes ==========
+
+#[derive(SimpleObject)]
+struct ClusterWeaveSituation {
+    situation_id: String,
+    group_id: String,
+    headline: String,
+    lede: String,
+    briefing_body: Option<String>,
+    structured_state: Option<String>,
+    signal_count: Option<u32>,
+    is_reweave: bool,
+}
+
+#[derive(SimpleObject)]
+struct ClusterWeaveDispatch {
+    dispatch_id: String,
+    body: String,
+    signal_count: u32,
+}
+
+struct ClusterWeaveRunOutcomes {
+    run_id: String,
+}
+
+#[Object]
+impl ClusterWeaveRunOutcomes {
+    async fn situation(&self, ctx: &Context<'_>) -> Result<Option<ClusterWeaveSituation>> {
+        let pool = get_pool(ctx)?;
+
+        // Read the group_id + situation_id from group_woven_into_situation
+        let woven_rows = list_events_by_variant(pool, &self.run_id, "group_woven_into_situation", 1)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let woven = match woven_rows.first() {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        let group_id = json_str(&woven.data, "group_id").unwrap_or_default();
+        let situation_id = json_str(&woven.data, "situation_id").unwrap_or_default();
+
+        // First weave: situation_identified event exists
+        let identified = list_events_by_variant(pool, &self.run_id, "situation_identified", 1)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        if let Some(row) = identified.first() {
+            return Ok(Some(ClusterWeaveSituation {
+                situation_id,
+                group_id,
+                headline: json_str(&row.data, "headline").unwrap_or_default(),
+                lede: json_str(&row.data, "lede").unwrap_or_default(),
+                briefing_body: json_str(&row.data, "briefing_body"),
+                structured_state: json_str(&row.data, "structured_state"),
+                signal_count: json_u32(&row.data, "signal_count"),
+                is_reweave: false,
+            }));
+        }
+
+        // Re-weave: extract latest values from situation_changed events
+        let changed = list_events_by_variant(pool, &self.run_id, "situation_changed", 10)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let mut headline = String::new();
+        let mut lede = String::new();
+        let mut briefing_body: Option<String> = None;
+        let mut structured_state: Option<String> = None;
+
+        for row in &changed {
+            let change = &row.data.get("change");
+            if let Some(change) = change {
+                match change.get("field").and_then(|f| f.as_str()) {
+                    Some("headline") => {
+                        if let Some(v) = change.pointer("/value/new").and_then(|v| v.as_str()) {
+                            headline = v.to_string();
+                        }
+                    }
+                    Some("lede") => {
+                        if let Some(v) = change.pointer("/value/new").and_then(|v| v.as_str()) {
+                            lede = v.to_string();
+                        }
+                    }
+                    Some("briefing_body") => {
+                        if let Some(v) = change.pointer("/value/new").and_then(|v| v.as_str()) {
+                            briefing_body = Some(v.to_string());
+                        }
+                    }
+                    Some("structured_state") => {
+                        if let Some(v) = change.pointer("/value/new").and_then(|v| v.as_str()) {
+                            structured_state = Some(v.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(Some(ClusterWeaveSituation {
+            situation_id,
+            group_id,
+            headline,
+            lede,
+            briefing_body,
+            structured_state,
+            signal_count: None,
+            is_reweave: true,
+        }))
+    }
+
+    async fn dispatch(&self, ctx: &Context<'_>) -> Result<Option<ClusterWeaveDispatch>> {
+        let pool = get_pool(ctx)?;
+        let rows = list_events_by_variant(pool, &self.run_id, "dispatch_created", 1)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let row = match rows.first() {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        let signal_ids = row.data.get("signal_ids")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len() as u32)
+            .unwrap_or(0);
+        Ok(Some(ClusterWeaveDispatch {
+            dispatch_id: json_str(&row.data, "dispatch_id").unwrap_or_default(),
+            body: json_str(&row.data, "body").unwrap_or_default(),
+            signal_count: signal_ids,
+        }))
     }
 }
 

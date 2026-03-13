@@ -42,8 +42,25 @@ export function CitationProvider({
     for (const s of signals) {
       signalMap.set(s.id, s);
     }
+    console.warn("[CitationContext]", signals.length, "signals passed,", signalMap.size, "mapped. First 3 IDs:", [...signalMap.keys()].slice(0, 3));
+
+    // Resolve a cited ID against the signal map, with prefix-match fallback
+    // for LLM-truncated UUIDs (e.g. "f1666d24" matching "f1666d24-abcd-...")
+    function resolveSignal(citedId: string): Signal | null {
+      const exact = signalMap.get(citedId);
+      if (exact) return exact;
+      let prefixMatch: Signal | null = null;
+      for (const [fullId, sig] of signalMap) {
+        if (fullId.startsWith(citedId)) {
+          if (prefixMatch) return null; // ambiguous — multiple matches
+          prefixMatch = sig;
+        }
+      }
+      return prefixMatch;
+    }
 
     const numberMap = new Map<string, number>();
+    const resolvedMap = new Map<string, Signal>();
     const sourceUrls = new Set<string>();
     let nextNumber = 1;
 
@@ -53,10 +70,13 @@ export function CitationProvider({
       while ((match = ANNOTATION_RE.exec(briefingBody)) !== null) {
         const id = match[1]!;
         if (!numberMap.has(id)) {
-          numberMap.set(id, nextNumber++);
-          const sig = signalMap.get(id);
-          const sigUrl = sig?.actionUrl || sig?.url;
-          if (sigUrl) sourceUrls.add(sigUrl);
+          const sig = resolveSignal(id);
+          if (sig) {
+            numberMap.set(id, nextNumber++);
+            resolvedMap.set(id, sig);
+            const sigUrl = sig.actionUrl || sig.url;
+            if (sigUrl) sourceUrls.add(sigUrl);
+          }
         }
       }
     }
@@ -65,7 +85,7 @@ export function CitationProvider({
       getEntry(signalId: string): CitationEntry | null {
         const number = numberMap.get(signalId);
         if (number === undefined) return null;
-        const signal = signalMap.get(signalId);
+        const signal = resolvedMap.get(signalId);
         if (!signal) return null;
         return { number, signal };
       },

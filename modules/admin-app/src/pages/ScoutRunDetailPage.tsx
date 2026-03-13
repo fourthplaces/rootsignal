@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery } from "@apollo/client";
-import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_OUTCOMES, ADMIN_COALESCE_RUN_OUTCOMES } from "@/graphql/queries";
+import { ADMIN_SCOUT_RUN, ADMIN_SCOUT_RUN_OUTCOMES, ADMIN_COALESCE_RUN_OUTCOMES, ADMIN_CLUSTER_WEAVE_RUN_OUTCOMES } from "@/graphql/queries";
 import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
@@ -329,6 +329,110 @@ function CoalesceOutcomes({ runId }: { runId: string }) {
   );
 }
 
+// ─── Cluster weave outcomes ──────────────────────────────────────────
+
+function ClusterWeaveOutcomes({ runId }: { runId: string }) {
+  const { data, loading } = useQuery(ADMIN_CLUSTER_WEAVE_RUN_OUTCOMES, {
+    variables: { runId },
+  });
+  const outcomes = data?.adminClusterWeaveRunOutcomes;
+
+  if (loading) return <p className="text-muted-foreground text-sm">Loading outcomes...</p>;
+  if (!outcomes?.situation) return <p className="text-muted-foreground text-sm">No situation produced.</p>;
+
+  const sit = outcomes.situation;
+  const dispatch = outcomes.dispatch;
+
+  // Parse structured_state JSON
+  let structuredState: { root_cause_thesis?: string; key_actors?: string[]; status?: string } | null = null;
+  if (sit.structuredState) {
+    try { structuredState = JSON.parse(sit.structuredState); } catch { /* ignore */ }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Summary stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard label="Weave Type" value={sit.isReweave ? "Re-weave" : "First weave"} />
+        {sit.signalCount != null && <StatCard label="Signals Woven" value={sit.signalCount} />}
+        {dispatch && <StatCard label="Delta Signals" value={dispatch.signalCount} />}
+      </div>
+
+      {/* Source cluster */}
+      <div className="space-y-2">
+        <h2 className="text-xs font-semibold text-muted-foreground">Source Cluster</h2>
+        <Link
+          to={`/clusters/${sit.groupId}`}
+          className="block rounded-lg border border-border p-4 hover:border-blue-500/40 transition-colors"
+        >
+          <span className="text-sm text-blue-400 hover:underline font-mono">{sit.groupId.slice(0, 8)}</span>
+        </Link>
+      </div>
+
+      {/* Situation output */}
+      <div className="space-y-2">
+        <h2 className="text-xs font-semibold text-muted-foreground">
+          Situation {sit.isReweave ? "Updated" : "Created"}
+        </h2>
+        <div className="rounded-lg border border-border p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-semibold">{sit.headline}</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">{sit.lede}</p>
+            </div>
+            <Link
+              to={`/situations/${sit.situationId}`}
+              className="text-xs text-blue-400 hover:underline whitespace-nowrap"
+            >
+              View situation &rarr;
+            </Link>
+          </div>
+
+          {sit.briefingBody && (
+            <div className="border-t border-border pt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Briefing</p>
+              <div className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
+                {sit.briefingBody}
+              </div>
+            </div>
+          )}
+
+          {structuredState && (
+            <div className="border-t border-border pt-3 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">Structured State</p>
+              {structuredState.root_cause_thesis && (
+                <p className="text-xs"><span className="text-muted-foreground">Thesis:</span> {structuredState.root_cause_thesis}</p>
+              )}
+              {structuredState.key_actors && structuredState.key_actors.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="text-xs text-muted-foreground">Actors:</span>
+                  {structuredState.key_actors.map((a, i) => (
+                    <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{a}</span>
+                  ))}
+                </div>
+              )}
+              {structuredState.status && (
+                <p className="text-xs"><span className="text-muted-foreground">Status:</span> {structuredState.status}</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Delta dispatch (re-weave only) */}
+      {dispatch && (
+        <div className="space-y-2">
+          <h2 className="text-xs font-semibold text-muted-foreground">Delta Dispatch</h2>
+          <div className="rounded-lg border border-border p-4 space-y-2">
+            <p className="text-xs text-foreground/80 leading-relaxed">{dispatch.body}</p>
+            <p className="text-xs text-muted-foreground">{dispatch.signalCount} new signal{dispatch.signalCount !== 1 ? "s" : ""} referenced</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main detail page ───────────────────────────────────────────────
 
 export function ScoutRunDetailPage() {
@@ -345,7 +449,7 @@ export function ScoutRunDetailPage() {
   if (loading) return <p className="text-muted-foreground">Loading run...</p>;
   if (!run) return <p className="text-muted-foreground">Run not found.</p>;
 
-  const isCoalesce = run.flowType === "coalesce";
+  const flowType = run.flowType ?? "scout";
 
   const duration = (() => {
     if (!run.finishedAt) return "running";
@@ -443,8 +547,10 @@ export function ScoutRunDetailPage() {
       )}
 
       {/* Flow-type-specific outcomes */}
-      {isCoalesce ? (
+      {flowType === "coalesce" ? (
         <CoalesceOutcomes runId={run.runId} />
+      ) : flowType === "cluster_weave" ? (
+        <ClusterWeaveOutcomes runId={run.runId} />
       ) : (
         <ScoutOutcomes runId={run.runId} stats={run.stats} />
       )}

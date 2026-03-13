@@ -35,6 +35,7 @@ Write in a warm, direct, action-oriented tone. Third person only — never use \
 is needed. No bureaucratic language.\n\n\
 CITATIONS:\n\
 When referencing information from a specific signal, cite it inline using [signal:UUID] format.\n\
+Copy the FULL 36-character UUID exactly as shown in the signal list (e.g. [signal:f1666d24-abcd-4ef0-9876-dc38e55c1234]). Do NOT abbreviate or truncate IDs.\n\
 Cite key factual claims — names, numbers, dates, quoted statements, specific events.\n\
 Do not cite general narrative sentences or transitions.\n\
 Every signal ID you cite MUST come from the provided signal list. Never invent IDs.";
