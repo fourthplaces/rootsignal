@@ -54,8 +54,8 @@ Returns full typed signal nodes (not `SignalBrief`) because CTAs need type-speci
 
 The reader already has `row_to_gathering`, `row_to_resource`, etc. — use `labels` to dispatch to the right parser. Follow the pattern in `all_signals` or `signals_near` which return the full union.
 
-- [ ] Add `signals_for_situation` method to `PublicGraphReader` in `reader.rs`
-- [ ] Return typed signal nodes using existing `row_to_*` parsers
+- [x] Add `signals_for_situation` method to `PublicGraphReader` in `reader.rs`
+- [x] Return typed signal nodes using existing `row_to_*` parsers
 
 #### `rootsignal-api/src/graphql/types.rs` — new resolver on GqlSituation
 
@@ -79,8 +79,8 @@ async fn signals(
 
 `GqlSignal` is the existing union type (lines 312-333) covering all 6 signal types. The frontend already handles this via the `SIGNAL_FIELDS` fragment in `queries.ts`.
 
-- [ ] Add `signals()` resolver to `GqlSituation` following `dispatches()` pattern
-- [ ] Map typed signal nodes to `GqlSignal` union variants
+- [x] Add `signals()` resolver to `GqlSituation` following `dispatches()` pattern
+- [x] Map typed signal nodes to `GqlSignal` union variants
 
 #### `admin-app/src/graphql/queries.ts` — extend SITUATION_DETAIL query
 
@@ -93,7 +93,7 @@ signals(limit: 50) {
 }
 ```
 
-- [ ] Add `signals` field to `SITUATION_DETAIL` query
+- [x] Add `signals` field to `SITUATION_DETAIL` query
 
 ### Phase 2: Briefing Narrative (Enhanced Weave)
 
@@ -131,8 +131,8 @@ Given a cluster of local signals, write a briefing that:
 4. structured_state: { root_cause_thesis, key_actors, status }
 ```
 
-- [ ] Add `briefing_body: String` field to `ClusterNarrative` struct
-- [ ] Update `build_first_weave_prompt` with neighbor-tone instructions
+- [x] Add `briefing_body: String` field to `ClusterNarrative` struct
+- [x] Update `build_first_weave_prompt` with neighbor-tone instructions
 - [ ] Update `build_delta_prompt` to also refresh the briefing body on re-weave
 
 #### `rootsignal-common/src/system_events.rs` — add field to SituationIdentified
@@ -144,7 +144,7 @@ briefing_body: Option<String>,  // NEW
 
 Use `Option<String>` (not bare `String`) so situations created before this change don't break, and so the system degrades gracefully if LLM extraction fails.
 
-- [ ] Add `briefing_body: Option<String>` to `SituationIdentified` event
+- [x] Add `briefing_body: Option<String>` to `SituationIdentified` event
 
 #### `rootsignal-common/src/types.rs` — add field to SituationNode
 
@@ -153,7 +153,7 @@ Use `Option<String>` (not bare `String`) so situations created before this chang
 pub briefing_body: Option<String>,
 ```
 
-- [ ] Add `briefing_body: Option<String>` to `SituationNode`
+- [x] Add `briefing_body: Option<String>` to `SituationNode`
 
 #### `rootsignal-graph/src/projector.rs` — store briefing on Situation node
 
@@ -163,7 +163,7 @@ In the `SituationIdentified` projection (lines 1659-1738), add `briefing_body` t
 SET s.briefing_body = $briefing_body
 ```
 
-- [ ] Add `briefing_body` property to SituationIdentified projection
+- [x] Add `briefing_body` property to SituationIdentified projection
 
 #### `rootsignal-graph/src/reader.rs` — read briefing from Neo4j
 
@@ -173,7 +173,7 @@ In `row_to_situation` (lines 2643-2713), extract the new field:
 briefing_body: node.get::<String>("briefing_body").ok(),
 ```
 
-- [ ] Add `briefing_body` extraction to `row_to_situation`
+- [x] Add `briefing_body` extraction to `row_to_situation`
 
 #### `rootsignal-api/src/graphql/types.rs` — expose via GraphQL
 
@@ -184,7 +184,7 @@ async fn briefing_body(&self) -> Option<&str> {
 }
 ```
 
-- [ ] Add `briefing_body` resolver to `GqlSituation`
+- [x] Add `briefing_body` resolver to `GqlSituation`
 
 ### Phase 3: Frontend Rewrite
 
@@ -252,26 +252,26 @@ New page structure (top to bottom):
 **Dependencies:**
 - `react-markdown` for rendering briefing_body (or simple `dangerouslySetInnerHTML` if markdown is pre-rendered)
 
-- [ ] Install markdown rendering dependency (or use simple prose styling)
-- [ ] Rewrite `SituationDetailPage.tsx` with briefing layout
-- [ ] Build CTA card component for actionable signals
-- [ ] Build context card component for informational signals
-- [ ] Group signals by type and render appropriate cards
-- [ ] Graceful fallbacks for missing data (no briefing, no CTAs, empty sections)
-- [ ] Update `SITUATION_DETAIL` query to include `signals` and `briefingBody`
+- [x] Install markdown rendering dependency (or use simple prose styling)
+- [x] Rewrite `SituationDetailPage.tsx` with briefing layout
+- [x] Build CTA card component for actionable signals
+- [x] Build context card component for informational signals
+- [x] Group signals by type and render appropriate cards
+- [x] Graceful fallbacks for missing data (no briefing, no CTAs, empty sections)
+- [x] Update `SITUATION_DETAIL` query to include `signals` and `briefingBody`
 
 ## Acceptance Criteria
 
-- [ ] `situation(id) { signals { ... } }` returns typed member signals via GraphQL
-- [ ] Weaving a cluster produces a `briefing_body` on the resulting Situation
+- [x] `situation(id) { signals { ... } }` returns typed member signals via GraphQL
+- [x] Weaving a cluster produces a `briefing_body` on the resulting Situation
 - [ ] Re-weaving updates the briefing_body
-- [ ] Situation page shows narrative section with briefing_body
-- [ ] Situation page shows CTA cards grouped by type (Gatherings, HelpRequests, Resources)
-- [ ] CTA cards link to action_url when available
-- [ ] Context sections show Concerns/Conditions/Announcements with relevant details
-- [ ] Page degrades gracefully when sections have no data
-- [ ] Temperature/metadata moved to footer position
-- [ ] Admin app compiles with no type errors
+- [x] Situation page shows narrative section with briefing_body
+- [x] Situation page shows CTA cards grouped by type (Gatherings, HelpRequests, Resources)
+- [x] CTA cards link to action_url when available
+- [x] Context sections show Concerns/Conditions/Announcements with relevant details
+- [x] Page degrades gracefully when sections have no data
+- [x] Temperature/metadata moved to footer position
+- [x] Admin app compiles with no type errors
 
 ## Dependencies & Risks
 
