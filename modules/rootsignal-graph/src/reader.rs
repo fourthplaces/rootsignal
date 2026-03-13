@@ -1394,6 +1394,57 @@ impl PublicGraphReader {
         })
     }
 
+    /// Global validation issue summary (all regions, for admin dashboard).
+    pub async fn validation_issue_summary_global(
+        &self,
+    ) -> Result<ValidationIssueSummary, neo4rs::Error> {
+        let q = neo4rs::query(
+            "MATCH (v:ValidationIssue)
+             RETURN
+               sum(CASE WHEN v.status = 'open' THEN 1 ELSE 0 END) AS total_open,
+               sum(CASE WHEN v.status = 'resolved' THEN 1 ELSE 0 END) AS total_resolved,
+               sum(CASE WHEN v.status = 'dismissed' THEN 1 ELSE 0 END) AS total_dismissed,
+               v.issue_type AS issue_type,
+               v.severity AS severity,
+               v.status AS status,
+               count(v) AS cnt",
+        );
+
+        let mut stream = self.client.execute(q).await?;
+
+        let mut total_open = 0i64;
+        let mut total_resolved = 0i64;
+        let mut total_dismissed = 0i64;
+        let mut count_by_type: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        let mut count_by_severity: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+
+        while let Some(row) = stream.next().await? {
+            total_open = row.get::<i64>("total_open").unwrap_or(0);
+            total_resolved = row.get::<i64>("total_resolved").unwrap_or(0);
+            total_dismissed = row.get::<i64>("total_dismissed").unwrap_or(0);
+            let issue_type: String = row.get("issue_type").unwrap_or_default();
+            let severity: String = row.get("severity").unwrap_or_default();
+            let cnt: i64 = row.get("cnt").unwrap_or(0);
+
+            if !issue_type.is_empty() {
+                *count_by_type.entry(issue_type).or_insert(0) += cnt;
+            }
+            if !severity.is_empty() {
+                *count_by_severity.entry(severity).or_insert(0) += cnt;
+            }
+        }
+
+        Ok(ValidationIssueSummary {
+            total_open,
+            total_resolved,
+            total_dismissed,
+            count_by_type: count_by_type.into_iter().collect(),
+            count_by_severity: count_by_severity.into_iter().collect(),
+        })
+    }
+
     /// Fetch a single source by UUID.
     pub async fn source_by_id(&self, id: &Uuid) -> Result<Option<SourceNode>, neo4rs::Error> {
         let cypher = "MATCH (s:Source {id: $id})

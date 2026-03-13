@@ -6,6 +6,7 @@ import { ADMIN_SCOUT_RUNS, ADMIN_SCHEDULED_SCRAPES, ADMIN_SCHEDULES } from "@/gr
 import { CANCEL_RUN, TOGGLE_SCHEDULE, DELETE_SCHEDULE } from "@/graphql/mutations";
 import { DataTable, type Column } from "@/components/DataTable";
 import { CreateScheduleDialog } from "@/components/CreateScheduleDialog";
+import { formatCadence } from "@/lib/utils";
 
 type Tab = "runs" | "schedules" | "scheduled";
 const TABS: { key: Tab; label: string }[] = [
@@ -34,6 +35,8 @@ type Schedule = {
   flowType: string;
   scope: string;
   cadenceSeconds: number;
+  baseCadenceSeconds: number;
+  recurring: boolean;
   enabled: boolean;
   lastRunId: string | null;
   nextRunAt: string | null;
@@ -60,11 +63,6 @@ const formatDate = (d: string) =>
     minute: "2-digit",
   });
 
-const formatCadence = (seconds: number) => {
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
-  return `${Math.round(seconds / 86400)}d`;
-};
 
 const STATUS_COLORS: Record<string, string> = {
   running: "text-amber-400",

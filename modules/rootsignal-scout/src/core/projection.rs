@@ -598,11 +598,16 @@ pub fn schedules_projection() -> Projection<ScoutEngineDeps> {
                     new_timeout,
                     reason,
                 } => {
-                    sqlx::query(
+                    let query = if reason == "manual_edit" {
+                        "UPDATE schedules SET timeout = $2, base_timeout = $2, \
+                         next_run_at = now() + make_interval(secs => $2) \
+                         WHERE schedule_id = $1"
+                    } else {
                         "UPDATE schedules SET timeout = $2, \
                          next_run_at = now() + make_interval(secs => $2) \
-                         WHERE schedule_id = $1",
-                    )
+                         WHERE schedule_id = $1"
+                    };
+                    sqlx::query(query)
                     .bind(schedule_id)
                     .bind(new_timeout)
                     .execute(pool)

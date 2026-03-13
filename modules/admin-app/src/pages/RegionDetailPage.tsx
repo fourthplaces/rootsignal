@@ -18,6 +18,7 @@ import {
   CANCEL_RUN,
 } from "@/graphql/mutations";
 import { RegionMap } from "@/pages/MapPage";
+import { SchedulesPanel } from "@/components/SchedulesPanel";
 
 type Tab = "map" | "signals" | "clusters" | "situations" | "actors" | "sources" | "runs";
 const TABS: { key: Tab; label: string }[] = [
@@ -184,6 +185,9 @@ export function RegionDetailPage() {
           </div>
         ))}
       </div>
+
+      {/* Schedules */}
+      <SchedulesPanel entityType="region" entityId={id!} regionId={id!} />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border">

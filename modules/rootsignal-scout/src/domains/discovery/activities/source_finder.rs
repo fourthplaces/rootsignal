@@ -964,6 +964,7 @@ mod tests {
         unmet: bool,
     ) -> UnmetTension {
         UnmetTension {
+            id: uuid::Uuid::nil(),
             title: title.to_string(),
             severity: severity.to_string(),
             opposing: opposing.map(|s| s.to_string()),
@@ -985,6 +986,7 @@ mod tests {
         cause_heat: f64,
     ) -> UnmetTension {
         UnmetTension {
+            id: uuid::Uuid::nil(),
             title: title.to_string(),
             severity: severity.to_string(),
             opposing: opposing.map(|s| s.to_string()),

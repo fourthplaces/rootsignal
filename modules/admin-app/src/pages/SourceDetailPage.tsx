@@ -5,6 +5,7 @@ import { SOURCE_DETAIL, ADMIN_SCOUT_RUNS_BY_SOURCE } from "@/graphql/queries";
 import { RUN_SCOUT_SOURCE, UPDATE_SOURCE, CLEAR_SOURCE_SIGNALS } from "@/graphql/mutations";
 import { InvestigateDrawer, type InvestigateMode } from "@/components/InvestigateDrawer";
 import { DataTable, type Column } from "@/components/DataTable";
+import { SchedulesPanel } from "@/components/SchedulesPanel";
 
 const formatDate = (d: string | null | undefined) => {
   if (!d) return "Never";
@@ -411,6 +412,8 @@ export function SourceDetailPage() {
             />
           </dl>
         </div>
+
+        <SchedulesPanel entityType="source" entityId={source.id} />
 
         <div className="rounded-lg border border-border p-4 space-y-3">
           <h3 className="text-sm font-medium text-muted-foreground">

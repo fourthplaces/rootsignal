@@ -276,6 +276,25 @@ impl CachedReader {
         Ok(results)
     }
 
+    /// Count signals missing a category classification (admin dashboard quality card).
+    pub fn signals_missing_category_count(&self) -> u64 {
+        let snap = self.cache.load_full();
+        snap.signals
+            .iter()
+            .filter(|n| n.meta().map(|m| m.category.is_none()).unwrap_or(true))
+            .count() as u64
+    }
+
+    /// Count signals with no location edge (admin dashboard quality card).
+    pub fn signals_without_location_count(&self) -> u64 {
+        let snap = self.cache.load_full();
+        let with_loc: HashSet<Uuid> = snap.location_edges.iter().map(|e| e.signal_id).collect();
+        snap.signals
+            .iter()
+            .filter(|n| !with_loc.contains(&n.id()))
+            .count() as u64
+    }
+
     pub async fn list_recent_in_bbox(
         &self,
         lat: f64,
@@ -1011,5 +1030,11 @@ impl CachedReader {
         region: &str,
     ) -> Result<crate::reader::ValidationIssueSummary, neo4rs::Error> {
         self.neo4j_reader.validation_issue_summary(region).await
+    }
+
+    pub async fn validation_issue_summary_global(
+        &self,
+    ) -> Result<crate::reader::ValidationIssueSummary, neo4rs::Error> {
+        self.neo4j_reader.validation_issue_summary_global().await
     }
 }

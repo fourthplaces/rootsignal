@@ -610,7 +610,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         flow_type: String,
         scope: String,
-        timeout: u32,
+        cadence_seconds: u32,
         recurring: Option<bool>,
         region_id: Option<String>,
     ) -> Result<ScoutResult> {
@@ -626,8 +626,8 @@ impl MutationRoot {
                 schedule_id: schedule_id.clone(),
                 flow_type,
                 scope: scope_json,
-                timeout: timeout as u64,
-                base_timeout: Some(timeout as u64),
+                timeout: cadence_seconds as u64,
+                base_timeout: Some(cadence_seconds as u64),
                 recurring: recurring.unwrap_or(true),
                 region_id,
             })
@@ -667,6 +667,35 @@ impl MutationRoot {
         Ok(ScoutResult {
             success: true,
             message: Some(format!("Schedule {schedule_id} {}", if enabled { "enabled" } else { "disabled" })),
+        })
+    }
+
+    /// Update a schedule's cadence (resets backoff baseline).
+    #[graphql(guard = "AdminGuard")]
+    async fn update_schedule_cadence(
+        &self,
+        ctx: &Context<'_>,
+        schedule_id: String,
+        cadence_seconds: i32,
+    ) -> Result<ScoutResult> {
+        use rootsignal_scout::domains::scheduling::events::SchedulingEvent;
+
+        let (engine, run_id) = require_engine(ctx)?;
+
+        engine
+            .emit(SchedulingEvent::ScheduleCadenceAdjusted {
+                schedule_id: schedule_id.clone(),
+                new_timeout: cadence_seconds,
+                reason: "manual_edit".into(),
+            })
+            .correlation_id(run_id)
+            .settled()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to update schedule cadence: {e}")))?;
+
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Schedule {schedule_id} cadence updated to {cadence_seconds}s")),
         })
     }
 

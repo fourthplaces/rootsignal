@@ -105,6 +105,15 @@ export const DELETE_SCHEDULE = gql`
   }
 `;
 
+export const UPDATE_SCHEDULE_CADENCE = gql`
+  mutation UpdateScheduleCadence($scheduleId: String!, $cadenceSeconds: Int!) {
+    updateScheduleCadence(scheduleId: $scheduleId, cadenceSeconds: $cadenceSeconds) {
+      success
+      message
+    }
+  }
+`;
+
 export const CREATE_REGION = gql`
   mutation CreateRegion($name: String!) {
     createRegion(name: $name) {

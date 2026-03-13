@@ -11,6 +11,7 @@ import {
   Archive,
   Waypoints,
   ScrollText,
+  AlertTriangle,
   Wallet,
   LogOut,
   ChevronsLeft,
@@ -27,6 +28,7 @@ const navItems: { to: string; label: string; icon: ComponentType<LucideProps>; i
   { to: "/budget", label: "Budget", icon: Wallet },
   { to: "/graph", label: "Graph", icon: Waypoints },
   { to: "/events", label: "Events", icon: ScrollText },
+  { to: "/findings", label: "Findings", icon: AlertTriangle },
   { to: "/archive", label: "Archive", icon: Archive },
 ];
 

@@ -50,70 +50,41 @@ export const ME = gql`
 `;
 
 export const ADMIN_DASHBOARD = gql`
-  query AdminDashboard($region: String!) {
-    adminDashboard(region: $region) {
-      totalSignals
-      totalActors
-      totalSources
-      activeSources
-      totalConcerns
-      scoutStatuses {
-        regionName
-        regionSlug
-        lastScouted
-        sourcesDue
-        running
+  query AdminDashboard {
+    adminDashboard {
+      pipelineStatus {
+        runId
+        region
+        flowType
+        status
+        startedAt
+        finishedAt
+        error
       }
-      signalVolumeByDay {
-        day
-        gatherings
-        aids
-        needs
-        notices
-        tensions
+      errorCount
+      budgetSpentCents
+      budgetLimitCents
+      signalsMissingCategory
+      signalsWithoutLocation
+      orphanedSignals
+      validationSummary {
+        totalOpen
+        countBySeverity {
+          label
+          count
+        }
       }
       countByType {
         signalType
         count
       }
-      freshnessDistribution {
-        label
-        count
-      }
-      confidenceDistribution {
-        label
-        count
-      }
-      unmetConcerns {
+      situationCount
+      hottestConcerns {
+        id
         title
-        severity
         category
-        opposing
-      }
-      topSources {
-        name
-        signals
-        weight
-        emptyRuns
-      }
-      bottomSources {
-        name
-        signals
-        weight
-        emptyRuns
-      }
-      extractionYield {
-        sourceLabel
-        extracted
-        survived
-        corroborated
-        contradicted
-      }
-      gapStats {
-        gapType
-        total
-        successful
-        avgWeight
+        causeHeat
+        corroborationCount
       }
     }
   }
@@ -581,10 +552,30 @@ export const ADMIN_SCHEDULES = gql`
       flowType
       scope
       cadenceSeconds
+      baseCadenceSeconds
+      recurring
       enabled
       lastRunId
       nextRunAt
       deletedAt
+      createdAt
+      regionId
+    }
+  }
+`;
+
+export const SCHEDULES_FOR_ENTITY = gql`
+  query SchedulesForEntity($entityType: String!, $entityId: String!) {
+    schedulesForEntity(entityType: $entityType, entityId: $entityId) {
+      scheduleId
+      flowType
+      scope
+      cadenceSeconds
+      baseCadenceSeconds
+      recurring
+      enabled
+      lastRunId
+      nextRunAt
       createdAt
       regionId
     }

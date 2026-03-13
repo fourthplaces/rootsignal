@@ -18,8 +18,9 @@ use super::mutations::MutationRoot;
 use super::types::*;
 use crate::scout_runner::ScoutRunner;
 use crate::db::scout_run::{
-    EventRow, EventRowFull, ScoutRunRow, StatsJson,
-    event_domain_prefix, event_layer, event_summary, json_str, json_u32, json_u64, json_f64,
+    EventRow, EventRowFull, PipelineStatusRow, ScoutRunRow, StatsJson,
+    error_count_last_24h, event_domain_prefix, event_layer, event_summary,
+    json_str, json_u32, json_u64, json_f64, last_run_per_flow,
     list_events_by_variant, count_events_by_variant,
 };
 use crate::jwt::JwtService;
@@ -321,7 +322,6 @@ impl QueryRoot {
     async fn admin_dashboard(
         &self,
         ctx: &Context<'_>,
-        region: String,
     ) -> Result<AdminDashboardData> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let writer = ctx.data_unchecked::<Arc<GraphStore>>();
@@ -329,190 +329,138 @@ impl QueryRoot {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
         let pub_reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
 
-        // Resolve region name → ID for scoped busy check
-        let region_id = {
-            let regions = writer.list_regions(None, 100).await.unwrap_or_default();
-            regions.into_iter().find(|r| r.name == region).map(|r| r.id.to_string())
-        };
+        let pool_ref = pool.as_ref();
 
-        let is_running_fut = async {
-            if let (Some(pool), Some(rid)) = (pool, &region_id) {
-                let (running,): (bool,) = sqlx::query_as(
-                    "SELECT EXISTS(
-                         SELECT 1 FROM runs
-                         WHERE region_id = $1
-                           AND finished_at IS NULL
-                           AND cancelled_at IS NULL
-                           AND started_at >= now() - interval '30 minutes'
-                     )",
-                )
-                .bind(rid)
-                .fetch_one(pool)
-                .await?;
-                Ok::<bool, sqlx::Error>(running)
-            } else {
-                Ok(false)
+        // Pipeline + budget queries (Postgres)
+        let pipeline_fut = async {
+            match pool_ref {
+                Some(p) => last_run_per_flow(p).await.unwrap_or_default(),
+                None => vec![],
+            }
+        };
+        let error_fut = async {
+            match pool_ref {
+                Some(p) => error_count_last_24h(p).await.unwrap_or(0),
+                None => 0,
+            }
+        };
+        let budget_config_fut = async {
+            match pool_ref {
+                Some(p) => crate::db::models::budget::load_config(p).await.ok(),
+                None => None,
+            }
+        };
+        let budget_spent_fut = async {
+            match pool_ref {
+                Some(p) => crate::db::models::budget::daily_spend(p).await.unwrap_or(0),
+                None => 0,
             }
         };
 
+        // Quality counts (in-memory cache + Neo4j)
+        let missing_category = reader.signals_missing_category_count();
+        let without_location = reader.signals_without_location_count();
+        let orphan_fut = writer.orphaned_signal_count();
+        let validation_fut = reader.validation_issue_summary_global();
+
+        // Graph overview
+        let by_type_fut = reader.count_by_type();
+        let situation_count_fut = pub_reader.situation_count();
+        let tensions_fut = writer.get_unmet_tensions(5);
+
         let (
-            total_signals,
-            situation_count,
-            actor_count,
+            pipeline_rows,
+            error_count,
+            budget_config,
+            budget_spent,
+            orphaned,
+            validation,
             by_type,
-            freshness,
-            confidence,
-            signal_volume,
-            situation_arcs,
-            situation_categories,
+            situation_count,
             tensions,
-            discovery,
-            yield_data,
-            gap_stats,
-            sources,
-            due_sources,
-            region_running,
         ) = tokio::join!(
-            reader.total_count(),
-            pub_reader.situation_count(),
-            reader.actor_count(),
-            reader.count_by_type(),
-            reader.freshness_distribution(),
-            reader.confidence_distribution(),
-            reader.signal_volume_by_day(),
-            pub_reader.situation_count_by_arc(),
-            pub_reader.situation_count_by_category(),
-            writer.get_unmet_tensions(20),
-            writer.get_discovery_performance(),
-            writer.get_extraction_yield(),
-            writer.get_gap_type_stats(),
-            writer.get_active_sources(),
-            writer.count_due_sources(),
-            is_running_fut,
+            pipeline_fut,
+            error_fut,
+            budget_config_fut,
+            budget_spent_fut,
+            orphan_fut,
+            validation_fut,
+            by_type_fut,
+            situation_count_fut,
+            tensions_fut,
         );
 
-        let sources = sources.unwrap_or_default();
-        let (top_sources, bottom_sources) = discovery.unwrap_or_default();
+        let config = budget_config.unwrap_or(crate::db::models::budget::BudgetConfig {
+            daily_limit_cents: 0,
+            per_run_max_cents: 0,
+        });
 
-        let scout_statuses = vec![RegionScoutStatus {
-            region_name: region.clone(),
-            region_slug: region.clone(),
-            last_scouted: None,
-            sources_due: due_sources.unwrap_or(0),
-            running: region_running.unwrap_or(false),
-        }];
-
-        let by_type = by_type.unwrap_or_default();
-        let signal_volume = signal_volume.unwrap_or_default();
+        let validation_summary = validation.unwrap_or(rootsignal_graph::reader::ValidationIssueSummary {
+            total_open: 0,
+            total_resolved: 0,
+            total_dismissed: 0,
+            count_by_type: vec![],
+            count_by_severity: vec![],
+        });
 
         Ok(AdminDashboardData {
-            total_signals: total_signals.unwrap_or(0),
-            total_situations: situation_count.unwrap_or(0),
-            total_actors: actor_count.unwrap_or(0),
-            total_sources: sources.len() as u64,
-            active_sources: sources.iter().filter(|s| s.active).count() as u64,
-            total_tensions: tensions.as_ref().map(|t| t.len() as u64).unwrap_or(0),
-            scout_statuses,
-            signal_volume_by_day: signal_volume
-                .iter()
-                .map(|(day, ev, gi, need, not, ten)| DayVolume {
-                    day: day.clone(),
-                    gatherings: *ev,
-                    aids: *gi,
-                    needs: *need,
-                    notices: *not,
-                    tensions: *ten,
+            pipeline_status: pipeline_rows
+                .into_iter()
+                .map(|r| AdminPipelineStatus {
+                    run_id: r.run_id,
+                    region: r.region,
+                    flow_type: r.flow_type,
+                    started_at: r.started_at,
+                    finished_at: r.finished_at,
+                    error: r.error,
+                    status: r.status,
                 })
                 .collect(),
+            error_count: error_count as i64,
+            budget_spent_cents: budget_spent,
+            budget_limit_cents: config.daily_limit_cents,
+            signals_missing_category: missing_category as i64,
+            signals_without_location: without_location as i64,
+            orphaned_signals: orphaned.unwrap_or(0) as i64,
+            validation_summary: SupervisorSummary {
+                total_open: validation_summary.total_open,
+                total_resolved: validation_summary.total_resolved,
+                total_dismissed: validation_summary.total_dismissed,
+                count_by_type: validation_summary
+                    .count_by_type
+                    .iter()
+                    .map(|(label, count)| FindingCount {
+                        label: label.clone(),
+                        count: *count,
+                    })
+                    .collect(),
+                count_by_severity: validation_summary
+                    .count_by_severity
+                    .iter()
+                    .map(|(label, count)| FindingCount {
+                        label: label.clone(),
+                        count: *count,
+                    })
+                    .collect(),
+            },
             count_by_type: by_type
+                .unwrap_or_default()
                 .iter()
                 .map(|(t, c)| TypeCount {
                     signal_type: format!("{t}"),
                     count: *c,
                 })
                 .collect(),
-            situation_count_by_arc: situation_arcs
+            situation_count: situation_count.unwrap_or(0),
+            hottest_concerns: tensions
                 .unwrap_or_default()
-                .iter()
-                .map(|(arc, c)| LabelCount {
-                    label: arc.clone(),
-                    count: *c,
-                })
-                .collect(),
-            situation_count_by_category: situation_categories
-                .unwrap_or_default()
-                .iter()
-                .map(|(cat, c)| LabelCount {
-                    label: cat.clone(),
-                    count: *c,
-                })
-                .collect(),
-            freshness_distribution: freshness
-                .unwrap_or_default()
-                .iter()
-                .map(|(bucket, c)| LabelCount {
-                    label: bucket.clone(),
-                    count: *c,
-                })
-                .collect(),
-            confidence_distribution: confidence
-                .unwrap_or_default()
-                .iter()
-                .map(|(bucket, c)| LabelCount {
-                    label: bucket.clone(),
-                    count: *c,
-                })
-                .collect(),
-            unmet_concerns: tensions
-                .unwrap_or_default()
-                .iter()
-                .filter(|t| t.unmet)
-                .map(|t| AdminConcernRow {
-                    title: t.title.clone(),
-                    severity: t.severity.clone(),
-                    category: t.category.clone(),
-                    opposing: t.opposing.clone(),
-                })
-                .collect(),
-            top_sources: top_sources
-                .iter()
-                .take(10)
-                .map(|s| AdminSourceRow {
-                    name: s.canonical_value.clone(),
-                    signals: s.signals_produced,
-                    weight: s.weight,
-                    empty_runs: s.consecutive_empty_runs,
-                })
-                .collect(),
-            bottom_sources: bottom_sources
-                .iter()
-                .take(10)
-                .map(|s| AdminSourceRow {
-                    name: s.canonical_value.clone(),
-                    signals: s.signals_produced,
-                    weight: s.weight,
-                    empty_runs: s.consecutive_empty_runs,
-                })
-                .collect(),
-            extraction_yield: yield_data
-                .unwrap_or_default()
-                .iter()
-                .map(|y| AdminYieldRow {
-                    source_label: y.source_label.clone(),
-                    extracted: y.extracted,
-                    survived: y.survived,
-                    corroborated: y.corroborated,
-                    contradicted: y.contradicted,
-                })
-                .collect(),
-            gap_stats: gap_stats
-                .unwrap_or_default()
-                .iter()
-                .map(|g| AdminGapRow {
-                    gap_type: g.gap_type.clone(),
-                    total: g.total_sources,
-                    successful: g.successful_sources,
-                    avg_weight: g.avg_weight,
+                .into_iter()
+                .map(|t| AdminHottestConcern {
+                    id: t.id,
+                    title: t.title,
+                    category: t.category,
+                    cause_heat: t.cause_heat,
+                    corroboration_count: t.corroboration_count as i64,
                 })
                 .collect(),
         })
@@ -1014,6 +962,26 @@ impl QueryRoot {
             crate::db::models::schedule::list_all(pool, limit).await
         }
         .map_err(|e| async_graphql::Error::new(format!("Failed to query schedules: {e}")))?;
+
+        Ok(rows.into_iter().map(Schedule::from).collect())
+    }
+
+    /// List schedules associated with a specific entity (source, region, or cluster).
+    #[graphql(guard = "AdminGuard")]
+    async fn schedules_for_entity(
+        &self,
+        ctx: &Context<'_>,
+        entity_type: String,
+        entity_id: String,
+    ) -> Result<Vec<Schedule>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::models::schedule::list_for_entity(pool, &entity_type, &entity_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to query schedules: {e}")))?;
 
         Ok(rows.into_iter().map(Schedule::from).collect())
     }
@@ -1767,24 +1735,40 @@ pub struct MeResult {
 
 #[derive(SimpleObject)]
 pub struct AdminDashboardData {
-    pub total_signals: u64,
-    pub total_situations: u64,
-    pub total_actors: u64,
-    pub total_sources: u64,
-    pub active_sources: u64,
-    pub total_tensions: u64,
-    pub scout_statuses: Vec<RegionScoutStatus>,
-    pub signal_volume_by_day: Vec<DayVolume>,
+    // System Health
+    pub pipeline_status: Vec<AdminPipelineStatus>,
+    pub error_count: i64,
+    pub budget_spent_cents: i64,
+    pub budget_limit_cents: i64,
+    // Data Quality
+    pub signals_missing_category: i64,
+    pub signals_without_location: i64,
+    pub orphaned_signals: i64,
+    pub validation_summary: SupervisorSummary,
+    // Graph Overview
     pub count_by_type: Vec<TypeCount>,
-    pub situation_count_by_arc: Vec<LabelCount>,
-    pub situation_count_by_category: Vec<LabelCount>,
-    pub freshness_distribution: Vec<LabelCount>,
-    pub confidence_distribution: Vec<LabelCount>,
-    pub unmet_concerns: Vec<AdminConcernRow>,
-    pub top_sources: Vec<AdminSourceRow>,
-    pub bottom_sources: Vec<AdminSourceRow>,
-    pub extraction_yield: Vec<AdminYieldRow>,
-    pub gap_stats: Vec<AdminGapRow>,
+    pub situation_count: u64,
+    pub hottest_concerns: Vec<AdminHottestConcern>,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminPipelineStatus {
+    pub run_id: String,
+    pub region: String,
+    pub flow_type: String,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+    pub status: String,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminHottestConcern {
+    pub id: Uuid,
+    pub title: String,
+    pub category: Option<String>,
+    pub cause_heat: f64,
+    pub corroboration_count: i64,
 }
 
 #[derive(SimpleObject)]
@@ -1797,16 +1781,6 @@ pub struct RegionScoutStatus {
 }
 
 #[derive(SimpleObject)]
-pub struct DayVolume {
-    pub day: String,
-    pub gatherings: u64,
-    pub aids: u64,
-    pub needs: u64,
-    pub notices: u64,
-    pub tensions: u64,
-}
-
-#[derive(SimpleObject)]
 pub struct TypeCount {
     pub signal_type: String,
     pub count: u64,
@@ -1816,39 +1790,6 @@ pub struct TypeCount {
 pub struct LabelCount {
     pub label: String,
     pub count: u64,
-}
-
-#[derive(SimpleObject)]
-pub struct AdminConcernRow {
-    pub title: String,
-    pub severity: String,
-    pub category: Option<String>,
-    pub opposing: Option<String>,
-}
-
-#[derive(SimpleObject)]
-pub struct AdminSourceRow {
-    pub name: String,
-    pub signals: u32,
-    pub weight: f64,
-    pub empty_runs: u32,
-}
-
-#[derive(SimpleObject)]
-pub struct AdminYieldRow {
-    pub source_label: String,
-    pub extracted: u32,
-    pub survived: u32,
-    pub corroborated: u32,
-    pub contradicted: u32,
-}
-
-#[derive(SimpleObject)]
-pub struct AdminGapRow {
-    pub gap_type: String,
-    pub total: u32,
-    pub successful: u32,
-    pub avg_weight: f64,
 }
 
 #[derive(SimpleObject)]

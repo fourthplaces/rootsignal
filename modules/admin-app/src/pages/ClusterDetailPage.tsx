@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_CLUSTER_DETAIL } from "@/graphql/queries";
 import { WEAVE_CLUSTER, FEED_GROUP } from "@/graphql/mutations";
 import { DataTable, type Column } from "@/components/DataTable";
+import { SchedulesPanel } from "@/components/SchedulesPanel";
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
   Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -158,6 +159,9 @@ export function ClusterDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Schedules */}
+      <SchedulesPanel entityType="cluster" entityId={id!} />
 
       {/* Members table */}
       <div>

@@ -15,6 +15,7 @@ import { GraphExplorerPage } from "@/pages/GraphExplorerPage";
 import { EventsPage } from "@/pages/events/EventsPage";
 import { DanglingSignalsPage } from "@/pages/DanglingSignalsPage";
 import { BudgetPage } from "@/pages/BudgetPage";
+import { FindingsPage } from "@/pages/FindingsPage";
 import { ClusterDetailPage } from "@/pages/ClusterDetailPage";
 import { SituationDetailPage } from "@/pages/SituationDetailPage";
 
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="budget" element={<BudgetPage />} />
         <Route path="graph" element={<GraphExplorerPage />} />
         <Route path="events" element={<EventsPage />} />
+        <Route path="findings" element={<FindingsPage />} />
         <Route path="archive" element={<ArchivePage />} />
         <Route path="actors" element={<ActorsPage />} />
         <Route path="actors/:id" element={<ActorDetailPage />} />

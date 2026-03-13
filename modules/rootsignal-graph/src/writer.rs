@@ -1582,6 +1582,37 @@ impl GraphReader {
         Ok(results)
     }
 
+    /// Count signals not connected to any SignalGroup (admin dashboard quality card).
+    /// Excludes signals extracted in the last day (not yet coalesced).
+    pub async fn orphaned_signal_count(&self) -> Result<u64, neo4rs::Error> {
+        let labels = [
+            "Gathering",
+            "Resource",
+            "HelpRequest",
+            "Announcement",
+            "Concern",
+            "Condition",
+        ];
+        let branches: Vec<String> = labels
+            .iter()
+            .map(|label| {
+                format!(
+                    "MATCH (n:{label}) WHERE size((n)-[:MEMBER_OF]->()) = 0 AND n.extracted_at < datetime() - duration('P1D') RETURN count(n) AS orphaned"
+                )
+            })
+            .collect();
+        let cypher = branches.join("\nUNION ALL\n");
+        let q = query(&cypher);
+
+        let mut total: u64 = 0;
+        let mut stream = self.client().execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let count: i64 = row.get("orphaned").unwrap_or(0);
+            total += count as u64;
+        }
+        Ok(total)
+    }
+
     // --- Discovery briefing queries ---
 
     /// Get tensions ordered by: unmet first, then by severity. Includes response coverage.
@@ -1591,7 +1622,7 @@ impl GraphReader {
              WHERE datetime(t.last_confirmed_active) >= datetime() - duration('P30D')
              OPTIONAL MATCH (resp)-[:RESPONDS_TO]->(t)
              WITH t, count(resp) AS response_count
-             RETURN t.title AS title, t.severity AS severity,
+             RETURN t.id AS id, t.title AS title, t.severity AS severity,
                     t.opposing AS opposing, t.category AS category,
                     response_count = 0 AS unmet,
                     COALESCE(t.corroboration_count, 0) AS corroboration_count,
@@ -1608,11 +1639,16 @@ impl GraphReader {
         let mut results = Vec::new();
         let mut stream = self.client().execute(q).await?;
         while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let Ok(id) = Uuid::parse_str(&id_str) else {
+                continue;
+            };
             let title: String = row.get("title").unwrap_or_default();
             if title.is_empty() {
                 continue;
             }
             results.push(UnmetTension {
+                id,
                 title,
                 severity: row.get("severity").unwrap_or_default(),
                 opposing: {
@@ -4576,6 +4612,7 @@ pub struct DuplicateMatch {
 /// A tension with its response coverage status.
 #[derive(Debug, Clone)]
 pub struct UnmetTension {
+    pub id: Uuid,
     pub title: String,
     pub severity: String,
     pub opposing: Option<String>,

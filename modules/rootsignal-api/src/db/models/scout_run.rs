@@ -67,9 +67,72 @@ pub struct ScoutRunRow {
     pub cancelled_at: Option<DateTime<Utc>>,
 }
 
+/// Last run status per pipeline flow type (admin dashboard).
+pub struct PipelineStatusRow {
+    pub run_id: String,
+    pub region: String,
+    pub flow_type: String,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+    pub status: String,
+}
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
+
+/// Most recent run per flow type across all regions (admin dashboard health section).
+pub async fn last_run_per_flow(pool: &PgPool) -> Result<Vec<PipelineStatusRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT DISTINCT ON (flow_type)
+            run_id, region, flow_type,
+            started_at, finished_at, error,
+            CASE
+                WHEN cancelled_at IS NOT NULL THEN 'cancelled'
+                WHEN error IS NOT NULL THEN 'failed'
+                WHEN finished_at IS NOT NULL THEN 'completed'
+                WHEN started_at > now() - interval '30 minutes' THEN 'running'
+                ELSE 'stale'
+            END AS status
+        FROM runs
+        WHERE flow_type IS NOT NULL
+        ORDER BY flow_type, started_at DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let error_raw: Option<String> = r.get("error");
+            PipelineStatusRow {
+                run_id: r.get("run_id"),
+                region: r.get("region"),
+                flow_type: r.get("flow_type"),
+                started_at: r.get("started_at"),
+                finished_at: r.get("finished_at"),
+                error: error_raw.map(|e| e.chars().take(200).collect()),
+                status: r.get("status"),
+            }
+        })
+        .collect())
+}
+
+/// Count of error events in the last 24 hours (admin dashboard health section).
+pub async fn error_count_last_24h(pool: &PgPool) -> Result<i64> {
+    let count: Option<i64> = sqlx::query_scalar(
+        "SELECT count(*) FROM events
+         WHERE ts >= now() - interval '24 hours'
+           AND event_type IN ('scrape:ContentFetchFailed', 'scrape:ExtractionFailed', 'pipeline:HandlerFailed')",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(count.unwrap_or(0))
+}
 
 pub async fn list_by_region(pool: &PgPool, region: &str, limit: u32) -> Result<Vec<ScoutRunRow>> {
     let limit = limit.min(100) as i64;

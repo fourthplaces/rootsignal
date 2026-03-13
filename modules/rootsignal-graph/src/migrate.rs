@@ -51,7 +51,7 @@ pub async fn migrate(client: &GraphClient) -> Result<(), neo4rs::Error> {
 
     for label in &signal_labels {
         let l = label.to_lowercase();
-        for prop in &["lat", "lng", "source_diversity", "cause_heat", "extracted_at", "review_status", "channel_diversity"] {
+        for prop in &["lat", "lng", "source_diversity", "cause_heat", "extracted_at", "review_status", "channel_diversity", "category"] {
             g.run(query(&format!(
                 "CREATE INDEX {l}_{prop} IF NOT EXISTS FOR (n:{label}) ON (n.{prop})"
             ))).await?;
