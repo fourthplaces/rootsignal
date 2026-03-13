@@ -485,6 +485,9 @@ impl PipelineState {
                 self.run_scope = RunScope::Region(region.clone());
                 self.budget_limit_cents = *budget_cents;
             }
+            LifecycleEvent::ClusterWeaveRequested { budget_cents, .. } => {
+                self.budget_limit_cents = *budget_cents;
+            }
             LifecycleEvent::ScoutRunCompleted { .. } => {}
             _ => {}
         }

@@ -61,6 +61,41 @@ pub struct UngroupedSignal {
     pub cause_heat: f64,
 }
 
+// --- Cluster detail types ---
+
+/// A cluster member signal for the detail page.
+#[derive(Debug, Clone)]
+pub struct ClusterMemberRow {
+    pub id: Uuid,
+    pub title: String,
+    pub signal_type: String,
+    pub confidence: f64,
+    pub source_url: Option<String>,
+    pub summary: Option<String>,
+}
+
+/// Full cluster detail for the admin detail page.
+#[derive(Debug, Clone)]
+pub struct ClusterDetailRow {
+    pub id: Uuid,
+    pub label: String,
+    pub queries: Vec<String>,
+    pub created_at: String,
+    pub members: Vec<ClusterMemberRow>,
+    pub woven_situation_id: Option<Uuid>,
+}
+
+/// Lightweight cluster summary for spatial listing.
+#[derive(Debug, Clone)]
+pub struct ClusterSummary {
+    pub id: Uuid,
+    pub label: String,
+    pub queries: Vec<String>,
+    pub created_at: String,
+    pub member_count: u32,
+    pub woven_situation_id: Option<Uuid>,
+}
+
 #[async_trait]
 pub trait GraphQueries: Send + Sync {
     // --- Source management ---
@@ -317,6 +352,17 @@ pub trait GraphQueries: Send + Sync {
 
     /// Check if a Region with the given name already exists.
     async fn region_exists_by_name(&self, name: &str) -> Result<bool>;
+
+    // --- Cluster weaving ---
+
+    /// Read a SignalGroup + members + optional WOVEN_INTO situation for the detail page.
+    async fn get_cluster_detail(&self, group_id: Uuid) -> Result<Option<ClusterDetailRow>>;
+
+    /// Read member signals as WeaveSignal structs for the cluster weaver.
+    async fn get_cluster_members(&self, group_id: Uuid) -> Result<Vec<WeaveSignal>>;
+
+    /// Delta signals: members added to the group after the last weave.
+    async fn get_cluster_delta_signals(&self, group_id: Uuid) -> Result<Vec<WeaveSignal>>;
 }
 
 // --- GraphReader implementation ---
@@ -839,5 +885,17 @@ impl GraphQueries for crate::writer::GraphReader {
 
     async fn region_exists_by_name(&self, name: &str) -> Result<bool> {
         Ok(self.region_exists_by_name(name).await?)
+    }
+
+    async fn get_cluster_detail(&self, group_id: Uuid) -> Result<Option<ClusterDetailRow>> {
+        Ok(self.get_cluster_detail(group_id).await?)
+    }
+
+    async fn get_cluster_members(&self, group_id: Uuid) -> Result<Vec<WeaveSignal>> {
+        Ok(self.get_cluster_members(group_id).await?)
+    }
+
+    async fn get_cluster_delta_signals(&self, group_id: Uuid) -> Result<Vec<WeaveSignal>> {
+        Ok(self.get_cluster_delta_signals(group_id).await?)
     }
 }

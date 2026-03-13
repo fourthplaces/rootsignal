@@ -3320,6 +3320,229 @@ impl GraphReader {
 
         Ok(results)
     }
+
+    // -----------------------------------------------------------------
+    // Cluster weaving
+    // -----------------------------------------------------------------
+
+    pub async fn get_cluster_detail(
+        &self,
+        group_id: Uuid,
+    ) -> Result<Option<crate::queries::ClusterDetailRow>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(
+            "MATCH (g:SignalGroup {id: $id})
+             OPTIONAL MATCH (g)-[:WOVEN_INTO]->(sit:Situation)
+             OPTIONAL MATCH (sig)-[m:MEMBER_OF]->(g)
+               WHERE sig:Gathering OR sig:Resource OR sig:HelpRequest
+                  OR sig:Announcement OR sig:Concern OR sig:Condition
+             OPTIONAL MATCH (sig)-[:PRODUCED_BY]->(src:Source)
+             RETURN g.id AS id, g.label AS label, g.queries AS queries,
+                    toString(g.created_at) AS created_at,
+                    sit.id AS woven_situation_id,
+                    sig.id AS sig_id, sig.title AS sig_title,
+                    head(labels(sig)) AS signal_type,
+                    m.confidence AS confidence,
+                    src.url AS source_url,
+                    sig.summary AS sig_summary",
+        )
+        .param("id", group_id.to_string());
+
+        let mut stream = g.execute(q).await?;
+        let mut label = String::new();
+        let mut queries = Vec::new();
+        let mut created_at = String::new();
+        let mut woven_situation_id = None;
+        let mut members = Vec::new();
+        let mut found = false;
+
+        while let Some(row) = stream.next().await? {
+            if !found {
+                found = true;
+                label = row.get("label").unwrap_or_default();
+                queries = row.get("queries").unwrap_or_default();
+                created_at = row.get("created_at").unwrap_or_default();
+                let woven_str: Option<String> = row.get("woven_situation_id").ok();
+                woven_situation_id = woven_str.and_then(|s| Uuid::parse_str(&s).ok());
+            }
+
+            let sig_id_str: Option<String> = row.get("sig_id").ok();
+            if let Some(sig_id_str) = sig_id_str {
+                if let Ok(id) = Uuid::parse_str(&sig_id_str) {
+                    members.push(crate::queries::ClusterMemberRow {
+                        id,
+                        title: row.get("sig_title").unwrap_or_default(),
+                        signal_type: row.get("signal_type").unwrap_or_default(),
+                        confidence: row.get("confidence").unwrap_or(0.0),
+                        source_url: row.get("source_url").ok(),
+                        summary: row.get("sig_summary").ok(),
+                    });
+                }
+            }
+        }
+
+        if !found {
+            return Ok(None);
+        }
+
+        Ok(Some(crate::queries::ClusterDetailRow {
+            id: group_id,
+            label,
+            queries,
+            created_at,
+            members,
+            woven_situation_id,
+        }))
+    }
+
+    pub async fn clusters_in_bounds(
+        &self,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: u32,
+    ) -> Result<Vec<crate::queries::ClusterSummary>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(
+            "MATCH (sig)-[:MEMBER_OF]->(g:SignalGroup)
+             WHERE sig.lat IS NOT NULL
+               AND sig.lat >= $min_lat AND sig.lat <= $max_lat
+               AND sig.lng >= $min_lng AND sig.lng <= $max_lng
+             WITH g, count(sig) AS member_count
+             OPTIONAL MATCH (g)-[:WOVEN_INTO]->(sit:Situation)
+             RETURN g.id AS id, g.label AS label, g.queries AS queries,
+                    toString(g.created_at) AS created_at,
+                    member_count,
+                    sit.id AS woven_situation_id
+             ORDER BY member_count DESC
+             LIMIT $limit",
+        )
+        .param("min_lat", min_lat)
+        .param("max_lat", max_lat)
+        .param("min_lng", min_lng)
+        .param("max_lng", max_lng)
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let woven_str: Option<String> = row.get("woven_situation_id").ok();
+            results.push(crate::queries::ClusterSummary {
+                id,
+                label: row.get("label").unwrap_or_default(),
+                queries: row.get("queries").unwrap_or_default(),
+                created_at: row.get("created_at").unwrap_or_default(),
+                member_count: row.get::<i64>("member_count").unwrap_or(0) as u32,
+                woven_situation_id: woven_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            });
+        }
+        Ok(results)
+    }
+
+    pub async fn get_cluster_members(
+        &self,
+        group_id: Uuid,
+    ) -> Result<Vec<WeaveSignal>, neo4rs::Error> {
+        let g = &self.client;
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
+        let mut signals = Vec::new();
+
+        for label in &labels {
+            let q = query(&format!(
+                "MATCH (n:{label})-[:MEMBER_OF]->(g:SignalGroup {{id: $group_id}})
+                 WHERE NOT n:Citation
+                 OPTIONAL MATCH (n)-[:{LOC_EDGES}]->(loc:Location)
+                 WITH n, head(collect(loc)) AS primary_loc
+                 RETURN n.id AS id, n.title AS title, n.summary AS summary,
+                        '{label}' AS node_type, n.embedding AS embedding,
+                        n.url AS url,
+                        coalesce(n.cause_heat, 0.0) AS cause_heat,
+                        primary_loc.lat AS lat, primary_loc.lng AS lng,
+                        n.published_at AS published_at"
+            ))
+            .param("group_id", group_id.to_string());
+
+            let mut stream = g.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id_str: String = row.get("id").unwrap_or_default();
+                let id = match Uuid::parse_str(&id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let embedding: Vec<f32> = row.get("embedding").unwrap_or_default();
+
+                signals.push(WeaveSignal {
+                    id,
+                    title: row.get("title").unwrap_or_default(),
+                    summary: row.get("summary").unwrap_or_default(),
+                    node_type: row.get("node_type").unwrap_or_default(),
+                    url: row.get("url").unwrap_or_default(),
+                    cause_heat: row.get("cause_heat").unwrap_or(0.0),
+                    lat: row.get("lat").ok(),
+                    lng: row.get("lng").ok(),
+                    embedding,
+                    published_at: row.get("published_at").ok(),
+                });
+            }
+        }
+        Ok(signals)
+    }
+
+    pub async fn get_cluster_delta_signals(
+        &self,
+        group_id: Uuid,
+    ) -> Result<Vec<WeaveSignal>, neo4rs::Error> {
+        let g = &self.client;
+        let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
+        let mut signals = Vec::new();
+
+        for label in &labels {
+            let q = query(&format!(
+                "MATCH (g:SignalGroup {{id: $group_id}})-[w:WOVEN_INTO]->(sit:Situation)
+                 MATCH (n:{label})-[m:MEMBER_OF]->(g)
+                 WHERE NOT n:Citation AND m.added_at > w.woven_at
+                 OPTIONAL MATCH (n)-[:{LOC_EDGES}]->(loc:Location)
+                 WITH n, head(collect(loc)) AS primary_loc
+                 RETURN n.id AS id, n.title AS title, n.summary AS summary,
+                        '{label}' AS node_type, n.embedding AS embedding,
+                        n.url AS url,
+                        coalesce(n.cause_heat, 0.0) AS cause_heat,
+                        primary_loc.lat AS lat, primary_loc.lng AS lng,
+                        n.published_at AS published_at"
+            ))
+            .param("group_id", group_id.to_string());
+
+            let mut stream = g.execute(q).await?;
+            while let Some(row) = stream.next().await? {
+                let id_str: String = row.get("id").unwrap_or_default();
+                let id = match Uuid::parse_str(&id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let embedding: Vec<f32> = row.get("embedding").unwrap_or_default();
+
+                signals.push(WeaveSignal {
+                    id,
+                    title: row.get("title").unwrap_or_default(),
+                    summary: row.get("summary").unwrap_or_default(),
+                    node_type: row.get("node_type").unwrap_or_default(),
+                    url: row.get("url").unwrap_or_default(),
+                    cause_heat: row.get("cause_heat").unwrap_or(0.0),
+                    lat: row.get("lat").ok(),
+                    lng: row.get("lng").ok(),
+                    embedding,
+                    published_at: row.get("published_at").ok(),
+                });
+            }
+        }
+        Ok(signals)
+    }
 }
 
 /// A signal discovered during weaving (returned by `discover_unassigned_signals`).

@@ -144,6 +144,17 @@ impl ScoutDeps {
         engine::build_weave_engine(deps, self.make_store(run_id))
     }
 
+    /// Build a cluster-weave engine: weave a single SignalGroup into a Situation.
+    ///
+    /// Kicked off by `ClusterWeaveRequested { group_id }`.
+    pub fn build_cluster_weave_engine(
+        &self,
+        run_id: Uuid,
+    ) -> ScoutEngine {
+        let (deps, _ai) = self.build_base_deps(run_id);
+        engine::build_cluster_weave_engine(deps, self.make_store(run_id))
+    }
+
     /// Build a coalesce-only engine: analytical clustering without weaving.
     ///
     /// Kicked off by `CoalesceRequested`. No situation_weaving, no supervisor.

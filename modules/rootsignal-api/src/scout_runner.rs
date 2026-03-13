@@ -199,6 +199,36 @@ impl ScoutRunner {
         });
     }
 
+    /// Spawn a cluster-weave flow: weave a single SignalGroup into a Situation.
+    pub async fn run_cluster_weave(&self, group_id: uuid::Uuid) {
+        let deps = self.deps.clone();
+        let run_id = uuid::Uuid::new_v4();
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, deps.daily_budget_cents,
+        ).await;
+
+        info!(%group_id, %run_id, "Spawning cluster weave flow");
+
+        tokio::spawn(async move {
+            let engine = deps.build_cluster_weave_engine(run_id);
+            let result = engine
+                .emit(LifecycleEvent::ClusterWeaveRequested {
+                    run_id,
+                    group_id,
+                    budget_cents: budget,
+                })
+                .correlation_id(run_id)
+                .settled()
+                .await;
+
+            if let Err(e) = result {
+                warn!(%group_id, error = %e, "Cluster weave flow failed");
+            } else {
+                info!(%group_id, "Cluster weave flow completed");
+            }
+        });
+    }
+
     /// Spawn a coalesce flow: seed from a specific signal, coalescing only (no weaving).
     pub async fn run_coalesce_signal(
         &self,

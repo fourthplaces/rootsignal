@@ -18,6 +18,7 @@ import { GraphExplorerPage } from "@/pages/GraphExplorerPage";
 import { EventsPage } from "@/pages/events/EventsPage";
 import { DanglingSignalsPage } from "@/pages/DanglingSignalsPage";
 import { BudgetPage } from "@/pages/BudgetPage";
+import { ClusterDetailPage } from "@/pages/ClusterDetailPage";
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="archive" element={<ArchivePage />} />
         <Route path="signals" element={<SignalsPage />} />
         <Route path="signals/:id" element={<SignalDetailPage />} />
+        <Route path="clusters/:id" element={<ClusterDetailPage />} />
         <Route path="situations" element={<SituationsPage />} />
         <Route path="actors" element={<ActorsPage />} />
         <Route path="actors/:id" element={<ActorDetailPage />} />

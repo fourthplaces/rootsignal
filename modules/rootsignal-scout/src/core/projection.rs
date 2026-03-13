@@ -22,6 +22,7 @@ use rootsignal_common::telemetry_events::TelemetryEvent;
 use crate::core::aggregate::PipelineState;
 use crate::core::engine::ScoutEngineDeps;
 use crate::core::pipeline_events::PipelineEvent;
+use crate::domains::cluster_weaving::events::ClusterWeavingEvent;
 use crate::domains::coalescing::events::CoalescingEvent;
 use crate::domains::discovery::events::DiscoveryEvent;
 use crate::domains::enrichment::events::EnrichmentEvent;
@@ -212,6 +213,10 @@ fn is_terminal_event(event: &AnyEvent) -> bool {
         .is_some_and(|e| matches!(e, CoalescingEvent::CoalescingCompleted { .. } | CoalescingEvent::CoalescingSkipped { .. }))
     { return true; }
 
+    if event.downcast_ref::<ClusterWeavingEvent>()
+        .is_some_and(|e| matches!(e, ClusterWeavingEvent::ClusterWeaveCompleted | ClusterWeavingEvent::ClusterWeaveSkipped { .. }))
+    { return true; }
+
     false
 }
 
@@ -353,6 +358,22 @@ pub fn runs_projection() -> Projection<ScoutEngineDeps> {
                             .bind(parent_run_id.as_deref())
                             .bind(schedule_id.as_deref())
                             .bind(run_at)
+                            .execute(pool)
+                            .await?;
+                        }
+                    }
+                    LifecycleEvent::ClusterWeaveRequested {
+                        run_id, group_id, ..
+                    } => {
+                        let deps = ctx.deps();
+                        if let Some(pool) = &deps.pg_pool {
+                            sqlx::query(
+                                "INSERT INTO runs (run_id, region, flow_type, started_at) \
+                                 VALUES ($1, $2, 'cluster_weave', now()) \
+                                 ON CONFLICT (run_id) DO NOTHING",
+                            )
+                            .bind(run_id.to_string())
+                            .bind(group_id.to_string())
                             .execute(pool)
                             .await?;
                         }

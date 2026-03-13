@@ -1,3 +1,4 @@
+pub mod cluster_weaving;
 pub mod coalescing;
 pub mod curiosity;
 pub mod discovery;

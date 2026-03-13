@@ -406,6 +406,43 @@ impl MutationRoot {
         })
     }
 
+    /// Weave a single SignalGroup into a Situation.
+    #[graphql(guard = "AdminGuard")]
+    async fn weave_cluster(&self, ctx: &Context<'_>, group_id: String) -> Result<ScoutResult> {
+        let runner = ctx.data_unchecked::<ScoutRunner>();
+        let group_uuid = uuid::Uuid::parse_str(&group_id)
+            .map_err(|_| async_graphql::Error::new("Invalid group ID"))?;
+
+        if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
+            let (busy,): (bool,) = sqlx::query_as(
+                "SELECT EXISTS(
+                     SELECT 1 FROM runs
+                     WHERE region = $1
+                       AND flow_type = 'cluster_weave'
+                       AND finished_at IS NULL
+                       AND started_at > NOW() - INTERVAL '30 minutes'
+                 )",
+            )
+            .bind(&group_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or((false,));
+
+            if busy {
+                return Ok(ScoutResult {
+                    success: false,
+                    message: Some("Cluster weave already running for this group".into()),
+                });
+            }
+        }
+
+        runner.run_cluster_weave(group_uuid).await;
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Cluster weave started for group {}", group_id)),
+        })
+    }
+
     /// Run a scout-source flow: scrape specific sources.
     #[graphql(guard = "AdminGuard")]
     async fn run_scout_source(

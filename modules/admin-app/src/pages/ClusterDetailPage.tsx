@@ -1,0 +1,150 @@
+import { useState } from "react";
+import { Link, useParams } from "react-router";
+import { useQuery, useMutation } from "@apollo/client";
+import { ADMIN_CLUSTER_DETAIL } from "@/graphql/queries";
+import { WEAVE_CLUSTER } from "@/graphql/mutations";
+
+const SIGNAL_TYPE_COLORS: Record<string, string> = {
+  Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  Resource: "bg-green-500/10 text-green-400 border-green-500/20",
+  HelpRequest: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  Announcement: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  Concern: "bg-red-500/10 text-red-400 border-red-500/20",
+  Condition: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+};
+
+export function ClusterDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const { data, loading } = useQuery(ADMIN_CLUSTER_DETAIL, {
+    variables: { groupId: id },
+  });
+  const [weave, { loading: weaving }] = useMutation(WEAVE_CLUSTER);
+  const [weaveMsg, setWeaveMsg] = useState<string | null>(null);
+
+  if (loading) return <p className="text-muted-foreground">Loading...</p>;
+
+  const cluster = data?.adminClusterDetail;
+  if (!cluster) return <p className="text-muted-foreground">Cluster not found</p>;
+
+  const isWoven = !!cluster.wovenSituationId;
+
+  return (
+    <div className="space-y-6 max-w-4xl">
+      {/* Breadcrumb */}
+      <nav className="text-sm text-muted-foreground">
+        <Link to="/workflows" className="hover:text-foreground">Workflows</Link>
+        <span className="mx-2">/</span>
+        <span>Cluster</span>
+      </nav>
+
+      {/* Header */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-semibold">{cluster.label}</h1>
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {cluster.memberCount} signal{cluster.memberCount !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <button
+            className="px-3 py-1 text-xs rounded-md bg-secondary hover:bg-secondary/80 disabled:opacity-50"
+            disabled={weaving}
+            onClick={async () => {
+              setWeaveMsg(null);
+              const { data } = await weave({ variables: { groupId: id } });
+              setWeaveMsg(data?.weaveCluster?.message ?? null);
+            }}
+          >
+            {weaving ? "Weaving..." : isWoven ? "Re-weave" : "Weave"}
+          </button>
+        </div>
+        {weaveMsg && (
+          <p className="text-xs text-muted-foreground">{weaveMsg}</p>
+        )}
+        <p className="text-sm text-muted-foreground">
+          Created {new Date(cluster.createdAt).toLocaleDateString()}
+        </p>
+      </div>
+
+      {/* Woven status */}
+      {isWoven && (
+        <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-sm">
+          <span className="text-green-400">Woven into </span>
+          <Link
+            to={`/situations`}
+            className="text-green-400 hover:underline font-medium"
+          >
+            Situation {cluster.wovenSituationId.slice(0, 8)}
+          </Link>
+        </div>
+      )}
+
+      {/* Queries */}
+      {cluster.queries.length > 0 && (
+        <div className="rounded-lg border border-border p-4">
+          <h2 className="text-sm font-medium mb-3">Queries ({cluster.queries.length})</h2>
+          <div className="flex flex-wrap gap-1.5">
+            {cluster.queries.map((q: string, i: number) => (
+              <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
+                {q}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Members table */}
+      {cluster.members.length > 0 && (
+        <div className="rounded-lg border border-border p-4">
+          <h2 className="text-sm font-medium mb-3">Member Signals ({cluster.memberCount})</h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                <th className="pb-2 pr-4">Title</th>
+                <th className="pb-2 pr-4">Type</th>
+                <th className="pb-2 pr-4">Confidence</th>
+                <th className="pb-2">Source</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {cluster.members.map((m: {
+                id: string;
+                title: string;
+                signalType: string;
+                confidence: number;
+                sourceUrl: string | null;
+                summary: string | null;
+              }) => (
+                <tr key={m.id} className="group">
+                  <td className="py-2 pr-4">
+                    <Link to={`/signals/${m.id}`} className="text-blue-400 hover:underline">
+                      {m.title}
+                    </Link>
+                    {m.summary && (
+                      <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{m.summary}</p>
+                    )}
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span className={`px-2 py-0.5 rounded-full text-xs border ${SIGNAL_TYPE_COLORS[m.signalType] ?? "bg-muted text-muted-foreground border-border"}`}>
+                      {m.signalType}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4 tabular-nums">
+                    {(m.confidence * 100).toFixed(0)}%
+                  </td>
+                  <td className="py-2 text-xs truncate max-w-[200px]">
+                    {m.sourceUrl && (
+                      <a href={m.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+                        {m.sourceUrl.replace(/^https?:\/\/(www\.)?/, "").slice(0, 40)}
+                      </a>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

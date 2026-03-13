@@ -751,6 +751,48 @@ export const ADMIN_ARCHIVE_FILES = gql`
   }
 `;
 
+export const ADMIN_CLUSTER_DETAIL = gql`
+  query AdminClusterDetail($groupId: String!) {
+    adminClusterDetail(groupId: $groupId) {
+      id
+      label
+      queries
+      createdAt
+      memberCount
+      wovenSituationId
+      members {
+        id
+        title
+        signalType
+        confidence
+        sourceUrl
+        summary
+      }
+    }
+  }
+`;
+
+export const CLUSTERS_IN_BOUNDS = gql`
+  query ClustersInBounds(
+    $minLat: Float!, $maxLat: Float!,
+    $minLng: Float!, $maxLng: Float!,
+    $limit: Int
+  ) {
+    clustersInBounds(
+      minLat: $minLat, maxLat: $maxLat,
+      minLng: $minLng, maxLng: $maxLng,
+      limit: $limit
+    ) {
+      id
+      label
+      queries
+      createdAt
+      memberCount
+      wovenSituationId
+    }
+  }
+`;
+
 // --- Source detail ---
 
 export const SOURCE_DETAIL = gql`

@@ -6,6 +6,7 @@ import {
   SIGNALS_NEAR,
   SITUATIONS_IN_BOUNDS,
   ACTORS_IN_BOUNDS,
+  CLUSTERS_IN_BOUNDS,
   ADMIN_SCOUT_RUNS,
   ADMIN_REGION_SOURCES_BY_REGION,
 } from "@/graphql/queries";
@@ -18,10 +19,11 @@ import {
 } from "@/graphql/mutations";
 import { RegionMap } from "@/pages/MapPage";
 
-type Tab = "map" | "signals" | "situations" | "actors" | "sources" | "runs";
+type Tab = "map" | "signals" | "clusters" | "situations" | "actors" | "sources" | "runs";
 const TABS: { key: Tab; label: string }[] = [
   { key: "map", label: "Map" },
   { key: "signals", label: "Signals" },
+  { key: "clusters", label: "Clusters" },
   { key: "situations", label: "Situations" },
   { key: "actors", label: "Actors" },
   { key: "sources", label: "Sources" },
@@ -80,6 +82,11 @@ export function RegionDetailPage() {
     skip: !bounds || tab !== "situations",
   });
 
+  const { data: clustersData, loading: clustersLoading } = useQuery(CLUSTERS_IN_BOUNDS, {
+    variables: { ...bounds, limit: 100 },
+    skip: !bounds || tab !== "clusters",
+  });
+
   const { data: actorsData, loading: actorsLoading } = useQuery(ACTORS_IN_BOUNDS, {
     variables: { ...bounds, limit: 100 },
     skip: !bounds || tab !== "actors",
@@ -120,6 +127,7 @@ export function RegionDetailPage() {
   if (!region) return <p className="text-muted-foreground p-4">Region not found.</p>;
 
   const signals = signalsData?.signalsNear ?? [];
+  const clusters = clustersData?.clustersInBounds ?? [];
   const situations = situationsData?.situationsInBounds ?? [];
   const actors = actorsData?.actorsInBounds ?? [];
   const regionSources = sourcesData?.adminRegionSourcesByRegion ?? [];
@@ -193,6 +201,9 @@ export function RegionDetailPage() {
             {t.key === "signals" && signals.length > 0 && (
               <span className="ml-1 text-xs text-muted-foreground">({signals.length})</span>
             )}
+            {t.key === "clusters" && clusters.length > 0 && (
+              <span className="ml-1 text-xs text-muted-foreground">({clusters.length})</span>
+            )}
             {t.key === "situations" && situations.length > 0 && (
               <span className="ml-1 text-xs text-muted-foreground">({situations.length})</span>
             )}
@@ -256,6 +267,67 @@ export function RegionDetailPage() {
                   </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {/* Clusters tab */}
+      {tab === "clusters" && (
+        clustersLoading ? (
+          <p className="text-muted-foreground">Loading clusters...</p>
+        ) : clusters.length === 0 ? (
+          <p className="text-muted-foreground">No clusters in this region.</p>
+        ) : (
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="text-left px-4 py-2 font-medium">Label</th>
+                  <th className="text-right px-4 py-2 font-medium">Signals</th>
+                  <th className="text-left px-4 py-2 font-medium">Queries</th>
+                  <th className="text-left px-4 py-2 font-medium">Status</th>
+                  <th className="text-left px-4 py-2 font-medium">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clusters.map((c: Record<string, string | number | string[] | null>) => (
+                  <tr key={c.id as string} className="border-b border-border last:border-0 hover:bg-muted/30">
+                    <td className="px-4 py-2 font-medium">
+                      <Link to={`/clusters/${c.id}`} className="text-blue-400 hover:underline">
+                        {c.label}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">{c.memberCount as number}</td>
+                    <td className="px-4 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        {(c.queries as string[] ?? []).slice(0, 3).map((q: string, i: number) => (
+                          <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground truncate max-w-[200px]">
+                            {q}
+                          </span>
+                        ))}
+                        {(c.queries as string[] ?? []).length > 3 && (
+                          <span className="text-xs text-muted-foreground">+{(c.queries as string[]).length - 3}</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2">
+                      {c.wovenSituationId ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-900/30 text-green-400 border border-green-500/30">
+                          Woven
+                        </span>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-900/30 text-amber-400 border border-amber-500/30">
+                          Open
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+                      {c.createdAt ? formatDate(c.createdAt as string) : "-"}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

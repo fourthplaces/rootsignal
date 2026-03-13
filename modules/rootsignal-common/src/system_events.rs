@@ -356,6 +356,11 @@ pub enum SystemEvent {
         queries: Vec<String>,
     },
 
+    GroupWovenIntoSituation {
+        group_id: Uuid,
+        situation_id: Uuid,
+    },
+
     // -----------------------------------------------------------------------
     // Tag decisions
     // -----------------------------------------------------------------------

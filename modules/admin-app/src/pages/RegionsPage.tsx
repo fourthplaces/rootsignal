@@ -70,10 +70,14 @@ function RegionActions({ region: r, onDelete, onRefetch }: { region: Region; onD
 }
 
 export function RegionsPage() {
+  const [search, setSearch] = useState("");
   const { data, loading, refetch } = useQuery(ADMIN_REGIONS, {
-    variables: { limit: 100 },
+    variables: { limit: 200 },
   });
-  const regions: Region[] = data?.adminRegions ?? [];
+  const allRegions: Region[] = data?.adminRegions ?? [];
+  const regions = search
+    ? allRegions.filter((r) => r.name.toLowerCase().includes(search.toLowerCase()))
+    : allRegions;
   const [createRegion] = useMutation(CREATE_REGION);
   const [deleteRegion] = useMutation(DELETE_REGION);
   const [showCreate, setShowCreate] = useState(false);
@@ -106,7 +110,10 @@ export function RegionsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Regions</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">Regions</h1>
+          <span className="text-sm text-muted-foreground">({regions.length})</span>
+        </div>
         <button
           onClick={() => setShowCreate(true)}
           className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
@@ -114,6 +121,14 @@ export function RegionsPage() {
           Create Region
         </button>
       </div>
+
+      <input
+        type="text"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search regions..."
+        className="px-3 py-1.5 rounded-md border border-input bg-background text-sm w-64"
+      />
 
       {showCreate && (
         <PromptDialog

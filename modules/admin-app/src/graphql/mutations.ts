@@ -210,6 +210,15 @@ export const SCRAPE_URL = gql`
 `;
 
 
+export const WEAVE_CLUSTER = gql`
+  mutation WeaveCluster($groupId: String!) {
+    weaveCluster(groupId: $groupId) {
+      success
+      message
+    }
+  }
+`;
+
 export const COALESCE_SIGNAL = gql`
   mutation CoalesceSignal($signalId: String!) {
     coalesceSignal(signalId: $signalId) {

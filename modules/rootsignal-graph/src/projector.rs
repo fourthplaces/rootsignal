@@ -3060,7 +3060,7 @@ impl GraphProjector {
                 .param("id", group_id.to_string())
                 .param("label", label.as_str())
                 .param("queries", queries_json)
-                .param("ts", ts);
+                .param("ts", ts.clone());
                 ops.push(Op::Run(q));
 
                 if let Some(seed_id) = seed_signal_id {
@@ -3069,10 +3069,11 @@ impl GraphProjector {
                            AND (sig:Gathering OR sig:Resource OR sig:HelpRequest OR sig:Announcement OR sig:Concern OR sig:Condition)
                          MATCH (g:SignalGroup {id: $group_id})
                          MERGE (sig)-[r:MEMBER_OF]->(g)
-                         ON CREATE SET r.confidence = 1.0",
+                         ON CREATE SET r.confidence = 1.0, r.added_at = datetime($ts)",
                     )
                     .param("signal_id", seed_id.to_string())
-                    .param("group_id", group_id.to_string());
+                    .param("group_id", group_id.to_string())
+                    .param("ts", ts);
                     ops.push(Op::Run(seed_q));
                 }
 
@@ -3084,17 +3085,19 @@ impl GraphProjector {
                 group_id,
                 confidence,
             } => {
+                let ts = format_dt_from_event(event);
                 let q = query(
                     "MATCH (sig) WHERE sig.id = $signal_id
                        AND (sig:Gathering OR sig:Resource OR sig:HelpRequest OR sig:Announcement OR sig:Concern OR sig:Condition)
                      MATCH (g:SignalGroup {id: $group_id})
                      MERGE (sig)-[r:MEMBER_OF]->(g)
-                     ON CREATE SET r.confidence = $confidence
+                     ON CREATE SET r.confidence = $confidence, r.added_at = datetime($ts)
                      ON MATCH SET r.confidence = $confidence",
                 )
                 .param("signal_id", signal_id.to_string())
                 .param("group_id", group_id.to_string())
-                .param("confidence", confidence);
+                .param("confidence", confidence)
+                .param("ts", ts);
 
                 Plan::single(Op::Run(q))
             }
@@ -3112,6 +3115,25 @@ impl GraphProjector {
                 )
                 .param("id", group_id.to_string())
                 .param("queries", queries_json)
+                .param("ts", ts);
+
+                Plan::single(Op::Run(q))
+            }
+
+            SystemEvent::GroupWovenIntoSituation {
+                group_id,
+                situation_id,
+            } => {
+                let ts = format_dt_from_event(event);
+                let q = query(
+                    "MATCH (g:SignalGroup {id: $group_id})
+                     MATCH (s:Situation {id: $situation_id})
+                     MERGE (g)-[w:WOVEN_INTO]->(s)
+                     ON CREATE SET w.woven_at = datetime($ts)
+                     ON MATCH SET w.woven_at = datetime($ts)",
+                )
+                .param("group_id", group_id.to_string())
+                .param("situation_id", situation_id.to_string())
                 .param("ts", ts);
 
                 Plan::single(Op::Run(q))

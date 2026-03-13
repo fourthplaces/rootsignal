@@ -902,6 +902,41 @@ impl QueryRoot {
         Ok(CoalesceRunOutcomes { run_id })
     }
 
+    /// Get a cluster (SignalGroup) with its member signals and woven status.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_cluster_detail(
+        &self,
+        ctx: &Context<'_>,
+        group_id: String,
+    ) -> Result<Option<GqlClusterDetail>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let id = Uuid::parse_str(&group_id)
+            .map_err(|_| async_graphql::Error::new("Invalid group ID"))?;
+        let detail = writer.get_cluster_detail(id).await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to read cluster: {e}")))?;
+        Ok(detail.map(GqlClusterDetail))
+    }
+
+    /// List clusters (SignalGroups) whose member signals fall within a bounding box.
+    #[graphql(guard = "AdminGuard")]
+    async fn clusters_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlClusterSummary>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let limit = limit.unwrap_or(50).min(200);
+        let clusters = writer
+            .clusters_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to read clusters: {e}")))?;
+        Ok(clusters.into_iter().map(GqlClusterSummary).collect())
+    }
+
     /// List scheduled scrapes (pending or recent).
     #[graphql(guard = "AdminGuard")]
     async fn admin_scheduled_scrapes(
@@ -2745,6 +2780,52 @@ struct OutcomeGroupRefined {
 struct CoalesceOutcomePage<T: async_graphql::OutputType> {
     items: Vec<T>,
     total: i64,
+}
+
+// ========== Cluster Detail ==========
+
+struct GqlClusterDetail(rootsignal_graph::ClusterDetailRow);
+
+#[Object]
+impl GqlClusterDetail {
+    async fn id(&self) -> String { self.0.id.to_string() }
+    async fn label(&self) -> &str { &self.0.label }
+    async fn queries(&self) -> &[String] { &self.0.queries }
+    async fn created_at(&self) -> &str { &self.0.created_at }
+    async fn member_count(&self) -> i32 { self.0.members.len() as i32 }
+    async fn members(&self) -> Vec<GqlClusterMember> {
+        self.0.members.iter().map(|m| GqlClusterMember(m.clone())).collect()
+    }
+    async fn woven_situation_id(&self) -> Option<String> {
+        self.0.woven_situation_id.map(|id| id.to_string())
+    }
+}
+
+#[derive(Clone)]
+struct GqlClusterMember(rootsignal_graph::ClusterMemberRow);
+
+#[Object]
+impl GqlClusterMember {
+    async fn id(&self) -> String { self.0.id.to_string() }
+    async fn title(&self) -> &str { &self.0.title }
+    async fn signal_type(&self) -> &str { &self.0.signal_type }
+    async fn confidence(&self) -> f64 { self.0.confidence }
+    async fn source_url(&self) -> Option<&str> { self.0.source_url.as_deref() }
+    async fn summary(&self) -> Option<&str> { self.0.summary.as_deref() }
+}
+
+struct GqlClusterSummary(rootsignal_graph::ClusterSummary);
+
+#[Object]
+impl GqlClusterSummary {
+    async fn id(&self) -> String { self.0.id.to_string() }
+    async fn label(&self) -> &str { &self.0.label }
+    async fn queries(&self) -> &[String] { &self.0.queries }
+    async fn created_at(&self) -> &str { &self.0.created_at }
+    async fn member_count(&self) -> i32 { self.0.member_count as i32 }
+    async fn woven_situation_id(&self) -> Option<String> {
+        self.0.woven_situation_id.map(|id| id.to_string())
+    }
 }
 
 struct CoalesceRunOutcomes {

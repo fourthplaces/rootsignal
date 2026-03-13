@@ -2468,6 +2468,15 @@ impl GraphQueries for MockGraphQueries {
     async fn region_exists_by_name(&self, _name: &str) -> Result<bool> {
         Ok(false)
     }
+    async fn get_cluster_detail(&self, _group_id: uuid::Uuid) -> Result<Option<rootsignal_graph::queries::ClusterDetailRow>> {
+        Ok(None)
+    }
+    async fn get_cluster_members(&self, _group_id: uuid::Uuid) -> Result<Vec<rootsignal_graph::WeaveSignal>> {
+        Ok(vec![])
+    }
+    async fn get_cluster_delta_signals(&self, _group_id: uuid::Uuid) -> Result<Vec<rootsignal_graph::WeaveSignal>> {
+        Ok(vec![])
+    }
 }
 
 // ---------------------------------------------------------------------------

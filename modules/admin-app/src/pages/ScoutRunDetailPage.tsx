@@ -260,14 +260,14 @@ function CoalesceOutcomes({ runId }: { runId: string }) {
           <SectionHeader title="Groups Created" total={outcomes.groupsCreated.total} />
           <div className="space-y-3">
             {outcomes.groupsCreated.items.map((g: { groupId: string; label: string; queries: string[]; seedSignalId: string | null; memberCount: number }) => (
-              <div key={g.groupId} className="rounded-lg border border-border p-4 space-y-2">
+              <Link key={g.groupId} to={`/clusters/${g.groupId}`} className="block rounded-lg border border-border p-4 space-y-2 hover:border-blue-500/40 transition-colors">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium">{g.label}</h3>
                   <span className="text-xs text-muted-foreground tabular-nums">{g.memberCount} signals</span>
                 </div>
                 {g.seedSignalId && (
                   <p className="text-xs text-muted-foreground">
-                    Seed: <Link to={`/signals/${g.seedSignalId}`} className="text-blue-400 hover:underline font-mono">{g.seedSignalId.slice(0, 8)}</Link>
+                    Seed: <Link to={`/signals/${g.seedSignalId}`} className="text-blue-400 hover:underline font-mono" onClick={(e) => e.stopPropagation()}>{g.seedSignalId.slice(0, 8)}</Link>
                   </p>
                 )}
                 <div className="flex flex-wrap gap-1.5">
@@ -275,7 +275,7 @@ function CoalesceOutcomes({ runId }: { runId: string }) {
                     <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{q}</span>
                   ))}
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
           <ShowingCount shown={outcomes.groupsCreated.items.length} total={outcomes.groupsCreated.total} />
@@ -312,14 +312,14 @@ function CoalesceOutcomes({ runId }: { runId: string }) {
           <SectionHeader title="Groups Refined" total={outcomes.groupsRefined.total} />
           <div className="space-y-3">
             {outcomes.groupsRefined.items.map((g: { groupId: string; queries: string[]; groupLabel: string | null }) => (
-              <div key={g.groupId} className="rounded-lg border border-border p-4 space-y-2">
+              <Link key={g.groupId} to={`/clusters/${g.groupId}`} className="block rounded-lg border border-border p-4 space-y-2 hover:border-blue-500/40 transition-colors">
                 <h3 className="text-sm font-medium">{g.groupLabel ?? g.groupId.slice(0, 8)}</h3>
                 <div className="flex flex-wrap gap-1.5">
                   {g.queries.map((q, i) => (
                     <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{q}</span>
                   ))}
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
           <ShowingCount shown={outcomes.groupsRefined.items.length} total={outcomes.groupsRefined.total} />

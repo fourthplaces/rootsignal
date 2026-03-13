@@ -88,6 +88,13 @@ pub enum LifecycleEvent {
         #[serde(default)]
         run_at: Option<DateTime<Utc>>,
     },
+    /// Kick off cluster weaving: weave a single SignalGroup into a Situation.
+    ClusterWeaveRequested {
+        run_id: Uuid,
+        group_id: Uuid,
+        #[serde(default)]
+        budget_cents: u64,
+    },
     /// A run was explicitly cancelled before completion.
     RunCancelled {
         run_id: Uuid,
