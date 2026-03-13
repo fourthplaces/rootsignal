@@ -338,6 +338,9 @@ pub trait GraphQueries: Send + Sync {
     /// Existing groups for LLM context during coalescing.
     async fn get_group_landscape(&self, limit: u32) -> Result<Vec<GroupBrief>>;
 
+    /// Fetch a single group by ID for targeted feeding.
+    async fn get_group_brief(&self, id: Uuid) -> Result<Option<GroupBrief>>;
+
     /// Batch-fetch signal details by ID for LLM tool results.
     async fn get_signal_details(&self, ids: &[Uuid]) -> Result<Vec<SignalDetail>>;
 
@@ -838,6 +841,40 @@ impl GraphQueries for crate::writer::GraphReader {
             }
         }
         Ok(results)
+    }
+
+    async fn get_group_brief(&self, id: Uuid) -> Result<Option<GroupBrief>> {
+        use neo4rs::query;
+
+        let q = query(
+            "MATCH (g:SignalGroup {id: $id})
+             OPTIONAL MATCH (sig)-[:MEMBER_OF]->(g)
+             WITH g, count(sig) AS sc, collect(sig.id) AS mids
+             RETURN g.id AS id, g.label AS label, g.queries AS queries,
+                    sc AS signal_count, mids AS member_ids",
+        )
+        .param("id", id.to_string());
+
+        let mut stream = self.client().execute(q).await?;
+        if let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                let queries: Vec<String> = row.get("queries").unwrap_or_default();
+                let raw_member_ids: Vec<String> = row.get("member_ids").unwrap_or_default();
+                let member_ids: Vec<Uuid> = raw_member_ids
+                    .iter()
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect();
+                return Ok(Some(GroupBrief {
+                    id,
+                    label: row.get("label").unwrap_or_default(),
+                    queries,
+                    signal_count: row.get::<i64>("signal_count").unwrap_or(0) as u32,
+                    member_ids,
+                }));
+            }
+        }
+        Ok(None)
     }
 
     async fn get_signal_details(&self, ids: &[Uuid]) -> Result<Vec<SignalDetail>> {

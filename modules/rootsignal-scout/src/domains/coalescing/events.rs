@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[causal::event(prefix = "coalescing", ephemeral)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,5 +12,11 @@ pub enum CoalescingEvent {
     },
     CoalescingSkipped {
         reason: String,
+    },
+    /// A single-group feed completed.
+    GroupFeedCompleted {
+        group_id: Uuid,
+        signals_added: u32,
+        queries_refined: bool,
     },
 }

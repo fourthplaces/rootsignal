@@ -2456,6 +2456,9 @@ impl GraphQueries for MockGraphQueries {
     async fn get_group_landscape(&self, limit: u32) -> Result<Vec<rootsignal_graph::GroupBrief>> {
         Ok(self.group_landscape.iter().take(limit as usize).cloned().collect())
     }
+    async fn get_group_brief(&self, id: Uuid) -> Result<Option<rootsignal_graph::GroupBrief>> {
+        Ok(self.group_landscape.iter().find(|g| g.id == id).cloned())
+    }
     async fn get_signal_details(&self, ids: &[Uuid]) -> Result<Vec<rootsignal_graph::SignalDetail>> {
         Ok(self.signal_details.iter().filter(|d| ids.contains(&d.id)).cloned().collect())
     }

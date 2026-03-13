@@ -731,8 +731,80 @@ mod handler_event_mapping_tests {
             fed_signals: vec![],
             refined_queries: vec![],
         };
-        let (system_events, _completed) = result_to_events(&result);
+        let (system_events, _completed, _schedules) = result_to_events(&result);
         assert!(system_events.is_empty());
+    }
+
+    #[test]
+    fn empty_result_produces_no_schedule_events() {
+        let result = CoalescingResult {
+            new_groups: vec![],
+            fed_signals: vec![],
+            refined_queries: vec![],
+        };
+        let (_events, _completed, schedules) = result_to_events(&result);
+        assert!(schedules.is_empty());
+    }
+
+    #[test]
+    fn new_group_emits_feed_schedule() {
+        use crate::domains::scheduling::events::SchedulingEvent;
+
+        let group_id = Uuid::new_v4();
+        let signal_id = Uuid::new_v4();
+        let result = CoalescingResult {
+            new_groups: vec![ProtoGroup {
+                group_id,
+                label: "Test group".into(),
+                queries: vec!["test query".into()],
+                signal_ids: vec![(signal_id, 0.9)],
+            }],
+            fed_signals: vec![],
+            refined_queries: vec![],
+        };
+        let (_events, _completed, schedules) = result_to_events(&result);
+        assert_eq!(schedules.len(), 1);
+        match &schedules[0] {
+            SchedulingEvent::ScheduleCreated {
+                schedule_id,
+                flow_type,
+                timeout,
+                recurring,
+                ..
+            } => {
+                assert_eq!(schedule_id, &format!("group_feed_{}", group_id));
+                assert_eq!(flow_type, "group_feed");
+                assert_eq!(*timeout, crate::domains::coalescing::BASE_FEED_INTERVAL);
+                assert!(*recurring);
+            }
+            other => panic!("Expected ScheduleCreated, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiple_new_groups_emit_one_schedule_each() {
+        let g1 = Uuid::new_v4();
+        let g2 = Uuid::new_v4();
+        let result = CoalescingResult {
+            new_groups: vec![
+                ProtoGroup {
+                    group_id: g1,
+                    label: "Group A".into(),
+                    queries: vec!["a".into()],
+                    signal_ids: vec![(Uuid::new_v4(), 0.9)],
+                },
+                ProtoGroup {
+                    group_id: g2,
+                    label: "Group B".into(),
+                    queries: vec!["b".into()],
+                    signal_ids: vec![(Uuid::new_v4(), 0.8)],
+                },
+            ],
+            fed_signals: vec![],
+            refined_queries: vec![],
+        };
+        let (_events, _completed, schedules) = result_to_events(&result);
+        assert_eq!(schedules.len(), 2);
     }
 
     #[test]
@@ -750,7 +822,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         assert_eq!(events.len(), 1, "Single-signal group: only GroupCreated, no SignalAddedToGroup");
         match &events[0] {
             SystemEvent::GroupCreated { group_id: gid, seed_signal_id, .. } => {
@@ -783,7 +855,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         assert_eq!(events.len(), 3, "1 GroupCreated + 2 SignalAddedToGroup");
 
         // First event: GroupCreated with seed
@@ -827,7 +899,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         assert_eq!(events.len(), 1);
         match &events[0] {
             SystemEvent::GroupCreated { seed_signal_id, .. } => {
@@ -852,7 +924,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         assert_eq!(events.len(), 2);
         for event in &events {
             match event {
@@ -875,7 +947,7 @@ mod handler_event_mapping_tests {
             ],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         assert_eq!(events.len(), 1);
         match &events[0] {
             SystemEvent::GroupQueriesRefined { group_id: gid, queries } => {
@@ -909,7 +981,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![(existing_group, vec!["refined".into()])],
         };
 
-        let (events, completed) = result_to_events(&result);
+        let (events, completed, _schedules) = result_to_events(&result);
         // GroupCreated, SignalAddedToGroup (sig2), SignalAddedToGroup (fed), GroupQueriesRefined
         assert_eq!(events.len(), 4);
         assert!(matches!(events[0], SystemEvent::GroupCreated { .. }));
@@ -962,7 +1034,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         // g1: GroupCreated + 1 add, g2: GroupCreated + 2 adds = 5 total
         assert_eq!(events.len(), 5);
 
@@ -1022,7 +1094,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         // g1: 1 create + 1 add, g2: 1 create + 1 add = 4
         assert_eq!(events.len(), 4);
 
@@ -1055,7 +1127,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         match &events[1] {
             SystemEvent::SignalAddedToGroup { confidence, .. } => {
                 assert!((*confidence - (-0.5)).abs() < f64::EPSILON,
@@ -1081,7 +1153,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         match &events[0] {
             SystemEvent::GroupCreated { queries: qs, .. } => {
                 assert_eq!(qs.len(), 100);
@@ -1109,7 +1181,7 @@ mod handler_event_mapping_tests {
             refined_queries: vec![],
         };
 
-        let (events, _completed) = result_to_events(&result);
+        let (events, _completed, _schedules) = result_to_events(&result);
         assert_eq!(events.len(), 50);
 
         let g1_count = events.iter().filter(|e| matches!(e, SystemEvent::SignalAddedToGroup { group_id, .. } if *group_id == g1)).count();
@@ -1319,5 +1391,120 @@ mod coalescer_tests {
         assert_eq!(result.refined_queries.len(), 1);
         assert_eq!(result.refined_queries[0].0, group_id);
         assert_eq!(result.refined_queries[0].1.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn feed_single_group_returns_fed_signals_and_refined_queries() {
+        let existing_signal = Uuid::new_v4();
+        let new_signal = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+
+        let group = GroupBrief {
+            id: group_id,
+            label: "Transit concerns".into(),
+            queries: vec!["bus route".into()],
+            signal_count: 1,
+            member_ids: vec![existing_signal],
+        };
+
+        let graph = MockGraphQueries::new()
+            .with_search_results(vec![
+                SignalSearchResult {
+                    id: existing_signal,
+                    title: "Already here".into(),
+                    summary: "Existing".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.95,
+                },
+                SignalSearchResult {
+                    id: new_signal,
+                    title: "New bus complaint".into(),
+                    summary: "Route cancelled".into(),
+                    signal_type: "Concern".into(),
+                    score: 0.85,
+                },
+            ])
+            .with_signal_details(vec![SignalDetail {
+                id: new_signal,
+                title: "New bus complaint".into(),
+                summary: "Route cancelled".into(),
+                signal_type: "Concern".into(),
+                cause_heat: Some(0.7),
+            }]);
+
+        let ai = MockAgent::with_response(serde_json::json!({
+            "add": [{ "signal_id": new_signal.to_string(), "confidence": 0.85 }],
+            "refined_queries": ["bus route cancellation"]
+        }));
+
+        let coalescer = Coalescer::new(
+            Arc::new(graph) as Arc<dyn GraphQueries>,
+            Arc::new(ai) as Arc<dyn ai_client::Agent>,
+            Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        );
+
+        let (fed, refined) = coalescer.feed_single_group(&group).await.unwrap();
+
+        assert_eq!(fed.len(), 1);
+        assert_eq!(fed[0].signal_id, new_signal);
+        assert_eq!(fed[0].group_id, group_id);
+        assert!((fed[0].confidence - 0.85).abs() < 0.01);
+
+        let refined = refined.unwrap();
+        assert_eq!(refined, vec!["bus route cancellation"]);
+    }
+
+    #[tokio::test]
+    async fn feed_single_group_with_no_candidates_returns_empty() {
+        let group_id = Uuid::new_v4();
+
+        let group = GroupBrief {
+            id: group_id,
+            label: "Empty group".into(),
+            queries: vec!["nothing matches".into()],
+            signal_count: 0,
+            member_ids: vec![],
+        };
+
+        let graph = MockGraphQueries::new();
+
+        let ai = MockAgent::with_response(serde_json::json!({
+            "add": [],
+            "refined_queries": []
+        }));
+
+        let coalescer = Coalescer::new(
+            Arc::new(graph) as Arc<dyn GraphQueries>,
+            Arc::new(ai) as Arc<dyn ai_client::Agent>,
+            Arc::new(FixedEmbedder::new(TEST_EMBEDDING_DIM)),
+        );
+
+        let (fed, refined) = coalescer.feed_single_group(&group).await.unwrap();
+        assert!(fed.is_empty());
+        assert!(refined.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_group_brief_finds_group_in_landscape() {
+        let group_id = Uuid::new_v4();
+        let graph = MockGraphQueries::new()
+            .with_group_landscape(vec![GroupBrief {
+                id: group_id,
+                label: "Test".into(),
+                queries: vec!["q".into()],
+                signal_count: 3,
+                member_ids: vec![],
+            }]);
+
+        let result = graph.get_group_brief(group_id).await.unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().label, "Test");
+    }
+
+    #[tokio::test]
+    async fn get_group_brief_returns_none_for_unknown_id() {
+        let graph = MockGraphQueries::new();
+        let result = graph.get_group_brief(Uuid::new_v4()).await.unwrap();
+        assert!(result.is_none());
     }
 }

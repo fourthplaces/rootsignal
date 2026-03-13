@@ -219,6 +219,15 @@ export const WEAVE_CLUSTER = gql`
   }
 `;
 
+export const FEED_GROUP = gql`
+  mutation FeedGroup($groupId: String!) {
+    feedGroup(groupId: $groupId) {
+      success
+      message
+    }
+  }
+`;
+
 export const COALESCE_SIGNAL = gql`
   mutation CoalesceSignal($signalId: String!) {
     coalesceSignal(signalId: $signalId) {

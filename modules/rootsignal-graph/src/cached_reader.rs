@@ -242,6 +242,40 @@ impl CachedReader {
         Ok(results)
     }
 
+    /// Admin listing: all signals from cache, no display filtering.
+    /// Optional status filter (staged/accepted/rejected).
+    pub async fn admin_list_signals(
+        &self,
+        limit: u32,
+        status: Option<&str>,
+    ) -> Result<Vec<Node>, neo4rs::Error> {
+        let snap = self.cache.load_full();
+
+        let mut results: Vec<Node> = snap
+            .signals
+            .iter()
+            .filter(|n| {
+                if let Some(status) = status {
+                    n.meta()
+                        .map(|m| format!("{:?}", m.review_status).to_lowercase() == status)
+                        .unwrap_or(false)
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+
+        results.sort_by(|a, b| {
+            let a_time = a.meta().map(|m| m.extracted_at);
+            let b_time = b.meta().map(|m| m.extracted_at);
+            b_time.cmp(&a_time)
+        });
+
+        results.truncate(limit as usize);
+        Ok(results)
+    }
+
     pub async fn list_recent_in_bbox(
         &self,
         lat: f64,

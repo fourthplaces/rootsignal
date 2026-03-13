@@ -155,6 +155,17 @@ impl ScoutDeps {
         engine::build_cluster_weave_engine(deps, self.make_store(run_id))
     }
 
+    /// Build a feed-group engine: gravity feed for a single SignalGroup.
+    ///
+    /// Kicked off by `FeedGroupRequested { group_id }`.
+    pub fn build_feed_group_engine(
+        &self,
+        run_id: Uuid,
+    ) -> ScoutEngine {
+        let (deps, _ai) = self.build_base_deps(run_id);
+        engine::build_feed_group_engine(deps, self.make_store(run_id))
+    }
+
     /// Build a coalesce-only engine: analytical clustering without weaving.
     ///
     /// Kicked off by `CoalesceRequested`. No situation_weaving, no supervisor.

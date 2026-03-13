@@ -291,6 +291,23 @@ impl QueryRoot {
         }))
     }
 
+    /// List all signals for admin, optionally filtered by review status.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_signals(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+        status: Option<String>,
+    ) -> Result<Vec<GqlSignal>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let limit = limit.unwrap_or(500).min(1000) as u32;
+        let nodes = reader
+            .admin_list_signals(limit, status.as_deref())
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Query failed: {e}")))?;
+        Ok(nodes.into_iter().map(GqlSignal::from).collect())
+    }
+
     /// Get a single signal by ID, bypassing display filters (expired, past, etc.).
     #[graphql(guard = "AdminGuard")]
     async fn admin_signal(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlSignal>> {

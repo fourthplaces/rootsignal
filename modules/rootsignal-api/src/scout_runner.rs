@@ -201,6 +201,14 @@ impl ScoutRunner {
 
     /// Spawn a cluster-weave flow: weave a single SignalGroup into a Situation.
     pub async fn run_cluster_weave(&self, group_id: uuid::Uuid) {
+        self.run_cluster_weave_with_parent(group_id, None).await;
+    }
+
+    pub async fn run_cluster_weave_with_parent(
+        &self,
+        group_id: uuid::Uuid,
+        parent_run_id: Option<String>,
+    ) {
         let deps = self.deps.clone();
         let run_id = uuid::Uuid::new_v4();
         let budget = crate::db::models::budget::effective_budget(
@@ -216,6 +224,7 @@ impl ScoutRunner {
                     run_id,
                     group_id,
                     budget_cents: budget,
+                    parent_run_id,
                 })
                 .correlation_id(run_id)
                 .settled()
@@ -225,6 +234,61 @@ impl ScoutRunner {
                 warn!(%group_id, error = %e, "Cluster weave flow failed");
             } else {
                 info!(%group_id, "Cluster weave flow completed");
+            }
+        });
+    }
+
+    /// Spawn a feed-group flow: gravity feed for a single SignalGroup.
+    ///
+    /// After feeding, if signals were added, auto-chains a cluster weave.
+    pub async fn run_feed_group(&self, group_id: uuid::Uuid) {
+        let deps = self.deps.clone();
+        let run_id = uuid::Uuid::new_v4();
+        let budget = crate::db::models::budget::effective_budget(
+            &deps.pg_pool, deps.daily_budget_cents,
+        ).await;
+
+        info!(%group_id, %run_id, "Spawning group feed flow");
+
+        let runner = self.clone();
+        tokio::spawn(async move {
+            let engine = deps.build_feed_group_engine(run_id);
+            let result = engine
+                .emit(LifecycleEvent::FeedGroupRequested {
+                    run_id,
+                    group_id,
+                    budget_cents: budget as u32,
+                })
+                .correlation_id(run_id)
+                .settled()
+                .await;
+
+            match result {
+                Err(e) => {
+                    warn!(%group_id, error = %e, "Group feed flow failed");
+                }
+                Ok(_) => {
+                    info!(%group_id, "Group feed flow completed");
+
+                    // Check if signals were added — if so, chain a cluster weave
+                    if let Ok(added) = sqlx::query_scalar::<_, i64>(
+                        "SELECT count(*) FROM seesaw_events \
+                         WHERE correlation_id = $1 \
+                           AND event_type = 'system:signal_added_to_group'",
+                    )
+                    .bind(run_id.to_string())
+                    .fetch_one(&deps.pg_pool)
+                    .await
+                    {
+                        if added > 0 {
+                            info!(%group_id, added, "Feed found signals, chaining cluster weave");
+                            runner.run_cluster_weave_with_parent(
+                                group_id,
+                                Some(run_id.to_string()),
+                            ).await;
+                        }
+                    }
+                }
             }
         });
     }
@@ -565,6 +629,8 @@ impl ScoutRunner {
                 let engine = match flow_type.as_str() {
                     "weave" => engine::build_weave_engine(engine_deps, Some(store_arc)),
                     "coalesce" => engine::build_coalesce_engine(engine_deps, Some(store_arc)),
+                    "cluster_weave" => engine::build_cluster_weave_engine(engine_deps, Some(store_arc)),
+                    "group_feed" => engine::build_feed_group_engine(engine_deps, Some(store_arc)),
                     _ => engine::build_engine(engine_deps, Some(store_arc)),
                 };
 
@@ -710,7 +776,7 @@ impl ScoutRunner {
     /// runs on partial failure (transactional outbox ordering).
     pub async fn process_schedules(&self, graph: &rootsignal_graph::GraphStore) {
         let rows = match sqlx::query_as::<_, ScheduleRow>(
-            "SELECT schedule_id, flow_type, scope, cadence_seconds, region_id \
+            "SELECT schedule_id, flow_type, scope, timeout, region_id \
              FROM schedules \
              WHERE enabled = true \
                AND deleted_at IS NULL \
@@ -794,6 +860,17 @@ impl ScoutRunner {
                         self.run_bootstrap(&region.id.to_string(), &scope).await;
                     } else {
                         warn!(schedule_id = row.schedule_id.as_str(), "Bootstrap schedule has no valid region");
+                    }
+                }
+                "group_feed" => {
+                    if let Some(group_id_str) = row.scope["group_id"].as_str() {
+                        if let Ok(group_uuid) = uuid::Uuid::parse_str(group_id_str) {
+                            self.run_feed_group(group_uuid).await;
+                        } else {
+                            warn!(schedule_id = row.schedule_id.as_str(), "Invalid group_id in group_feed scope");
+                        }
+                    } else {
+                        warn!(schedule_id = row.schedule_id.as_str(), "group_feed schedule missing group_id in scope");
                     }
                 }
                 other => {
@@ -899,7 +976,7 @@ struct ScheduleRow {
     flow_type: String,
     scope: serde_json::Value,
     #[allow(dead_code)]
-    cadence_seconds: i32,
+    timeout: i32,
     region_id: Option<String>,
 }
 

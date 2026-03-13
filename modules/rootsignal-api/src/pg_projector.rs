@@ -286,20 +286,24 @@ impl PostgresProjector {
                     let flow_type = p["flow_type"].as_str().unwrap_or_default();
                     let empty_obj = serde_json::Value::Object(Default::default());
                     let scope = p.get("scope").unwrap_or(&empty_obj);
-                    let cadence_seconds = p["cadence_seconds"].as_u64().unwrap_or(0) as i32;
+                    let timeout = p["timeout"].as_u64().unwrap_or(0) as i32;
+                    let base_timeout = p["base_timeout"].as_u64().map(|v| v as i32).unwrap_or(timeout);
+                    let recurring = p["recurring"].as_bool().unwrap_or(true);
                     let region_id = p["region_id"].as_str();
                     let next_run_at = event.created_at
-                        + chrono::Duration::seconds(cadence_seconds as i64);
+                        + chrono::Duration::seconds(timeout as i64);
 
                     sqlx::query(
-                        "INSERT INTO schedules (schedule_id, flow_type, scope, cadence_seconds, region_id, next_run_at, created_at) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                        "INSERT INTO schedules (schedule_id, flow_type, scope, timeout, base_timeout, recurring, region_id, next_run_at, created_at) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
                          ON CONFLICT (schedule_id) DO NOTHING",
                     )
                     .bind(schedule_id)
                     .bind(flow_type)
                     .bind(scope)
-                    .bind(cadence_seconds)
+                    .bind(timeout)
+                    .bind(base_timeout)
+                    .bind(recurring)
                     .bind(region_id)
                     .bind(next_run_at)
                     .bind(event.created_at)
@@ -315,7 +319,7 @@ impl PostgresProjector {
                     if enabled {
                         sqlx::query(
                             "UPDATE schedules SET enabled = true, \
-                             next_run_at = $2 + (cadence_seconds || ' seconds')::interval \
+                             next_run_at = $2 + (timeout || ' seconds')::interval \
                              WHERE schedule_id = $1",
                         )
                         .bind(schedule_id)
@@ -340,7 +344,7 @@ impl PostgresProjector {
 
                     sqlx::query(
                         "UPDATE schedules SET last_run_id = $2, \
-                         next_run_at = $3 + (cadence_seconds || ' seconds')::interval \
+                         next_run_at = $3 + (timeout || ' seconds')::interval \
                          WHERE schedule_id = $1",
                     )
                     .bind(schedule_id)
@@ -360,6 +364,22 @@ impl PostgresProjector {
                     )
                     .bind(schedule_id)
                     .bind(event.created_at)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                "scheduling:schedule_cadence_adjusted" => {
+                    let p = &event.payload;
+                    let schedule_id = p["schedule_id"].as_str().unwrap_or_default();
+                    let new_timeout = p["new_timeout"].as_i64().unwrap_or(0) as i32;
+
+                    sqlx::query(
+                        "UPDATE schedules SET timeout = $2, \
+                         next_run_at = now() + make_interval(secs => $2) \
+                         WHERE schedule_id = $1",
+                    )
+                    .bind(schedule_id)
+                    .bind(new_timeout)
                     .execute(&mut *tx)
                     .await?;
                 }

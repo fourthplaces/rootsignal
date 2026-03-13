@@ -20,7 +20,11 @@ pub enum SchedulingEvent {
         schedule_id: String,
         flow_type: String,
         scope: serde_json::Value,
-        cadence_seconds: u64,
+        timeout: u64,
+        #[serde(default)]
+        base_timeout: Option<u64>,
+        #[serde(default = "default_recurring")]
+        recurring: bool,
         region_id: Option<String>,
     },
 
@@ -40,7 +44,16 @@ pub enum SchedulingEvent {
     ScheduleDeleted {
         schedule_id: String,
     },
+
+    /// Adjust a schedule's timeout (exponential backoff or reset).
+    ScheduleCadenceAdjusted {
+        schedule_id: String,
+        new_timeout: i32,
+        reason: String,
+    },
 }
+
+fn default_recurring() -> bool { true }
 
 /// What to re-scrape: specific sources or an entire region.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -368,6 +368,68 @@ pub fn build_cluster_weave_engine(deps: ScoutEngineDeps, seesaw_store: Option<Ar
     engine
 }
 
+/// Build a feed-group engine: gravity feed for a single SignalGroup.
+///
+/// Kicked off by `FeedGroupRequested { group_id }`.
+/// Includes: coalescing (feed_group reactor only).
+///
+/// Terminal event: GroupFeedCompleted.
+pub fn build_feed_group_engine(deps: ScoutEngineDeps, seesaw_store: Option<Arc<PostgresStore>>) -> CausalEngine {
+    let capture_sink = deps.captured_events.clone();
+    let embedding_store: Option<Arc<dyn EmbeddingLookup>> =
+        deps.pg_pool.as_ref().map(|pool| {
+            Arc::new(EmbeddingStore::new(
+                pool.clone(),
+                deps.embedder.clone(),
+                EMBEDDING_MODEL.to_string(),
+            )) as Arc<dyn EmbeddingLookup>
+        });
+    let graph_projector = deps.graph_client.as_ref().map(|client| {
+        let mut projector = GraphProjector::new(client.clone());
+        if let Some(store) = embedding_store.clone() {
+            projector = projector.with_embedding_store(store);
+        }
+        projector
+    });
+    let run_id = deps.run_id;
+
+    let mut engine = causal::Engine::new(deps)
+        .with_aggregators(pipeline_aggregators::aggregators())
+        .with_reactors(coalescing::reactors::reactors())
+        .on_dlq(|info: causal::DlqTerminalInfo| PipelineEvent::HandlerFailed {
+            handler_id: info.reactor_id.clone(),
+            source_event_type: info.source_event_type.clone(),
+            error: info.error.clone(),
+            attempts: info.attempts,
+        });
+
+    if let Some(s) = seesaw_store {
+        engine = engine
+            .with_store(s)
+            .with_event_metadata(serde_json::json!({
+                "run_id": run_id,
+                "schema_v": 1
+            }))
+            .snapshot_every(100);
+    }
+
+    if let Some(projector) = graph_projector {
+        engine = engine.with_reactor(projection::neo4j_projection_handler(projector));
+    }
+
+    engine = engine.with_reactor(projection::run_completion_handler());
+
+    engine = engine.with_projection(projection::runs_projection());
+    engine = engine.with_projection(projection::system_log_projection());
+    engine = engine.with_projection(projection::schedules_projection());
+
+    if let Some(sink) = capture_sink {
+        engine = engine.with_reactor(projection::capture_handler(sink));
+    }
+
+    engine
+}
+
 /// Build an infrastructure-only engine: event persistence + Neo4j projector.
 ///
 /// No domain handlers, no aggregators, no production deps — used for emitting

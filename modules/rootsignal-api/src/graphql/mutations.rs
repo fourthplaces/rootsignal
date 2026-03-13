@@ -443,6 +443,43 @@ impl MutationRoot {
         })
     }
 
+    /// Feed a single SignalGroup: run its queries to find new matching signals.
+    #[graphql(guard = "AdminGuard")]
+    async fn feed_group(&self, ctx: &Context<'_>, group_id: String) -> Result<ScoutResult> {
+        let runner = require_runner(ctx)?;
+        let group_uuid = uuid::Uuid::parse_str(&group_id)
+            .map_err(|_| async_graphql::Error::new("Invalid group ID"))?;
+
+        if let Some(pool) = ctx.data_unchecked::<Option<sqlx::PgPool>>() {
+            let (busy,): (bool,) = sqlx::query_as(
+                "SELECT EXISTS(
+                     SELECT 1 FROM runs
+                     WHERE region = $1
+                       AND flow_type IN ('group_feed', 'cluster_weave')
+                       AND finished_at IS NULL
+                       AND started_at > NOW() - INTERVAL '30 minutes'
+                 )",
+            )
+            .bind(&group_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or((false,));
+
+            if busy {
+                return Ok(ScoutResult {
+                    success: false,
+                    message: Some("Feed or weave already running for this group".into()),
+                });
+            }
+        }
+
+        runner.run_feed_group(group_uuid).await;
+        Ok(ScoutResult {
+            success: true,
+            message: Some(format!("Feed started for group {}", group_id)),
+        })
+    }
+
     /// Run a scout-source flow: scrape specific sources.
     #[graphql(guard = "AdminGuard")]
     async fn run_scout_source(
@@ -573,7 +610,8 @@ impl MutationRoot {
         ctx: &Context<'_>,
         flow_type: String,
         scope: String,
-        cadence_seconds: u32,
+        timeout: u32,
+        recurring: Option<bool>,
         region_id: Option<String>,
     ) -> Result<ScoutResult> {
         use rootsignal_scout::domains::scheduling::events::SchedulingEvent;
@@ -588,7 +626,9 @@ impl MutationRoot {
                 schedule_id: schedule_id.clone(),
                 flow_type,
                 scope: scope_json,
-                cadence_seconds: cadence_seconds as u64,
+                timeout: timeout as u64,
+                base_timeout: Some(timeout as u64),
+                recurring: recurring.unwrap_or(true),
                 region_id,
             })
             .correlation_id(run_id)

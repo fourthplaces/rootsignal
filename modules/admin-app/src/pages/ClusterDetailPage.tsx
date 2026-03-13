@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_CLUSTER_DETAIL } from "@/graphql/queries";
-import { WEAVE_CLUSTER } from "@/graphql/mutations";
+import { WEAVE_CLUSTER, FEED_GROUP } from "@/graphql/mutations";
 import { DataTable, type Column } from "@/components/DataTable";
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
@@ -70,7 +70,9 @@ export function ClusterDetailPage() {
     variables: { groupId: id },
   });
   const [weave, { loading: weaving }] = useMutation(WEAVE_CLUSTER);
+  const [feed, { loading: feeding }] = useMutation(FEED_GROUP);
   const [weaveMsg, setWeaveMsg] = useState<string | null>(null);
+  const [feedMsg, setFeedMsg] = useState<string | null>(null);
 
   if (loading) return <p className="text-muted-foreground">Loading...</p>;
 
@@ -97,20 +99,33 @@ export function ClusterDetailPage() {
               {cluster.memberCount} signal{cluster.memberCount !== 1 ? "s" : ""}
             </span>
           </div>
-          <button
-            className="px-3 py-1 text-xs rounded-md bg-secondary hover:bg-secondary/80 disabled:opacity-50"
-            disabled={weaving}
-            onClick={async () => {
-              setWeaveMsg(null);
-              const { data } = await weave({ variables: { groupId: id } });
-              setWeaveMsg(data?.weaveCluster?.message ?? null);
-            }}
-          >
-            {weaving ? "Weaving..." : isWoven ? "Re-weave" : "Weave"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              className="px-3 py-1 text-xs rounded-md bg-secondary hover:bg-secondary/80 disabled:opacity-50"
+              disabled={feeding}
+              onClick={async () => {
+                setFeedMsg(null);
+                const { data } = await feed({ variables: { groupId: id } });
+                setFeedMsg(data?.feedGroup?.message ?? null);
+              }}
+            >
+              {feeding ? "Feeding..." : "Feed"}
+            </button>
+            <button
+              className="px-3 py-1 text-xs rounded-md bg-secondary hover:bg-secondary/80 disabled:opacity-50"
+              disabled={weaving}
+              onClick={async () => {
+                setWeaveMsg(null);
+                const { data } = await weave({ variables: { groupId: id } });
+                setWeaveMsg(data?.weaveCluster?.message ?? null);
+              }}
+            >
+              {weaving ? "Weaving..." : isWoven ? "Re-weave" : "Weave"}
+            </button>
+          </div>
         </div>
-        {weaveMsg && (
-          <p className="text-xs text-muted-foreground">{weaveMsg}</p>
+        {(weaveMsg || feedMsg) && (
+          <p className="text-xs text-muted-foreground">{feedMsg || weaveMsg}</p>
         )}
         <p className="text-sm text-muted-foreground">
           Created {new Date(cluster.createdAt).toLocaleDateString()}

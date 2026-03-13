@@ -5,7 +5,7 @@ import { ClustersPage } from "./ClustersPage";
 import { SignalsPage } from "./SignalsPage";
 import { SituationsPage } from "./SituationsPage";
 
-const TABS = ["sources", "regions", "clusters", "signals", "situations"] as const;
+const TABS = ["sources", "regions", "signals", "clusters", "situations"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {

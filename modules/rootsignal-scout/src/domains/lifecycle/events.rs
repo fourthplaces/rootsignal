@@ -94,6 +94,15 @@ pub enum LifecycleEvent {
         group_id: Uuid,
         #[serde(default)]
         budget_cents: u64,
+        #[serde(default)]
+        parent_run_id: Option<String>,
+    },
+    /// Kick off a gravity feed for a single group — find new matching signals.
+    FeedGroupRequested {
+        run_id: Uuid,
+        group_id: Uuid,
+        #[serde(default)]
+        budget_cents: u32,
     },
     /// A run was explicitly cancelled before completion.
     RunCancelled {

@@ -157,7 +157,7 @@ export function DataTable<T>({
                 {columns.map((col) => (
                   <td
                     key={col.key}
-                    className={`px-4 py-2${col.align === "right" ? " text-right" : ""}${
+                    className={`px-4 py-2 overflow-hidden text-ellipsis${col.align === "right" ? " text-right" : ""}${
                       col.className ? ` ${col.className}` : ""
                     }`}
                   >

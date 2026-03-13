@@ -378,6 +378,22 @@ pub fn runs_projection() -> Projection<ScoutEngineDeps> {
                             .await?;
                         }
                     }
+                    LifecycleEvent::FeedGroupRequested {
+                        run_id, group_id, ..
+                    } => {
+                        let deps = ctx.deps();
+                        if let Some(pool) = &deps.pg_pool {
+                            sqlx::query(
+                                "INSERT INTO runs (run_id, region, flow_type, started_at) \
+                                 VALUES ($1, $2, 'group_feed', now()) \
+                                 ON CONFLICT (run_id) DO NOTHING",
+                            )
+                            .bind(run_id.to_string())
+                            .bind(group_id.to_string())
+                            .execute(pool)
+                            .await?;
+                        }
+                    }
                     LifecycleEvent::RunCancelled { run_id, cancelled_at, .. } => {
                         let deps = ctx.deps();
                         if let Some(pool) = &deps.pg_pool {
@@ -513,35 +529,39 @@ pub fn schedules_projection() -> Projection<ScoutEngineDeps> {
                     schedule_id,
                     flow_type,
                     scope,
-                    cadence_seconds,
+                    timeout,
+                    base_timeout,
+                    recurring,
                     region_id,
                 } => {
                     let next_run_at = Utc::now()
-                        + chrono::Duration::seconds(*cadence_seconds as i64);
+                        + chrono::Duration::seconds(*timeout as i64);
+                    let base = base_timeout.unwrap_or(*timeout) as i32;
                     sqlx::query(
-                        "INSERT INTO schedules (schedule_id, flow_type, scope, cadence_seconds, region_id, next_run_at, created_at) \
-                         VALUES ($1, $2, $3, $4, $5, $6, now()) \
+                        "INSERT INTO schedules (schedule_id, flow_type, scope, timeout, base_timeout, recurring, region_id, next_run_at, created_at) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
                          ON CONFLICT (schedule_id) DO NOTHING",
                     )
                     .bind(schedule_id)
                     .bind(flow_type)
                     .bind(scope)
-                    .bind(*cadence_seconds as i32)
+                    .bind(*timeout as i32)
+                    .bind(base)
+                    .bind(recurring)
                     .bind(region_id.as_deref())
                     .bind(next_run_at)
                     .execute(pool)
                     .await?;
-                    info!(schedule_id, flow_type, cadence_seconds, "Schedule created");
+                    info!(schedule_id, flow_type, timeout, "Schedule created");
                 }
                 SchedulingEvent::ScheduleToggled {
                     schedule_id,
                     enabled,
                 } => {
                     if *enabled {
-                        // Skip to future — no catch-up storm
                         sqlx::query(
                             "UPDATE schedules SET enabled = true, \
-                             next_run_at = now() + (cadence_seconds || ' seconds')::interval \
+                             next_run_at = now() + (timeout || ' seconds')::interval \
                              WHERE schedule_id = $1",
                         )
                         .bind(schedule_id)
@@ -564,7 +584,7 @@ pub fn schedules_projection() -> Projection<ScoutEngineDeps> {
                 } => {
                     sqlx::query(
                         "UPDATE schedules SET last_run_id = $2, \
-                         next_run_at = now() + (cadence_seconds || ' seconds')::interval \
+                         next_run_at = now() + (timeout || ' seconds')::interval \
                          WHERE schedule_id = $1",
                     )
                     .bind(schedule_id)
@@ -572,6 +592,22 @@ pub fn schedules_projection() -> Projection<ScoutEngineDeps> {
                     .execute(pool)
                     .await?;
                     info!(schedule_id, run_id, "Schedule triggered");
+                }
+                SchedulingEvent::ScheduleCadenceAdjusted {
+                    schedule_id,
+                    new_timeout,
+                    reason,
+                } => {
+                    sqlx::query(
+                        "UPDATE schedules SET timeout = $2, \
+                         next_run_at = now() + make_interval(secs => $2) \
+                         WHERE schedule_id = $1",
+                    )
+                    .bind(schedule_id)
+                    .bind(new_timeout)
+                    .execute(pool)
+                    .await?;
+                    info!(schedule_id, new_timeout, reason = reason.as_str(), "Schedule cadence adjusted");
                 }
                 SchedulingEvent::ScheduleDeleted { schedule_id } => {
                     sqlx::query(

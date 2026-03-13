@@ -1,5 +1,5 @@
 import { useEffect, useState, type ComponentType } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { NavLink, Outlet, useNavigate, useLocation } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ME } from "@/graphql/queries";
 import { LOGOUT } from "@/graphql/mutations";
@@ -18,9 +18,11 @@ import {
   type LucideProps,
 } from "lucide-react";
 
-const navItems: { to: string; label: string; icon: ComponentType<LucideProps> }[] = [
+const DATA_DETAIL_PREFIXES = ["/sources/", "/regions/", "/signals/", "/clusters/", "/situations/"];
+
+const navItems: { to: string; label: string; icon: ComponentType<LucideProps>; isActive?: (pathname: string) => boolean }[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/data", label: "Data", icon: Database },
+  { to: "/data", label: "Data", icon: Database, isActive: (p) => p.startsWith("/data") || DATA_DETAIL_PREFIXES.some((prefix) => p.startsWith(prefix)) },
   { to: "/workflows", label: "Workflows", icon: GitBranch },
   { to: "/budget", label: "Budget", icon: Wallet },
   { to: "/graph", label: "Graph", icon: Waypoints },
@@ -39,6 +41,30 @@ function useCollapsed() {
       return next;
     });
   return [collapsed, toggle] as const;
+}
+
+function SidebarLink({ item, collapsed }: { item: (typeof navItems)[number]; collapsed: boolean }) {
+  const { pathname } = useLocation();
+  const active = item.isActive ? item.isActive(pathname) : undefined;
+
+  return (
+    <NavLink
+      to={item.to}
+      end={item.to === "/"}
+      title={collapsed ? item.label : undefined}
+      className={({ isActive: routerActive }) => {
+        const on = active ?? routerActive;
+        return `flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors overflow-hidden whitespace-nowrap ${
+          on
+            ? "bg-accent text-accent-foreground"
+            : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+        }`;
+      }}
+    >
+      <item.icon size={16} className="shrink-0" />
+      {!collapsed && item.label}
+    </NavLink>
+  );
 }
 
 export function AdminLayout() {
@@ -99,22 +125,7 @@ export function AdminLayout() {
         )}
         <nav className="flex-1 p-2 space-y-0.5">
           {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              title={collapsed ? item.label : undefined}
-              className={({ isActive }) =>
-                `flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors overflow-hidden whitespace-nowrap ${
-                  isActive
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                }`
-              }
-            >
-              <item.icon size={16} className="shrink-0" />
-              {!collapsed && item.label}
-            </NavLink>
+            <SidebarLink key={item.to} item={item} collapsed={collapsed} />
           ))}
         </nav>
         <div className="p-2 border-t border-border space-y-0.5">

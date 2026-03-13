@@ -61,7 +61,7 @@ async fn rochester_disambiguated_by_region_context() {
                 address: Some("Rochester, MN".to_string()),
                 precision: "approximate".to_string(),
                 timezone: Some("America/Chicago".to_string()),
-                city: None, state: None, country_code: None,
+                city: None, state: None, country_code: None, country_name: None,
             })
     );
 
@@ -100,7 +100,7 @@ async fn no_context_still_geocodes_best_effort() {
                 address: Some("Minneapolis City Hall, Minneapolis, MN".to_string()),
                 precision: "exact".to_string(),
                 timezone: Some("America/Chicago".to_string()),
-                city: None, state: None, country_code: None,
+                city: None, state: None, country_code: None, country_name: None,
             })
     );
 
@@ -136,7 +136,7 @@ async fn qualified_name_from_extractor_not_double_qualified() {
                 address: Some("Rochester, MN".to_string()),
                 precision: "approximate".to_string(),
                 timezone: Some("America/Chicago".to_string()),
-                city: None, state: None, country_code: None,
+                city: None, state: None, country_code: None, country_name: None,
             })
     );
 
@@ -172,7 +172,7 @@ async fn about_location_not_from_location() {
                 address: Some("Washington, DC".to_string()),
                 precision: "approximate".to_string(),
                 timezone: Some("America/New_York".to_string()),
-                city: None, state: None, country_code: None,
+                city: None, state: None, country_code: None, country_name: None,
             })
     );
 
@@ -208,7 +208,7 @@ async fn italian_restaurant_on_lake_street() {
                 address: Some("Lake Street, Minneapolis, MN".to_string()),
                 precision: "exact".to_string(),
                 timezone: Some("America/Chicago".to_string()),
-                city: None, state: None, country_code: None,
+                city: None, state: None, country_code: None, country_name: None,
             })
     );
 
@@ -244,7 +244,7 @@ async fn somali_family_in_phillips() {
                 address: Some("Phillips, Minneapolis, MN".to_string()),
                 precision: "neighborhood".to_string(),
                 timezone: Some("America/Chicago".to_string()),
-                city: None, state: None, country_code: None,
+                city: None, state: None, country_code: None, country_name: None,
             })
     );
 

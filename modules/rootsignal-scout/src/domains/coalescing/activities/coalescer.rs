@@ -329,7 +329,7 @@ impl Coalescer {
         Ok((all_fed, all_refined))
     }
 
-    async fn feed_single_group(
+    pub async fn feed_single_group(
         &self,
         group: &rootsignal_graph::GroupBrief,
     ) -> Result<(Vec<FedSignal>, Option<Vec<String>>)> {
