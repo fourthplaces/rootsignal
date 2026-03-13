@@ -804,7 +804,7 @@ impl PublicGraphReader {
         let cypher = "UNWIND $ids AS sid
             MATCH (n) WHERE n.id = sid
               AND (n:Gathering OR n:Resource OR n:HelpRequest OR n:Announcement OR n:Concern OR n:Condition)
-            OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(s:Source)
+            OPTIONAL MATCH (n)-[:PRODUCED_BY]->(s:Source)
             RETURN n.id AS id, n.title AS title, labels(n)[0] AS signal_type, s.url AS source_url";
         let q = neo4rs::query(cypher).param("ids", ids.to_vec());
         let mut stream = self.client.execute(q).await?;
