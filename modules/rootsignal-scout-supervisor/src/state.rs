@@ -1,48 +1,66 @@
 use chrono::{DateTime, Duration, Utc};
-use neo4rs::query;
+use sqlx::PgPool;
 use tracing::info;
-use uuid::Uuid;
 
 use rootsignal_graph::GraphClient;
 
-/// Manages the SupervisorState node (watermark + calibrated thresholds).
+/// Manages supervisor state: advisory lock, watermark (from runs), and scout-running check.
 pub struct SupervisorState {
+    pg_pool: PgPool,
     client: GraphClient,
     region: String,
+    lock_key: i64,
 }
 
 impl SupervisorState {
-    pub fn new(client: GraphClient, region: String) -> Self {
-        Self { client, region }
+    pub fn new(pg_pool: PgPool, client: GraphClient, region: String) -> Self {
+        // Stable hash of region name → advisory lock key
+        let lock_key = {
+            let mut hash: i64 = 5381;
+            for byte in region.as_bytes() {
+                hash = hash.wrapping_mul(33).wrapping_add(*byte as i64);
+            }
+            hash
+        };
+        Self {
+            pg_pool,
+            client,
+            region,
+            lock_key,
+        }
     }
 
     /// Read the last_run watermark. Returns None if no state exists (first boot).
-    pub async fn last_run(&self) -> Result<Option<DateTime<Utc>>, neo4rs::Error> {
-        let q = query(
-            "MATCH (s:SupervisorState)
-             WHERE s.region = $region
-             RETURN s.last_run AS last_run",
+    pub async fn last_run(&self) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
+        let row: Option<(DateTime<Utc>,)> = sqlx::query_as(
+            "SELECT last_run FROM supervisor_watermarks WHERE region = $1",
         )
-        .param("region", self.region.clone());
+        .bind(&self.region)
+        .fetch_optional(&self.pg_pool)
+        .await?;
 
-        let mut stream = self.client.inner().execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let s: String = row.get("last_run").unwrap_or_default();
-            if s.is_empty() {
-                return Ok(None);
-            }
-            let dt = chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
-                .ok()
-                .map(|ndt| ndt.and_utc());
-            Ok(dt)
-        } else {
-            Ok(None)
-        }
+        Ok(row.map(|(dt,)| dt))
+    }
+
+    /// Update the last_run watermark.
+    pub async fn update_last_run(&self, dt: &DateTime<Utc>) -> Result<(), anyhow::Error> {
+        sqlx::query(
+            "INSERT INTO supervisor_watermarks (region, last_run, updated_at)
+             VALUES ($1, $2, now())
+             ON CONFLICT (region)
+             DO UPDATE SET last_run = $2, updated_at = now()",
+        )
+        .bind(&self.region)
+        .bind(dt)
+        .execute(&self.pg_pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Compute the effective watermark window for this run.
     /// Returns (from, to) where from = last_run (or now-24h) and to = min(now, from+24h).
-    pub async fn watermark_window(&self) -> Result<(DateTime<Utc>, DateTime<Utc>), neo4rs::Error> {
+    pub async fn watermark_window(&self) -> Result<(DateTime<Utc>, DateTime<Utc>), anyhow::Error> {
         let now = Utc::now();
         let last = self.last_run().await?;
 
@@ -60,77 +78,37 @@ impl SupervisorState {
         Ok((from, to))
     }
 
-    /// Update the last_run watermark. Creates the state node if it doesn't exist.
-    pub async fn update_last_run(&self, dt: &DateTime<Utc>) -> Result<(), neo4rs::Error> {
-        let ts = rootsignal_graph::writer::format_datetime_pub(dt);
-
-        let q = query(
-            "MERGE (s:SupervisorState {region: $region})
-             ON CREATE SET s.id = $id,
-                           s.last_run = datetime($last_run),
-                           s.min_confidence = 0.0,
-                           s.dedup_threshold_recommendation = 0.92,
-                           s.version = 1
-             ON MATCH SET s.last_run = datetime($last_run)",
-        )
-        .param("region", self.region.clone())
-        .param("id", Uuid::new_v4().to_string())
-        .param("last_run", ts);
-
-        self.client.inner().run(q).await?;
-        Ok(())
-    }
-
-    /// Acquire a supervisor lock. Returns false if another supervisor is running.
-    /// Cleans up stale locks (>30 min) from killed containers.
-    pub async fn acquire_lock(&self) -> Result<bool, neo4rs::Error> {
-        // Delete stale locks older than 30 minutes
-        self.client
-            .inner()
-            .run(query(
-                "MATCH (lock:SupervisorLock) WHERE lock.started_at < datetime() - duration('PT30M') DELETE lock"
-            ))
-            .await?;
-
-        // Atomic check-and-create
-        let q = query(
-            "OPTIONAL MATCH (existing:SupervisorLock)
-             WITH existing WHERE existing IS NULL
-             CREATE (lock:SupervisorLock {started_at: datetime()})
-             RETURN lock IS NOT NULL AS acquired",
-        );
-
-        let mut result = self.client.inner().execute(q).await?;
-        if let Some(row) = result.next().await? {
-            let acquired: bool = row.get("acquired").unwrap_or(false);
-            return Ok(acquired);
-        }
-
-        Ok(false)
+    /// Acquire a supervisor lock via Postgres advisory lock.
+    /// Returns false if another supervisor is running.
+    pub async fn acquire_lock(&self) -> Result<bool, anyhow::Error> {
+        let (acquired,): (bool,) =
+            sqlx::query_as("SELECT pg_try_advisory_lock($1)")
+                .bind(self.lock_key)
+                .fetch_one(&self.pg_pool)
+                .await?;
+        Ok(acquired)
     }
 
     /// Release the supervisor lock.
-    pub async fn release_lock(&self) -> Result<(), neo4rs::Error> {
-        self.client
-            .inner()
-            .run(query("MATCH (lock:SupervisorLock) DELETE lock"))
+    pub async fn release_lock(&self) -> Result<(), anyhow::Error> {
+        sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(self.lock_key)
+            .execute(&self.pg_pool)
             .await?;
         Ok(())
     }
 
-    /// Check if any scout task is currently running (ScoutTask with running_* phase_status).
-    pub async fn is_scout_running(&self) -> Result<bool, neo4rs::Error> {
-        let q = query(
-            "MATCH (t:ScoutTask) \
-             WHERE t.phase_status STARTS WITH 'running_' \
-               AND t.phase_status_updated_at >= datetime() - duration('PT30M') \
-             RETURN count(t) > 0 AS running"
-        );
-        let mut stream = self.client.inner().execute(q).await?;
-        if let Some(row) = stream.next().await? {
-            let running: bool = row.get("running").unwrap_or(false);
-            return Ok(running);
-        }
-        Ok(false)
+    /// Check if any scout run is currently in progress (started but not finished within 30min).
+    pub async fn is_scout_running(&self) -> Result<bool, anyhow::Error> {
+        let (running,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(
+                 SELECT 1 FROM runs
+                 WHERE finished_at IS NULL
+                   AND started_at >= now() - interval '30 minutes'
+             )",
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(running)
     }
 }

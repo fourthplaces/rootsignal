@@ -1,23 +1,31 @@
 use std::sync::Arc;
 
 use async_graphql::dataloader::DataLoader;
-use async_graphql::{Context, EmptySubscription, Object, Result, Schema, SimpleObject};
+use async_graphql::{Context, Object, Result, Schema, SimpleObject, Subscription};
+use futures::Stream;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use rootsignal_common::{Node, NodeType};
-use rootsignal_graph::{CachedReader, GraphWriter};
+use rootsignal_common::NodeType;
+use rootsignal_graph::{CachedReader, GraphStore};
 
 use super::context::{AdminGuard, AuthContext};
 use super::loaders::{
-    ActorsBySignalLoader, EvidenceBySignalLoader, SituationsBySignalLoader, StoryBySignalLoader,
-    TagsBySituationLoader, TagsByStoryLoader,
+    ActorsBySignalLoader, CitationBySignalLoader, ScheduleBySignalLoader, SituationsBySignalLoader,
+    TagsBySituationLoader,
 };
 use super::mutations::MutationRoot;
 use super::types::*;
-use crate::restate_client::RestateClient;
+use crate::scout_runner::ScoutRunner;
+use crate::db::scout_run::{
+    EventRow, EventRowFull, ScoutRunRow, StatsJson,
+    event_domain_prefix, event_layer, event_summary, json_str, json_u32, json_u64, json_f64,
+    list_events_by_variant, count_events_by_variant,
+};
+use crate::jwt::JwtService;
+use rootsignal_common::Config;
 
-pub type ApiSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+pub type ApiSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
 pub struct QueryRoot;
 
@@ -52,7 +60,6 @@ impl QueryRoot {
             .await?;
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
-
 
     /// List recent signals, ordered by triangulation quality.
     async fn signals_recent(
@@ -96,33 +103,6 @@ impl QueryRoot {
         Ok(nodes.into_iter().map(GqlSignal::from).collect())
     }
 
-    /// Find stories within a bounding box (by centroid), sorted by energy.
-    /// Optionally filter by tag slug.
-    async fn stories_in_bounds(
-        &self,
-        ctx: &Context<'_>,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-        tag: Option<String>,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader
-            .stories_in_bounds_filtered(
-                min_lat,
-                max_lat,
-                min_lng,
-                max_lng,
-                tag.as_deref(),
-                limit,
-            )
-            .await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-
     /// Semantic search for signals within a bounding box. Embeds the query via Voyage AI,
     /// then finds nearest signals via vector KNN, post-filtered by bbox.
     async fn search_signals_in_bounds(
@@ -139,9 +119,10 @@ impl QueryRoot {
         let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::infra::embedder::Embedder>>();
         let limit = limit.unwrap_or(50).min(200);
 
-        let embedding = embedder.embed(&query).await.map_err(|e| {
-            async_graphql::Error::new(format!("Embedding failed: {e}"))
-        })?;
+        let embedding = embedder
+            .embed(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Embedding failed: {e}")))?;
 
         let results = reader
             .semantic_search_signals_in_bounds(
@@ -158,134 +139,18 @@ impl QueryRoot {
             .collect())
     }
 
-    /// Semantic search for stories within a bounding box. Searches signals via KNN,
-    /// then aggregates to parent stories.
-    async fn search_stories_in_bounds(
-        &self,
-        ctx: &Context<'_>,
-        query: String,
-        min_lat: f64,
-        max_lat: f64,
-        min_lng: f64,
-        max_lng: f64,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStorySearchResult>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let embedder = ctx.data_unchecked::<Arc<rootsignal_scout::infra::embedder::Embedder>>();
-        let limit = limit.unwrap_or(20).min(100);
-
-        let embedding = embedder.embed(&query).await.map_err(|e| {
-            async_graphql::Error::new(format!("Embedding failed: {e}"))
-        })?;
-
-        let results = reader
-            .semantic_search_stories_in_bounds(
-                &embedding, min_lat, max_lat, min_lng, max_lng, limit,
-            )
-            .await?;
-
-        Ok(results
-            .into_iter()
-            .map(|(story, score, top_title)| GqlStorySearchResult {
-                story: GqlStory(story),
-                score,
-                top_matching_signal_title: if top_title.is_empty() {
-                    None
-                } else {
-                    Some(top_title)
-                },
-            })
-            .collect())
-    }
-
-    /// List stories ordered by energy.
-    async fn stories(
-        &self,
-        ctx: &Context<'_>,
-        limit: Option<u32>,
-        status: Option<String>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader
-            .top_stories_by_energy(limit, status.as_deref())
-            .await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-
-    /// Get a single story by ID.
-    async fn story(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let story = reader.get_story_by_id(id).await?;
-        Ok(story.map(GqlStory))
-    }
-
-    /// List stories by category.
-    async fn stories_by_category(
-        &self,
-        ctx: &Context<'_>,
-        category: String,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader.stories_by_category(&category, limit).await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-
-    /// List stories by arc.
-    async fn stories_by_arc(
-        &self,
-        ctx: &Context<'_>,
-        arc: String,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader.stories_by_arc(&arc, limit).await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-    }
-
-    /// List available tags, sorted by story count.
-    async fn tags(
-        &self,
-        ctx: &Context<'_>,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlTag>> {
+    /// List available tags, sorted by usage count.
+    async fn tags(&self, ctx: &Context<'_>, limit: Option<u32>) -> Result<Vec<GqlTag>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200) as usize;
         let tags = reader.top_tags(limit).await?;
         Ok(tags.into_iter().map(GqlTag).collect())
     }
 
-    /// Stories that have a specific tag, optionally bounded geographically.
-    async fn stories_by_tag(
-        &self,
-        ctx: &Context<'_>,
-        tag: String,
-        min_lat: Option<f64>,
-        max_lat: Option<f64>,
-        min_lng: Option<f64>,
-        max_lng: Option<f64>,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlStory>> {
-        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let limit = limit.unwrap_or(20).min(100);
-        let stories = reader
-            .stories_by_tag(&tag, min_lat, max_lat, min_lng, max_lng, limit)
-            .await?;
-        Ok(stories.into_iter().map(GqlStory).collect())
-
-    }
-
     // ========== Situation queries ==========
 
     /// Top situations by temperature.
-    async fn situations(
-        &self,
-        ctx: &Context<'_>,
-        limit: Option<u32>,
-    ) -> Result<Vec<GqlSituation>> {
+    async fn situations(&self, ctx: &Context<'_>, limit: Option<u32>) -> Result<Vec<GqlSituation>> {
         let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
         let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
         let limit = limit.unwrap_or(20).min(100);
@@ -365,7 +230,9 @@ impl QueryRoot {
     ) -> Result<Vec<GqlActor>> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
         let limit = limit.unwrap_or(50).min(200);
-        let actors = reader.actors_in_bounds(min_lat, max_lat, min_lng, max_lng, limit).await?;
+        let actors = reader
+            .actors_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await?;
         Ok(actors.into_iter().map(GqlActor).collect())
     }
 
@@ -378,22 +245,109 @@ impl QueryRoot {
 
     // ========== Admin queries (AdminGuard) ==========
 
+    /// Full actor detail with recent signals.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_actor_detail(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<AdminActorDetail>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let actor = match reader.actor_detail(id).await? {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let pub_reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let signals = pub_reader.signals_for_actor(&id).await?;
+
+        let admin_signals: Vec<AdminSignalBrief> = signals
+            .into_iter()
+            .map(|s| AdminSignalBrief {
+                id: s.id.to_string(),
+                title: s.title,
+                signal_type: s.signal_type,
+                confidence: s.confidence,
+                extracted_at: s.extracted_at,
+                url: s.url,
+                review_status: s.review_status,
+                location_name: s.location_name,
+                content_date: s.published_at,
+            })
+            .collect();
+
+        Ok(Some(AdminActorDetail {
+            id: actor.id,
+            name: actor.name,
+            actor_type: format!("{:?}", actor.actor_type),
+            canonical_key: actor.canonical_key,
+            description: actor.description,
+            domains: actor.domains,
+            social_urls: actor.social_urls,
+            signal_count: actor.signal_count,
+            first_seen: actor.first_seen,
+            last_active: actor.last_active,
+            typical_roles: actor.typical_roles,
+            location_name: actor.location_name,
+            bio: actor.bio,
+            signals: admin_signals,
+        }))
+    }
+
+    /// Get a single signal by ID, bypassing display filters (expired, past, etc.).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_signal(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<GqlSignal>> {
+        let reader = ctx.data_unchecked::<Arc<CachedReader>>();
+        let node = reader.get_signal_by_id_unfiltered(id).await?;
+        Ok(node.map(GqlSignal::from))
+    }
+
     /// Dashboard data for a region.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_dashboard(&self, ctx: &Context<'_>, region: String) -> Result<AdminDashboardData> {
+    async fn admin_dashboard(
+        &self,
+        ctx: &Context<'_>,
+        region: String,
+    ) -> Result<AdminDashboardData> {
         let reader = ctx.data_unchecked::<Arc<CachedReader>>();
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pub_reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+
+        // Resolve region name → ID for scoped busy check
+        let region_id = {
+            let regions = writer.list_regions(None, 100).await.unwrap_or_default();
+            regions.into_iter().find(|r| r.name == region).map(|r| r.id.to_string())
+        };
+
+        let is_running_fut = async {
+            if let (Some(pool), Some(rid)) = (pool, &region_id) {
+                let (running,): (bool,) = sqlx::query_as(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM runs
+                         WHERE region_id = $1
+                           AND finished_at IS NULL
+                           AND cancelled_at IS NULL
+                           AND started_at >= now() - interval '30 minutes'
+                     )",
+                )
+                .bind(rid)
+                .fetch_one(pool)
+                .await?;
+                Ok::<bool, sqlx::Error>(running)
+            } else {
+                Ok(false)
+            }
+        };
 
         let (
             total_signals,
-            story_count,
+            situation_count,
             actor_count,
             by_type,
             freshness,
             confidence,
             signal_volume,
-            story_arcs,
-            story_categories,
+            situation_arcs,
+            situation_categories,
             tensions,
             discovery,
             yield_data,
@@ -403,21 +357,21 @@ impl QueryRoot {
             region_running,
         ) = tokio::join!(
             reader.total_count(),
-            reader.story_count(),
+            pub_reader.situation_count(),
             reader.actor_count(),
             reader.count_by_type(),
             reader.freshness_distribution(),
             reader.confidence_distribution(),
             reader.signal_volume_by_day(),
-            reader.story_count_by_arc(),
-            reader.story_count_by_category(),
+            pub_reader.situation_count_by_arc(),
+            pub_reader.situation_count_by_category(),
             writer.get_unmet_tensions(20),
             writer.get_discovery_performance(),
             writer.get_extraction_yield(),
             writer.get_gap_type_stats(),
             writer.get_active_sources(),
             writer.count_due_sources(),
-            writer.is_region_task_running(&region),
+            is_running_fut,
         );
 
         let sources = sources.unwrap_or_default();
@@ -436,7 +390,7 @@ impl QueryRoot {
 
         Ok(AdminDashboardData {
             total_signals: total_signals.unwrap_or(0),
-            total_stories: story_count.unwrap_or(0),
+            total_situations: situation_count.unwrap_or(0),
             total_actors: actor_count.unwrap_or(0),
             total_sources: sources.len() as u64,
             active_sources: sources.iter().filter(|s| s.active).count() as u64,
@@ -460,7 +414,7 @@ impl QueryRoot {
                     count: *c,
                 })
                 .collect(),
-            story_count_by_arc: story_arcs
+            situation_count_by_arc: situation_arcs
                 .unwrap_or_default()
                 .iter()
                 .map(|(arc, c)| LabelCount {
@@ -468,7 +422,7 @@ impl QueryRoot {
                     count: *c,
                 })
                 .collect(),
-            story_count_by_category: story_categories
+            situation_count_by_category: situation_categories
                 .unwrap_or_default()
                 .iter()
                 .map(|(cat, c)| LabelCount {
@@ -492,15 +446,15 @@ impl QueryRoot {
                     count: *c,
                 })
                 .collect(),
-            unmet_tensions: tensions
+            unmet_concerns: tensions
                 .unwrap_or_default()
                 .iter()
                 .filter(|t| t.unmet)
-                .map(|t| AdminTensionRow {
+                .map(|t| AdminConcernRow {
                     title: t.title.clone(),
                     severity: t.severity.clone(),
                     category: t.category.clone(),
-                    what_would_help: t.what_would_help.clone(),
+                    opposing: t.opposing.clone(),
                 })
                 .collect(),
             top_sources: top_sources
@@ -547,20 +501,19 @@ impl QueryRoot {
         })
     }
 
-    /// List active sources with schedule preview.
+    /// List active sources with schedule preview, optionally filtered by search term.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_region_sources(
-        &self,
-        ctx: &Context<'_>,
-    ) -> Result<Vec<AdminSource>> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let sources = writer.get_active_sources().await?;
+    async fn admin_region_sources(&self, ctx: &Context<'_>, search: Option<String>) -> Result<Vec<AdminSource>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let sources = writer.search_sources(search.as_deref()).await?;
         Ok(sources
             .iter()
             .map(|s| {
                 let effective_weight = s.weight * s.quality_penalty;
                 let cadence = s.cadence_hours.unwrap_or_else(|| {
-                    rootsignal_scout::scheduling::scheduler::cadence_hours_for_weight(effective_weight)
+                    rootsignal_scout::domains::scheduling::activities::selector::cadence_hours_for_weight(
+                        effective_weight,
+                    )
                 });
                 let source_label = source_label_from_value(s.value());
                 AdminSource {
@@ -581,6 +534,184 @@ impl QueryRoot {
             .collect())
     }
 
+    /// List sources watched by a specific region.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_region_sources_by_region(&self, ctx: &Context<'_>, region_id: String) -> Result<Vec<AdminSource>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let sources = writer.list_region_sources(&region_id).await?;
+        Ok(sources
+            .iter()
+            .map(|s| {
+                let effective_weight = s.weight * s.quality_penalty;
+                let cadence = s.cadence_hours.unwrap_or_else(|| {
+                    rootsignal_scout::domains::scheduling::activities::selector::cadence_hours_for_weight(
+                        effective_weight,
+                    )
+                });
+                let source_label = source_label_from_value(s.value());
+                AdminSource {
+                    id: s.id,
+                    url: s.url.clone().unwrap_or_default(),
+                    canonical_value: s.canonical_value.clone(),
+                    source_label,
+                    weight: s.weight,
+                    quality_penalty: s.quality_penalty,
+                    effective_weight,
+                    discovery_method: format!("{:?}", s.discovery_method),
+                    last_scraped: s.last_scraped,
+                    cadence_hours: cadence as f64,
+                    signals_produced: s.signals_produced,
+                    active: s.active,
+                }
+            })
+            .collect())
+    }
+
+    /// Full detail for a single source, including recent signals and discovery tree.
+    #[graphql(guard = "AdminGuard")]
+    async fn source_detail(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<AdminSourceDetail>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+
+        let source = match reader.source_by_id(&id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let signals = reader.signals_for_source(&id).await?;
+
+        // Scrape stats from Postgres (source of truth) instead of Neo4j counters
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let scrape_stats = if let Some(pool) = pool.as_ref() {
+            crate::db::scout_run::source_scrape_stats(pool, &id.to_string())
+                .await
+                .unwrap_or_else(|_| crate::db::scout_run::SourceScrapeStats {
+                    last_scraped: None,
+                    scrape_count: 0,
+                    consecutive_empty_runs: 0,
+                })
+        } else {
+            crate::db::scout_run::SourceScrapeStats {
+                last_scraped: None,
+                scrape_count: 0,
+                consecutive_empty_runs: 0,
+            }
+        };
+
+        let effective_weight = source.weight * source.quality_penalty;
+        let cadence = source.cadence_hours.unwrap_or_else(|| {
+            rootsignal_scout::domains::scheduling::activities::selector::cadence_hours_for_weight(
+                effective_weight,
+            )
+        });
+        let source_label = source_label_from_value(source.value());
+
+        let admin_signals: Vec<AdminSignalBrief> = signals
+            .into_iter()
+            .map(|s| AdminSignalBrief {
+                id: s.id.to_string(),
+                title: s.title,
+                signal_type: s.signal_type,
+                confidence: s.confidence,
+                extracted_at: s.extracted_at,
+                url: s.url,
+                review_status: s.review_status,
+                location_name: s.location_name,
+                content_date: s.published_at,
+            })
+            .collect();
+
+        // Signal stats computed from the actual graph relationships
+        let signals_produced = admin_signals.len() as u32;
+        let last_produced_signal = admin_signals
+            .iter()
+            .filter_map(|s| s.extracted_at)
+            .max();
+        let avg_signals_per_scrape = if scrape_stats.scrape_count > 0 {
+            signals_produced as f64 / scrape_stats.scrape_count as f64
+        } else {
+            0.0
+        };
+
+        let actor_pairs = reader.actors_for_source(&id).await.unwrap_or_default();
+        let admin_actors: Vec<AdminActorBrief> = actor_pairs
+            .into_iter()
+            .map(|(a, count)| AdminActorBrief {
+                id: a.id.to_string(),
+                name: a.name,
+                actor_type: format!("{:?}", a.actor_type),
+                signal_count: count,
+            })
+            .collect();
+
+        let (tree_nodes, tree_edges) = reader.discovery_tree(&id).await.unwrap_or_default();
+        let discovery_tree = if tree_nodes.is_empty() {
+            AdminDiscoveryTree {
+                nodes: vec![AdminDiscoveryTreeNode {
+                    id: source.id.to_string(),
+                    canonical_value: source.canonical_value.clone(),
+                    discovery_method: format!("{:?}", source.discovery_method),
+                    active: source.active,
+                    signals_produced,
+                }],
+                edges: vec![],
+                root_id: source.id.to_string(),
+            }
+        } else {
+            AdminDiscoveryTree {
+                nodes: tree_nodes
+                    .into_iter()
+                    .map(|n| AdminDiscoveryTreeNode {
+                        id: n.id,
+                        canonical_value: n.canonical_value,
+                        discovery_method: n.discovery_method,
+                        active: n.active,
+                        signals_produced: n.signals_produced,
+                    })
+                    .collect(),
+                edges: tree_edges
+                    .into_iter()
+                    .map(|(child_id, parent_id)| AdminDiscoveryTreeEdge { child_id, parent_id })
+                    .collect(),
+                root_id: source.id.to_string(),
+            }
+        };
+
+        Ok(Some(AdminSourceDetail {
+            id: source.id,
+            url: source.url.clone().unwrap_or_default(),
+            canonical_value: source.canonical_value.clone(),
+            source_label,
+            weight: source.weight,
+            quality_penalty: source.quality_penalty,
+            effective_weight,
+            discovery_method: format!("{:?}", source.discovery_method),
+            last_scraped: scrape_stats.last_scraped,
+            cadence_hours: cadence as f64,
+            signals_produced,
+            signals_corroborated: source.signals_corroborated,
+            consecutive_empty_runs: scrape_stats.consecutive_empty_runs,
+            active: source.active,
+            gap_context: source.gap_context.clone(),
+            scrape_count: scrape_stats.scrape_count,
+            avg_signals_per_scrape,
+            source_role: format!("{:?}", source.source_role),
+            created_at: source.created_at,
+            last_produced_signal,
+            signals: admin_signals,
+            actors: admin_actors,
+            archive_summary: None,
+            discovery_tree,
+            channel_weights: AdminChannelWeights {
+                page: source.channel_weights.page,
+                feed: source.channel_weights.feed,
+                media: source.channel_weights.media,
+                discussion: source.channel_weights.discussion,
+                events: source.channel_weights.events,
+            },
+        }))
+    }
+
     /// Scout status for a specific region.
     #[graphql(guard = "AdminGuard")]
     async fn admin_scout_status(
@@ -588,9 +719,42 @@ impl QueryRoot {
         ctx: &Context<'_>,
         region_slug: String,
     ) -> Result<RegionScoutStatus> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+
+        // Resolve region slug/name → ID for scoped busy check
+        let region_id = {
+            // Try by ID first, then by name
+            if let Ok(Some(r)) = writer.get_region(&region_slug).await {
+                Some(r.id.to_string())
+            } else {
+                let regions = writer.list_regions(None, 100).await.unwrap_or_default();
+                regions.into_iter().find(|r| r.name == region_slug).map(|r| r.id.to_string())
+            }
+        };
+
+        let is_running_fut = async {
+            if let (Some(pool), Some(rid)) = (pool, &region_id) {
+                let (running,): (bool,) = sqlx::query_as(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM runs
+                         WHERE region_id = $1
+                           AND finished_at IS NULL
+                           AND cancelled_at IS NULL
+                           AND started_at >= now() - interval '30 minutes'
+                     )",
+                )
+                .bind(rid)
+                .fetch_one(pool)
+                .await?;
+                Ok::<bool, sqlx::Error>(running)
+            } else {
+                Ok(false)
+            }
+        };
+
         let (running, due) = tokio::join!(
-            writer.is_region_task_running(&region_slug),
+            is_running_fut,
             writer.count_due_sources(),
         );
 
@@ -635,21 +799,45 @@ impl QueryRoot {
             .collect())
     }
 
-    /// List recent scout runs for a region.
+    /// List recent scout runs, optionally filtered by region.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_scout_runs(
+    async fn admin_runs(
         &self,
         ctx: &Context<'_>,
-        region: String,
+        region: Option<String>,
         limit: Option<u32>,
     ) -> Result<Vec<ScoutRun>> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
-        let pool = pool.as_ref().ok_or_else(|| {
-            async_graphql::Error::new("Postgres not configured")
-        })?;
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
         let limit = limit.unwrap_or(20).min(100);
 
-        let rows = crate::db::scout_run::list_by_region(pool, &region, limit)
+        let rows = if let Some(ref region) = region {
+            crate::db::scout_run::list_by_region(pool, region, limit).await
+        } else {
+            crate::db::scout_run::list_recent(pool, limit).await
+        }
+        .map_err(|e| async_graphql::Error::new(format!("Failed to query scout runs: {e}")))?;
+
+        Ok(rows.into_iter().map(ScoutRun::from).collect())
+    }
+
+    /// List scout runs that included a specific source.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_runs_by_source(
+        &self,
+        ctx: &Context<'_>,
+        source_id: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<ScoutRun>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let limit = limit.unwrap_or(20).min(100);
+
+        let rows = crate::db::scout_run::list_by_source_id(pool, &source_id, limit)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to query scout runs: {e}")))?;
 
@@ -658,21 +846,284 @@ impl QueryRoot {
 
     /// Get a single scout run by run_id.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_scout_run(
-        &self,
-        ctx: &Context<'_>,
-        run_id: String,
-    ) -> Result<Option<ScoutRun>> {
+    async fn admin_scout_run(&self, ctx: &Context<'_>, run_id: String) -> Result<Option<ScoutRun>> {
         let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
-        let pool = pool.as_ref().ok_or_else(|| {
-            async_graphql::Error::new("Postgres not configured")
-        })?;
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
 
         let row = crate::db::scout_run::find_by_id(pool, &run_id)
             .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to query scout run: {e}")))?;
 
         Ok(row.map(ScoutRun::from))
+    }
+
+    /// List events for a scout run from the unified event store.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_run_events(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+        event_type_filter: Option<String>,
+    ) -> Result<Vec<ScoutRunEvent>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let rows = crate::db::scout_run::list_events_by_run_id(
+            pool,
+            &run_id,
+            event_type_filter.as_deref(),
+        )
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
+        Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
+    }
+
+    /// Get outcome-focused data for a scout run. Returns a lazy object whose
+    /// field resolvers each issue targeted queries (by payload variant).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scout_run_outcomes(
+        &self,
+        _ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<ScoutRunOutcomes> {
+        Ok(ScoutRunOutcomes { run_id })
+    }
+
+    /// Get outcome-focused data for a coalesce run (groups created, signals grouped, refinements).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_coalesce_run_outcomes(
+        &self,
+        _ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<CoalesceRunOutcomes> {
+        Ok(CoalesceRunOutcomes { run_id })
+    }
+
+    /// Get a cluster (SignalGroup) with its member signals and woven status.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_cluster_detail(
+        &self,
+        ctx: &Context<'_>,
+        group_id: String,
+    ) -> Result<Option<GqlClusterDetail>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let id = Uuid::parse_str(&group_id)
+            .map_err(|_| async_graphql::Error::new("Invalid group ID"))?;
+        let detail = writer.get_cluster_detail(id).await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to read cluster: {e}")))?;
+        Ok(detail.map(GqlClusterDetail))
+    }
+
+    /// List clusters (SignalGroups) whose member signals fall within a bounding box.
+    #[graphql(guard = "AdminGuard")]
+    async fn clusters_in_bounds(
+        &self,
+        ctx: &Context<'_>,
+        min_lat: f64,
+        max_lat: f64,
+        min_lng: f64,
+        max_lng: f64,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlClusterSummary>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let limit = limit.unwrap_or(50).min(200);
+        let clusters = writer
+            .clusters_in_bounds(min_lat, max_lat, min_lng, max_lng, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to read clusters: {e}")))?;
+        Ok(clusters.into_iter().map(GqlClusterSummary).collect())
+    }
+
+    /// List scheduled scrapes (pending or recent).
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_scheduled_scrapes(
+        &self,
+        ctx: &Context<'_>,
+        pending_only: Option<bool>,
+        limit: Option<u32>,
+    ) -> Result<Vec<ScheduledScrape>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let limit = limit.unwrap_or(50).min(200);
+
+        let rows = if pending_only.unwrap_or(false) {
+            crate::db::scheduled_scrapes::list_pending(pool, limit).await
+        } else {
+            crate::db::scheduled_scrapes::list_recent(pool, limit).await
+        }
+        .map_err(|e| async_graphql::Error::new(format!("Failed to query scheduled scrapes: {e}")))?;
+
+        Ok(rows.into_iter().map(ScheduledScrape::from).collect())
+    }
+
+    /// List recurring schedules.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_schedules(
+        &self,
+        ctx: &Context<'_>,
+        active_only: Option<bool>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Schedule>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let limit = limit.unwrap_or(50).min(200);
+
+        let rows: Vec<crate::db::models::schedule::ScheduleRow> = if active_only.unwrap_or(true) {
+            crate::db::models::schedule::list_active(pool, limit).await
+        } else {
+            crate::db::models::schedule::list_all(pool, limit).await
+        }
+        .map_err(|e| async_graphql::Error::new(format!("Failed to query schedules: {e}")))?;
+
+        Ok(rows.into_iter().map(Schedule::from).collect())
+    }
+
+    /// List events that touched a specific graph node.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_node_events(
+        &self,
+        ctx: &Context<'_>,
+        node_id: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<ScoutRunEvent>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let rows = crate::db::scout_run::list_events_by_node_id(
+            pool,
+            &node_id,
+            limit.unwrap_or(100),
+        )
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
+        Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
+    }
+
+    /// Browse the full event stream with filters and cursor pagination.
+    /// Tries in-memory cache first, falls through to Postgres on miss.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_events(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+        cursor: Option<i64>,
+        search: Option<String>,
+        from: Option<DateTime<Utc>>,
+        to: Option<DateTime<Utc>>,
+        run_id: Option<String>,
+    ) -> Result<AdminEventsPage> {
+        let lim = (limit.unwrap_or(50) as usize).min(200);
+
+        // Try cache first
+        if let Some(Some(cache)) = ctx.data_opt::<Option<crate::event_cache::SharedEventCache>>() {
+            let cache = cache.read().await;
+            let (events, next_cursor) = cache.search(
+                search.as_deref(),
+                cursor,
+                from,
+                to,
+                run_id.as_deref(),
+                lim,
+            );
+            let events: Vec<AdminEvent> = events.into_iter().map(|e| (*e).clone()).collect();
+            return Ok(AdminEventsPage { events, next_cursor });
+        }
+
+        // Fall through to Postgres
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::list_events_paginated(
+            pool,
+            search.as_deref(),
+            cursor,
+            from,
+            to,
+            run_id.as_deref(),
+            lim as i64,
+        )
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
+
+        let next_cursor = if rows.len() == lim {
+            rows.last().map(|r| r.seq)
+        } else {
+            None
+        };
+
+        let events: Vec<AdminEvent> = rows.into_iter().map(AdminEvent::from).collect();
+        Ok(AdminEventsPage {
+            events,
+            next_cursor,
+        })
+    }
+
+    /// Walk the causal tree for an event (ancestors + descendants).
+    /// Tries in-memory cache first, falls through to Postgres on miss.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_causal_tree(&self, ctx: &Context<'_>, seq: i64) -> Result<AdminCausalTree> {
+        // Try cache first
+        if let Some(Some(cache)) = ctx.data_opt::<Option<crate::event_cache::SharedEventCache>>() {
+            let cache = cache.read().await;
+            if let Some((events, root_seq)) = cache.causal_tree(seq) {
+                let events: Vec<AdminEvent> = events.into_iter().map(|e| (*e).clone()).collect();
+                return Ok(AdminCausalTree { events, root_seq });
+            }
+        }
+
+        // Fall through to Postgres
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let (rows, root_seq) = crate::db::scout_run::causal_tree(pool, seq)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load causal tree: {e}")))?;
+
+        let events: Vec<AdminEvent> = rows.into_iter().map(AdminEvent::from).collect();
+        Ok(AdminCausalTree { events, root_seq })
+    }
+
+    /// Fetch all events for a run, with handler_id, for the causal flow DAG viewer.
+    /// Tries in-memory cache first, falls through to Postgres on miss.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_causal_flow(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<AdminCausalFlow> {
+        // Try cache first
+        if let Some(Some(cache)) = ctx.data_opt::<Option<crate::event_cache::SharedEventCache>>() {
+            let cache = cache.read().await;
+            if let Some(events) = cache.causal_flow(&run_id) {
+                let events: Vec<AdminEvent> = events.into_iter().map(|e| (*e).clone()).collect();
+                return Ok(AdminCausalFlow { events });
+            }
+        }
+
+        // Fall through to Postgres
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::causal_flow(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load causal flow: {e}")))?;
+
+        let events: Vec<AdminEvent> = rows.into_iter().map(AdminEvent::from).collect();
+        Ok(AdminCausalFlow { events })
     }
 
     /// Aggregate summary of supervisor findings for a region.
@@ -702,25 +1153,103 @@ impl QueryRoot {
         })
     }
 
-    /// List scout tasks, optionally filtered by status.
+    // ========== Graph Explorer ==========
+
+    /// Return nodes and edges for the graph explorer, filtered by bounds/time/types.
     #[graphql(guard = "AdminGuard")]
-    async fn admin_scout_tasks(
+    async fn graph_neighborhood(
         &self,
         ctx: &Context<'_>,
-        status: Option<String>,
-        limit: Option<i32>,
-    ) -> Result<Vec<GqlScoutTask>> {
-        let writer = ctx.data_unchecked::<Arc<GraphWriter>>();
-        let lim = limit.unwrap_or(50).min(200) as u32;
-        let tasks = writer
-            .list_scout_tasks(status.as_deref(), lim)
+        min_lat: Option<f64>,
+        max_lat: Option<f64>,
+        min_lng: Option<f64>,
+        max_lng: Option<f64>,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        node_types: Vec<String>,
+        limit: i32,
+    ) -> Result<GqlGraphNeighborhood> {
+        let cache = ctx.data_unchecked::<Arc<rootsignal_graph::CacheStore>>();
+        let reader = CachedReader::new(
+            Arc::clone(cache),
+            rootsignal_graph::PublicGraphReader::new(
+                ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>().as_ref().clone(),
+            ),
+        );
+        let result = reader
+            .graph_neighborhood(min_lat, max_lat, min_lng, max_lng, from, to, &node_types, limit as u32)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to list scout tasks: {e}")))?;
+            .map_err(|e| async_graphql::Error::new(format!("Graph query failed: {e}")))?;
 
-        Ok(tasks
-            .into_iter()
-            .map(GqlScoutTask::from_task)
-            .collect())
+        Ok(GqlGraphNeighborhood {
+            nodes: result.nodes.into_iter().map(|n| GqlGraphNode {
+                id: n.id.to_string(),
+                node_type: n.node_type,
+                label: n.label,
+                lat: n.lat,
+                lng: n.lng,
+                confidence: n.confidence,
+                metadata: n.metadata,
+            }).collect(),
+            edges: result.edges.into_iter().map(|e| GqlGraphEdge {
+                source_id: e.source_id.to_string(),
+                target_id: e.target_id.to_string(),
+                edge_type: e.edge_type,
+            }).collect(),
+            total_count: result.total_count,
+        })
+    }
+
+    // ========== Region queries ==========
+
+    /// List regions, optionally filtered by leaf status.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_regions(
+        &self,
+        ctx: &Context<'_>,
+        leaf_only: Option<bool>,
+        limit: Option<i32>,
+    ) -> Result<Vec<GqlRegion>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let lim = limit.unwrap_or(50).min(200) as u32;
+        let regions = writer
+            .list_regions(leaf_only, lim)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to list regions: {e}")))?;
+
+        Ok(regions.into_iter().map(GqlRegion::from_region).collect())
+    }
+
+    /// Get a single region by ID.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_region(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> Result<Option<GqlRegion>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let region = writer
+            .get_region(&id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to get region: {e}")))?;
+
+        Ok(region.map(GqlRegion::from_region))
+    }
+
+    /// List child regions of a parent.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_region_children(
+        &self,
+        ctx: &Context<'_>,
+        parent_id: String,
+    ) -> Result<Vec<GqlRegion>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let children = writer
+            .list_child_regions(&parent_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to list children: {e}")))?;
+
+        Ok(children.into_iter().map(GqlRegion::from_region).collect())
     }
 
     // ========== Archive queries ==========
@@ -733,9 +1262,9 @@ impl QueryRoot {
             .as_ref()
             .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
 
-        let counts = crate::db::archive::count_all(pool)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive counts: {e}")))?;
+        let counts = crate::db::archive::count_all(pool).await.map_err(|e| {
+            async_graphql::Error::new(format!("Failed to query archive counts: {e}"))
+        })?;
 
         Ok(GqlArchiveCounts {
             posts: counts.posts,
@@ -764,7 +1293,9 @@ impl QueryRoot {
         let days = days.unwrap_or(7);
         let rows = crate::db::archive::volume_by_day(pool, days)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive volume: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive volume: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -797,7 +1328,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_posts(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive posts: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive posts: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -830,7 +1363,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_short_videos(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive short videos: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive short videos: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -860,7 +1395,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_stories(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive stories: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive stories: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -891,7 +1428,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_long_videos(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive long videos: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive long videos: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -921,7 +1460,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_pages(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive pages: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive pages: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -949,7 +1490,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_feeds(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive feeds: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive feeds: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -978,7 +1521,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_search_results(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive search results: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive search results: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -1006,7 +1551,9 @@ impl QueryRoot {
         let limit = limit.unwrap_or(50);
         let rows = crate::db::archive::recent_files(pool, limit)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to query archive files: {e}")))?;
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to query archive files: {e}"))
+            })?;
 
         Ok(rows
             .into_iter()
@@ -1021,9 +1568,163 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    /// Fetch handler log entries for a specific (event_id, handler_id) pair.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_handler_logs(
+        &self,
+        ctx: &Context<'_>,
+        event_id: String,
+        handler_id: String,
+    ) -> Result<Vec<HandlerLog>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let event_uuid = Uuid::parse_str(&event_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid event_id: {e}")))?;
+
+        let rows = crate::db::scout_run::handler_logs(pool, &event_uuid, &handler_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load handler logs: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| HandlerLog {
+                event_id: event_id.clone(),
+                handler_id: handler_id.clone(),
+                level: r.level,
+                message: r.message,
+                data: r.data,
+                logged_at: r.logged_at,
+            })
+            .collect())
+    }
+
+    /// Fetch all handler logs for a run, identified by run_id.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_handler_logs_by_run(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<Vec<HandlerLog>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::handler_logs_by_run(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load handler logs: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| HandlerLog {
+                event_id: r.event_id.to_string(),
+                handler_id: r.handler_id,
+                level: r.level,
+                message: r.message,
+                data: r.data,
+                logged_at: r.logged_at,
+            })
+            .collect())
+    }
+
+    /// Fetch handler gate descriptions for a run, keyed by handler_id.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_handler_descriptions(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<Vec<HandlerDescription>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::handler_descriptions(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load handler descriptions: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| HandlerDescription {
+                handler_id: r.handler_id,
+                blocks: r.description,
+            })
+            .collect())
+    }
+
+    /// Fetch aggregated handler execution outcomes for a run.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_handler_outcomes(
+        &self,
+        ctx: &Context<'_>,
+        run_id: String,
+    ) -> Result<Vec<HandlerOutcome>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let rows = crate::db::scout_run::handler_outcomes(pool, &run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load handler outcomes: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| HandlerOutcome {
+                handler_id: r.handler_id,
+                status: r.status,
+                error: r.error,
+                attempts: r.attempts,
+                started_at: r.started_at,
+                completed_at: r.completed_at,
+                triggering_event_ids: r.triggering_event_ids,
+            })
+            .collect())
+    }
+
+    /// Budget status: daily limit, today's spend, and per-run cap.
+    #[graphql(guard = "AdminGuard")]
+    async fn budget_status(&self, ctx: &Context<'_>) -> Result<BudgetStatus> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+
+        let config = crate::db::models::budget::load_config(pool)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load budget config: {e}")))?;
+        let spent = crate::db::models::budget::daily_spend(pool)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load daily spend: {e}")))?;
+
+        let remaining = if config.daily_limit_cents > 0 {
+            (config.daily_limit_cents - spent).max(0)
+        } else {
+            0
+        };
+
+        Ok(BudgetStatus {
+            daily_limit_cents: config.daily_limit_cents,
+            spent_today_cents: spent,
+            remaining_cents: remaining,
+            per_run_max_cents: config.per_run_max_cents,
+        })
+    }
 }
 
 // ========== Admin GQL Types ==========
+
+#[derive(SimpleObject)]
+struct BudgetStatus {
+    daily_limit_cents: i64,
+    spent_today_cents: i64,
+    remaining_cents: i64,
+    per_run_max_cents: i64,
+}
 
 #[derive(SimpleObject)]
 pub struct MeResult {
@@ -1034,7 +1735,7 @@ pub struct MeResult {
 #[derive(SimpleObject)]
 pub struct AdminDashboardData {
     pub total_signals: u64,
-    pub total_stories: u64,
+    pub total_situations: u64,
     pub total_actors: u64,
     pub total_sources: u64,
     pub active_sources: u64,
@@ -1042,11 +1743,11 @@ pub struct AdminDashboardData {
     pub scout_statuses: Vec<RegionScoutStatus>,
     pub signal_volume_by_day: Vec<DayVolume>,
     pub count_by_type: Vec<TypeCount>,
-    pub story_count_by_arc: Vec<LabelCount>,
-    pub story_count_by_category: Vec<LabelCount>,
+    pub situation_count_by_arc: Vec<LabelCount>,
+    pub situation_count_by_category: Vec<LabelCount>,
     pub freshness_distribution: Vec<LabelCount>,
     pub confidence_distribution: Vec<LabelCount>,
-    pub unmet_tensions: Vec<AdminTensionRow>,
+    pub unmet_concerns: Vec<AdminConcernRow>,
     pub top_sources: Vec<AdminSourceRow>,
     pub bottom_sources: Vec<AdminSourceRow>,
     pub extraction_yield: Vec<AdminYieldRow>,
@@ -1085,11 +1786,11 @@ pub struct LabelCount {
 }
 
 #[derive(SimpleObject)]
-pub struct AdminTensionRow {
+pub struct AdminConcernRow {
     pub title: String,
     pub severity: String,
     pub category: Option<String>,
-    pub what_would_help: Option<String>,
+    pub opposing: Option<String>,
 }
 
 #[derive(SimpleObject)]
@@ -1131,6 +1832,120 @@ pub struct AdminSource {
     pub cadence_hours: f64,
     pub signals_produced: u32,
     pub active: bool,
+}
+
+// ========== Source Detail GQL Types ==========
+
+#[derive(SimpleObject)]
+pub struct AdminSourceDetail {
+    pub id: Uuid,
+    pub url: String,
+    pub canonical_value: String,
+    pub source_label: String,
+    pub weight: f64,
+    pub quality_penalty: f64,
+    pub effective_weight: f64,
+    pub discovery_method: String,
+    pub last_scraped: Option<DateTime<Utc>>,
+    pub cadence_hours: f64,
+    pub signals_produced: u32,
+    pub signals_corroborated: u32,
+    pub consecutive_empty_runs: u32,
+    pub active: bool,
+    pub gap_context: Option<String>,
+    pub scrape_count: u32,
+    pub avg_signals_per_scrape: f64,
+    pub source_role: String,
+    pub created_at: DateTime<Utc>,
+    pub last_produced_signal: Option<DateTime<Utc>>,
+    pub signals: Vec<AdminSignalBrief>,
+    pub actors: Vec<AdminActorBrief>,
+    pub archive_summary: Option<AdminArchiveSummary>,
+    pub discovery_tree: AdminDiscoveryTree,
+    pub channel_weights: AdminChannelWeights,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminActorBrief {
+    pub id: String,
+    pub name: String,
+    pub actor_type: String,
+    pub signal_count: u32,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminActorDetail {
+    pub id: Uuid,
+    pub name: String,
+    pub actor_type: String,
+    pub canonical_key: String,
+    pub description: String,
+    pub domains: Vec<String>,
+    pub social_urls: Vec<String>,
+    pub signal_count: u32,
+    pub first_seen: DateTime<Utc>,
+    pub last_active: DateTime<Utc>,
+    pub typical_roles: Vec<String>,
+    pub location_name: Option<String>,
+    pub bio: Option<String>,
+    pub signals: Vec<AdminSignalBrief>,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminChannelWeights {
+    pub page: f64,
+    pub feed: f64,
+    pub media: f64,
+    pub discussion: f64,
+    pub events: f64,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminSignalBrief {
+    pub id: String,
+    pub title: String,
+    pub signal_type: String,
+    pub confidence: f32,
+    pub extracted_at: Option<DateTime<Utc>>,
+    pub url: String,
+    pub review_status: String,
+    pub location_name: Option<String>,
+    pub content_date: Option<DateTime<Utc>>,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminArchiveSummary {
+    pub posts: u32,
+    pub pages: u32,
+    pub feeds: u32,
+    pub short_videos: u32,
+    pub long_videos: u32,
+    pub stories: u32,
+    pub search_results: u32,
+    pub files: u32,
+    pub last_fetched_at: Option<DateTime<Utc>>,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminDiscoveryTree {
+    pub nodes: Vec<AdminDiscoveryTreeNode>,
+    pub edges: Vec<AdminDiscoveryTreeEdge>,
+    pub root_id: String,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminDiscoveryTreeNode {
+    pub id: String,
+    pub canonical_value: String,
+    pub discovery_method: String,
+    pub active: bool,
+    pub signals_produced: u32,
+}
+
+#[derive(SimpleObject)]
+pub struct AdminDiscoveryTreeEdge {
+    pub child_id: String,
+    pub parent_id: String,
 }
 
 // ========== Archive GQL Types ==========
@@ -1240,19 +2055,163 @@ struct GqlArchiveFile {
     fetched_at: DateTime<Utc>,
 }
 
+// ========== Handler Log Types ==========
+
+#[derive(SimpleObject)]
+struct HandlerLog {
+    event_id: String,
+    handler_id: String,
+    level: String,
+    message: String,
+    data: Option<serde_json::Value>,
+    logged_at: DateTime<Utc>,
+}
+
+// ========== Handler Description Types ==========
+
+#[derive(SimpleObject)]
+struct HandlerDescription {
+    handler_id: String,
+    blocks: serde_json::Value,
+}
+
+// ========== Handler Outcome Types ==========
+
+#[derive(SimpleObject)]
+struct HandlerOutcome {
+    handler_id: String,
+    status: String,
+    error: Option<String>,
+    attempts: i64,
+    started_at: Option<DateTime<Utc>>,
+    completed_at: Option<DateTime<Utc>>,
+    triggering_event_ids: Vec<String>,
+}
+
 // ========== Scout Run Types ==========
 
-use crate::db::scout_run::{ScoutRunRow, StatsJson, EventJson};
 
 /// GraphQL output type for a scout run.
-#[derive(SimpleObject)]
+/// Events are loaded lazily — only queried when the client requests the `events` field.
 struct ScoutRun {
-    run_id: String,
-    region: String,
-    started_at: DateTime<Utc>,
-    finished_at: DateTime<Utc>,
-    stats: ScoutRunStats,
-    events: Vec<ScoutRunEvent>,
+    row: ScoutRunRow,
+}
+
+#[Object]
+impl ScoutRun {
+    async fn run_id(&self) -> &str {
+        &self.row.run_id
+    }
+    async fn region(&self) -> &str {
+        &self.row.region
+    }
+    async fn region_id(&self) -> Option<&str> {
+        self.row.region_id.as_deref()
+    }
+    async fn flow_type(&self) -> Option<&str> {
+        self.row.flow_type.as_deref()
+    }
+    /// Source briefs derived from the stored scope JSON.
+    /// No Neo4j round-trip — everything needed is in the scope column.
+    async fn sources(&self) -> Vec<RunSourceBrief> {
+        self.row
+            .scope
+            .as_ref()
+            .and_then(|v| v["sources"].as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| {
+                        let id = s["id"].as_str()?;
+                        let label = s["canonical_value"].as_str().unwrap_or("unknown");
+                        Some(RunSourceBrief {
+                            id: id.to_string(),
+                            label: label.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    async fn parent_run_id(&self) -> Option<&str> {
+        self.row.parent_run_id.as_deref()
+    }
+    async fn schedule_id(&self) -> Option<&str> {
+        self.row.schedule_id.as_deref()
+    }
+    async fn run_at(&self) -> Option<DateTime<Utc>> {
+        self.row.run_at
+    }
+    async fn error(&self) -> Option<&str> {
+        self.row.error.as_deref()
+    }
+    async fn cancelled_at(&self) -> Option<DateTime<Utc>> {
+        self.row.cancelled_at
+    }
+    async fn started_at(&self) -> DateTime<Utc> {
+        self.row.started_at
+    }
+    async fn finished_at(&self) -> Option<DateTime<Utc>> {
+        self.row.finished_at
+    }
+    /// Derived status: cancelled > failed > completed > running.
+    /// Every row in `runs` has `started_at` set on creation, so all
+    /// unfinished rows are "running". Deferred-run support would add
+    /// a "scheduled" branch here.
+    async fn status(&self) -> &str {
+        if self.row.cancelled_at.is_some() {
+            "cancelled"
+        } else if self.row.error.is_some() {
+            "failed"
+        } else if self.row.finished_at.is_some() {
+            "completed"
+        } else {
+            "running"
+        }
+    }
+    async fn stats(&self) -> ScoutRunStats {
+        ScoutRunStats::from(&self.row.stats)
+    }
+    /// Child runs spawned from this run (chain orchestration).
+    async fn child_runs(&self, ctx: &Context<'_>) -> Result<Vec<ScoutRun>> {
+        let pool = get_pool(ctx)?;
+        let rows = crate::db::scout_run::list_children(pool, &self.row.run_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load child runs: {e}")))?;
+        Ok(rows.into_iter().map(ScoutRun::from).collect())
+    }
+
+    async fn signal_count(&self, ctx: &Context<'_>) -> Result<u32> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let mut result = client
+            .execute(
+                rootsignal_graph::query("MATCH (n) WHERE n.scout_run_id = $run_id RETURN count(n) AS cnt")
+                    .param("run_id", self.row.run_id.clone()),
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Neo4j query failed: {e}")))?;
+        let count: i64 = match result.next().await {
+            Ok(Some(row)) => row.get("cnt").unwrap_or(0),
+            _ => 0,
+        };
+        Ok(count as u32)
+    }
+
+    async fn events(&self, ctx: &Context<'_>) -> Result<Vec<ScoutRunEvent>> {
+        let pool = ctx.data_unchecked::<Option<sqlx::PgPool>>();
+        let pool = pool
+            .as_ref()
+            .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))?;
+        let rows = crate::db::scout_run::list_events_by_run_id(pool, &self.row.run_id, None)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load events: {e}")))?;
+        Ok(rows.into_iter().map(ScoutRunEvent::from).collect())
+    }
+}
+
+#[derive(SimpleObject)]
+struct RunSourceBrief {
+    id: String,
+    label: String,
 }
 
 #[derive(SimpleObject)]
@@ -1266,11 +2225,15 @@ struct ScoutRunStats {
     social_media_posts: u32,
     expansion_queries_collected: u32,
     expansion_sources_created: u32,
+    handler_failures: u32,
+    spent_cents: u64,
 }
 
 #[derive(SimpleObject)]
 struct ScoutRunEvent {
-    seq: u32,
+    id: Option<String>,
+    parent_id: Option<String>,
+    seq: i64,
     ts: DateTime<Utc>,
     #[graphql(name = "type")]
     event_type: String,
@@ -1295,8 +2258,8 @@ struct ScoutRunEvent {
     node_id: Option<String>,
     matched_id: Option<String>,
     existing_id: Option<String>,
-    source_url: Option<String>,
-    new_source_url: Option<String>,
+    signal_url: Option<String>,
+    new_signal_url: Option<String>,
     canonical_key: Option<String>,
     gatherings: Option<u64>,
     needs: Option<u64>,
@@ -1306,23 +2269,23 @@ struct ScoutRunEvent {
     remaining_cents: Option<u64>,
     topics: Option<Vec<String>>,
     posts_found: Option<u32>,
+    reason: Option<String>,
+    strategy: Option<String>,
+    field: Option<String>,
+    old_value: Option<String>,
+    new_value: Option<String>,
+    signal_count: Option<u32>,
+    summary: Option<String>,
 }
 
 impl From<ScoutRunRow> for ScoutRun {
     fn from(r: ScoutRunRow) -> Self {
-        Self {
-            run_id: r.run_id,
-            region: r.region,
-            started_at: r.started_at,
-            finished_at: r.finished_at,
-            stats: ScoutRunStats::from(r.stats),
-            events: r.events.into_iter().map(ScoutRunEvent::from).collect(),
-        }
+        Self { row: r }
     }
 }
 
-impl From<StatsJson> for ScoutRunStats {
-    fn from(s: StatsJson) -> Self {
+impl From<&StatsJson> for ScoutRunStats {
+    fn from(s: &StatsJson) -> Self {
         Self {
             urls_scraped: s.urls_scraped.unwrap_or(0),
             urls_unchanged: s.urls_unchanged.unwrap_or(0),
@@ -1333,49 +2296,829 @@ impl From<StatsJson> for ScoutRunStats {
             social_media_posts: s.social_media_posts.unwrap_or(0),
             expansion_queries_collected: s.expansion_queries_collected.unwrap_or(0),
             expansion_sources_created: s.expansion_sources_created.unwrap_or(0),
+            handler_failures: s.handler_failures.unwrap_or(0),
+            spent_cents: s.spent_cents.unwrap_or(0),
         }
     }
 }
 
-impl From<EventJson> for ScoutRunEvent {
-    fn from(j: EventJson) -> Self {
+impl From<EventRow> for ScoutRunEvent {
+    fn from(j: EventRow) -> Self {
+        let d = &j.data;
         Self {
+            id: j.id.map(|u| u.to_string()),
+            parent_id: j.parent_id.map(|u| u.to_string()),
             seq: j.seq,
             ts: j.ts,
             event_type: j.event_type,
-            query: j.query,
-            url: j.url,
-            provider: j.provider,
-            platform: j.platform,
-            identifier: j.identifier,
-            signal_type: j.signal_type,
-            title: j.title,
-            result_count: j.result_count,
-            post_count: j.post_count,
-            items: j.items,
-            content_bytes: j.content_bytes,
-            content_chars: j.content_chars,
-            signals_extracted: j.signals_extracted,
-            implied_queries: j.implied_queries,
-            similarity: j.similarity,
-            confidence: j.confidence,
-            success: j.success,
-            action: j.action,
-            node_id: j.node_id,
-            matched_id: j.matched_id,
-            existing_id: j.existing_id,
-            source_url: j.source_url,
-            new_source_url: j.new_source_url,
-            canonical_key: j.canonical_key,
-            gatherings: j.gatherings,
-            needs: j.needs,
-            stale: j.stale,
-            sources_created: j.sources_created,
-            spent_cents: j.spent_cents,
-            remaining_cents: j.remaining_cents,
-            topics: j.topics,
-            posts_found: j.posts_found,
+            query: json_str(d, "query"),
+            url: json_str(d, "url"),
+            provider: json_str(d, "provider"),
+            platform: json_str(d, "platform"),
+            identifier: json_str(d, "identifier"),
+            signal_type: json_str(d, "signal_type"),
+            title: json_str(d, "title"),
+            result_count: json_u32(d, "result_count"),
+            post_count: json_u32(d, "post_count"),
+            items: json_u32(d, "items"),
+            content_bytes: json_u64(d, "content_bytes"),
+            content_chars: json_u64(d, "content_chars"),
+            signals_extracted: json_u32(d, "signals_extracted"),
+            implied_queries: json_u32(d, "implied_queries"),
+            similarity: json_f64(d, "similarity"),
+            confidence: json_f64(d, "confidence"),
+            success: d.get("success").and_then(|v| v.as_bool()),
+            action: json_str(d, "action"),
+            node_id: json_str(d, "node_id"),
+            matched_id: json_str(d, "matched_id"),
+            existing_id: json_str(d, "existing_id"),
+            signal_url: json_str(d, "source_url").or_else(|| json_str(d, "url")),
+            new_signal_url: json_str(d, "new_source_url").or_else(|| json_str(d, "new_url")),
+            canonical_key: json_str(d, "canonical_key"),
+            gatherings: json_u64(d, "gatherings"),
+            needs: json_u64(d, "needs"),
+            stale: json_u64(d, "stale"),
+            sources_created: json_u64(d, "sources_created"),
+            spent_cents: json_u64(d, "spent_cents"),
+            remaining_cents: json_u64(d, "remaining_cents"),
+            topics: d.get("topics").and_then(|v| {
+                v.as_array().map(|arr| {
+                    arr.iter().filter_map(|s| s.as_str().map(String::from)).collect()
+                })
+            }),
+            posts_found: json_u32(d, "posts_found"),
+            reason: json_str(d, "reason"),
+            strategy: json_str(d, "strategy"),
+            field: json_str(d, "field"),
+            old_value: json_str(d, "old_value"),
+            new_value: json_str(d, "new_value"),
+            signal_count: json_u32(d, "signal_count"),
+            summary: json_str(d, "summary"),
         }
+    }
+}
+
+// ========== Scout Run Outcomes (lazy field resolvers) ==========
+
+fn get_pool<'a>(ctx: &'a Context<'a>) -> Result<&'a sqlx::PgPool> {
+    ctx.data_unchecked::<Option<sqlx::PgPool>>()
+        .as_ref()
+        .ok_or_else(|| async_graphql::Error::new("Postgres not configured"))
+}
+
+#[derive(SimpleObject)]
+struct OutcomeSourceScraped {
+    source_id: Option<String>,
+    canonical_key: String,
+    url: Option<String>,
+    signals_produced: u32,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeSignalCreated {
+    node_id: String,
+    node_type: String,
+    title: Option<String>,
+    confidence: Option<f64>,
+    url: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeDedupMatch {
+    node_type: Option<String>,
+    similarity: Option<f64>,
+    existing_id: Option<String>,
+    title: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeRejection {
+    title: String,
+    reason: String,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeSourceDiscovered {
+    source_id: Option<String>,
+    canonical_key: String,
+    url: Option<String>,
+    discovery_method: Option<String>,
+    gap_context: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeExpansionQuery {
+    query: String,
+    source_url: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeFailure {
+    handler_id: Option<String>,
+    error: String,
+    url: Option<String>,
+    variant: String,
+}
+
+#[derive(SimpleObject)]
+#[graphql(concrete(name = "OutcomePageSourceScraped", params(OutcomeSourceScraped)))]
+#[graphql(concrete(name = "OutcomePageSignalCreated", params(OutcomeSignalCreated)))]
+#[graphql(concrete(name = "OutcomePageDedupMatch", params(OutcomeDedupMatch)))]
+#[graphql(concrete(name = "OutcomePageRejection", params(OutcomeRejection)))]
+#[graphql(concrete(name = "OutcomePageSourceDiscovered", params(OutcomeSourceDiscovered)))]
+#[graphql(concrete(name = "OutcomePageExpansionQuery", params(OutcomeExpansionQuery)))]
+#[graphql(concrete(name = "OutcomePageFailure", params(OutcomeFailure)))]
+struct OutcomePage<T: async_graphql::OutputType> {
+    items: Vec<T>,
+    total: i64,
+}
+
+struct ScoutRunOutcomes {
+    run_id: String,
+}
+
+#[Object]
+impl ScoutRunOutcomes {
+    async fn sources_scraped(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeSourceScraped>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(100).min(200) as i64;
+
+        // Build canonical_key → source_id lookup from the sources_prepared event
+        let mut key_to_id: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let prepared = list_events_by_variant(pool, &self.run_id, "sources_prepared", 1)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        if let Some(row) = prepared.first() {
+            if let Some(sources) = row.data.pointer("/source_plan/all_sources").and_then(|v| v.as_array()) {
+                for s in sources {
+                    if let (Some(id), Some(key)) = (
+                        s.get("id").and_then(|v| v.as_str()),
+                        s.get("canonical_key").and_then(|v| v.as_str()),
+                    ) {
+                        key_to_id.insert(key.to_string(), id.to_string());
+                    }
+                }
+            }
+        }
+
+        // Derive sources scraped from scrape completion events' source_signal_counts,
+        // falling back to source_scraped system events for older runs.
+        let scrape_variants = ["web_scrape_completed", "social_scrape_completed", "topic_discovery_completed"];
+        let mut merged: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for variant in &scrape_variants {
+            let rows = list_events_by_variant(pool, &self.run_id, variant, 50)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            for r in &rows {
+                if let Some(counts) = r.data.get("source_signal_counts").and_then(|v| v.as_object()) {
+                    for (key, val) in counts {
+                        let n = val.as_u64().unwrap_or(0) as u32;
+                        *merged.entry(key.clone()).or_default() += n;
+                    }
+                }
+            }
+        }
+
+        if merged.is_empty() {
+            // Fallback: older runs that have source_scraped system events
+            let total = count_events_by_variant(pool, &self.run_id, "source_scraped")
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            let rows = list_events_by_variant(pool, &self.run_id, "source_scraped", limit)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            let items = rows
+                .into_iter()
+                .map(|r| {
+                    let key = json_str(&r.data, "canonical_key").unwrap_or_default();
+                    OutcomeSourceScraped {
+                        source_id: key_to_id.get(&key).cloned(),
+                        canonical_key: key,
+                        url: json_str(&r.data, "url"),
+                        signals_produced: json_u32(&r.data, "signals_produced").unwrap_or(0),
+                    }
+                })
+                .collect();
+            return Ok(OutcomePage { items, total });
+        }
+
+        let total = merged.len() as i64;
+        let mut items: Vec<OutcomeSourceScraped> = merged
+            .into_iter()
+            .map(|(key, count)| OutcomeSourceScraped {
+                source_id: key_to_id.get(&key).cloned(),
+                canonical_key: key,
+                url: None,
+                signals_produced: count,
+            })
+            .collect();
+        items.sort_by(|a, b| b.signals_produced.cmp(&a.signals_produced));
+        items.truncate(limit as usize);
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn signals_created(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeSignalCreated>> {
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let limit = limit.unwrap_or(100).min(200) as i64;
+
+        let (signals, total) = reader
+            .signals_for_run(&self.run_id, limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let items = signals
+            .into_iter()
+            .map(|s| OutcomeSignalCreated {
+                node_id: s.id.to_string(),
+                node_type: s.signal_type,
+                title: Some(s.title).filter(|t| !t.is_empty()),
+                confidence: Some(s.confidence as f64),
+                url: Some(s.url).filter(|u| !u.is_empty()),
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn dedup_matches(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeDedupMatch>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+
+        let cross = list_events_by_variant(pool, &self.run_id, "cross_source_match_detected", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let same = list_events_by_variant(pool, &self.run_id, "same_source_reencountered", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let count_cross = count_events_by_variant(pool, &self.run_id, "cross_source_match_detected")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let count_same = count_events_by_variant(pool, &self.run_id, "same_source_reencountered")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let items: Vec<OutcomeDedupMatch> = cross
+            .into_iter()
+            .chain(same)
+            .map(|r| OutcomeDedupMatch {
+                node_type: json_str(&r.data, "node_type"),
+                similarity: json_f64(&r.data, "similarity"),
+                existing_id: json_str(&r.data, "existing_id"),
+                title: json_str(&r.data, "title"),
+            })
+            .take(limit as usize)
+            .collect();
+        Ok(OutcomePage {
+            items,
+            total: count_cross + count_same,
+        })
+    }
+
+    async fn rejections(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeRejection>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "observation_rejected")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "observation_rejected", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let items = rows
+            .into_iter()
+            .map(|r| OutcomeRejection {
+                title: json_str(&r.data, "title").unwrap_or_default(),
+                reason: json_str(&r.data, "reason").unwrap_or_default(),
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn sources_discovered(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeSourceDiscovered>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        // Three eras: source_discovered (old pipeline), source_registered (individual), sources_registered (batch).
+        let variants = &["source_discovered", "source_registered", "sources_registered"];
+        let mut total = 0i64;
+        let mut rows = Vec::new();
+        for variant in variants {
+            total += count_events_by_variant(pool, &self.run_id, variant)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            let batch = list_events_by_variant(pool, &self.run_id, variant, limit)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            rows.extend(batch);
+        }
+        let items = rows
+            .into_iter()
+            .flat_map(|r| {
+                // Batch format (sources_registered): sources array
+                if let Some(sources) = r.data.get("sources").and_then(|v| v.as_array()) {
+                    return sources.iter().map(|s| {
+                        OutcomeSourceDiscovered {
+                            source_id: s.get("id").and_then(|v| v.as_str()).map(String::from),
+                            canonical_key: s.get("canonical_key").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+                            url: s.get("url").and_then(|v| v.as_str()).map(String::from),
+                            discovery_method: s.get("discovery_method").and_then(|v| v.as_str()).map(String::from),
+                            gap_context: s.get("gap_context").and_then(|v| v.as_str()).map(String::from),
+                        }
+                    }).collect::<Vec<_>>();
+                }
+                // Legacy formats: fields nested under "source" or top-level
+                let src = r.data.get("source");
+                let get_field = |field: &str| -> Option<&str> {
+                    src.and_then(|s| s.get(field))
+                        .or_else(|| r.data.get(field))
+                        .and_then(|v| v.as_str())
+                };
+                vec![OutcomeSourceDiscovered {
+                    source_id: get_field("id").map(String::from),
+                    canonical_key: get_field("canonical_key").unwrap_or("?").to_string(),
+                    url: get_field("url").map(String::from),
+                    discovery_method: get_field("discovery_method").map(String::from),
+                    gap_context: get_field("gap_context").map(String::from),
+                }]
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn expansion_queries(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeExpansionQuery>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "expansion_query_collected")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "expansion_query_collected", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let items = rows
+            .into_iter()
+            .map(|r| OutcomeExpansionQuery {
+                query: json_str(&r.data, "query").unwrap_or_default(),
+                source_url: json_str(&r.data, "source_url"),
+            })
+            .collect();
+        Ok(OutcomePage { items, total })
+    }
+
+    async fn failures(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<OutcomePage<OutcomeFailure>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+
+        let handler = list_events_by_variant(pool, &self.run_id, "handler_failed", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let fetch = list_events_by_variant(pool, &self.run_id, "content_fetch_failed", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let extract = list_events_by_variant(pool, &self.run_id, "extraction_failed", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let count_handler = count_events_by_variant(pool, &self.run_id, "handler_failed")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let count_fetch = count_events_by_variant(pool, &self.run_id, "content_fetch_failed")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let count_extract = count_events_by_variant(pool, &self.run_id, "extraction_failed")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let items: Vec<OutcomeFailure> = handler
+            .into_iter()
+            .map(|r| OutcomeFailure {
+                handler_id: json_str(&r.data, "handler_id"),
+                error: json_str(&r.data, "error").unwrap_or_default(),
+                url: json_str(&r.data, "url"),
+                variant: "handler_failed".to_string(),
+            })
+            .chain(fetch.into_iter().map(|r| OutcomeFailure {
+                handler_id: None,
+                error: json_str(&r.data, "error").unwrap_or_default(),
+                url: json_str(&r.data, "url"),
+                variant: "content_fetch_failed".to_string(),
+            }))
+            .chain(extract.into_iter().map(|r| OutcomeFailure {
+                handler_id: None,
+                error: json_str(&r.data, "error").unwrap_or_default(),
+                url: json_str(&r.data, "url"),
+                variant: "extraction_failed".to_string(),
+            }))
+            .take(limit as usize)
+            .collect();
+        Ok(OutcomePage {
+            items,
+            total: count_handler + count_fetch + count_extract,
+        })
+    }
+}
+
+// ========== Coalesce Run Outcomes (lazy field resolvers) ==========
+
+#[derive(SimpleObject)]
+struct OutcomeGroupCreated {
+    group_id: String,
+    label: String,
+    queries: Vec<String>,
+    seed_signal_id: Option<String>,
+    member_count: i64,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeSignalGrouped {
+    signal_id: String,
+    group_id: String,
+    confidence: f64,
+    signal_title: Option<String>,
+    signal_type: Option<String>,
+    source_url: Option<String>,
+    group_label: Option<String>,
+}
+
+#[derive(SimpleObject)]
+struct OutcomeGroupRefined {
+    group_id: String,
+    queries: Vec<String>,
+    group_label: Option<String>,
+}
+
+#[derive(SimpleObject)]
+#[graphql(concrete(name = "OutcomePageGroupCreated", params(OutcomeGroupCreated)))]
+#[graphql(concrete(name = "OutcomePageSignalGrouped", params(OutcomeSignalGrouped)))]
+#[graphql(concrete(name = "OutcomePageGroupRefined", params(OutcomeGroupRefined)))]
+struct CoalesceOutcomePage<T: async_graphql::OutputType> {
+    items: Vec<T>,
+    total: i64,
+}
+
+// ========== Cluster Detail ==========
+
+struct GqlClusterDetail(rootsignal_graph::ClusterDetailRow);
+
+#[Object]
+impl GqlClusterDetail {
+    async fn id(&self) -> String { self.0.id.to_string() }
+    async fn label(&self) -> &str { &self.0.label }
+    async fn queries(&self) -> &[String] { &self.0.queries }
+    async fn created_at(&self) -> &str { &self.0.created_at }
+    async fn member_count(&self) -> i32 { self.0.members.len() as i32 }
+    async fn members(&self) -> Vec<GqlClusterMember> {
+        self.0.members.iter().map(|m| GqlClusterMember(m.clone())).collect()
+    }
+    async fn woven_situation_id(&self) -> Option<String> {
+        self.0.woven_situation_id.map(|id| id.to_string())
+    }
+}
+
+#[derive(Clone)]
+struct GqlClusterMember(rootsignal_graph::ClusterMemberRow);
+
+#[Object]
+impl GqlClusterMember {
+    async fn id(&self) -> String { self.0.id.to_string() }
+    async fn title(&self) -> &str { &self.0.title }
+    async fn signal_type(&self) -> &str { &self.0.signal_type }
+    async fn confidence(&self) -> f64 { self.0.confidence }
+    async fn source_url(&self) -> Option<&str> { self.0.source_url.as_deref() }
+    async fn summary(&self) -> Option<&str> { self.0.summary.as_deref() }
+}
+
+struct GqlClusterSummary(rootsignal_graph::ClusterSummary);
+
+#[Object]
+impl GqlClusterSummary {
+    async fn id(&self) -> String { self.0.id.to_string() }
+    async fn label(&self) -> &str { &self.0.label }
+    async fn queries(&self) -> &[String] { &self.0.queries }
+    async fn created_at(&self) -> &str { &self.0.created_at }
+    async fn member_count(&self) -> i32 { self.0.member_count as i32 }
+    async fn woven_situation_id(&self) -> Option<String> {
+        self.0.woven_situation_id.map(|id| id.to_string())
+    }
+}
+
+struct CoalesceRunOutcomes {
+    run_id: String,
+}
+
+#[Object]
+impl CoalesceRunOutcomes {
+    async fn groups_created(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<CoalesceOutcomePage<OutcomeGroupCreated>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "group_created")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "group_created", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Count members per group from signal_added_to_group events in this run
+        let member_rows = list_events_by_variant(pool, &self.run_id, "signal_added_to_group", 500)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let mut member_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for r in &member_rows {
+            if let Some(gid) = json_str(&r.data, "group_id") {
+                *member_counts.entry(gid).or_default() += 1;
+            }
+        }
+
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                let gid = json_str(&r.data, "group_id").unwrap_or_default();
+                let queries = r.data.get("queries")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                OutcomeGroupCreated {
+                    member_count: member_counts.get(&gid).copied().unwrap_or(0),
+                    group_id: gid,
+                    label: json_str(&r.data, "label").unwrap_or_default(),
+                    queries,
+                    seed_signal_id: json_str(&r.data, "seed_signal_id"),
+                }
+            })
+            .collect();
+        Ok(CoalesceOutcomePage { items, total })
+    }
+
+    async fn signals_grouped(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<CoalesceOutcomePage<OutcomeSignalGrouped>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(100).min(500) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "signal_added_to_group")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "signal_added_to_group", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Build group_id → label lookup from group_created events in same run
+        let group_rows = list_events_by_variant(pool, &self.run_id, "group_created", 200)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let group_labels: std::collections::HashMap<String, String> = group_rows
+            .iter()
+            .filter_map(|r| {
+                let gid = json_str(&r.data, "group_id")?;
+                let label = json_str(&r.data, "label")?;
+                Some((gid, label))
+            })
+            .collect();
+
+        // Fetch signal titles from Neo4j
+        let client = ctx.data_unchecked::<Arc<rootsignal_graph::GraphClient>>();
+        let reader = rootsignal_graph::PublicGraphReader::new(client.as_ref().clone());
+        let signal_ids: Vec<String> = rows.iter()
+            .filter_map(|r| json_str(&r.data, "signal_id"))
+            .collect();
+        let signal_info = reader.signal_summaries_by_ids(&signal_ids).await.unwrap_or_default();
+
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                let sid = json_str(&r.data, "signal_id").unwrap_or_default();
+                let gid = json_str(&r.data, "group_id").unwrap_or_default();
+                let info = signal_info.get(&sid);
+                OutcomeSignalGrouped {
+                    signal_id: sid,
+                    confidence: json_f64(&r.data, "confidence").unwrap_or(0.0),
+                    signal_title: info.map(|i| i.title.clone()),
+                    signal_type: info.map(|i| i.signal_type.clone()),
+                    source_url: info.and_then(|i| i.source_url.clone()),
+                    group_label: group_labels.get(&gid).cloned(),
+                    group_id: gid,
+                }
+            })
+            .collect();
+        Ok(CoalesceOutcomePage { items, total })
+    }
+
+    async fn groups_refined(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<CoalesceOutcomePage<OutcomeGroupRefined>> {
+        let pool = get_pool(ctx)?;
+        let limit = limit.unwrap_or(50).min(200) as i64;
+        let total = count_events_by_variant(pool, &self.run_id, "group_queries_refined")
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = list_events_by_variant(pool, &self.run_id, "group_queries_refined", limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Lookup group labels from group_created events
+        let group_rows = list_events_by_variant(pool, &self.run_id, "group_created", 200)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let group_labels: std::collections::HashMap<String, String> = group_rows
+            .iter()
+            .filter_map(|r| {
+                let gid = json_str(&r.data, "group_id")?;
+                let label = json_str(&r.data, "label")?;
+                Some((gid, label))
+            })
+            .collect();
+
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                let gid = json_str(&r.data, "group_id").unwrap_or_default();
+                let queries = r.data.get("queries")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                OutcomeGroupRefined {
+                    group_label: group_labels.get(&gid).cloned(),
+                    group_id: gid,
+                    queries,
+                }
+            })
+            .collect();
+        Ok(CoalesceOutcomePage { items, total })
+    }
+}
+
+// ========== Event Browser types ==========
+
+#[derive(Clone, SimpleObject)]
+pub struct AdminEvent {
+    pub seq: i64,
+    pub ts: DateTime<Utc>,
+    /// The event_type column — codec name like "DiscoveryEvent".
+    #[graphql(name = "type")]
+    pub event_type: String,
+    /// Human-readable variant name (e.g. "source_discovered") from payload "type" tag.
+    pub name: String,
+    pub layer: String,
+    /// Seesaw event UUID — this event's identity.
+    pub id: Option<String>,
+    /// Seesaw parent event UUID — which event caused this one.
+    pub parent_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub run_id: Option<String>,
+    pub handler_id: Option<String>,
+    pub summary: Option<String>,
+    pub payload: String,
+}
+
+#[derive(SimpleObject)]
+struct AdminEventsPage {
+    events: Vec<AdminEvent>,
+    next_cursor: Option<i64>,
+}
+
+#[derive(SimpleObject)]
+struct AdminCausalTree {
+    events: Vec<AdminEvent>,
+    root_seq: i64,
+}
+
+#[derive(SimpleObject)]
+struct AdminCausalFlow {
+    events: Vec<AdminEvent>,
+}
+
+impl From<EventRowFull> for AdminEvent {
+    fn from(r: EventRowFull) -> Self {
+        let variant = json_str(&r.data, "type").unwrap_or_else(|| r.event_type.clone());
+        let summary = event_summary(&variant, &r.data);
+        let prefix = event_domain_prefix(&r.event_type);
+        let name = format!("{prefix}:{variant}");
+        let layer = event_layer(&r.event_type).to_string();
+        let payload = serde_json::to_string(&r.data).unwrap_or_default();
+        Self {
+            seq: r.seq,
+            ts: r.ts,
+            event_type: r.event_type,
+            name,
+            layer,
+            id: r.id.map(|u| u.to_string()),
+            parent_id: r.parent_id.map(|u| u.to_string()),
+            correlation_id: r.correlation_id.map(|u| u.to_string()),
+            run_id: r.run_id,
+            handler_id: r.handler_id,
+            summary,
+            payload,
+        }
+    }
+}
+
+// ========== Subscriptions ==========
+
+pub struct SubscriptionRoot;
+
+#[Subscription]
+impl SubscriptionRoot {
+    /// Stream live events. If `last_seq` is provided, replays missed events first
+    /// (catch-up phase), then switches to live broadcast.
+    async fn events(
+        &self,
+        ctx: &Context<'_>,
+        last_seq: Option<i64>,
+    ) -> Result<impl Stream<Item = AdminEvent>> {
+        // Defense-in-depth: verify admin auth (primary check is at WS connect)
+        let auth = ctx.data::<AuthContext>()?;
+        match &auth.0 {
+            Some(claims) if claims.is_admin => {}
+            _ => return Err(async_graphql::Error::new("Unauthorized")),
+        }
+
+        let pool = ctx
+            .data::<Option<sqlx::PgPool>>()?
+            .clone()
+            .ok_or_else(|| async_graphql::Error::new("Database not available"))?;
+
+        let broadcast = ctx
+            .data::<Option<crate::event_broadcast::EventBroadcast>>()?
+            .clone()
+            .ok_or_else(|| async_graphql::Error::new("Event broadcast not available"))?;
+        let mut rx = broadcast.subscribe();
+
+        Ok(async_stream::stream! {
+            let mut high_water: i64 = 0;
+
+            // ── Catch-up phase ──
+            if let Some(start) = last_seq {
+                // Fetch events from start_seq + 1 onward
+                let catch_up_start = start + 1;
+                match crate::db::scout_run::get_events_from_seq(&pool, catch_up_start, 500).await {
+                    Ok(rows) => {
+                        for row in rows {
+                            let event = AdminEvent::from(row);
+                            if event.seq > high_water {
+                                high_water = event.seq;
+                            }
+                            yield event;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Subscription catch-up query failed");
+                    }
+                }
+            }
+
+            // ── Live phase ──
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if event.seq > high_water {
+                            high_water = event.seq;
+                            yield event;
+                        }
+                        // else: already sent during catch-up, skip
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "Subscription receiver lagged");
+                        // Continue — we'll pick up the next event
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        })
     }
 }
 
@@ -1396,18 +3139,22 @@ fn source_label_from_value(value: &str) -> String {
 
 pub fn build_schema(
     reader: Arc<CachedReader>,
-    writer: Arc<GraphWriter>,
+    writer: Arc<GraphStore>,
+    store_factory: Option<rootsignal_scout::store::SignalReaderFactory>,
+    engine_factory: Option<rootsignal_scout::store::EngineFactory>,
     jwt_service: JwtService,
     config: Arc<Config>,
     twilio: Option<Arc<twilio::TwilioService>>,
     rate_limiter: super::mutations::RateLimiter,
     graph_client: Arc<rootsignal_graph::GraphClient>,
     cache_store: Arc<rootsignal_graph::CacheStore>,
-    restate_client: Option<RestateClient>,
+    scout_runner: Option<ScoutRunner>,
     pg_pool: Option<sqlx::PgPool>,
+    event_broadcast: Option<crate::event_broadcast::EventBroadcast>,
+    event_cache: Option<crate::event_cache::SharedEventCache>,
 ) -> ApiSchema {
-    let evidence_loader = DataLoader::new(
-        EvidenceBySignalLoader {
+    let citation_loader = DataLoader::new(
+        CitationBySignalLoader {
             reader: reader.clone(),
         },
         tokio::spawn,
@@ -1418,20 +3165,14 @@ pub fn build_schema(
         },
         tokio::spawn,
     );
-    let story_loader = DataLoader::new(
-        StoryBySignalLoader {
-            reader: reader.clone(),
-        },
-        tokio::spawn,
-    );
     let situations_loader = DataLoader::new(
         SituationsBySignalLoader {
             reader: reader.clone(),
         },
         tokio::spawn,
     );
-    let tags_loader = DataLoader::new(
-        TagsByStoryLoader {
+    let schedule_loader = DataLoader::new(
+        ScheduleBySignalLoader {
             reader: reader.clone(),
         },
         tokio::spawn,
@@ -1452,9 +3193,10 @@ pub fn build_schema(
         Arc::new(rootsignal_scout::infra::embedder::Embedder::new(voyage_key))
     };
 
-    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+    Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(reader)
-        .data(writer.clone() as Arc<dyn rootsignal_scout::pipeline::traits::SignalStore>)
+        .data(store_factory)
+        .data(engine_factory)
         .data(writer)
         .data(jwt_service)
         .data(config)
@@ -1462,17 +3204,16 @@ pub fn build_schema(
         .data(rate_limiter)
         .data(graph_client)
         .data(cache_store)
-        .data(evidence_loader)
+        .data(citation_loader)
         .data(actors_loader)
-        .data(story_loader)
         .data(situations_loader)
-        .data(tags_loader)
+        .data(schedule_loader)
         .data(situation_tags_loader)
         .data(embedder)
-        .data(restate_client)
+        .data(scout_runner)
         .data(pg_pool)
+        .data(event_broadcast)
+        .data(event_cache)
         .finish()
 }
 
-use crate::jwt::JwtService;
-use rootsignal_common::Config;

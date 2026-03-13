@@ -262,7 +262,7 @@ All traits are `async + Send + Sync`, enabling both production clients and test 
 ```rust
 pub struct Scout {
     graph_client: GraphClient,
-    writer: GraphWriter,
+    writer: GraphStore,
     extractor: Box<dyn SignalExtractor>,
     embedder: Box<dyn TextEmbedder>,
     scraper: Box<dyn PageScraper>,

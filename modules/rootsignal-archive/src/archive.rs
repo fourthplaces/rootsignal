@@ -30,7 +30,10 @@ pub struct ArchiveConfig {
 
 pub enum PageBackend {
     Chrome,
-    Browserless { base_url: String, token: Option<String> },
+    Browserless {
+        base_url: String,
+        token: Option<String>,
+    },
 }
 
 /// The archive: fetch, store, and serve content from the web.
@@ -40,26 +43,41 @@ pub struct Archive {
 }
 
 impl Archive {
-    pub fn new(pool: PgPool, config: ArchiveConfig, dispatcher: Option<Arc<dyn WorkflowDispatcher>>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        config: ArchiveConfig,
+        dispatcher: Option<Arc<dyn WorkflowDispatcher>>,
+    ) -> Self {
         let store = Store::new(pool);
 
         // Page fetcher
         let (chrome_page, browserless_page) = match config.page_backend {
             PageBackend::Chrome => (Some(ChromePageService::new()), None),
-            PageBackend::Browserless { base_url, token } => {
-                (None, Some(BrowserlessPageService::new(&base_url, token.as_deref())))
-            }
+            PageBackend::Browserless { base_url, token } => (
+                None,
+                Some(BrowserlessPageService::new(&base_url, token.as_deref())),
+            ),
         };
 
         // Social services (all require Apify)
         let (instagram, twitter, reddit, facebook, tiktok, bluesky) =
             if let Some(ref api_key) = config.apify_api_key {
                 (
-                    Some(InstagramService::new(apify_client::ApifyClient::new(api_key.clone()))),
-                    Some(TwitterService::new(apify_client::ApifyClient::new(api_key.clone()))),
-                    Some(RedditService::new(apify_client::ApifyClient::new(api_key.clone()))),
-                    Some(FacebookService::new(apify_client::ApifyClient::new(api_key.clone()))),
-                    Some(TikTokService::new(apify_client::ApifyClient::new(api_key.clone()))),
+                    Some(InstagramService::new(apify_client::ApifyClient::new(
+                        api_key.clone(),
+                    ))),
+                    Some(TwitterService::new(apify_client::ApifyClient::new(
+                        api_key.clone(),
+                    ))),
+                    Some(RedditService::new(apify_client::ApifyClient::new(
+                        api_key.clone(),
+                    ))),
+                    Some(FacebookService::new(apify_client::ApifyClient::new(
+                        api_key.clone(),
+                    ))),
+                    Some(TikTokService::new(apify_client::ApifyClient::new(
+                        api_key.clone(),
+                    ))),
                     Some(BlueskyService::new()),
                 )
             } else {
@@ -111,7 +129,11 @@ impl Archive {
     // --- Shorthand methods (skip the two-step source().await?.method().await pattern) ---
 
     /// Fetch posts from a social media URL.
-    pub async fn posts(&self, url: &str, limit: u32) -> Result<Vec<rootsignal_common::types::Post>> {
+    pub async fn posts(
+        &self,
+        url: &str,
+        limit: u32,
+    ) -> Result<Vec<rootsignal_common::types::Post>> {
         self.source(url).await?.posts(limit).await
     }
 
@@ -126,7 +148,10 @@ impl Archive {
     }
 
     /// Run a web search.
-    pub async fn search(&self, query: &str) -> Result<rootsignal_common::types::ArchivedSearchResults> {
+    pub async fn search(
+        &self,
+        query: &str,
+    ) -> Result<rootsignal_common::types::ArchivedSearchResults> {
         self.source(query).await?.search(query).await
     }
 
@@ -135,5 +160,4 @@ impl Archive {
     pub async fn crawl(&self, url: &str) -> Result<Vec<rootsignal_common::types::ArchivedPage>> {
         self.source(url).await?.crawl().await
     }
-
 }

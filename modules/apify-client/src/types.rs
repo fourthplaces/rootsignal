@@ -33,6 +33,54 @@ pub struct InstagramScraperInput {
     pub results_limit: u32,
 }
 
+/// Input for the apidojo/instagram-scraper actor with resultsType=stories.
+#[derive(Debug, Clone, Serialize)]
+pub struct InstagramStoriesInput {
+    #[serde(rename = "directUrls")]
+    pub direct_urls: Vec<String>,
+    #[serde(rename = "resultsType")]
+    pub results_type: String,
+}
+
+/// A single Instagram story item from the Apify dataset.
+/// Fields are permissive (all Optional) since the exact schema varies by actor version.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstagramStoryItem {
+    #[serde(rename = "displayUrl", alias = "imageUrl")]
+    pub display_url: Option<String>,
+    #[serde(rename = "videoUrl")]
+    pub video_url: Option<String>,
+    #[serde(rename = "ownerUsername")]
+    pub owner_username: Option<String>,
+    pub url: Option<String>,
+    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(rename = "expiringAt")]
+    pub expiring_at: Option<DateTime<Utc>>,
+    #[serde(rename = "type")]
+    pub story_type: Option<String>,
+    #[serde(rename = "locationName")]
+    pub location_name: Option<String>,
+    pub caption: Option<String>,
+}
+
+impl InstagramStoryItem {
+    /// Best media URL: prefer video, fall back to image.
+    pub fn media_url(&self) -> Option<&str> {
+        self.video_url
+            .as_deref()
+            .or(self.display_url.as_deref())
+    }
+
+    /// Infer mime type from available URLs.
+    pub fn mime_type(&self) -> &str {
+        if self.video_url.is_some() {
+            "video/mp4"
+        } else {
+            "image/jpeg"
+        }
+    }
+}
+
 /// A single Instagram post from the Apify dataset.
 /// Also used as the output type for the hashtag scraper (same schema).
 #[derive(Debug, Clone, Deserialize)]
@@ -240,6 +288,31 @@ pub struct RedditPost {
     /// Apify returns "community", "post", or "comment". Used to filter out non-posts.
     #[serde(rename = "dataType")]
     pub data_type: Option<String>,
+}
+
+/// Input for the apify/instagram-profile-scraper actor.
+#[derive(Debug, Clone, Serialize)]
+pub struct InstagramProfileInput {
+    pub usernames: Vec<String>,
+}
+
+/// A single Instagram profile from the Apify dataset.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstagramProfile {
+    pub username: Option<String>,
+    #[serde(rename = "fullName")]
+    pub full_name: Option<String>,
+    pub biography: Option<String>,
+    #[serde(rename = "externalUrl")]
+    pub external_url: Option<String>,
+    #[serde(rename = "followersCount")]
+    pub followers_count: Option<u64>,
+    #[serde(rename = "followsCount")]
+    pub follows_count: Option<u64>,
+    #[serde(rename = "profilePicUrl")]
+    pub profile_pic_url: Option<String>,
+    #[serde(rename = "isVerified")]
+    pub is_verified: Option<bool>,
 }
 
 /// Apify actor run metadata.

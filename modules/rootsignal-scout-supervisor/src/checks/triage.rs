@@ -57,12 +57,12 @@ async fn triage_misclassification(
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let mut suspects = Vec::new();
 
-    for label in &["Gathering", "Aid", "Need", "Notice", "Tension"] {
+    for label in &["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"] {
         let q = query(&format!(
             "MATCH (n:{label})
              WHERE n.extracted_at >= datetime($from) AND n.extracted_at <= datetime($to)
                AND n.confidence < 0.5
-             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Evidence)
+             OPTIONAL MATCH (n)-[:SOURCED_FROM]->(ev:Citation)
              WITH n, count(ev) AS ev_count, collect(ev.snippet) AS snippets
              WHERE ev_count <= 1
              RETURN n.id AS id, n.title AS title, n.summary AS summary,
@@ -71,7 +71,7 @@ async fn triage_misclassification(
         .param("from", from_ts.to_string())
         .param("to", to_ts.to_string());
 
-        let mut stream = client.inner().execute(q).await?;
+        let mut stream = client.execute(q).await?;
         while let Some(row) = stream.next().await? {
             let id_str: String = row.get("id").unwrap_or_default();
             let id = match Uuid::parse_str(&id_str) {
@@ -109,7 +109,7 @@ async fn triage_incoherent_stories(
     to_ts: &str,
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let q = query(
-        "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+        "MATCH (sig)-[:PART_OF]->(s:Situation)
          WHERE s.last_updated >= datetime($from) AND s.last_updated <= datetime($to)
          WITH s, collect(sig) AS signals,
               count(DISTINCT labels(sig)[0]) AS type_count
@@ -127,7 +127,7 @@ async fn triage_incoherent_stories(
     .param("to", to_ts.to_string());
 
     let mut suspects = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {
@@ -140,13 +140,13 @@ async fn triage_incoherent_stories(
 
         // Fetch signal titles for LLM context
         let signals_q = query(
-            "MATCH (sig)-[:EVIDENCES]->(s:Situation {id: $id})
+            "MATCH (sig)-[:PART_OF]->(s:Situation {id: $id})
              RETURN labels(sig)[0] AS label, sig.title AS title, sig.summary AS summary
              LIMIT 20",
         )
         .param("id", id_str.clone());
 
-        let mut sig_stream = client.inner().execute(signals_q).await?;
+        let mut sig_stream = client.execute(signals_q).await?;
         let mut signal_lines = Vec::new();
         while let Some(sig_row) = sig_stream.next().await? {
             let sig_label: String = sig_row.get("label").unwrap_or_default();
@@ -171,7 +171,10 @@ async fn triage_incoherent_stories(
     }
 
     if !suspects.is_empty() {
-        info!(count = suspects.len(), "Incoherent situation suspects found");
+        info!(
+            count = suspects.len(),
+            "Incoherent situation suspects found"
+        );
     }
     Ok(suspects)
 }
@@ -191,7 +194,7 @@ async fn triage_bad_responds_to(
                 labels(responder)[0] AS responder_label,
                 responder.title AS responder_title,
                 responder.summary AS responder_summary,
-                tension.id AS tension_id,
+                tension.id AS concern_id,
                 tension.title AS tension_title,
                 tension.summary AS tension_summary,
                 r.match_strength AS match_strength,
@@ -201,7 +204,7 @@ async fn triage_bad_responds_to(
     .param("to", to_ts.to_string());
 
     let mut suspects = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("responder_id").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {
@@ -260,7 +263,7 @@ async fn triage_near_duplicates(
     .param("to", to_ts.to_string());
 
     let mut suspects = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id_a").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {
@@ -302,7 +305,7 @@ async fn triage_low_confidence_high_visibility(
     to_ts: &str,
 ) -> Result<Vec<Suspect>, neo4rs::Error> {
     let q = query(
-        "MATCH (sig)-[:EVIDENCES]->(s:Situation)
+        "MATCH (sig)-[:PART_OF]->(s:Situation)
          WHERE sig.extracted_at >= datetime($from) AND sig.extracted_at <= datetime($to)
            AND sig.confidence < 0.3
            AND s.temperature >= 0.3
@@ -315,7 +318,7 @@ async fn triage_low_confidence_high_visibility(
     .param("to", to_ts.to_string());
 
     let mut suspects = Vec::new();
-    let mut stream = client.inner().execute(q).await?;
+    let mut stream = client.execute(q).await?;
     while let Some(row) = stream.next().await? {
         let id_str: String = row.get("id").unwrap_or_default();
         let id = match Uuid::parse_str(&id_str) {
@@ -325,7 +328,8 @@ async fn triage_low_confidence_high_visibility(
         let confidence: f64 = row.get("confidence").unwrap_or(0.0);
         let situation_headline: String = row.get("situation_headline").unwrap_or_default();
 
-        let context = format!("Confidence: {confidence:.2}\nIn active situation: {situation_headline}");
+        let context =
+            format!("Confidence: {confidence:.2}\nIn active situation: {situation_headline}");
 
         suspects.push(Suspect {
             id,

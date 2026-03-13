@@ -5,45 +5,56 @@ use std::time::Instant;
 
 use anyhow::Result;
 use async_graphql::http::GraphiQLSource;
-use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
 use axum::{
     extract::State,
     http::{header, HeaderValue, Method},
     response::{Html, IntoResponse},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use tokio::sync::Mutex;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-
 use rootsignal_common::Config;
-use rootsignal_graph::{CacheStore, CachedReader, GraphClient, GraphWriter, PublicGraphReader};
+use rootsignal_graph::{connect_graph, CacheStore, CachedReader, GraphClient, GraphStore, PublicGraphReader};
 use twilio::TwilioService;
-
-mod db;
-mod graphql;
-mod jwt;
-mod link_preview;
-mod restate_client;
-
 use graphql::context::AuthContext;
 use graphql::mutations::{ClientIp, RateLimiter, ResponseHeaders};
 use graphql::{build_schema, ApiSchema};
 use jwt::JwtService;
-use restate_client::RestateClient;
+use scout_runner::ScoutRunner;
+
+
+mod db;
+mod debug_context;
+mod event_broadcast;
+mod event_cache;
+mod graphql;
+mod inspector_display;
+mod inspector_read_model;
+mod investigate;
+mod investigate_tools;
+mod jwt;
+mod link_preview;
+mod pg_projector;
+mod projection;
+mod scout_runner;
+
 
 pub struct AppState {
     pub schema: ApiSchema,
-    pub reader: PublicGraphReader,
-    pub writer: GraphWriter,
+    pub reader: Arc<PublicGraphReader>,
+    pub writer: GraphStore,
     pub graph_client: GraphClient,
     pub config: Config,
     pub twilio: Option<TwilioService>,
     pub region: String,
     pub rate_limiter: Mutex<HashMap<IpAddr, Vec<Instant>>>,
     pub jwt_service: JwtService,
+    pub pg_pool: Option<sqlx::PgPool>,
+    pub event_broadcast: Option<event_broadcast::EventBroadcast>,
 }
 
 async fn graphql_handler(
@@ -91,9 +102,46 @@ async fn graphql_handler(
     response
 }
 
+async fn graphql_ws_handler(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    protocol: GraphQLProtocol,
+    ws: axum::extract::WebSocketUpgrade,
+) -> axum::response::Response {
+    // Extract JWT from cookie at WS upgrade time (primary auth gate)
+    let cookie_header = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let claims = jwt::parse_auth_cookie(cookie_header)
+        .and_then(|token| state.jwt_service.verify_token(token).ok());
+
+    let auth_context = AuthContext(claims);
+
+    let schema = state.schema.clone();
+
+    ws.protocols(["graphql-transport-ws", "graphql-ws"])
+        .on_upgrade(move |stream| {
+            GraphQLWebSocket::new(stream, schema, protocol)
+                .on_connection_init(move |_params| async move {
+                    let mut data = async_graphql::Data::default();
+                    data.insert(auth_context);
+                    Ok(data)
+                })
+                .serve()
+        })
+}
+
 async fn graphiql() -> impl IntoResponse {
     if cfg!(debug_assertions) {
-        Html(GraphiQLSource::build().endpoint("/graphql").finish()).into_response()
+        Html(
+            GraphiQLSource::build()
+                .endpoint("/graphql")
+                .subscription_endpoint("/graphql/ws")
+                .finish(),
+        )
+        .into_response()
     } else {
         axum::http::StatusCode::NOT_FOUND.into_response()
     }
@@ -102,22 +150,63 @@ async fn graphiql() -> impl IntoResponse {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("rootsignal=info".parse()?))
+        .with_env_filter(
+            EnvFilter::from_default_env()
+                .add_directive("rootsignal=info".parse()?)
+                .add_directive("causal_replay=info".parse()?),
+        )
         .init();
 
     let config = Config::web_from_env();
     config.log_redacted();
 
-    let client = GraphClient::connect(
-        &config.neo4j_uri,
-        &config.neo4j_user,
-        &config.neo4j_password,
-    )
-    .await?;
+    // ========== Postgres ==========
+    let pg_pool = match std::env::var("DATABASE_URL") {
+        Ok(database_url) => {
+            match sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .connect(&database_url)
+                .await
+            {
+                Ok(pool) => Some(pool),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to connect to Postgres — scout workflows disabled");
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            tracing::warn!("DATABASE_URL not set — scout workflows disabled");
+            None
+        }
+    };
 
-    rootsignal_graph::migrate::migrate(&client)
-        .await
-        .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
+    // REPLAY mode: run full projection, health check, promote, exit.
+    if std::env::var("REPLAY").is_ok() {
+        let pool = pg_pool.expect("REPLAY requires DATABASE_URL");
+        projection::run(pool, &config).await?;
+        return Ok(());
+    }
+
+    // Live mode: start projection stream in background, get the graph client.
+    let client = match &pg_pool {
+        Some(pool) => projection::start(pool.clone(), &config).await?,
+        None => {
+            let neo4j_db = std::env::var("NEO4J_DB").unwrap_or_else(|_| "neo4j".into());
+            info!(db = neo4j_db.as_str(), "Connecting to Neo4j (no Postgres)");
+            let c = connect_graph(
+                &config.neo4j_uri,
+                &config.neo4j_user,
+                &config.neo4j_password,
+                &neo4j_db,
+            )
+            .await?;
+            rootsignal_graph::migrate::migrate(&c)
+                .await
+                .map_err(|e| anyhow::anyhow!("Neo4j migration failed: {e}"))?;
+            c
+        }
+    };
 
     // Build the in-memory cache. Block until loaded — no HTTP traffic until ready.
     info!("Loading signal cache from Neo4j…");
@@ -131,7 +220,7 @@ async fn main() -> Result<()> {
 
     let neo4j_reader = PublicGraphReader::new(client.clone());
     let reader = Arc::new(CachedReader::new(cache_store.clone(), neo4j_reader));
-    let writer = Arc::new(GraphWriter::new(client.clone()));
+    let writer = Arc::new(GraphStore::new(client.clone()));
     let jwt_service = JwtService::new(
         if config.session_secret.is_empty() {
             &config.admin_password
@@ -156,152 +245,130 @@ async fn main() -> Result<()> {
         None
     };
 
-    // ========== Postgres ==========
-    // Connect to Postgres for the web archive, scout runs, and Restate workflows.
-    let pg_pool = match std::env::var("DATABASE_URL") {
-        Ok(database_url) => {
-            match sqlx::postgres::PgPoolOptions::new()
-                .max_connections(5)
-                .connect(&database_url)
-                .await
-            {
-                Ok(pool) => Some(pool),
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to connect to Postgres — Restate workflows disabled");
-                    None
+    // Migrations are handled by `rootsignal-migrate` binary (run before deploy).
+
+    // Spawn live event broadcast (PgListener → broadcast channel)
+    let event_broadcast = pg_pool
+        .as_ref()
+        .map(|pool| event_broadcast::EventBroadcast::spawn(pool.clone()));
+
+    // Causal Inspector: bridge AdminEvent broadcast → StoredEvent for live subscriptions
+    let (inspector_tx, _) =
+        tokio::sync::broadcast::channel::<causal_inspector::StoredEvent>(1024);
+    if let Some(ref broadcast) = event_broadcast {
+        let mut rx = broadcast.subscribe();
+        let tx = inspector_tx.clone();
+        tokio::spawn(async move {
+            while let Ok(admin_event) = rx.recv().await {
+                let payload: serde_json::Value =
+                    serde_json::from_str(&admin_event.payload).unwrap_or_default();
+                let stored = causal_inspector::StoredEvent {
+                    seq: admin_event.seq,
+                    ts: admin_event.ts,
+                    event_type: admin_event.event_type,
+                    payload,
+                    id: admin_event.id.and_then(|s| s.parse().ok()),
+                    parent_id: admin_event.parent_id.and_then(|s| s.parse().ok()),
+                    correlation_id: admin_event.correlation_id.and_then(|s| s.parse().ok()),
+                    reactor_id: admin_event.handler_id,
+                    aggregate_type: None,
+                    aggregate_id: None,
+                    stream_version: None,
+                };
+                let _ = tx.send(stored);
+            }
+        });
+    }
+
+    let inspector_router = pg_pool.as_ref().map(|pool| {
+        let read_model = Arc::new(inspector_read_model::PgInspectorReadModel::new(pool.clone()));
+        let display = inspector_display::RootsignalEventDisplay;
+        causal_inspector::router(read_model, display, inspector_tx.clone())
+    });
+
+    // Hydrate in-memory event cache (most recent 500K events)
+    let event_cache = if let Some(ref pool) = pg_pool {
+        match event_cache::EventCache::hydrate(pool, 500_000).await {
+            Ok(cache) => {
+                let shared = std::sync::Arc::new(tokio::sync::RwLock::new(cache));
+                // Spawn live update listener
+                if let Some(ref broadcast) = event_broadcast {
+                    event_cache::spawn_cache_listener(shared.clone(), broadcast);
                 }
+                Some(shared)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to hydrate event cache — admin queries will use Postgres directly");
+                None
             }
         }
-        Err(_) => {
-            tracing::warn!("DATABASE_URL not set — Restate workflows disabled");
-            None
-        }
+    } else {
+        None
     };
 
-    // Run SQL migrations if Postgres is available
-    if let Some(ref pool) = pg_pool {
-        sqlx::migrate!("./migrations")
-            .run(pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("Postgres migration failed: {e}"))?;
-        info!("Postgres migrations applied");
+    let store_factory = pg_pool
+        .clone()
+        .map(|_pool| rootsignal_scout::store::SignalReaderFactory::new(client.clone()));
+    let engine_factory = pg_pool
+        .clone()
+        .map(|pool| rootsignal_scout::store::EngineFactory::new(client.clone(), pool));
+
+    if store_factory.is_none() {
+        tracing::warn!(
+            "SignalReaderFactory not available — mutations that write signals will fail"
+        );
     }
 
-    let restate_client = std::env::var("RESTATE_INGRESS_URL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(RestateClient::new);
-    if restate_client.is_some() {
-        info!("Restate ingress configured — runScout will dispatch via Restate");
-    }
+    // Build ScoutRunner for spawning causal engines directly
+    let scout_runner = pg_pool.as_ref().map(|pool| {
+        let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::from_config(
+            client.clone(),
+            pool.clone(),
+            &config,
+        ));
+        info!("ScoutRunner configured — runScout will spawn causal engines directly");
+        let runner = ScoutRunner::new(scout_deps);
+        // Resume any runs that were in-flight when the server last crashed
+        let resume_runner = runner.clone();
+        tokio::spawn(async move {
+            resume_runner.resume_incomplete_runs().await;
+        });
+        // Background loop: process due schedules + legacy scheduled scrapes
+        runner.clone().start_schedule_loop(
+            GraphStore::new(client.clone()),
+        );
+        runner
+    });
 
     let schema = build_schema(
         reader.clone(),
         writer.clone(),
+        store_factory,
+        engine_factory,
         jwt_service.clone(),
         Arc::new(config.clone()),
         twilio.clone(),
         RateLimiter(Mutex::new(HashMap::new())),
         Arc::new(client.clone()),
         cache_store.clone(),
-        restate_client,
+        scout_runner.clone(),
         pg_pool.clone(),
+        event_broadcast.clone(),
+        event_cache.clone(),
     );
-
-    // ========== Restate endpoint ==========
-    // Runs on a separate port alongside the Axum GraphQL server.
-    // Workflows will be bound here as they are implemented (Phase 2+).
-    let restate_port: u16 = std::env::var("RESTATE_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(9080);
-
-    if let Some(ref pool) = pg_pool {
-        let pool = pool.clone();
-        let scout_deps = Arc::new(rootsignal_scout::workflows::ScoutDeps::from_config(
-            client.clone(),
-            pool,
-            &config,
-        ));
-
-        let mut builder = restate_sdk::endpoint::Endpoint::builder();
-
-        // Configure Restate request identity verification
-        if let Ok(identity_key) = std::env::var("RESTATE_IDENTITY_KEY") {
-            info!("Restate identity key configured");
-            builder = builder
-                .identity_key(&identity_key)
-                .expect("Invalid Restate identity key");
-        }
-
-        use rootsignal_scout::workflows::bootstrap::{BootstrapWorkflow, BootstrapWorkflowImpl};
-        use rootsignal_scout::workflows::scrape::{ScrapeWorkflow, ScrapeWorkflowImpl};
-        use rootsignal_scout::workflows::synthesis::{SynthesisWorkflow, SynthesisWorkflowImpl};
-        use rootsignal_scout::workflows::situation_weaver::{SituationWeaverWorkflow, SituationWeaverWorkflowImpl};
-        use rootsignal_scout::workflows::supervisor::{SupervisorWorkflow, SupervisorWorkflowImpl};
-        use rootsignal_scout::workflows::full_run::{FullScoutRunWorkflow, FullScoutRunWorkflowImpl};
-        use rootsignal_scout::workflows::news_scanner::{NewsScanWorkflow, NewsScanWorkflowImpl};
-        use rootsignal_archive::workflows::enrichment::{EnrichmentWorkflow, EnrichmentWorkflowImpl};
-
-        let archive_deps = Arc::new(rootsignal_archive::workflows::ArchiveDeps {
-            pg_pool: scout_deps.pg_pool.clone(),
-            anthropic_api_key: scout_deps.anthropic_api_key.clone(),
-            openai_api_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(),
-        });
-
-        let endpoint = builder
-            .bind(BootstrapWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(ScrapeWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(SynthesisWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(SituationWeaverWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(SupervisorWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(FullScoutRunWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(NewsScanWorkflowImpl::with_deps(scout_deps.clone()).serve())
-            .bind(EnrichmentWorkflowImpl::with_deps(archive_deps).serve())
-            .build();
-
-        let restate_addr = format!("0.0.0.0:{restate_port}");
-        info!("Restate endpoint starting on {restate_addr}");
-
-        // Auto-register with Restate runtime if RESTATE_ADMIN_URL is set
-        if let Ok(admin_url) = std::env::var("RESTATE_ADMIN_URL") {
-            let self_url = std::env::var("RESTATE_SELF_URL")
-                .unwrap_or_else(|_| format!("http://localhost:{restate_port}"));
-            let auth_token = std::env::var("RESTATE_AUTH_TOKEN").ok();
-            tokio::spawn(register_with_restate(admin_url, self_url, auth_token));
-        }
-
-        tokio::spawn(async move {
-            let addr: std::net::SocketAddr = restate_addr.parse().expect("Invalid Restate address");
-            let listener = loop {
-                match tokio::net::TcpListener::bind(addr).await {
-                    Ok(l) => break l,
-                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                        tracing::warn!("Restate port {addr} in use, retrying in 3s");
-                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    }
-                    Err(e) => {
-                        tracing::error!("Restate endpoint failed to bind {addr}: {e}");
-                        return;
-                    }
-                }
-            };
-            restate_sdk::http_server::HttpServer::new(endpoint)
-                .serve(listener)
-                .await;
-        });
-    }
 
     let state = Arc::new(AppState {
         schema,
-        reader: PublicGraphReader::new(client.clone()),
-        writer: GraphWriter::new(client.clone()),
+        reader: Arc::new(PublicGraphReader::new(client.clone())),
+        writer: GraphStore::new(client.clone()),
         graph_client: client,
         config: config.clone(),
         twilio: twilio.map(|t| (*t).clone()),
         region: config.region.clone(),
         rate_limiter: Mutex::new(HashMap::new()),
         jwt_service: jwt_service.clone(),
+        pg_pool: pg_pool.clone(),
+        event_broadcast: event_broadcast.clone(),
     });
 
     let link_preview_cache = Arc::new(link_preview::LinkPreviewCache::new());
@@ -309,9 +376,28 @@ async fn main() -> Result<()> {
     let app = Router::new()
         // GraphQL
         .route("/graphql", get(graphiql).post(graphql_handler))
+        // GraphQL WebSocket subscriptions
+        .route(
+            "/graphql/ws",
+            get(graphql_ws_handler),
+        )
+        // AI investigation (SSE streaming)
+        .route("/api/investigate", post(investigate::investigate_handler))
+        // Debug context (markdown dump for Claude Code)
+        .route("/api/debug-context", get(debug_context::debug_context_handler))
         // Health check
         .route("/", get(|| async { "ok" }))
-        .with_state(state)
+        .with_state(state);
+
+    // Causal Inspector: nested GraphQL + WebSocket router
+    let app = if let Some(inspector) = inspector_router {
+        info!("Causal Inspector mounted at /api/inspector");
+        app.nest("/api/inspector", inspector)
+    } else {
+        app
+    };
+
+    let app = app
         // Link preview (separate state)
         .route(
             "/api/link-preview",
@@ -398,35 +484,4 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Register this deployment with the Restate admin API after a brief delay.
-async fn register_with_restate(admin_url: String, self_url: String, auth_token: Option<String>) {
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    info!(
-        admin_url = %admin_url,
-        self_url = %self_url,
-        "Auto-registering with Restate"
-    );
-    let client = reqwest::Client::new();
-    let mut request = client
-        .post(format!("{}/deployments", admin_url))
-        .json(&serde_json::json!({
-            "uri": self_url,
-            "force": true
-        }));
-    if let Some(token) = &auth_token {
-        request = request.bearer_auth(token);
-    }
-    match request.send().await {
-        Ok(resp) if resp.status().is_success() => {
-            info!("Restate registration successful");
-        }
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            tracing::warn!(status = %status, body = %body, "Restate registration failed");
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to connect to Restate admin");
-        }
-    }
-}
+

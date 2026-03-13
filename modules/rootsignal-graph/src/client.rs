@@ -1,29 +1,19 @@
 use neo4rs::{ConfigBuilder, Graph};
 
-/// Thin wrapper around neo4rs::Graph providing connection setup.
-#[derive(Clone)]
-pub struct GraphClient {
-    pub(crate) graph: Graph,
-}
+/// `GraphClient` is a type alias for `neo4rs::Graph`.
+/// Previously this was a newtype wrapper; the alias preserves backward compatibility.
+pub type GraphClient = Graph;
 
-impl GraphClient {
-    /// Connect to the graph database (Neo4j) with the given credentials.
-    pub async fn connect(uri: &str, user: &str, password: &str) -> Result<Self, neo4rs::Error> {
-        let config = ConfigBuilder::default()
-            .uri(uri)
-            .user(user)
-            .password(password)
-            .db("neo4j")
-            .fetch_size(500)
-            .max_connections(10)
-            .build()
-            .unwrap();
-        let graph = Graph::connect(config).await?;
-        Ok(Self { graph })
-    }
-
-    /// Get a reference to the underlying neo4rs Graph.
-    pub fn inner(&self) -> &Graph {
-        &self.graph
-    }
+/// Connect to the graph database (Neo4j) with the given credentials.
+pub async fn connect_graph(uri: &str, user: &str, password: &str, db: &str) -> Result<Graph, neo4rs::Error> {
+    let config = ConfigBuilder::default()
+        .uri(uri)
+        .user(user)
+        .password(password)
+        .db(db)
+        .fetch_size(500)
+        .max_connections(10)
+        .build()
+        .unwrap();
+    Graph::connect(config).await
 }

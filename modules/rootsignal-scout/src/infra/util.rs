@@ -1,7 +1,13 @@
+pub use rootsignal_common::content_hash;
 // Shared utility functions and constants for the scout module.
 //
 // These were consolidated from duplicate implementations across scout.rs,
 // investigator.rs, response_finder.rs, and gathering_finder.rs.
+
+pub use ai_client::models::HAIKU_4_5 as HAIKU_MODEL;
+
+/// Central model constant — change here when Voyage retires this model.
+pub const EMBEDDING_MODEL: &str = "voyage-3-large";
 
 /// Seeds deserve faster first scrapes; `compute_weight` takes over after first scrape.
 pub const COLD_START_SOURCE_WEIGHT: f64 = 0.5;
@@ -12,20 +18,29 @@ pub const DISCOVERED_SOURCE_WEIGHT: f64 = 0.3;
 /// Reddit posts are shorter; subreddits have many authors.
 pub const REDDIT_POST_LIMIT: u32 = 20;
 
+/// Give every URL at least this many scrapes before suppressing it.
+pub const SUPPRESS_MIN_FETCHES: i64 = 3;
+
+/// Any URL that has ever yielded a signal stays active.
+pub const SUPPRESS_MIN_YIELD: i64 = 1;
+
 /// Standard limit for single-org social accounts.
 pub const SOCIAL_POST_LIMIT: u32 = 10;
 
-/// Shared tension category list for LLM prompts. These are guidance, not constraints —
-/// the LLM may propose categories outside this list per Principle 13 ("Emergent Over Engineered").
-pub const TENSION_CATEGORIES: &str =
+/// Shared signal category list for LLM prompts. Applies to ALL signal types.
+/// These are guidance, not constraints — the LLM may propose categories outside
+/// this list per Principle 13 ("Emergent Over Engineered").
+pub const SIGNAL_CATEGORIES: &str =
     "housing, safety, economic, health, education, infrastructure, \
 environment, social, governance, immigration, civil_rights, other";
 
 // Re-export content_hash from common for backwards compatibility within scout.
-pub use rootsignal_common::content_hash;
 
 /// Cosine similarity between two f64 vectors. Returns 0.0 for zero-norm inputs.
 pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
     let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
     let norm_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -60,6 +75,8 @@ pub fn sanitize_url(url: &str) -> String {
     }) else {
         return url.to_string();
     };
+
+    parsed.set_fragment(None);
 
     let had_query = parsed.query().is_some();
     if !had_query {
@@ -121,6 +138,21 @@ mod tests {
     }
 
     #[test]
+    fn cosine_similarity_mismatched_dimensions_returns_zero() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0, 0.5, 0.5];
+        assert!(
+            cosine_similarity(&a, &b).abs() < 0.001,
+            "Mismatched embedding dimensions must return 0.0, not a partial comparison"
+        );
+    }
+
+    #[test]
+    fn cosine_similarity_empty_vectors_returns_zero() {
+        assert!(cosine_similarity(&[], &[]).abs() < 0.001);
+    }
+
+    #[test]
     fn sanitize_url_strips_tracking() {
         let url = "https://example.com/page?id=123&utm_source=twitter&fbclid=abc";
         let clean = sanitize_url(url);
@@ -156,6 +188,22 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_url_strips_fragment() {
+        let url = "https://example.com/page#section";
+        let clean = sanitize_url(url);
+        assert_eq!(clean, "https://example.com/page");
+    }
+
+    #[test]
+    fn sanitize_url_strips_fragment_and_tracking() {
+        let url = "https://example.com/page?id=1&utm_source=x#section";
+        let clean = sanitize_url(url);
+        assert!(clean.contains("id=1"));
+        assert!(!clean.contains("utm_source"));
+        assert!(!clean.contains("#section"));
+    }
+
+    #[test]
     fn sanitize_url_adds_scheme_and_strips_tracking() {
         let url = "example.com/page?id=1&utm_source=x";
         let clean = sanitize_url(url);
@@ -164,3 +212,4 @@ mod tests {
         assert!(!clean.contains("utm_source"));
     }
 }
+

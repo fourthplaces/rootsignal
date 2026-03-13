@@ -1,0 +1,168 @@
+// Signal Expansion domain: follow implied queries to discover additional signals.
+
+pub mod activities;
+pub mod events;
+
+use anyhow::Result;
+use causal::{events, reactor, reactors, Context, Events};
+
+use rootsignal_common::events::SystemEvent;
+
+use crate::core::aggregate::PipelineState;
+use crate::core::engine::ScoutEngineDeps;
+use crate::core::pipeline_events::PipelineEvent;
+use crate::domains::discovery::events::DiscoveryEvent;
+use crate::domains::expansion::activities::expansion::Expansion;
+use crate::domains::expansion::events::ExpansionEvent;
+use crate::domains::scheduling::activities::budget::OperationCost;
+use crate::domains::scrape::events::ScrapeEvent;
+
+fn is_expansion_ready(e: &ExpansionEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
+    matches!(e, ExpansionEvent::ExpansionReady)
+}
+
+#[reactors]
+pub mod reactors {
+    use super::*;
+
+    /// ExpansionReady → compute source metrics, expand signals, emit ExpansionCompleted.
+    #[reactor(on = ExpansionEvent, id = "expansion:expand_signals", filter = is_expansion_ready)]
+    async fn expand_signals(
+        _event: ExpansionEvent,
+        ctx: Context<ScoutEngineDeps>,
+    ) -> Result<Events> {
+        let deps = ctx.deps();
+        let state = ctx.aggregate::<PipelineState>().curr;
+
+        let graph = match deps.graph.as_deref() {
+            Some(g) => g,
+            None => {
+                return Ok(events![ExpansionEvent::ExpansionCompleted {
+                    social_expansion_topics: Vec::new(),
+                    expansion_deferred_expanded: 0,
+                    expansion_queries_collected: 0,
+                    expansion_sources_created: 0,
+                    expansion_social_topics_queued: 0,
+                }]);
+            }
+        };
+
+        // Source metrics (Phase 1f deferred — still returns Events)
+        let mut all_events = if let Some(region) = state.run_scope.region() {
+            let all_sources = state
+                .source_plan
+                .as_ref()
+                .map(|s| s.all_sources.clone())
+                .unwrap_or_default();
+            let source_signal_counts = state.source_signal_counts.clone();
+            let query_api_errors = state.query_api_errors.clone();
+
+            crate::domains::enrichment::activities::compute_source_metrics(
+                graph,
+                &region.name,
+                &all_sources,
+                &source_signal_counts,
+                &query_api_errors,
+            )
+            .await
+        } else {
+            Events::new()
+        };
+
+        // Signal expansion + end-of-run discovery
+        let region_name = state.run_scope.region().map(|r| r.name.as_str());
+        let expansion = Expansion::new(graph, &*deps.embedder);
+        let budget_exhausted = !state.has_budget(OperationCost::CLAUDE_HAIKU_DISCOVERY);
+
+        let state = ctx.aggregate::<PipelineState>().curr;
+        let output = activities::expand_and_discover(
+            &expansion,
+            Some(deps),
+            &state,
+            graph,
+            region_name,
+            deps.ai.as_deref(),
+            budget_exhausted,
+            &*deps.embedder,
+        )
+        .await;
+
+        if output.discovery_llm_calls > 0 {
+            let cents = output.discovery_llm_calls as u64 * OperationCost::CLAUDE_HAIKU_DISCOVERY;
+            all_events.push(PipelineEvent::BudgetSpent { cents });
+        }
+
+        // Consumed signal IDs from deferred expansion
+        if !output.expansion.consumed_signal_ids.is_empty() {
+            all_events.push(SystemEvent::ImpliedQueriesConsumed {
+                signal_ids: output.expansion.consumed_signal_ids,
+            });
+        }
+
+        // Query embeddings from expansion
+        for qe in output.expansion.query_embeddings {
+            all_events.push(SystemEvent::QueryEmbeddingStored {
+                canonical_key: qe.canonical_key,
+                embedding: qe.embedding,
+            });
+        }
+
+        // Sources from signal expansion
+        if !output.expansion.sources.is_empty() {
+            all_events.push(DiscoveryEvent::SourcesDiscovered {
+                sources: output.expansion.sources,
+                discovered_by: "signal_expansion".into(),
+            });
+        }
+
+        // Sources from end-of-run discovery
+        if !output.discovery_sources.is_empty() {
+            all_events.push(DiscoveryEvent::SourcesDiscovered {
+                sources: output.discovery_sources,
+                discovered_by: "source_finder".into(),
+            });
+        }
+
+        // Query embeddings from end-of-run discovery
+        for qe in output.discovery_query_embeddings {
+            all_events.push(SystemEvent::QueryEmbeddingStored {
+                canonical_key: qe.canonical_key,
+                embedding: qe.embedding,
+            });
+        }
+
+        all_events.push(ExpansionEvent::ExpansionCompleted {
+            social_expansion_topics: output.expansion.social_expansion_topics,
+            expansion_deferred_expanded: output.expansion.expansion_deferred_expanded,
+            expansion_queries_collected: output.expansion.expansion_queries_collected,
+            expansion_sources_created: output.expansion.expansion_sources_created,
+            expansion_social_topics_queued: output.expansion.expansion_social_topics_queued,
+        });
+
+        // End-of-run topic scrape
+        if let Some(mut topic_scrape) = output.topic_scrape {
+            let scrape_events = topic_scrape.take_events();
+            let run_id = deps.run_id;
+            all_events.push(ScrapeEvent::SourcesResolved {
+                run_id,
+                is_response_phase: false,
+                web_urls: Vec::new(),
+                web_source_keys: Default::default(),
+                web_source_count: 0,
+                url_mappings: topic_scrape.url_mappings,
+                pub_dates: topic_scrape.pub_dates,
+                query_api_errors: topic_scrape.query_api_errors,
+            });
+            all_events.push(ScrapeEvent::TopicDiscoveryCompleted {
+                run_id,
+                source_signal_counts: topic_scrape.source_signal_counts,
+                collected_links: topic_scrape.collected_links,
+                expansion_queries: topic_scrape.expansion_queries,
+                stats_delta: topic_scrape.stats_delta,
+                extracted_batches: Vec::new(),
+            });
+            all_events.extend(scrape_events);
+        }
+        Ok(all_events)
+    }
+}

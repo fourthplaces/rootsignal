@@ -4,6 +4,7 @@ members = [
     "modules/apify-client",
     "modules/twilio-rs",
     "modules/rootsignal-common",
+    "modules/rootsignal-events",
     "modules/rootsignal-graph",
     "modules/browserless-client",
     "modules/rootsignal-scout",
@@ -11,6 +12,8 @@ members = [
     "modules/rootsignal-api",
     "modules/simweb",
     "modules/rootsignal-archive",
+    "modules/rootsignal-world",
+    "modules/rootsignal-migrate",
 ]
 resolver = "2"
 
@@ -53,7 +56,8 @@ async-graphql = { version = "7", features = ["chrono", "uuid", "dataloader"] }
 async-graphql-axum = "7"
 
 # Web framework
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+async-stream = "0.3"
 tower-http = { version = "0.6", features = ["trace", "compression-gzip", "set-header", "cors"] }
 tower = "0.5"
 
@@ -66,6 +70,9 @@ feed-rs = "2"
 # Geohash (spatial bucketing)
 geohash = "0.13"
 
+# Recurrence rules (RFC 5545)
+rrule = "0.14"
+
 # Regex (PII detection)
 regex = "1"
 
@@ -75,12 +82,15 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chron
 # Builder pattern
 typed-builder = "0.20"
 
-# Durable workflows
-restate-sdk = "0.4.0"
-bytes = "1"
-
 # Testing
 testcontainers = "0.23"
+
+# Event sourcing
+causal = "0.1.5"
+causal_core_macros = "0.1.5"
+causal_utils = "0.1.5"
+causal_replay = { version = "0.1.5", features = ["postgres"] }
+causal_inspector = { version = "0.1.5", features = ["axum"] }
 
 # Local crates
 ai-client = { path = "modules/ai-client" }
@@ -88,6 +98,8 @@ apify-client = { path = "modules/apify-client" }
 browserless-client = { path = "modules/browserless-client" }
 twilio = { path = "modules/twilio-rs" }
 rootsignal-common = { path = "modules/rootsignal-common" }
+rootsignal-world = { path = "modules/rootsignal-world" }
+rootsignal-events = { path = "modules/rootsignal-events" }
 rootsignal-graph = { path = "modules/rootsignal-graph" }
 rootsignal-archive = { path = "modules/rootsignal-archive" }
 simweb = { path = "modules/simweb" }

@@ -10,8 +10,8 @@ use rootsignal_common::types::{
     ArchiveFile, ArchivedFeed, ArchivedPage, ArchivedSearchResults, FeedItem, LongVideo, Post,
     SearchResult, ShortVideo, Source, Story,
 };
-
 use crate::error::Result;
+
 
 #[derive(Clone)]
 pub(crate) struct Store {
@@ -124,6 +124,14 @@ impl Store {
     }
 
     // --- Source content types (freshness tracking) ---
+
+    pub(crate) async fn increment_fetch_count(&self, source_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE sources SET fetch_count = fetch_count + 1 WHERE id = $1")
+            .bind(source_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 
     pub(crate) async fn update_last_scraped(
         &self,
@@ -252,7 +260,21 @@ impl Store {
         parent_type: &str,
         parent_id: Uuid,
     ) -> Result<Vec<ArchiveFile>> {
-        let rows = sqlx::query_as::<_, (Uuid, String, String, DateTime<Utc>, Option<String>, String, Option<f64>, Option<i32>, Option<String>, Option<String>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                String,
+                DateTime<Utc>,
+                Option<String>,
+                String,
+                Option<f64>,
+                Option<i32>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT f.id, f.url, f.content_hash, f.fetched_at, f.title, f.mime_type,
                    f.duration, f.page_count, f.text, f.text_language
@@ -314,7 +336,25 @@ impl Store {
     pub(crate) async fn get_posts(&self, source_id: Uuid, limit: u32) -> Result<Vec<Post>> {
         // 14 columns — large tuple, but avoids a custom FromRow derive.
         #[allow(clippy::type_complexity)]
-        let rows = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, Option<String>, Option<String>, Option<String>, Option<serde_json::Value>, Option<DateTime<Utc>>, Option<String>, Vec<String>, Vec<String>, Option<String>, Option<String>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Uuid,
+                DateTime<Utc>,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<serde_json::Value>,
+                Option<DateTime<Utc>>,
+                Option<String>,
+                Vec<String>,
+                Vec<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT id, source_id, fetched_at, content_hash, text, author, location, engagement,
                    published_at, permalink, mentions, hashtags, media_type, platform_id
@@ -373,7 +413,19 @@ impl Store {
     }
 
     pub(crate) async fn get_stories(&self, source_id: Uuid) -> Result<Vec<Story>> {
-        let rows = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, Option<String>, Option<String>, Option<DateTime<Utc>>, Option<String>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Uuid,
+                DateTime<Utc>,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<DateTime<Utc>>,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT id, source_id, fetched_at, content_hash, text, location, expires_at, permalink
             FROM stories WHERE source_id = $1
@@ -537,7 +589,19 @@ impl Store {
     }
 
     pub(crate) async fn get_page(&self, source_id: Uuid) -> Result<Option<ArchivedPage>> {
-        let row = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, String, String, Option<String>, Vec<String>)>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Uuid,
+                DateTime<Utc>,
+                String,
+                String,
+                String,
+                Option<String>,
+                Vec<String>,
+            ),
+        >(
             r#"
             SELECT id, source_id, fetched_at, content_hash, raw_html, markdown, title, links
             FROM pages WHERE source_id = $1
@@ -557,6 +621,7 @@ impl Store {
             markdown: r.5,
             title: r.6,
             links: r.7,
+            published_at: None, // Computed at scrape time from raw_html, not stored in DB
         }))
     }
 
@@ -580,7 +645,17 @@ impl Store {
     }
 
     pub(crate) async fn get_feed(&self, source_id: Uuid) -> Result<Option<ArchivedFeed>> {
-        let row = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, serde_json::Value, Option<String>)>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Uuid,
+                DateTime<Utc>,
+                String,
+                serde_json::Value,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT id, source_id, fetched_at, content_hash, items, title
             FROM feeds WHERE source_id = $1
@@ -627,16 +702,17 @@ impl Store {
         &self,
         source_id: Uuid,
     ) -> Result<Option<ArchivedSearchResults>> {
-        let row = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, String, serde_json::Value)>(
-            r#"
+        let row =
+            sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, String, String, serde_json::Value)>(
+                r#"
             SELECT id, source_id, fetched_at, content_hash, query, results
             FROM search_results WHERE source_id = $1
             ORDER BY fetched_at DESC LIMIT 1
             "#,
-        )
-        .bind(source_id)
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(source_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.map(|r| {
             let results: Vec<SearchResult> = serde_json::from_value(r.5).unwrap_or_default();
@@ -651,3 +727,4 @@ impl Store {
         }))
     }
 }
+

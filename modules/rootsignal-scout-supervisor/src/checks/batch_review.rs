@@ -3,18 +3,18 @@ use std::collections::HashSet;
 use anyhow::Result;
 use neo4rs::query;
 use schemars::JsonSchema;
+use causal::Events;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use ai_client::claude::Claude;
+use ai_client::{ai_extract, Agent};
+use rootsignal_common::events::SystemEvent;
 use rootsignal_common::ScoutScope;
 use rootsignal_graph::GraphClient;
 
 use super::triage::Suspect;
 use crate::types::{IssueType, Severity, ValidationIssue};
-
-const SONNET_MODEL: &str = "claude-sonnet-4-5-20250929";
 
 // =============================================================================
 // Types for LLM structured output
@@ -85,6 +85,8 @@ pub struct BatchReviewOutput {
     /// The raw signals + verdicts for the feedback loop
     pub reviewed_signals: Vec<SignalForReview>,
     pub verdicts: Vec<Verdict>,
+    /// Events describing all review decisions (for event store persistence).
+    pub events: Events,
 }
 
 // =============================================================================
@@ -95,7 +97,7 @@ pub async fn fetch_staged_signals(
     client: &GraphClient,
     region: &ScoutScope,
 ) -> Result<Vec<SignalForReview>> {
-    let g = client.inner();
+    let g = client;
 
     let lat_delta = region.radius_km / 111.0;
     let lng_delta = region.radius_km / (111.0 * region.center_lat.to_radians().cos());
@@ -105,7 +107,7 @@ pub async fn fetch_staged_signals(
     let max_lng = region.center_lng + lng_delta;
 
     // UNION-per-label for index utilization
-    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
+    let labels = ["Gathering", "Resource", "HelpRequest", "Announcement", "Concern", "Condition"];
     let branches: Vec<String> = labels
         .iter()
         .map(|label| {
@@ -113,7 +115,7 @@ pub async fn fetch_staged_signals(
                 "MATCH (s:{label}) WHERE s.review_status = 'staged'
                    AND s.lat >= $min_lat AND s.lat <= $max_lat
                    AND s.lng >= $min_lng AND s.lng <= $max_lng
-                 OPTIONAL MATCH (s)-[:EVIDENCES]->(sit:Situation)
+                 OPTIONAL MATCH (s)-[:PART_OF]->(sit:Situation)
                  WITH s, head(collect(sit.headline)) AS situation_headline
                  RETURN s.id AS id, labels(s)[0] AS signal_type, s.title AS title,
                         s.summary AS summary, s.confidence AS confidence,
@@ -201,11 +203,24 @@ pub fn annotate_triage_flags(signals: &mut [SignalForReview], suspects: &[Suspec
 // Build prompts
 // =============================================================================
 
-fn build_system_prompt(region: &ScoutScope) -> String {
+fn build_system_prompt(region: Option<&ScoutScope>) -> String {
+    let region_context = match region {
+        Some(r) => format!(
+            "You are reviewing staged signals from a scout run in {name} (center: {lat}, {lng}, radius: {radius}km).\n\n\
+             Pass signals that describe real, observable community activity in or near {name}, are correctly classified, have credible sources, and contain specific information.\n\n\
+             Reject signals that reference a different region, read like speculation or fabrication, have hallucinated sources (<UNKNOWN> URLs), are misclassified, are too vague, or are near-duplicates.",
+            name = r.name, lat = r.center_lat, lng = r.center_lng, radius = r.radius_km,
+        ),
+        None => "You are reviewing staged signals from a source-targeted scan (no specific region).\n\n\
+             Pass signals that describe real, observable community activity, are correctly classified, have credible sources, and contain specific information.\n\n\
+             Reject signals that read like speculation or fabrication, have hallucinated sources (<UNKNOWN> URLs), are misclassified, are too vague, or are near-duplicates.\n\n\
+             Do NOT reject signals for geographic reasons — this scan has no region constraint.".to_string(),
+    };
+
     format!(
         r#"You are a data quality gate for a community signal mapping system.
 
-You are reviewing staged signals from a scout run in {region_name} (center: {lat}, {lng}, radius: {radius}km).
+{region_context}
 
 Signal types:
 - Gathering: time-bound community events
@@ -225,10 +240,6 @@ YOUR TWO TASKS:
 
 1. For EACH signal, decide: pass or reject.
 
-Pass signals that describe real, observable community activity in or near {region_name}, are correctly classified, have credible sources, and contain specific information.
-
-Reject signals that reference a different region, read like speculation or fabrication, have hallucinated sources (<UNKNOWN> URLs), are misclassified, are too vague, or are near-duplicates.
-
 When rejecting, provide rejection_reason (short category) and explanation.
 
 2. If ANY signals are rejected, provide a run_analysis:
@@ -238,10 +249,6 @@ When rejecting, provide rejection_reason (short category) and explanation.
 - suggested_fix: What should a developer change in the module's code to prevent this? Be specific (e.g., "add source URL validation in the investigator's evidence gathering step").
 
 Most signals from well-configured sources should pass. Be a fair but firm gate."#,
-        region_name = region.name,
-        lat = region.center_lat,
-        lng = region.center_lng,
-        radius = region.radius_km,
     )
 }
 
@@ -253,10 +260,7 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
         } else {
             signal.triage_flags.join("; ")
         };
-        let situation = signal
-            .situation_headline
-            .as_deref()
-            .unwrap_or("none");
+        let situation = signal.situation_headline.as_deref().unwrap_or("none");
 
         parts.push(format!(
             "<signal id=\"{id}\">\ntype: {signal_type}\ntitle: {title}\nsummary: {summary}\nconfidence: {confidence:.2}\nsource_url: {source_url}\nlat: {lat}, lng: {lng}\ncreated_by: {created_by}\nscout_run_id: {scout_run_id}\nsituation_headline: {situation}\ntriage_flags: {triage}\n</signal>",
@@ -273,21 +277,24 @@ fn build_user_prompt(signals: &[SignalForReview]) -> String {
         ));
     }
 
-    format!("Review these {} signals:\n\n{}", signals.len(), parts.join("\n\n"))
+    format!(
+        "Review these {} signals:\n\n{}",
+        signals.len(),
+        parts.join("\n\n")
+    )
 }
 
 // =============================================================================
-// Run the batch review
+// Run the batch review (pure function: signals in → verdicts + events out)
 // =============================================================================
 
 pub async fn review_batch(
-    client: &GraphClient,
-    api_key: &str,
-    region: &ScoutScope,
+    ai: &dyn Agent,
+    region: Option<&ScoutScope>,
+    signals: Vec<SignalForReview>,
     suspects: &[Suspect],
 ) -> Result<BatchReviewOutput> {
-    // 1. Fetch staged signals
-    let mut signals = fetch_staged_signals(client, region).await?;
+    let mut signals = signals;
 
     if signals.is_empty() {
         info!("No staged signals to review");
@@ -299,23 +306,23 @@ pub async fn review_batch(
             run_analysis: None,
             reviewed_signals: Vec::new(),
             verdicts: Vec::new(),
+            events: Events::new(),
         });
     }
 
-    // 2. Annotate with triage flags
+    // 1. Annotate with triage flags
     annotate_triage_flags(&mut signals, suspects);
 
-    // 3. Build prompts
+    // 2. Build prompts
     let system = build_system_prompt(region);
     let user = build_user_prompt(&signals);
 
-    // 4. Call LLM
-    let claude = Claude::new(api_key, SONNET_MODEL);
-    let result: BatchReviewResult = claude.extract(SONNET_MODEL, &system, &user).await?;
+    // 3. Call LLM
+    let result: BatchReviewResult = ai_extract(ai, &system, &user).await?;
 
     debug!(raw_verdicts = ?result.verdicts.len(), "Batch review LLM response");
 
-    // 5. Validate signal_ids
+    // 4. Validate signal_ids
     let valid_ids: HashSet<String> = signals.iter().map(|s| s.id.clone()).collect();
     let mut valid_verdicts = Vec::new();
     for verdict in &result.verdicts {
@@ -329,32 +336,39 @@ pub async fn review_batch(
         }
     }
 
-    // 6. Apply verdicts
+    // 5. Build events and issues from verdicts (no direct graph writes)
     let mut passed = 0u64;
     let mut rejected = 0u64;
     let mut issues = Vec::new();
-    let g = client.inner();
+    let mut events = Events::new();
 
     for verdict in &valid_verdicts {
+        let signal_id = Uuid::parse_str(&verdict.signal_id).unwrap_or(Uuid::nil());
+
         match verdict.decision.as_str() {
             "pass" => {
-                promote_to_live(g, &verdict.signal_id).await?;
+                events.push(SystemEvent::ReviewVerdictReached {
+                    signal_id,
+                    old_status: "staged".into(),
+                    new_status: "accepted".into(),
+                    reason: "passed_review".into(),
+                });
                 passed += 1;
             }
             "reject" => {
-                mark_rejected(g, &verdict.signal_id).await?;
+                let reason = verdict.rejection_reason.as_deref().unwrap_or("unspecified");
+                events.push(SystemEvent::ReviewVerdictReached {
+                    signal_id,
+                    old_status: "staged".into(),
+                    new_status: "rejected".into(),
+                    reason: reason.into(),
+                });
                 rejected += 1;
 
-                let reason = verdict
-                    .rejection_reason
-                    .as_deref()
-                    .unwrap_or("unspecified");
                 let explanation = verdict
                     .explanation
                     .as_deref()
                     .unwrap_or("No explanation provided");
-
-                let signal_id = Uuid::parse_str(&verdict.signal_id).unwrap_or(Uuid::nil());
                 let signal_title = signals
                     .iter()
                     .find(|s| s.id == verdict.signal_id)
@@ -362,7 +376,7 @@ pub async fn review_batch(
                     .unwrap_or("unknown");
 
                 issues.push(ValidationIssue::new(
-                    &region.name,
+                    region.map(|r| r.name.as_str()).unwrap_or("unscoped"),
                     IssueType::from_llm_str(reason),
                     Severity::Warning,
                     signal_id,
@@ -377,22 +391,22 @@ pub async fn review_batch(
                     decision = other,
                     "Unknown verdict decision, treating as pass"
                 );
-                promote_to_live(g, &verdict.signal_id).await?;
+                events.push(SystemEvent::ReviewVerdictReached {
+                    signal_id,
+                    old_status: "staged".into(),
+                    new_status: "accepted".into(),
+                    reason: "passed_review".into(),
+                });
                 passed += 1;
             }
         }
     }
 
-    // 7. Promote situations where all constituent signals are live
-    promote_ready_situations(g).await?;
+    // Situation promotion is handled reactively by the projector after
+    // ReviewVerdictReached events are applied — no separate event needed.
 
     let reviewed = signals.len() as u64;
-    info!(
-        reviewed,
-        passed,
-        rejected,
-        "Batch review complete"
-    );
+    info!(reviewed, passed, rejected, "Batch review complete");
 
     Ok(BatchReviewOutput {
         signals_reviewed: reviewed,
@@ -402,54 +416,6 @@ pub async fn review_batch(
         run_analysis: result.run_analysis,
         reviewed_signals: signals,
         verdicts: valid_verdicts,
+        events,
     })
-}
-
-// =============================================================================
-// Graph mutations
-// =============================================================================
-
-async fn promote_to_live(graph: &neo4rs::Graph, signal_id: &str) -> Result<(), neo4rs::Error> {
-    // Use UNION-per-label pattern for index utilization
-    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
-    for label in &labels {
-        let cypher = format!(
-            "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' SET n.review_status = 'live'"
-        );
-        graph.run(query(&cypher).param("id", signal_id)).await?;
-    }
-    Ok(())
-}
-
-async fn mark_rejected(graph: &neo4rs::Graph, signal_id: &str) -> Result<(), neo4rs::Error> {
-    let labels = ["Gathering", "Aid", "Need", "Notice", "Tension"];
-    for label in &labels {
-        let cypher = format!(
-            "MATCH (n:{label}) WHERE n.id = $id AND n.review_status = 'staged' SET n.review_status = 'rejected'"
-        );
-        graph.run(query(&cypher).param("id", signal_id)).await?;
-    }
-    Ok(())
-}
-
-async fn promote_ready_situations(graph: &neo4rs::Graph) -> Result<(), neo4rs::Error> {
-    // A situation is ready when all its EVIDENCES signals are 'live' (none are 'staged')
-    let q = query(
-        "MATCH (s:Situation)
-         WHERE s.review_status = 'staged'
-         AND NOT EXISTS {
-           MATCH (n)-[:EVIDENCES]->(s)
-           WHERE n.review_status <> 'live'
-         }
-         SET s.review_status = 'live'
-         RETURN count(s) AS promoted",
-    );
-    let mut stream = graph.execute(q).await?;
-    if let Some(row) = stream.next().await? {
-        let promoted: i64 = row.get("promoted").unwrap_or(0);
-        if promoted > 0 {
-            info!(promoted, "Situations promoted to live");
-        }
-    }
-    Ok(())
 }

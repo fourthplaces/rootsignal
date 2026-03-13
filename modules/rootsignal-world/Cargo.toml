@@ -1,0 +1,14 @@
+[package]
+name = "rootsignal-world"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+causal = { workspace = true }
+causal_core_macros = { workspace = true }

@@ -2,68 +2,45 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import {
-  ADMIN_SCOUT_RUNS,
-  ADMIN_REGION_SOURCES,
-  ADMIN_SCOUT_TASKS,
+  ADMIN_REGIONS,
   SUPERVISOR_FINDINGS,
   SUPERVISOR_SUMMARY,
+  ADMIN_SCOUT_RUNS,
+  ADMIN_SCHEDULED_SCRAPES,
 } from "@/graphql/queries";
+import { useRegion } from "@/contexts/RegionContext";
 import {
-  ADD_SOURCE,
-  RUN_SCOUT,
-  RUN_SCOUT_PHASE,
-  CREATE_SCOUT_TASK,
-  CANCEL_SCOUT_TASK,
+  CREATE_REGION,
+  DELETE_REGION,
+  RUN_SCRAPE,
+  RUN_BOOTSTRAP,
+  RUN_WEAVE,
+  CANCEL_RUN,
   DISMISS_FINDING,
-  RESET_SCOUT_STATUS,
 } from "@/graphql/mutations";
+import { SourcesPage } from "@/pages/SourcesPage";
+import { PromptDialog } from "@/components/PromptDialog";
+import { DataTable, type Column } from "@/components/DataTable";
 
-type Tab = "tasks" | "runs" | "sources" | "findings";
+type Tab = "runs" | "regions" | "sources" | "findings" | "scheduled";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "tasks", label: "Tasks" },
   { key: "runs", label: "Runs" },
+  { key: "regions", label: "Regions" },
   { key: "sources", label: "Sources" },
   { key: "findings", label: "Findings" },
+  { key: "scheduled", label: "Scheduled" },
 ];
 
-type ScoutRunStats = {
-  urlsScraped: number;
-  signalsExtracted: number;
-  signalsDeduplicated: number;
-  signalsStored: number;
-  socialMediaPosts: number;
-};
-
-type ScoutRun = {
-  runId: string;
-  region: string;
-  startedAt: string;
-  finishedAt: string;
-  stats: ScoutRunStats;
-};
-
-type ScoutTask = {
+type Region = {
   id: string;
+  name: string;
   centerLat: number;
   centerLng: number;
   radiusKm: number;
-  context: string;
   geoTerms: string[];
-  priority: number;
-  source: string;
-  status: string;
-  phaseStatus: string;
+  isLeaf: boolean;
   createdAt: string;
-  completedAt: string | null;
 };
-
-type ScoutPhaseValue =
-  | "FULL_RUN"
-  | "BOOTSTRAP"
-  | "SCRAPE"
-  | "SYNTHESIS"
-  | "SITUATION_WEAVER"
-  | "SUPERVISOR";
 
 type ScoutFinding = {
   id: string;
@@ -78,69 +55,31 @@ type ScoutFinding = {
   resolvedAt: string | null;
 };
 
+type ScoutRun = {
+  runId: string;
+  region: string;
+  regionId: string | null;
+  flowType: string | null;
+  sources: { id: string; label: string }[];
+  startedAt: string;
+  finishedAt: string | null;
+};
+
+type ScheduledScrape = {
+  id: string;
+  scopeType: string;
+  scopeData: string;
+  runAfter: string;
+  reason: string;
+  createdAt: string;
+  completedAt: string | null;
+};
+
 const SEVERITY_COLORS: Record<string, string> = {
   error: "bg-red-500/10 text-red-400 border-red-500/20",
   warning: "bg-amber-500/10 text-amber-400 border-amber-500/20",
   info: "bg-blue-500/10 text-blue-400 border-blue-500/20",
 };
-
-const PHASES: { value: ScoutPhaseValue; label: string }[] = [
-  { value: "FULL_RUN", label: "Full Run" },
-  { value: "BOOTSTRAP", label: "Bootstrap" },
-  { value: "SCRAPE", label: "Scrape" },
-  { value: "SYNTHESIS", label: "Synthesis" },
-  { value: "SITUATION_WEAVER", label: "Situation Weaver" },
-  { value: "SUPERVISOR", label: "Supervisor" },
-];
-
-/** Check if a phase can run given the current region status. Full Run is always allowed (unless running). */
-function phaseEnabled(phase: ScoutPhaseValue, status: string): boolean {
-  if (status.startsWith("running_")) return false;
-  if (phase === "FULL_RUN") return true;
-
-  switch (phase) {
-    case "BOOTSTRAP":
-      return true; // Always runnable when not running
-    case "SCRAPE":
-      return [
-        "bootstrap_complete", "scrape_complete", "synthesis_complete",
-        "situation_weaver_complete", "complete",
-      ].includes(status);
-    case "SYNTHESIS":
-      return [
-        "scrape_complete", "synthesis_complete",
-        "situation_weaver_complete", "complete",
-      ].includes(status);
-    case "SITUATION_WEAVER":
-      return [
-        "synthesis_complete", "situation_weaver_complete", "complete",
-      ].includes(status);
-    case "SUPERVISOR":
-      return [
-        "situation_weaver_complete", "complete",
-      ].includes(status);
-    default:
-      return false;
-  }
-}
-
-/** Human-readable label for a phase status string. */
-function phaseStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    idle: "Idle",
-    running_bootstrap: "Running Bootstrap",
-    bootstrap_complete: "Bootstrap Done",
-    running_scrape: "Running Scrape",
-    scrape_complete: "Scrape Done",
-    running_synthesis: "Running Synthesis",
-    synthesis_complete: "Synthesis Done",
-    running_situation_weaver: "Running Situation Weaver",
-    situation_weaver_complete: "Situation Weaver Done",
-    running_supervisor: "Running Supervisor",
-    complete: "Complete",
-  };
-  return labels[status] || status;
-}
 
 const formatDate = (d: string) =>
   new Date(d).toLocaleDateString("en-US", {
@@ -150,163 +89,47 @@ const formatDate = (d: string) =>
     minute: "2-digit",
   });
 
-const duration = (start: string, end: string) => {
-  const ms = new Date(end).getTime() - new Date(start).getTime();
-  const secs = Math.round(ms / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  return `${mins}m ${secs % 60}s`;
-};
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MutationFn = (options?: any) => Promise<any>;
 
-function TaskRow({
-  task: t,
-  runScout,
-  runScoutPhase,
-  resetStatus,
-  onCancel,
-  onRefetch,
-}: {
-  task: ScoutTask;
-  runScout: MutationFn;
-  runScoutPhase: MutationFn;
-  resetStatus: MutationFn;
-  onCancel: (id: string) => void;
-  onRefetch: () => void;
-}) {
-  const [selectedPhase, setSelectedPhase] = useState<ScoutPhaseValue>("FULL_RUN");
-  const [running, setRunning] = useState(false);
-  const [resetting, setResetting] = useState(false);
+function RegionActions({ region: r, onDelete, onRefetch }: { region: Region; onDelete: (id: string) => void; onRefetch: () => void }) {
+  const [runScrape] = useMutation(RUN_SCRAPE);
+  const [runBootstrap] = useMutation(RUN_BOOTSTRAP);
+  const [runWeave] = useMutation(RUN_WEAVE);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleRun = async () => {
-    setRunning(true);
+  const runFlow = async (mutation: MutationFn, label: string) => {
+    setBusy(label);
     setError(null);
     try {
-      if (selectedPhase === "FULL_RUN") {
-        await runScout({ variables: { taskId: t.id } });
-      } else {
-        await runScoutPhase({ variables: { phase: selectedPhase, taskId: t.id } });
-      }
+      await mutation({ variables: { regionId: r.id } });
       onRefetch();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to run");
+      setError(err instanceof Error ? err.message : `Failed to ${label}`);
     } finally {
-      setRunning(false);
-    }
-  };
-
-  const handleReset = async () => {
-    setResetting(true);
-    setError(null);
-    try {
-      await resetStatus({ variables: { taskId: t.id } });
-      onRefetch();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to reset");
-    } finally {
-      setResetting(false);
+      setBusy(null);
     }
   };
 
   return (
-    <tr className="border-b border-border last:border-0 hover:bg-muted/30">
-      <td className="px-4 py-2 max-w-[200px] truncate">
-        <Link to={`/scout/tasks/${t.id}`} className="text-blue-400 hover:underline">
-          {t.context}
-        </Link>
-      </td>
-      <td className="px-4 py-2 text-muted-foreground text-xs font-mono">
-        {t.centerLat.toFixed(3)}, {t.centerLng.toFixed(3)}
-      </td>
-      <td className="px-4 py-2 text-right tabular-nums">{t.radiusKm}km</td>
-      <td className="px-4 py-2 text-right tabular-nums">{t.priority}</td>
-      <td className="px-4 py-2 text-muted-foreground">{t.source}</td>
-      <td className="px-4 py-2">
-        <div className="flex flex-col gap-1">
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full w-fit ${
-              t.status === "pending"
-                ? "bg-amber-500/10 text-amber-400"
-                : t.status === "running"
-                  ? "bg-green-900 text-green-300"
-                  : t.status === "completed"
-                    ? "bg-secondary text-muted-foreground"
-                    : "bg-red-500/10 text-red-400"
-            }`}
-          >
-            {t.status}
-          </span>
-          {t.phaseStatus !== "idle" && (
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full w-fit ${
-                t.phaseStatus.startsWith("running_")
-                  ? "bg-green-900 text-green-300"
-                  : t.phaseStatus === "complete"
-                    ? "bg-secondary text-muted-foreground"
-                    : "bg-blue-500/10 text-blue-400"
-              }`}
-            >
-              {phaseStatusLabel(t.phaseStatus)}
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-        {formatDate(t.createdAt)}
-      </td>
-      <td className="px-4 py-2 text-right">
-        <div className="flex gap-1 justify-end items-center">
-          {t.status === "pending" && (
-            <>
-              <select
-                value={selectedPhase}
-                onChange={(e) => setSelectedPhase(e.target.value as ScoutPhaseValue)}
-                disabled={running}
-                className="text-xs px-1 py-1 rounded border border-border bg-background text-muted-foreground"
-              >
-                {PHASES.map((p) => (
-                  <option
-                    key={p.value}
-                    value={p.value}
-                    disabled={!phaseEnabled(p.value, t.phaseStatus)}
-                  >
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={handleRun}
-                disabled={running}
-                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
-              >
-                {running ? "Running..." : "Run"}
-              </button>
-            </>
-          )}
-          {t.phaseStatus.startsWith("running_") && (
-            <button
-              onClick={handleReset}
-              disabled={resetting}
-              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50"
-            >
-              {resetting ? "Resetting..." : "Reset Status"}
-            </button>
-          )}
-          {(t.status === "pending" || t.status === "running") && (
-            <button
-              onClick={() => onCancel(t.id)}
-              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-            >
-              Cancel
-            </button>
-          )}
-        </div>
-        {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
-      </td>
-    </tr>
+    <div>
+      <div className="flex gap-1 justify-end items-center flex-wrap">
+        <button onClick={() => runFlow(runBootstrap, "bootstrap")} disabled={busy !== null} className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50">
+          {busy === "bootstrap" ? "..." : "Bootstrap"}
+        </button>
+        <button onClick={() => runFlow(runScrape, "scrape")} disabled={busy !== null} className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50 disabled:opacity-50">
+          {busy === "scrape" ? "..." : "Scrape"}
+        </button>
+        <button onClick={() => runFlow(runWeave, "weave")} disabled={busy !== null} className="text-xs px-2 py-1 rounded border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 disabled:opacity-50">
+          {busy === "weave" ? "..." : "Weave"}
+        </button>
+        <button onClick={() => onDelete(r.id)} className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10">
+          Delete
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+    </div>
   );
 }
 
@@ -374,80 +197,43 @@ function ScoutFindingRow({
 export function ScoutPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab");
-  const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "tasks") as Tab;
+  const tab: Tab = (rawTab && TABS.some((t) => t.key === rawTab) ? rawTab : "runs") as Tab;
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: false });
+
+  // --- Regions ---
+  const { data: regionsData, loading: regionsLoading, refetch: refetchRegions } = useQuery(
+    ADMIN_REGIONS,
+    { variables: { limit: 100 }, skip: tab !== "regions" },
+  );
+  const regions: Region[] = regionsData?.adminRegions ?? [];
+  const [createRegion] = useMutation(CREATE_REGION);
+  const [deleteRegion] = useMutation(DELETE_REGION);
+
+  const [showCreate, setShowCreate] = useState(false);
+
+  const handleCreate = async (name: string) => {
+    await createRegion({ variables: { name: name.trim() } });
+    setShowCreate(false);
+    refetchRegions();
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this region?")) return;
+    await deleteRegion({ variables: { id } });
+    refetchRegions();
+  };
 
   // --- Runs ---
   const { data: runsData, loading: runsLoading } = useQuery(ADMIN_SCOUT_RUNS, {
-    variables: { region: "", limit: 50 },
+    variables: { limit: 50 },
     skip: tab !== "runs",
   });
-  const runs: ScoutRun[] = runsData?.adminScoutRuns ?? [];
-
-  // --- Sources ---
-  const { data: sourcesData, refetch: refetchSources } = useQuery(ADMIN_REGION_SOURCES, {
-    variables: { regionSlug: "" },
-    skip: tab !== "sources",
-  });
-  const sources = sourcesData?.adminRegionSources ?? [];
-  const [addSource] = useMutation(ADD_SOURCE);
-  const [showAddSource, setShowAddSource] = useState(false);
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [sourceReason, setSourceReason] = useState("");
-
-  const handleAddSource = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await addSource({
-      variables: { url: sourceUrl, reason: sourceReason || undefined },
-    });
-    setSourceUrl("");
-    setSourceReason("");
-    setShowAddSource(false);
-    refetchSources();
-  };
-
-  // --- Tasks ---
-  const { data: tasksData, loading: tasksLoading, refetch: refetchTasks } = useQuery(
-    ADMIN_SCOUT_TASKS,
-    { variables: { limit: 50 }, skip: tab !== "tasks" },
-  );
-  const tasks: ScoutTask[] = tasksData?.adminScoutTasks ?? [];
-  const [createTask] = useMutation(CREATE_SCOUT_TASK);
-  const [cancelTask] = useMutation(CANCEL_SCOUT_TASK);
-  const [taskLocation, setTaskLocation] = useState("");
-  const [taskCreating, setTaskCreating] = useState(false);
-  const [taskError, setTaskError] = useState<string | null>(null);
-
-  const handleCreateTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!taskLocation.trim()) return;
-    setTaskCreating(true);
-    setTaskError(null);
-    try {
-      await createTask({
-        variables: { location: taskLocation.trim() },
-      });
-      setTaskLocation("");
-      refetchTasks();
-    } catch (err: unknown) {
-      setTaskError(err instanceof Error ? err.message : "Failed to create task");
-    } finally {
-      setTaskCreating(false);
-    }
-  };
-
-  const handleCancelTask = async (id: string) => {
-    await cancelTask({ variables: { id } });
-    refetchTasks();
-  };
-
-  // --- Task actions ---
-  const [runScout] = useMutation(RUN_SCOUT);
-  const [runScoutPhase] = useMutation(RUN_SCOUT_PHASE);
-  const [resetScoutStatus] = useMutation(RESET_SCOUT_STATUS);
+  const runs: ScoutRun[] = runsData?.adminRuns ?? [];
+  const [cancelRun] = useMutation(CANCEL_RUN);
 
   // --- Findings ---
-  const region = "twincities";
+  const { regionName } = useRegion();
+  const region = regionName || "twincities";
   const [findingsStatusFilter, setFindingsStatusFilter] = useState<string | undefined>(undefined);
   const [findingsSeverityFilter, setFindingsSeverityFilter] = useState<string | undefined>(undefined);
   const [findingsTypeFilter, setFindingsTypeFilter] = useState<string | undefined>(undefined);
@@ -472,12 +258,93 @@ export function ScoutPage() {
     return true;
   });
 
+  // --- Scheduled ---
+  const { data: scheduledData, loading: scheduledLoading } = useQuery(
+    ADMIN_SCHEDULED_SCRAPES,
+    { variables: { limit: 50 }, skip: tab !== "scheduled" },
+  );
+  const scheduled: ScheduledScrape[] = scheduledData?.adminScheduledScrapes ?? [];
+
+  const scheduledColumns: Column<ScheduledScrape>[] = [
+    { key: "scopeType", label: "Scope", render: (s) => (
+      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{s.scopeType}</span>
+    )},
+    { key: "scopeData", label: "Target", render: (s) => {
+      try {
+        const data = JSON.parse(s.scopeData);
+        if (Array.isArray(data)) return <span className="font-mono text-xs">{data.map((id: string) => id.slice(0, 8)).join(", ")}</span>;
+        return <span className="text-xs">{String(data)}</span>;
+      } catch {
+        return <span className="text-xs text-muted-foreground">{s.scopeData}</span>;
+      }
+    }},
+    { key: "reason", label: "Reason", render: (s) => <span className="text-muted-foreground">{s.reason}</span> },
+    { key: "runAfter", label: "Run After", render: (s) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(s.runAfter)}</span> },
+    { key: "createdAt", label: "Created", render: (s) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(s.createdAt)}</span> },
+    { key: "status", label: "Status", render: (s) => (
+      <span className={`text-xs ${s.completedAt ? "text-green-400" : new Date(s.runAfter) <= new Date() ? "text-amber-400" : "text-muted-foreground"}`}>
+        {s.completedAt ? "Completed" : new Date(s.runAfter) <= new Date() ? "Due" : "Pending"}
+      </span>
+    )},
+  ];
+
   const findingsIssueTypes = [...new Set(findings.map((f) => f.issueType))].sort();
 
   const refetchAllFindings = () => {
     refetchFindings();
     refetchFindingsSummary();
   };
+
+  const runColumns: Column<ScoutRun>[] = [
+    { key: "runId", label: "Run", render: (r) => (
+      <Link to={`/scout-runs/${r.runId}`} className="text-blue-400 hover:underline font-mono text-xs">{r.runId.slice(0, 8)}</Link>
+    )},
+    { key: "area", label: "Area", render: (r) => {
+      if (r.sources.length > 0) {
+        return (
+          <span className="flex flex-wrap gap-1.5">
+            {r.sources.map((s) => (
+              <Link key={s.id} to={`/sources/${s.id}`} className="text-blue-400 hover:underline text-xs">
+                {s.label}
+              </Link>
+            ))}
+          </span>
+        );
+      }
+      if (r.regionId) {
+        return <Link to={`/regions/${r.regionId}`} className="text-blue-400 hover:underline">{r.region}</Link>;
+      }
+      return <span className="text-muted-foreground">{r.region || "-"}</span>;
+    }},
+    { key: "flowType", label: "Flow", render: (r) => r.flowType ? (
+      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{r.flowType}</span>
+    ) : null },
+    { key: "startedAt", label: "Started", render: (r) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(r.startedAt)}</span> },
+    { key: "status", label: "Status", render: (r) => (
+      <span className={`text-xs ${r.finishedAt ? "text-green-400" : "text-amber-400"}`}>{r.finishedAt ? "Completed" : "Running"}</span>
+    )},
+    { key: "actions", label: "", align: "right" as const, render: (r) => !r.finishedAt ? (
+      <button
+        onClick={() => cancelRun({ variables: { runId: r.runId } })}
+        className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10"
+      >
+        Cancel
+      </button>
+    ) : null },
+  ];
+
+  const regionColumns: Column<Region>[] = [
+    { key: "name", label: "Name", render: (r) => (
+      <Link to={`/regions/${r.id}`} className="text-blue-400 hover:underline font-medium">{r.name}</Link>
+    )},
+    { key: "center", label: "Center", render: (r) => <span className="text-muted-foreground text-xs font-mono">{r.centerLat.toFixed(3)}, {r.centerLng.toFixed(3)}</span> },
+    { key: "radius", label: "Radius", align: "right" as const, render: (r) => <span className="tabular-nums">{r.radiusKm}km</span> },
+    { key: "geoTerms", label: "Geo Terms", render: (r) => <span className="text-muted-foreground text-xs">{r.geoTerms.length > 0 ? r.geoTerms.join(", ") : "-"}</span> },
+    { key: "createdAt", label: "Created", render: (r) => <span className="text-muted-foreground whitespace-nowrap">{formatDate(r.createdAt)}</span> },
+    { key: "actions", label: "Actions", align: "right" as const, render: (r) => (
+      <RegionActions region={r} onDelete={handleDelete} onRefetch={refetchRegions} />
+    )},
+  ];
 
   return (
     <div className="space-y-4">
@@ -504,195 +371,61 @@ export function ScoutPage() {
 
       {/* Runs tab */}
       {tab === "runs" && (
-        runsLoading ? (
-          <p className="text-muted-foreground">Loading runs...</p>
-        ) : runs.length === 0 ? (
-          <p className="text-muted-foreground">No scout runs found.</p>
-        ) : (
-          <div className="rounded-lg border border-border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/50">
-                  <th className="text-left px-4 py-2 font-medium">Date</th>
-                  <th className="text-left px-4 py-2 font-medium">Run ID</th>
-                  <th className="text-left px-4 py-2 font-medium">Duration</th>
-                  <th className="text-right px-4 py-2 font-medium">URLs</th>
-                  <th className="text-right px-4 py-2 font-medium">Extracted</th>
-                  <th className="text-right px-4 py-2 font-medium">Stored</th>
-                  <th className="text-right px-4 py-2 font-medium">Deduped</th>
-                  <th className="text-right px-4 py-2 font-medium">Social</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((run) => (
-                  <tr key={run.runId} className="border-b border-border last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                      {formatDate(run.startedAt)}
-                    </td>
-                    <td className="px-4 py-2">
-                      <Link
-                        to={`/scout-runs/${run.runId}`}
-                        className="text-blue-400 hover:underline font-mono text-xs"
-                      >
-                        {run.runId.slice(0, 8)}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2 text-muted-foreground">
-                      {duration(run.startedAt, run.finishedAt)}
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums">{run.stats.urlsScraped}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{run.stats.signalsExtracted}</td>
-                    <td className="px-4 py-2 text-right tabular-nums font-medium">{run.stats.signalsStored}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{run.stats.signalsDeduplicated}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{run.stats.socialMediaPosts}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <DataTable<ScoutRun>
+          columns={runColumns}
+          data={runs}
+          getRowKey={(r) => r.runId}
+          loading={runsLoading}
+          emptyMessage="No runs yet."
+        />
+      )}
+
+      {/* Regions tab */}
+      {tab === "regions" && (
+        <div className="space-y-4">
+          <div className="flex gap-2 items-center">
+            <button
+              onClick={() => setShowCreate(true)}
+              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
+            >
+              Create Region
+            </button>
           </div>
-        )
+
+          {showCreate && (
+            <PromptDialog
+              title="Create Region"
+              description="Enter a location name for the new region."
+              placeholder="e.g. Minneapolis, Minnesota"
+              confirmLabel="Create"
+              onConfirm={handleCreate}
+              onCancel={() => setShowCreate(false)}
+            />
+          )}
+
+          <DataTable<Region>
+            columns={regionColumns}
+            data={regions}
+            getRowKey={(r) => r.id}
+            loading={regionsLoading}
+            emptyMessage="No regions configured."
+          />
+
+        </div>
       )}
 
       {/* Sources tab */}
-      {tab === "sources" && (
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium">Sources ({sources.length})</h2>
-            <button
-              onClick={() => setShowAddSource(!showAddSource)}
-              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
-            >
-              Add Source
-            </button>
-          </div>
+      {tab === "sources" && <SourcesPage />}
 
-          {showAddSource && (
-            <form onSubmit={handleAddSource} className="mb-4 space-y-2">
-              <input
-                type="url"
-                value={sourceUrl}
-                onChange={(e) => setSourceUrl(e.target.value)}
-                placeholder="https://..."
-                className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-                required
-              />
-              <input
-                type="text"
-                value={sourceReason}
-                onChange={(e) => setSourceReason(e.target.value)}
-                placeholder="Reason (optional)"
-                className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
-              >
-                Add
-              </button>
-            </form>
-          )}
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="pb-2 font-medium">Source</th>
-                  <th className="pb-2 font-medium">Type</th>
-                  <th className="pb-2 font-medium">Weight</th>
-                  <th className="pb-2 font-medium">Signals</th>
-                  <th className="pb-2 font-medium">Cadence</th>
-                  <th className="pb-2 font-medium">Last Scraped</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map(
-                  (s: {
-                    id: string;
-                    canonicalValue: string;
-                    sourceLabel: string;
-                    effectiveWeight: number;
-                    signalsProduced: number;
-                    cadenceHours: number;
-                    lastScraped: string | null;
-                  }) => (
-                    <tr key={s.id} className="border-b border-border/50">
-                      <td className="py-2 truncate max-w-[200px]">{s.canonicalValue}</td>
-                      <td className="py-2">{s.sourceLabel}</td>
-                      <td className="py-2">{s.effectiveWeight.toFixed(2)}</td>
-                      <td className="py-2">{s.signalsProduced}</td>
-                      <td className="py-2">{s.cadenceHours}h</td>
-                      <td className="py-2 text-muted-foreground">
-                        {s.lastScraped ? new Date(s.lastScraped).toLocaleDateString() : "Never"}
-                      </td>
-                    </tr>
-                  ),
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tasks tab */}
-      {tab === "tasks" && (
-        <div>
-          <form onSubmit={handleCreateTask} className="mb-4 flex gap-2 items-center">
-            <input
-              type="text"
-              value={taskLocation}
-              onChange={(e) => { setTaskLocation(e.target.value); setTaskError(null); }}
-              placeholder="Location (e.g. Austin, TX)"
-              className="flex-1 max-w-xs px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-              required
-            />
-            <button
-              type="submit"
-              disabled={taskCreating || !taskLocation.trim()}
-              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
-            >
-              {taskCreating ? "Creating..." : "Create Task"}
-            </button>
-            {taskError && (
-              <span className="text-sm text-red-400">{taskError}</span>
-            )}
-          </form>
-
-          {tasksLoading ? (
-            <p className="text-muted-foreground">Loading tasks...</p>
-          ) : tasks.length === 0 ? (
-            <p className="text-muted-foreground">No scout tasks.</p>
-          ) : (
-            <div className="rounded-lg border border-border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/50">
-                    <th className="text-left px-4 py-2 font-medium">Context</th>
-                    <th className="text-left px-4 py-2 font-medium">Center</th>
-                    <th className="text-right px-4 py-2 font-medium">Radius</th>
-                    <th className="text-right px-4 py-2 font-medium">Priority</th>
-                    <th className="text-left px-4 py-2 font-medium">Source</th>
-                    <th className="text-left px-4 py-2 font-medium">Status</th>
-                    <th className="text-left px-4 py-2 font-medium">Created</th>
-                    <th className="text-right px-4 py-2 font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tasks.map((t) => (
-                    <TaskRow
-                      key={t.id}
-                      task={t}
-                      runScout={runScout}
-                      runScoutPhase={runScoutPhase}
-                      resetStatus={resetScoutStatus}
-                      onCancel={handleCancelTask}
-                      onRefetch={refetchTasks}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+      {/* Scheduled tab */}
+      {tab === "scheduled" && (
+        <DataTable<ScheduledScrape>
+          columns={scheduledColumns}
+          data={scheduled}
+          getRowKey={(s) => s.id}
+          loading={scheduledLoading}
+          emptyMessage="No scheduled scrapes."
+        />
       )}
 
       {/* Findings tab */}

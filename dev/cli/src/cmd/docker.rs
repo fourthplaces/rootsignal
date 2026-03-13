@@ -118,6 +118,14 @@ pub enum DockerCommand {
         /// Don't use cache
         #[arg(long)]
         no_cache: bool,
+
+        /// Remove existing images before building (start from scratch)
+        #[arg(long)]
+        clean: bool,
+
+        /// Pull latest base images before building
+        #[arg(long)]
+        pull: bool,
     },
 
     /// Follow logs from services
@@ -150,9 +158,6 @@ pub enum DockerCommand {
 
     /// Run cypher-shell in the neo4j container
     Cypher,
-
-    /// Run scout to discover signals
-    Scout,
 }
 
 pub fn run(ctx: &AppContext, cmd: DockerCommand) -> Result<()> {
@@ -169,7 +174,9 @@ pub fn run(ctx: &AppContext, cmd: DockerCommand) -> Result<()> {
             services,
             all,
             no_cache,
-        } => run_build(ctx, services, all, no_cache),
+            clean,
+            pull,
+        } => run_build(ctx, services, all, no_cache, clean, pull),
         DockerCommand::Logs {
             services,
             all,
@@ -179,7 +186,6 @@ pub fn run(ctx: &AppContext, cmd: DockerCommand) -> Result<()> {
         DockerCommand::Status => run_status(ctx),
         DockerCommand::Shell { service } => run_shell(ctx, service),
         DockerCommand::Cypher => run_cypher(ctx),
-        DockerCommand::Scout => run_scout(ctx),
     }
 }
 
@@ -377,7 +383,14 @@ fn run_restart(ctx: &AppContext, services: Vec<String>, all: bool) -> Result<()>
     Ok(())
 }
 
-fn run_build(ctx: &AppContext, services: Vec<String>, all: bool, no_cache: bool) -> Result<()> {
+fn run_build(
+    ctx: &AppContext,
+    services: Vec<String>,
+    all: bool,
+    no_cache: bool,
+    clean: bool,
+    pull: bool,
+) -> Result<()> {
     let all_services = discover_services(ctx)?;
     let buildable: Vec<&ServiceInfo> = all_services.iter().filter(|s| s.buildable).collect();
 
@@ -411,9 +424,42 @@ fn run_build(ctx: &AppContext, services: Vec<String>, all: bool, no_cache: bool)
         return Ok(());
     }
 
+    // Remove existing images if --clean was passed
+    if clean {
+        ctx.print_header("Removing existing images");
+        for svc in &services {
+            // Get the image name for this compose service
+            let output = docker_compose(ctx)
+                .args(["images", svc, "--format", "json"])
+                .output()
+                .context("Failed to list images")?;
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if let Ok(img) = serde_json::from_str::<serde_json::Value>(line) {
+                        if let Some(id) = img["ID"].as_str() {
+                            println!("  Removing image {} for {}", style(id).dim(), style(svc).cyan());
+                            let _ = Command::new("docker")
+                                .args(["rmi", "-f", id])
+                                .status();
+                        }
+                    }
+                }
+            }
+        }
+        println!();
+    }
+
     ctx.print_header("Building services");
     for svc in &services {
         println!("  • {}", style(svc).cyan());
+    }
+    if no_cache {
+        println!("  (no cache)");
+    }
+    if pull {
+        println!("  (pulling base images)");
     }
     println!();
 
@@ -421,6 +467,9 @@ fn run_build(ctx: &AppContext, services: Vec<String>, all: bool, no_cache: bool)
     cmd.arg("build");
     if no_cache {
         cmd.arg("--no-cache");
+    }
+    if pull {
+        cmd.arg("--pull");
     }
     cmd.args(&services);
 
@@ -537,21 +586,3 @@ fn run_cypher(ctx: &AppContext) -> Result<()> {
     Ok(())
 }
 
-fn run_scout(ctx: &AppContext) -> Result<()> {
-    ctx.print_header("Running scout investigation");
-    ctx.print_info("Scraping sources, extracting signals, populating graph...");
-    println!();
-
-    let mut cmd = docker_compose(ctx);
-    cmd.args(["run", "--rm", "scout"]);
-
-    let status = cmd.status().context("Failed to run scout")?;
-
-    if status.success() {
-        ctx.print_success("Scout run complete");
-    } else {
-        anyhow::bail!("Scout run failed");
-    }
-
-    Ok(())
-}

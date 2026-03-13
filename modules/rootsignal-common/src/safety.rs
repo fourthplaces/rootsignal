@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use crate::types::{GeoPoint, GeoPrecision};
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Sensitivity classification — enforced at schema level.
 /// Determines coordinate precision reduction before data reaches any public API.
@@ -33,7 +36,6 @@ impl SensitivityLevel {
     }
 }
 
-use crate::types::{GeoPoint, GeoPrecision};
 
 /// Reduce coordinate precision based on sensitivity level.
 /// General: exact coordinates returned.
@@ -62,8 +64,6 @@ pub fn fuzz_location(point: GeoPoint, sensitivity: SensitivityLevel) -> GeoPoint
     }
 }
 
-use regex::Regex;
-use std::sync::LazyLock;
 
 static PHONE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b").unwrap());
@@ -152,3 +152,4 @@ mod tests {
         assert!(findings.is_empty());
     }
 }
+

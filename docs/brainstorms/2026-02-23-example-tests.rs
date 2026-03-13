@@ -174,7 +174,7 @@ mod actor_location_handoff {
             location_name: None,
             source_url: "https://instagram.com/mplsmutualaid".into(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,
@@ -495,7 +495,7 @@ mod source_location_bug {
     use rootsignal_common::{canonical_value, DiscoveryMethod, SourceNode, SourceRole};
     use rootsignal_scout::enrichment::link_promoter;
 
-    // NOTE: promote_links currently takes &GraphWriter (concrete), so these tests
+    // NOTE: promote_links currently takes &GraphStore (concrete), so these tests
     // can't run until the SignalStore trait lands. The logic being tested is the
     // SourceNode construction inside promote_links.
     //
@@ -615,7 +615,7 @@ mod multi_actor_emergence {
             location_name: Some("Northeast Minneapolis".into()),
             source_url: "https://linktr.ee/necommdefense".into(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,
@@ -701,7 +701,7 @@ mod multi_actor_emergence {
             location_name: None,
             source_url: "https://reddit.com/r/Minneapolis/comments/abc".into(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,
@@ -740,7 +740,7 @@ mod multi_actor_emergence {
             location_name: None,
             source_url: "https://reddit.com/r/Minneapolis/comments/xyz".into(),
             extracted_at: Utc::now(),
-            content_date: None,
+            published_at: None,
             last_confirmed_active: Utc::now(),
             source_diversity: 1,
             external_ratio: 0.0,

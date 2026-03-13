@@ -2,7 +2,7 @@
 //
 // Archive detects unenriched media files after fetch and dispatches
 // enrichment jobs via a WorkflowDispatcher trait. Production wires in
-// a Restate-backed dispatcher; tests use MockDispatcher.
+// a SpawnDispatcher (tokio::spawn); tests use MockDispatcher.
 
 use std::sync::Mutex;
 
@@ -21,7 +21,7 @@ pub struct EnrichmentJob {
 }
 
 /// Trait boundary for dispatching enrichment work.
-/// Archive calls this without knowing about Restate or any specific backend.
+/// Archive calls this without knowing about the specific dispatch backend.
 #[async_trait]
 pub trait WorkflowDispatcher: Send + Sync {
     async fn enrich(&self, jobs: Vec<EnrichmentJob>) -> Result<()>;
@@ -49,67 +49,96 @@ pub fn files_needing_enrichment(files: &[ArchiveFile]) -> Vec<Uuid> {
 }
 
 // ---------------------------------------------------------------------------
-// RestateDispatcher (production)
+// SpawnDispatcher (production — runs enrichment directly via tokio::spawn)
 // ---------------------------------------------------------------------------
 
-/// Production dispatcher that POSTs enrichment jobs to the Restate ingress.
-/// Uses `/send` suffix for fire-and-forget semantics.
-pub struct RestateDispatcher {
-    http: reqwest::Client,
-    ingress_url: String,
+const OCR_PROMPT: &str = "Extract all visible text from this image. Return only the text, nothing else. If no text is visible, return an empty string.";
+
+/// Production dispatcher that processes enrichment jobs directly via `tokio::spawn`.
+pub struct SpawnDispatcher {
+    pg_pool: sqlx::PgPool,
+    anthropic_api_key: String,
+    openai_api_key: String,
 }
 
-impl RestateDispatcher {
-    pub fn new(ingress_url: impl Into<String>) -> Self {
+impl SpawnDispatcher {
+    pub fn new(pg_pool: sqlx::PgPool, anthropic_api_key: String, openai_api_key: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
-            ingress_url: ingress_url.into(),
+            pg_pool,
+            anthropic_api_key,
+            openai_api_key,
         }
     }
 }
 
 #[async_trait]
-impl WorkflowDispatcher for RestateDispatcher {
+impl WorkflowDispatcher for SpawnDispatcher {
     async fn enrich(&self, jobs: Vec<EnrichmentJob>) -> Result<()> {
-        use base64::Engine;
+        let pg_pool = self.pg_pool.clone();
+        let anthropic_key = self.anthropic_api_key.clone();
+        let openai_key = self.openai_api_key.clone();
+        let file_count = jobs.len();
 
-        // Derive workflow key from sorted file IDs (idempotent)
-        let mut ids: Vec<String> = jobs.iter().map(|j| j.file_id.to_string()).collect();
-        ids.sort();
-        let key = rootsignal_common::content_hash(&ids.join(",")).to_string();
+        tracing::info!(file_count, "Dispatching enrichment via tokio::spawn");
 
-        let files: Vec<crate::workflows::types::EnrichmentFileRequest> = jobs
-            .into_iter()
-            .map(|j| crate::workflows::types::EnrichmentFileRequest {
-                file_id: j.file_id,
-                mime_type: j.mime_type,
-                media_bytes_b64: base64::engine::general_purpose::STANDARD.encode(&j.media_bytes),
-            })
-            .collect();
+        tokio::spawn(async move {
+            const BATCH_SIZE: usize = 5;
 
-        let body = serde_json::json!({ "files": files });
-        let url = format!(
-            "{}/EnrichmentWorkflow/{key}/run/send",
-            self.ingress_url
-        );
+            for batch in jobs.chunks(BATCH_SIZE) {
+                let futures: Vec<_> = batch
+                    .iter()
+                    .map(|job| {
+                        let pg_pool = pg_pool.clone();
+                        let anthropic_key = anthropic_key.clone();
+                        let openai_key = openai_key.clone();
+                        let job = job.clone();
+                        async move {
+                            let file_id = job.file_id;
+                            match enrich_single_file(&pg_pool, &anthropic_key, &openai_key, job)
+                                .await
+                            {
+                                Ok(()) => {
+                                    tracing::info!(%file_id, "enrichment: file complete");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(%file_id, error = %e, "enrichment: file failed, marking as attempted");
+                                    let store = crate::store::Store::new(pg_pool.clone());
+                                    let _ = store.update_file_text(file_id, "", None).await;
+                                }
+                            }
+                        }
+                    })
+                    .collect();
 
-        tracing::info!(url = url.as_str(), file_count = files.len(), "Dispatching enrichment via Restate");
-
-        let resp = self.http
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let error_text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Restate enrichment dispatch failed ({}): {}", status, error_text);
-        }
+                futures::future::join_all(futures).await;
+            }
+        });
 
         Ok(())
     }
+}
+
+/// Process a single file: route by mime type to Claude vision or Whisper.
+async fn enrich_single_file(
+    pg_pool: &sqlx::PgPool,
+    anthropic_key: &str,
+    openai_key: &str,
+    job: EnrichmentJob,
+) -> Result<()> {
+    let text = if job.mime_type.starts_with("image/") {
+        let claude = ai_client::Claude::new(anthropic_key, ai_client::models::SONNET_4);
+        claude
+            .describe_image(&job.media_bytes, &job.mime_type, OCR_PROMPT)
+            .await?
+    } else {
+        let openai = ai_client::OpenAi::new(openai_key, "whisper-1");
+        openai.transcribe(job.media_bytes, &job.mime_type).await?
+    };
+
+    let store = crate::store::Store::new(pg_pool.clone());
+    store.update_file_text(job.file_id, &text, None).await?;
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -245,3 +274,4 @@ mod tests {
         assert!(ids.is_empty());
     }
 }
+

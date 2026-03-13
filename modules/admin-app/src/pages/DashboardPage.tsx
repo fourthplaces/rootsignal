@@ -1,5 +1,6 @@
 import { useQuery } from "@apollo/client";
 import { ADMIN_DASHBOARD } from "@/graphql/queries";
+import { useRegion } from "@/contexts/RegionContext";
 import {
   BarChart,
   Bar,
@@ -17,9 +18,10 @@ import {
 const COLORS = ["#8b5cf6", "#06b6d4", "#f59e0b", "#10b981", "#ef4444", "#ec4899"];
 
 export function DashboardPage() {
-  const region = "twincities";
+  const { regionName } = useRegion();
   const { data, loading } = useQuery(ADMIN_DASHBOARD, {
-    variables: { region },
+    variables: { region: regionName },
+    skip: !regionName,
   });
 
   if (loading) return <p className="text-muted-foreground">Loading dashboard...</p>;
@@ -37,13 +39,12 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
         {[
           { label: "Signals", value: d.totalSignals },
-          { label: "Stories", value: d.totalStories },
           { label: "Actors", value: d.totalActors },
           { label: "Sources", value: d.activeSources },
-          { label: "Tensions", value: d.totalTensions },
+          { label: "Tensions", value: d.totalConcerns },
           {
             label: "Scout",
-            value: d.scoutStatuses.find((s: { regionSlug: string }) => s.regionSlug === region)?.running
+            value: d.scoutStatuses.find((s: { regionSlug: string }) => s.regionSlug === regionName)?.running
               ? "Running"
               : "Idle",
           },
@@ -96,23 +97,11 @@ export function DashboardPage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Story arcs */}
-        <div className="rounded-lg border border-border p-4">
-          <h2 className="text-sm font-medium mb-4">Story Arcs</h2>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={d.storyCountByArc} layout="vertical">
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="label" tick={{ fontSize: 11 }} width={100} />
-              <Tooltip />
-              <Bar dataKey="count" fill="#8b5cf6" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
       </div>
 
       {/* Unmet tensions table */}
       <div className="rounded-lg border border-border p-4">
-        <h2 className="text-sm font-medium mb-4">Unmet Tensions</h2>
+        <h2 className="text-sm font-medium mb-4">Unmet Concerns</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -120,17 +109,17 @@ export function DashboardPage() {
                 <th className="pb-2 font-medium">Title</th>
                 <th className="pb-2 font-medium">Severity</th>
                 <th className="pb-2 font-medium">Category</th>
-                <th className="pb-2 font-medium">What Would Help</th>
+                <th className="pb-2 font-medium">Opposing</th>
               </tr>
             </thead>
             <tbody>
-              {d.unmetTensions.map(
-                (t: { title: string; severity: string; category: string; whatWouldHelp: string }, i: number) => (
+              {d.unmetConcerns.map(
+                (t: { title: string; severity: string; category: string; opposing: string }, i: number) => (
                   <tr key={i} className="border-b border-border/50">
                     <td className="py-2">{t.title}</td>
                     <td className="py-2">{t.severity}</td>
                     <td className="py-2">{t.category}</td>
-                    <td className="py-2 text-muted-foreground">{t.whatWouldHelp}</td>
+                    <td className="py-2 text-muted-foreground">{t.opposing}</td>
                   </tr>
                 ),
               )}

@@ -7,10 +7,10 @@ mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
 
 const TYPE_COLORS: Record<string, string> = {
   Gathering: "#3b82f6",
-  Aid: "#22c55e",
-  Need: "#f97316",
-  Notice: "#6b7280",
-  Tension: "#ef4444",
+  Resource: "#22c55e",
+  HelpRequest: "#f97316",
+  Announcement: "#6b7280",
+  Concern: "#ef4444",
 };
 
 export type MapSignal = {
@@ -135,10 +135,10 @@ export function RegionMap({ region, signals }: RegionMapProps) {
             "match",
             ["get", "node_type"],
             "Gathering", TYPE_COLORS.Gathering!,
-            "Aid", TYPE_COLORS.Aid!,
-            "Need", TYPE_COLORS.Need!,
-            "Notice", TYPE_COLORS.Notice!,
-            "Tension", TYPE_COLORS.Tension!,
+            "Resource", TYPE_COLORS.Resource!,
+            "HelpRequest", TYPE_COLORS.HelpRequest!,
+            "Announcement", TYPE_COLORS.Announcement!,
+            "Concern", TYPE_COLORS.Concern!,
             "#6366f1",
           ],
           "circle-radius": 7,

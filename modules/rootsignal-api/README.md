@@ -295,4 +295,4 @@ rootsignal-api
     └── context.rs       # AuthContext + AdminGuard
 ```
 
-The API reads from Neo4j via an in-memory `CacheStore` that reloads periodically. Writes go through `GraphWriter`. Scout runs spawn in a dedicated thread with their own Tokio runtime to avoid blocking the API event loop.
+The API reads from Neo4j via an in-memory `CacheStore` that reloads periodically. Writes go through `GraphStore`. Scout runs spawn in a dedicated thread with their own Tokio runtime to avoid blocking the API event loop.

@@ -104,7 +104,7 @@ New module `modules/rootsignal-graph/src/discover.rs`:
 ```rust
 pub struct SourceDiscoverer {
     client: GraphClient,
-    writer: GraphWriter,
+    writer: GraphStore,
     anthropic_api_key: String,
     city: String,
 }

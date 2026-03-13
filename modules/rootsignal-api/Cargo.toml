@@ -28,18 +28,26 @@ rootsignal-scout = { path = "../rootsignal-scout" }
 rootsignal-archive = { workspace = true }
 sqlx = { workspace = true }
 rootsignal-scout-supervisor = { path = "../rootsignal-scout-supervisor" }
+rootsignal-events = { workspace = true }
 twilio = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
 jsonwebtoken = "9"
 sha2 = "0.10"
 hex = "0.4"
-restate-sdk = { workspace = true }
-bytes = { workspace = true }
 url = "2"
 regex = { workspace = true }
 ai-client = { workspace = true }
+async-trait = { workspace = true }
 schemars = { workspace = true }
+spider_transformations = { workspace = true }
+rrule = { workspace = true }
+futures = { workspace = true }
+async-stream = { workspace = true }
+causal = { workspace = true }
+causal_replay = { workspace = true }
+causal_inspector = { workspace = true }
+indicatif = "0.17"
 
 [dev-dependencies]
 rootsignal-scout = { path = "../rootsignal-scout", features = ["test-support"] }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::judge::JudgeCriteria;
 use crate::world::World;
 
-const SONNET_MODEL: &str = "claude-sonnet-4-20250514";
+use ai_client::models::SONNET_4 as SONNET_MODEL;
 
 /// A test failure capturing verdict and audit details.
 #[derive(Debug, Clone, Serialize)]

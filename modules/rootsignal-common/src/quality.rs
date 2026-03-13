@@ -39,8 +39,9 @@ pub const FRESHNESS_MAX_DAYS: i64 = 30;
 /// Need signals expire after this many days (fundraisers, volunteer calls, etc.)
 pub const NEED_EXPIRE_DAYS: i64 = 60;
 
-/// Notice signals expire after this many days (PSAs, advisories stay relevant longer)
-pub const NOTICE_EXPIRE_DAYS: i64 = 90;
+/// Notice signals expire after this many days without re-scrape confirmation.
+/// Re-scrape refreshes `last_confirmed_active`, keeping persistent notices alive.
+pub const NOTICE_EXPIRE_DAYS: i64 = 7;
 
 /// Grace period after a gathering ends before it's hidden (hours).
 /// Allows same-day gatherings to remain visible until the day is over.

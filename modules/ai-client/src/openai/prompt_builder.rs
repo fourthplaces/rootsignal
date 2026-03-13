@@ -1,7 +1,9 @@
 use std::marker::PhantomData;
+use std::pin::Pin;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use futures::Stream;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use tracing::debug;
@@ -42,31 +44,9 @@ impl OpenAiPromptBuilder {
             _phantom: PhantomData,
         }
     }
-}
 
-#[async_trait]
-impl PromptBuilder for OpenAiPromptBuilder {
-    fn preamble(mut self, preamble: impl Into<String>) -> Self {
-        self.preamble = Some(preamble.into());
-        self
-    }
-
-    fn temperature(mut self, temperature: f32) -> Self {
-        self.temperature = Some(temperature);
-        self
-    }
-
-    fn multi_turn(mut self, max_turns: usize) -> Self {
-        self.max_turns = max_turns;
-        self
-    }
-
-    fn messages(mut self, messages: Vec<Message>) -> Self {
-        self.messages = messages;
-        self
-    }
-
-    async fn send(self) -> Result<String> {
+    /// Internal send implementation (shared by trait impl and direct callers).
+    async fn send_impl(self) -> Result<String> {
         let client = self.agent.client();
 
         let mut messages = Vec::new();
@@ -90,7 +70,9 @@ impl PromptBuilder for OpenAiPromptBuilder {
         let mut request = ChatRequest::new(&self.agent.model).messages(messages);
 
         if let Some(temp) = self.temperature {
-            request = request.temperature(temp);
+            if !uses_max_completion_tokens(&self.agent.model) {
+                request = request.temperature(temp);
+            }
         }
 
         // Add tools
@@ -160,6 +142,41 @@ impl PromptBuilder for OpenAiPromptBuilder {
 
             return Ok(choice.message.content.clone().unwrap_or_default());
         }
+    }
+}
+
+// =============================================================================
+// Object-safe PromptBuilder implementation
+// =============================================================================
+
+#[async_trait]
+impl PromptBuilder for OpenAiPromptBuilder {
+    fn preamble(mut self: Box<Self>, preamble: &str) -> Box<dyn PromptBuilder> {
+        self.preamble = Some(preamble.to_string());
+        self
+    }
+
+    fn temperature(mut self: Box<Self>, temperature: f32) -> Box<dyn PromptBuilder> {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    fn multi_turn(mut self: Box<Self>, max_turns: usize) -> Box<dyn PromptBuilder> {
+        self.max_turns = max_turns;
+        self
+    }
+
+    fn messages(mut self: Box<Self>, messages: Vec<Message>) -> Box<dyn PromptBuilder> {
+        self.messages = messages;
+        self
+    }
+
+    async fn send(self: Box<Self>) -> Result<String> {
+        (*self).send_impl().await
+    }
+
+    async fn stream(self: Box<Self>) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
+        unimplemented!("streaming not yet supported for OpenAI provider")
     }
 }
 

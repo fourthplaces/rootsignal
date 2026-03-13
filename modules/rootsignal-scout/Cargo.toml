@@ -4,12 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "scout"
-path = "src/main.rs"
-
 [dependencies]
 rootsignal-common = { workspace = true }
+rootsignal-events = { workspace = true }
 rootsignal-graph = { workspace = true }
 rootsignal-archive = { workspace = true }
 ai-client = { workspace = true }
@@ -32,14 +29,16 @@ spider_transformations = { workspace = true }
 feed-rs = { workspace = true }
 sqlx = { workspace = true }
 rootsignal-scout-supervisor = { path = "../rootsignal-scout-supervisor" }
-restate-sdk = { workspace = true }
+causal = { workspace = true }
+causal_utils = { workspace = true }
 typed-builder = { workspace = true }
-bytes = { workspace = true }
 url = "2"
+percent-encoding = "2"
 tempfile = "3"
 rand = "0.9"
 futures = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+rrule = { workspace = true }
 
 [features]
 test-support = []
