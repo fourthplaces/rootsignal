@@ -153,6 +153,9 @@ pub enum SituationChange {
         old: String,
         new: String,
     },
+    BriefingBody {
+        new: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

@@ -198,41 +198,91 @@ async fn reweave(
     label: &str,
     events: &mut causal::Events,
 ) {
-    let delta = match graph.get_cluster_delta_signals(group_id).await {
-        Ok(d) => d,
+    // Fetch ALL members to regenerate the full briefing
+    let all_signals = match graph.get_cluster_members(group_id).await {
+        Ok(s) => s,
         Err(e) => {
-            warn!(error = %e, "ClusterWeaver: failed to read delta signals");
+            warn!(error = %e, "ClusterWeaver: failed to read members for re-weave");
             return;
         }
     };
 
-    if delta.is_empty() {
-        info!(%group_id, "ClusterWeaver: no new signals since last weave");
+    if all_signals.is_empty() {
+        info!(%group_id, "ClusterWeaver: no member signals, skipping re-weave");
         return;
     }
 
-    let prompt = build_delta_dispatch_prompt(label, &delta);
-    let dispatch: DeltaDispatch = match ai_extract(ai, SYSTEM_PROMPT, &prompt).await {
-        Ok(d) => d,
+    // Regenerate full briefing from all signals
+    let prompt = build_first_weave_prompt(label, &all_signals);
+    let narrative: ClusterNarrative = match ai_extract(ai, SYSTEM_PROMPT, &prompt).await {
+        Ok(n) => n,
         Err(e) => {
-            warn!(error = %e, "ClusterWeaver: delta dispatch LLM call failed");
+            warn!(error = %e, "ClusterWeaver: re-weave LLM call failed");
             return;
         }
     };
 
-    let signal_ids: Vec<Uuid> = delta.iter().map(|s| s.id).collect();
-
-    events.push(SystemEvent::DispatchCreated {
-        dispatch_id: Uuid::new_v4(),
+    events.push(SystemEvent::SituationChanged {
         situation_id,
-        body: dispatch.body,
-        signal_ids,
-        dispatch_type: DispatchType::Update,
-        supersedes: None,
-        fidelity_score: None,
-        flagged_for_review: None,
-        flag_reason: None,
+        change: rootsignal_common::events::SituationChange::BriefingBody {
+            new: narrative.briefing_body,
+        },
     });
+
+    events.push(SystemEvent::SituationChanged {
+        situation_id,
+        change: rootsignal_common::events::SituationChange::Headline {
+            old: String::new(),
+            new: narrative.headline,
+        },
+    });
+
+    events.push(SystemEvent::SituationChanged {
+        situation_id,
+        change: rootsignal_common::events::SituationChange::Lede {
+            old: String::new(),
+            new: narrative.lede,
+        },
+    });
+
+    if !narrative.structured_state.is_null() {
+        let new_state = serde_json::to_string(&narrative.structured_state)
+            .unwrap_or_else(|_| "{}".to_string());
+        events.push(SystemEvent::SituationChanged {
+            situation_id,
+            change: rootsignal_common::events::SituationChange::StructuredState {
+                old: String::new(),
+                new: new_state,
+            },
+        });
+    }
+
+    // Also produce a delta dispatch if there are new signals since last weave
+    let delta = match graph.get_cluster_delta_signals(group_id).await {
+        Ok(d) => d,
+        Err(e) => {
+            warn!(error = %e, "ClusterWeaver: failed to read delta signals (non-fatal)");
+            Vec::new()
+        }
+    };
+
+    if !delta.is_empty() {
+        let dispatch_prompt = build_delta_dispatch_prompt(label, &delta);
+        if let Ok(dispatch) = ai_extract::<DeltaDispatch>(ai, SYSTEM_PROMPT, &dispatch_prompt).await {
+            let signal_ids: Vec<Uuid> = delta.iter().map(|s| s.id).collect();
+            events.push(SystemEvent::DispatchCreated {
+                dispatch_id: Uuid::new_v4(),
+                situation_id,
+                body: dispatch.body,
+                signal_ids,
+                dispatch_type: DispatchType::Update,
+                supersedes: None,
+                fidelity_score: None,
+                flagged_for_review: None,
+                flag_reason: None,
+            });
+        }
+    }
 
     // Update woven_at timestamp
     events.push(SystemEvent::GroupWovenIntoSituation {
@@ -240,7 +290,7 @@ async fn reweave(
         situation_id,
     });
 
-    // Recompute temperature — situation already exists in Neo4j from prior weave
+    // Recompute temperature
     match graph.compute_situation_temperature(&situation_id).await {
         Ok((components, temp_events)) => {
             info!(
@@ -258,7 +308,7 @@ async fn reweave(
         }
     }
 
-    info!(%group_id, %situation_id, delta = delta.len(), "ClusterWeaver: re-weave complete");
+    info!(%group_id, %situation_id, signals = all_signals.len(), "ClusterWeaver: re-weave complete");
 }
 
 async fn compute_centroid(

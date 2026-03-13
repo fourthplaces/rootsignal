@@ -1785,6 +1785,10 @@ impl GraphProjector {
                         query("MATCH (s:Situation {id: $id}) SET s.structured_state = $value, s.last_updated = datetime($ts)")
                             .param("id", id_str).param("value", new.as_str()).param("ts", ts)
                     }
+                    SituationChange::BriefingBody { new } => {
+                        query("MATCH (s:Situation {id: $id}) SET s.briefing_body = $value, s.last_updated = datetime($ts)")
+                            .param("id", id_str).param("value", new.as_str()).param("ts", ts)
+                    }
                 };
                 Plan::single(Op::Run(q))
             }
