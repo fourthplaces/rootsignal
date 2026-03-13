@@ -27,8 +27,10 @@ struct DeltaDispatch {
 }
 
 const SYSTEM_PROMPT: &str = "\
-You are a caring neighbor briefing your community about a developing local situation. \
-Write in a warm, direct, action-oriented tone. No bureaucratic language.";
+You are writing a local situation briefing. \
+Write in a warm, direct, action-oriented tone. Third person only — never use \"we\", \
+\"our\", \"us\", or \"together\". Report what is happening, who is involved, and what \
+is needed. No bureaucratic language.";
 
 fn build_first_weave_prompt(label: &str, signals: &[WeaveSignal]) -> String {
     let signal_list: Vec<String> = signals
@@ -46,7 +48,7 @@ fn build_first_weave_prompt(label: &str, signals: &[WeaveSignal]) -> String {
            1. What's happening (the core situation)\n\
            2. How people are responding (who's organizing, what's underway)\n\
            3. What's needed (explicit asks — e.g. \"volunteers needed for X\")\n\
-           Write as if explaining to a neighbor. Be warm, direct, action-oriented.\n\
+           Be warm, direct, action-oriented. Third person only — no \"we\" or \"our\".\n\
            Use **bold** for key details.\n\
          - \"structured_state\": {{\"root_cause_thesis\": \"...\", \"key_actors\": [...], \"status\": \"emerging\"}}",
         count = signals.len(),
