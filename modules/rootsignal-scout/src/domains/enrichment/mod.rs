@@ -318,6 +318,7 @@ pub mod reactors {
                         city: result.city,
                         state: result.state,
                         country_code: result.country_code,
+                        country_name: result.country_name,
                     });
                 }
                 Ok(None) => {
@@ -338,8 +339,8 @@ pub mod reactors {
     // ---------------------------------------------------------------
 
     fn has_region_context(event: &SystemEvent, _ctx: &Context<ScoutEngineDeps>) -> bool {
-        matches!(event, SystemEvent::LocationGeocoded { city, state, country_code, .. }
-            if city.is_some() || state.is_some() || country_code.is_some()
+        matches!(event, SystemEvent::LocationGeocoded { city, state, country_name, .. }
+            if city.is_some() || state.is_some() || country_name.is_some()
         )
     }
 
@@ -348,9 +349,9 @@ pub mod reactors {
         event: SystemEvent,
         ctx: Context<ScoutEngineDeps>,
     ) -> Result<Events> {
-        let (city, state, country_code) = match &event {
-            SystemEvent::LocationGeocoded { city, state, country_code, .. } => {
-                (city.clone(), state.clone(), country_code.clone())
+        let (city, state, country_name) = match &event {
+            SystemEvent::LocationGeocoded { city, state, country_name, .. } => {
+                (city.clone(), state.clone(), country_name.clone())
             }
             _ => return Ok(Events::new()),
         };
@@ -367,90 +368,95 @@ pub mod reactors {
 
         let mut out = Events::new();
 
-        // Build region candidates from most specific to least.
-        // Each level: (name, search_query, scale, radius_km)
-        let mut candidates: Vec<(String, String, &str, f64)> = Vec::new();
+        // Build region candidates coarse → fine for parent chaining.
+        // Names are hierarchical for disambiguation:
+        //   country: "United States"
+        //   state:   "Minnesota, United States"
+        //   city:    "Minneapolis, Minnesota"
+        struct Candidate {
+            name: String,
+            search: String,
+            scale: &'static str,
+            radius_km: f64,
+        }
+        let mut candidates: Vec<Candidate> = Vec::new();
 
-        if let Some(ref country) = country_code {
-            candidates.push((
-                country_name_from_code(country),
-                country_name_from_code(country),
-                "country",
-                2500.0,
-            ));
+        if let Some(ref country) = country_name {
+            candidates.push(Candidate {
+                name: country.clone(),
+                search: country.clone(),
+                scale: "country",
+                radius_km: 2500.0,
+            });
         }
         if let Some(ref st) = state {
-            let search = match &country_code {
-                Some(cc) => format!("{st}, {}", country_name_from_code(cc)),
+            let name = match &country_name {
+                Some(cn) => format!("{st}, {cn}"),
                 None => st.clone(),
             };
-            candidates.push((st.clone(), search, "state", 500.0));
+            candidates.push(Candidate {
+                search: name.clone(),
+                name,
+                scale: "state",
+                radius_km: 500.0,
+            });
         }
         if let Some(ref c) = city {
-            let search = match (&state, &country_code) {
-                (Some(st), _) => format!("{c}, {st}"),
-                (None, Some(cc)) => format!("{c}, {}", country_name_from_code(cc)),
+            let name = match &state {
+                Some(st) => format!("{c}, {st}"),
+                None => match &country_name {
+                    Some(cn) => format!("{c}, {cn}"),
+                    None => c.clone(),
+                },
+            };
+            let search = match (&state, &country_name) {
+                (Some(st), Some(cn)) => format!("{c}, {st}, {cn}"),
+                (Some(st), None) => format!("{c}, {st}"),
+                (None, Some(cn)) => format!("{c}, {cn}"),
                 _ => c.clone(),
             };
-            candidates.push((c.clone(), search, "city", 25.0));
+            candidates.push(Candidate { name, search, scale: "city", radius_km: 25.0 });
         }
 
-        // Track parent IDs for nesting
         let mut parent_id: Option<Uuid> = None;
 
-        for (name, search_query, scale, radius_km) in &candidates {
-            if graph.region_exists_by_name(name).await.unwrap_or(false) {
-                // Still track as parent for nesting even if it already exists
-                parent_id = None; // We don't know its ID — projector handles CONTAINS by name
+        for candidate in &candidates {
+            if graph.region_exists_by_name(&candidate.name).await.unwrap_or(false) {
+                parent_id = None;
                 continue;
             }
 
-            match geocoder.geocode(search_query, None, None).await {
+            match geocoder.geocode(&candidate.search, None, None).await {
                 Ok(Some(result)) => {
                     let region_id = Uuid::new_v4();
                     ctx.logger.info(&format!(
                         "Discovered {} region '{}' at ({:.4}, {:.4})",
-                        scale, name, result.lat, result.lng
+                        candidate.scale, candidate.name, result.lat, result.lng
                     ));
                     out.push(SystemEvent::RegionDiscovered {
                         region_id,
-                        name: name.clone(),
+                        name: candidate.name.clone(),
                         center_lat: result.lat,
                         center_lng: result.lng,
-                        radius_km: *radius_km,
+                        radius_km: candidate.radius_km,
                         city: city.clone(),
                         state: state.clone(),
-                        country_code: country_code.clone(),
-                        scale: scale.to_string(),
+                        country_code: None,
+                        scale: candidate.scale.to_string(),
                         parent_region_id: parent_id,
                     });
                     parent_id = Some(region_id);
                 }
                 Ok(None) => {
-                    ctx.logger.warn(&format!("No geocoding result for region '{search_query}'"));
+                    ctx.logger.warn(&format!("No geocoding result for region '{}'", candidate.search));
                 }
                 Err(e) => {
-                    ctx.logger.warn(&format!("Geocoding failed for region '{search_query}': {e}"));
+                    ctx.logger.warn(&format!("Geocoding failed for region '{}': {e}", candidate.search));
                 }
             }
         }
 
         Ok(out)
-    }
-}
-
-fn country_name_from_code(code: &str) -> String {
-    match code {
-        "US" => "United States".to_string(),
-        "CA" => "Canada".to_string(),
-        "GB" => "United Kingdom".to_string(),
-        "AU" => "Australia".to_string(),
-        "NZ" => "New Zealand".to_string(),
-        "DE" => "Germany".to_string(),
-        "FR" => "France".to_string(),
-        "JP" => "Japan".to_string(),
-        "MX" => "Mexico".to_string(),
-        other => other.to_string(),
     }
 }
 

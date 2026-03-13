@@ -551,6 +551,8 @@ pub enum SystemEvent {
         state: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         country_code: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        country_name: Option<String>,
     },
 
     // -----------------------------------------------------------------------

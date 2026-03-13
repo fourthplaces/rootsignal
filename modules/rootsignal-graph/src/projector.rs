@@ -2895,6 +2895,7 @@ impl GraphProjector {
                 city,
                 state,
                 country_code,
+                country_name,
             } => {
                 let canonical_address = address.as_deref().unwrap_or("").to_string();
                 let normalized_name = location_name.trim().to_lowercase();
@@ -2913,6 +2914,7 @@ impl GraphProjector {
                                    canonical.city = $city,
                                    canonical.state = $state,
                                    canonical.country_code = $country_code,
+                                   canonical.country_name = $country_name,
                                    canonical.geocoded = true
                      ON MATCH SET canonical.lat = $lat, canonical.lng = $lng,
                                   canonical.lat_bucket = $lat_bucket, canonical.lng_bucket = $lng_bucket,
@@ -2921,6 +2923,7 @@ impl GraphProjector {
                                   canonical.city = $city,
                                   canonical.state = $state,
                                   canonical.country_code = $country_code,
+                                  canonical.country_name = $country_name,
                                   canonical.geocoded = true",
                 )
                 .param("canonical_address", canonical_address.as_str())
@@ -2934,7 +2937,8 @@ impl GraphProjector {
                 .param("timezone", timezone.as_deref().unwrap_or(""))
                 .param("city", city.as_deref().unwrap_or(""))
                 .param("state", state.as_deref().unwrap_or(""))
-                .param("country_code", country_code.as_deref().unwrap_or(""));
+                .param("country_code", country_code.as_deref().unwrap_or(""))
+                .param("country_name", country_name.as_deref().unwrap_or(""));
 
                 // Step 2: Find un-geocoded stub by normalized_name and merge into canonical.
                 // Only targets stubs (no canonical_address yet) to avoid merging

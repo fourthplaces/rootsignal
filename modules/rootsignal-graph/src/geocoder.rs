@@ -22,6 +22,7 @@ pub struct GeocodingResult {
     pub city: Option<String>,
     pub state: Option<String>,
     pub country_code: Option<String>,
+    pub country_name: Option<String>,
 }
 
 #[async_trait]
@@ -98,6 +99,7 @@ struct MapboxContextRegion {
 
 #[derive(Deserialize)]
 struct MapboxContextCountry {
+    name: Option<String>,
     country_code: Option<String>,
 }
 
@@ -208,6 +210,9 @@ impl GeocodingLookup for MapboxGeocoder {
             let country_code = ctx
                 .and_then(|c| c.country.as_ref())
                 .and_then(|c| c.country_code.clone());
+            let country_name = ctx
+                .and_then(|c| c.country.as_ref())
+                .and_then(|c| c.name.clone());
 
             GeocodingResult {
                 lat,
@@ -218,6 +223,7 @@ impl GeocodingLookup for MapboxGeocoder {
                 city,
                 state,
                 country_code,
+                country_name,
             }
         });
 
