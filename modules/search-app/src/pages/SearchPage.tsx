@@ -26,6 +26,7 @@ const TYPE_TO_TYPENAME: Record<string, string> = {
   need: "GqlHelpRequestSignal",
   notice: "GqlAnnouncementSignal",
   tension: "GqlConcernSignal",
+  condition: "GqlConditionSignal",
 };
 
 export function SearchPage() {

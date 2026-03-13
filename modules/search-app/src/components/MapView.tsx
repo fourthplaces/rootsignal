@@ -11,6 +11,7 @@ const TYPE_COLORS: Record<string, string> = {
   HelpRequest: "#f97316",
   Announcement: "#6b7280",
   Concern: "#ef4444",
+  Condition: "#a855f7",
 };
 
 interface Signal {
@@ -132,6 +133,8 @@ export function MapView({
             TYPE_COLORS.Announcement!,
             "Concern",
             TYPE_COLORS.Concern!,
+            "Condition",
+            TYPE_COLORS.Condition!,
             "#6366f1",
           ],
           "circle-radius": 7,

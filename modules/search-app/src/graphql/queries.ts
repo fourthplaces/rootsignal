@@ -78,6 +78,19 @@ export const SIGNALS_IN_BOUNDS = gql`
         severity
         opposing
       }
+      ... on GqlConditionSignal {
+        id
+        title
+        summary
+        confidence
+        causeHeat
+        channelDiversity
+        extractedAt
+        location { lat lng }
+        locationName
+        severity
+        measurement
+      }
     }
   }
 `;
@@ -163,6 +176,19 @@ export const SEARCH_SIGNALS_IN_BOUNDS = gql`
           locationName
           severity
           opposing
+        }
+        ... on GqlConditionSignal {
+          id
+          title
+          summary
+          confidence
+          causeHeat
+          channelDiversity
+          extractedAt
+          location { lat lng }
+          locationName
+          severity
+          measurement
         }
       }
     }
@@ -260,6 +286,24 @@ export const SIGNAL_DETAIL = gql`
         opposing
         citations { sourceUrl snippet relevance }
       }
+      ... on GqlConditionSignal {
+        id
+        title
+        summary
+        confidence
+        causeHeat
+        channelDiversity
+        extractedAt
+        location { lat lng precision }
+        locationName
+        sourceUrl
+        severity
+        subject
+        observedBy
+        measurement
+        affectedScope
+        citations { sourceUrl snippet relevance }
+      }
     }
   }
 `;
@@ -322,6 +366,27 @@ export const SITUATION_DETAIL = gql`
       lastUpdated
       sensitivity
       category
+      briefingBody
+      signals(limit: 50) {
+        ... on GqlGatheringSignal {
+          id title summary locationName startsAt endsAt actionUrl organizer isRecurring
+        }
+        ... on GqlResourceSignal {
+          id title summary locationName actionUrl availability isOngoing
+        }
+        ... on GqlHelpRequestSignal {
+          id title summary locationName urgency whatNeeded actionUrl statedGoal
+        }
+        ... on GqlAnnouncementSignal {
+          id title summary locationName severity subject effectiveDate sourceAuthority
+        }
+        ... on GqlConcernSignal {
+          id title summary locationName severity subject opposing
+        }
+        ... on GqlConditionSignal {
+          id title summary locationName severity subject observedBy measurement affectedScope
+        }
+      }
       dispatches(limit: 50) {
         id
         body
