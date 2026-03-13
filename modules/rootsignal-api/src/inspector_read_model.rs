@@ -5,7 +5,7 @@ use causal_inspector::{
     ReactorDescriptionSnapshotEntry, ReactorLogEntry, ReactorOutcomeEntry, StoredEvent,
 };
 use causal_inspector::read_model::{
-    AggregateLifecycleEntry, CorrelationSummaryEntry, ReactorDependencyEntry,
+    AggregateLifecycleEntry, CorrelationSummaryEntry, ReactorAttemptEntry, ReactorDependencyEntry,
 };
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
@@ -156,10 +156,10 @@ impl InspectorReadModel for PgInspectorReadModel {
     ) -> Result<Vec<ReactorLogEntry>> {
         let rows = sqlx::query(
             r#"
-            SELECT handler_id, event_id, seq, value, created_at
-            FROM seesaw_handler_journal
+            SELECT event_id, handler_id, level, message, data, logged_at
+            FROM seesaw_handler_logs
             WHERE event_id = $1 AND handler_id = $2
-            ORDER BY seq
+            ORDER BY id
             "#,
         )
         .bind(event_id)
@@ -169,24 +169,13 @@ impl InspectorReadModel for PgInspectorReadModel {
 
         Ok(rows
             .iter()
-            .map(|r| {
-                let value: serde_json::Value = r.get("value");
-                ReactorLogEntry {
-                    event_id: r.get("event_id"),
-                    reactor_id: r.get("handler_id"),
-                    level: value
-                        .get("level")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("info")
-                        .to_string(),
-                    message: value
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    data: value.get("data").cloned(),
-                    logged_at: r.get("created_at"),
-                }
+            .map(|r| ReactorLogEntry {
+                event_id: r.get("event_id"),
+                reactor_id: r.get("handler_id"),
+                level: r.get("level"),
+                message: r.get("message"),
+                data: r.get("data"),
+                logged_at: r.get("logged_at"),
             })
             .collect())
     }
@@ -198,11 +187,10 @@ impl InspectorReadModel for PgInspectorReadModel {
         let cid: Uuid = correlation_id.parse()?;
         let rows = sqlx::query(
             r#"
-            SELECT j.handler_id, j.event_id, j.seq, j.value, j.created_at
-            FROM seesaw_handler_journal j
-            JOIN events e ON e.id = j.event_id
-            WHERE e.correlation_id = $1
-            ORDER BY j.created_at, j.seq
+            SELECT event_id, handler_id, level, message, data, logged_at
+            FROM seesaw_handler_logs
+            WHERE correlation_id = $1
+            ORDER BY logged_at, id
             "#,
         )
         .bind(cid)
@@ -211,24 +199,13 @@ impl InspectorReadModel for PgInspectorReadModel {
 
         Ok(rows
             .iter()
-            .map(|r| {
-                let value: serde_json::Value = r.get("value");
-                ReactorLogEntry {
-                    event_id: r.get("event_id"),
-                    reactor_id: r.get("handler_id"),
-                    level: value
-                        .get("level")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("info")
-                        .to_string(),
-                    message: value
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    data: value.get("data").cloned(),
-                    logged_at: r.get("created_at"),
-                }
+            .map(|r| ReactorLogEntry {
+                event_id: r.get("event_id"),
+                reactor_id: r.get("handler_id"),
+                level: r.get("level"),
+                message: r.get("message"),
+                data: r.get("data"),
+                logged_at: r.get("logged_at"),
             })
             .collect())
     }
@@ -262,6 +239,13 @@ impl InspectorReadModel for PgInspectorReadModel {
                 }
             })
             .collect())
+    }
+
+    async fn reactor_attempt_history(
+        &self,
+        _correlation_id: &str,
+    ) -> Result<Vec<ReactorAttemptEntry>> {
+        Ok(vec![])
     }
 
     async fn reactor_descriptions(

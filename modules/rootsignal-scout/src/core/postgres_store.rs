@@ -401,7 +401,10 @@ impl ReactorQueue for PostgresStore {
                 error,
                 new_attempts,
                 next_execute_at,
+                log_entries,
             } => {
+                let mut tx = self.pool.begin().await?;
+
                 sqlx::query(
                     "UPDATE seesaw_effect_executions \
                      SET status = 'pending', attempts = $3, execute_at = $4, error = $5, updated_at = now() \
@@ -413,8 +416,27 @@ impl ReactorQueue for PostgresStore {
                 .bind(next_execute_at)
                 .bind(&error)
                 .bind(self.correlation_id)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await?;
+
+                for entry in &log_entries {
+                    sqlx::query(
+                        "INSERT INTO seesaw_handler_logs \
+                         (event_id, handler_id, correlation_id, level, message, data, logged_at) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                    )
+                    .bind(event_id)
+                    .bind(&reactor_id)
+                    .bind(self.correlation_id)
+                    .bind(log_level_str(&entry.level))
+                    .bind(&entry.message)
+                    .bind(&entry.data)
+                    .bind(entry.timestamp)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                tx.commit().await?;
                 Ok(())
             }
             ReactorResolution::DeadLetter(dlq) => self.dlq_reactor_inner(dlq).await,

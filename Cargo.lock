@@ -120,7 +120,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -131,7 +131,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -641,9 +641,9 @@ dependencies = [
 
 [[package]]
 name = "causal"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10beba10ca4a96f005fdf18b416deb57916062357d2ad8e60ca9a18e1f80ae31"
+checksum = "50f928cb9182ca96fb238f136005ac0a62b6d9e86bbb19e2aa656f495c9c0798"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -662,9 +662,9 @@ dependencies = [
 
 [[package]]
 name = "causal_core_macros"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4926a8ea8acdd9141f73b2e3fc73877483ff3d8f9dcdacb5800c989ee0a0cab8"
+checksum = "e7808874e2d9b0902c0c4fee972e2b4834ddc6e865abe18c593c6aaf34cf254a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -673,9 +673,9 @@ dependencies = [
 
 [[package]]
 name = "causal_inspector"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "837d527387fdce80f666da0508ac671e6c59dcfb7f4289fea42cfc3045a623a3"
+checksum = "62ad445c979173f718cdb5ff980bab0b1cb275e097165fce1d9906fdc1c39e7e"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -694,9 +694,9 @@ dependencies = [
 
 [[package]]
 name = "causal_replay"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5f0584e18a280c7ad74166c0e25551629ce869c4ce930e6258f0944a30d800e"
+checksum = "57e0f72f99798a374f67bf4022e6f7b426abab03ffff80c4f26265aede8efd2b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -709,9 +709,9 @@ dependencies = [
 
 [[package]]
 name = "causal_utils"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca92ab87699856723587b3705741255dad852c587e061479da5f2102a37f8d1"
+checksum = "be7e656b83af2fcabff7547fd402c5163ee5a4b678d0826c98affc54d4ccbbc2"
 dependencies = [
  "anyhow",
  "dashmap",
@@ -1415,7 +1415,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2766,7 +2766,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4000,7 +4000,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4080,7 +4080,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4577,7 +4577,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5110,7 +5110,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5968,7 +5968,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
