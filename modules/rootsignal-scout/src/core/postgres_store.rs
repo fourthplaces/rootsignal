@@ -77,6 +77,8 @@ impl EventLog for PostgresStore {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        let payload = strip_postgres_null_bytes(event.payload);
+
         let result = sqlx::query_as::<_, (i64,)>(
             "INSERT INTO events \
              (event_type, run_id, payload, schema_v, id, parent_id, correlation_id, \
@@ -87,7 +89,7 @@ impl EventLog for PostgresStore {
         )
         .bind(&event.event_type)
         .bind(&run_id)
-        .bind(&event.payload)
+        .bind(&payload)
         .bind(schema_v)
         .bind(event.event_id)
         .bind(event.parent_id)
@@ -777,4 +779,51 @@ struct SnapshotRow {
     version: i64,
     state: serde_json::Value,
     created_at: DateTime<Utc>,
+}
+
+/// Postgres jsonb rejects \u0000 null bytes. Strip them from all strings in a Value tree.
+fn strip_postgres_null_bytes(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => serde_json::Value::String(s.replace('\0', "")),
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(strip_postgres_null_bytes).collect())
+        }
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, strip_postgres_null_bytes(v)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn null_bytes_stripped_from_payload_strings() {
+        let input = json!({
+            "text": "hello\0world",
+            "nested": {"caption": "foo\0bar"},
+            "array": ["a\0b", "clean"],
+            "number": 42,
+            "null_val": null,
+        });
+        let cleaned = strip_postgres_null_bytes(input);
+        assert_eq!(cleaned["text"], "helloworld");
+        assert_eq!(cleaned["nested"]["caption"], "foobar");
+        assert_eq!(cleaned["array"][0], "ab");
+        assert_eq!(cleaned["array"][1], "clean");
+        assert_eq!(cleaned["number"], 42);
+        assert!(cleaned["null_val"].is_null());
+    }
+
+    #[test]
+    fn clean_payload_passes_through_unchanged() {
+        let input = json!({"title": "Minneapolis neighbors gather for block party"});
+        let cleaned = strip_postgres_null_bytes(input.clone());
+        assert_eq!(cleaned, input);
+    }
 }
