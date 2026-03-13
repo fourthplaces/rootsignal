@@ -196,25 +196,25 @@ This is free — the infrastructure built for briefs works identically for dispa
 
 ### Functional
 
-- [ ] `build_first_weave_prompt` includes signal UUIDs and source URLs in the signal list
-- [ ] Cluster weaving `SYSTEM_PROMPT` instructs the LLM to cite signals inline
+- [x] `build_first_weave_prompt` includes signal UUIDs and source URLs in the signal list
+- [x] Cluster weaving `SYSTEM_PROMPT` instructs the LLM to cite signals inline
 - [ ] LLM-generated `briefing_body` contains `[signal:UUID]` tokens for key claims
-- [ ] Invalid citations (hallucinated UUIDs) are stripped before the event is emitted
-- [ ] Warning logged when citations are stripped
-- [ ] search-app renders `[signal:UUID]` as superscript citation numbers
-- [ ] Clicking a citation number opens a popover with signal title, type, summary, and source link
-- [ ] Stacked citations (`[signal:A][signal:B]`) render as grouped numbers with combined popover
-- [ ] Same signal cited multiple times uses the same citation number (academic style)
-- [ ] Synthesis indicator shows "from N signals across M sources" above the brief
-- [ ] Old briefs without annotations render unchanged (graceful degradation)
-- [ ] Missing signals in citation lookup show "Source no longer available" in popover
-- [ ] Dispatch bodies also render with citation popovers (Phase 3)
+- [x] Invalid citations (hallucinated UUIDs) are stripped before the event is emitted
+- [x] Warning logged when citations are stripped
+- [x] search-app renders `[signal:UUID]` as superscript citation numbers
+- [x] Clicking a citation number opens a popover with signal title, type, summary, and source link
+- [x] Stacked citations (`[signal:A][signal:B]`) render as grouped numbers with combined popover
+- [x] Same signal cited multiple times uses the same citation number (academic style)
+- [x] Synthesis indicator shows "from N signals across M sources" above the brief
+- [x] Old briefs without annotations render unchanged (graceful degradation)
+- [x] Missing signals in citation lookup show "Source no longer available" in popover
+- [x] Dispatch bodies also render with citation popovers (Phase 3)
 
 ### Non-Functional
 
-- [ ] Generic `extract_annotations` parser lives in `rootsignal-common`, not in a specific domain
-- [ ] Remark plugin is a separate module, reusable across search-app and admin-app
-- [ ] No new GraphQL queries — citation data resolved from existing `signals` field
+- [x] Generic `extract_annotations` parser lives in `rootsignal-common`, not in a specific domain
+- [x] Remark plugin is a separate module, reusable across search-app and admin-app
+- [x] No new GraphQL queries — citation data resolved from existing `signals` field
 
 ## Dependencies & Risks
 

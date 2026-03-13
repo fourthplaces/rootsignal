@@ -3,6 +3,9 @@ import { SITUATION_DETAIL } from "@/graphql/queries";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
+import remarkAnnotations from "@/lib/remarkAnnotations";
+import { CitationProvider, useCitations } from "./CitationContext";
+import { CitationRef } from "./CitationRef";
 
 interface SituationDetailProps {
   situationId: string;
@@ -64,6 +67,23 @@ const briefingComponents: Components = {
   a: ({ href, children }) => <a href={href} className="text-blue-400 underline" target="_blank" rel="noreferrer">{children}</a>,
   hr: () => <hr className="my-4 border-border" />,
 };
+
+const annotatedBriefingComponents: Components & Record<string, unknown> = {
+  ...briefingComponents,
+  // Custom element injected by remarkAnnotations plugin
+  citation: CitationRef,
+};
+
+function SynthesisIndicator() {
+  const { totalCitations, totalSources } = useCitations();
+  if (totalCitations === 0) return null;
+  return (
+    <p className="text-[11px] text-muted-foreground mb-2">
+      Synthesized from {totalCitations} signal{totalCitations !== 1 ? "s" : ""}
+      {totalSources > 0 && <> across {totalSources} source{totalSources !== 1 ? "s" : ""}</>}
+    </p>
+  );
+}
 
 function formatShortDate(d: string | null | undefined) {
   if (!d) return null;
@@ -216,11 +236,14 @@ export function SituationDetail({ situationId, onBack }: SituationDetailProps) {
 
             {/* Briefing narrative */}
             {situation.briefingBody ? (
-              <div className="rounded border border-border p-4">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={briefingComponents}>
-                  {situation.briefingBody}
-                </ReactMarkdown>
-              </div>
+              <CitationProvider signals={signals} briefingBody={situation.briefingBody}>
+                <div className="rounded border border-border p-4">
+                  <SynthesisIndicator />
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkAnnotations]} components={annotatedBriefingComponents}>
+                    {situation.briefingBody}
+                  </ReactMarkdown>
+                </div>
+              </CitationProvider>
             ) : situation.lede ? (
               <p className="text-sm text-foreground/90 italic">{situation.lede}</p>
             ) : null}
@@ -292,9 +315,11 @@ export function SituationDetail({ situationId, onBack }: SituationDetailProps) {
                           <span className="text-xs text-red-400">Flagged</span>
                         )}
                       </div>
-                      <p className="text-muted-foreground whitespace-pre-wrap">
-                        {dispatch.body as string}
-                      </p>
+                      <CitationProvider signals={signals} briefingBody={dispatch.body as string}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkAnnotations]} components={annotatedBriefingComponents}>
+                          {dispatch.body as string}
+                        </ReactMarkdown>
+                      </CitationProvider>
                     </div>
                   ))}
                 </div>

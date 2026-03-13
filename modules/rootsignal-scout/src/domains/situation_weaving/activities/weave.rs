@@ -245,7 +245,7 @@ pub async fn verify_dispatches(
 
     for (dispatch_id, body) in &dispatches_to_check {
         // Citation check
-        let cited_ids = pure::extract_signal_citations(body);
+        let cited_ids = rootsignal_common::extract_signal_ids(body);
         if !cited_ids.is_empty() {
             let missing = graph.check_signal_ids_exist(&cited_ids).await?;
             if !missing.is_empty() {

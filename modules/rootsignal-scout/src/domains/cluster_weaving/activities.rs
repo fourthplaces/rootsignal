@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -6,6 +7,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use ai_client::{ai_extract, Agent};
+use rootsignal_common::annotations::strip_invalid_signal_citations;
 use rootsignal_common::events::SystemEvent;
 use rootsignal_common::{DispatchType, SensitivityLevel, SituationArc};
 use rootsignal_graph::{GraphQueries, WeaveSignal};
@@ -30,12 +32,22 @@ const SYSTEM_PROMPT: &str = "\
 You are writing a local situation briefing. \
 Write in a warm, direct, action-oriented tone. Third person only — never use \"we\", \
 \"our\", \"us\", or \"together\". Report what is happening, who is involved, and what \
-is needed. No bureaucratic language.";
+is needed. No bureaucratic language.\n\n\
+CITATIONS:\n\
+When referencing information from a specific signal, cite it inline using [signal:UUID] format.\n\
+Cite key factual claims — names, numbers, dates, quoted statements, specific events.\n\
+Do not cite general narrative sentences or transitions.\n\
+Every signal ID you cite MUST come from the provided signal list. Never invent IDs.";
 
 fn build_first_weave_prompt(label: &str, signals: &[WeaveSignal]) -> String {
     let signal_list: Vec<String> = signals
         .iter()
-        .map(|s| format!("- [{}] {}: {}", s.node_type, s.title, truncate(&s.summary, 200)))
+        .map(|s| {
+            format!(
+                "- [signal:{}] ({}) {} — source: {} — {}",
+                s.id, s.node_type, s.title, s.url, truncate(&s.summary, 200)
+            )
+        })
         .collect();
 
     format!(
@@ -50,6 +62,7 @@ fn build_first_weave_prompt(label: &str, signals: &[WeaveSignal]) -> String {
            3. What's needed (explicit asks — e.g. \"volunteers needed for X\")\n\
            Be warm, direct, action-oriented. Third person only — no \"we\" or \"our\".\n\
            Use **bold** for key details.\n\
+           Cite signals inline using [signal:UUID] when referencing specific facts.\n\
          - \"structured_state\": {{\"root_cause_thesis\": \"...\", \"key_actors\": [...], \"status\": \"emerging\"}}",
         count = signals.len(),
         signals = signal_list.join("\n"),
@@ -59,13 +72,19 @@ fn build_first_weave_prompt(label: &str, signals: &[WeaveSignal]) -> String {
 fn build_delta_dispatch_prompt(label: &str, new_signals: &[WeaveSignal]) -> String {
     let signal_list: Vec<String> = new_signals
         .iter()
-        .map(|s| format!("- [{}] {}: {}", s.node_type, s.title, truncate(&s.summary, 200)))
+        .map(|s| {
+            format!(
+                "- [signal:{}] ({}) {} — source: {} — {}",
+                s.id, s.node_type, s.title, s.url, truncate(&s.summary, 200)
+            )
+        })
         .collect();
 
     format!(
         "Cluster: {label}\n\n\
          New signals added since last weave ({count}):\n{signals}\n\n\
          Write a brief dispatch (2-3 sentences) summarizing the update. \
+         Cite each signal using [signal:UUID] format. \
          Return JSON with a single \"body\" field.",
         count = new_signals.len(),
         signals = signal_list.join("\n"),
@@ -149,6 +168,13 @@ async fn first_weave(
         }
     };
 
+    let valid_ids: HashSet<Uuid> = signals.iter().map(|s| s.id).collect();
+    let (briefing_body, stripped) =
+        strip_invalid_signal_citations(&narrative.briefing_body, &valid_ids);
+    if stripped > 0 {
+        warn!(%group_id, stripped, "ClusterWeaver: stripped hallucinated citation(s) from briefing");
+    }
+
     let situation_id = Uuid::new_v4();
 
     let (narrative_emb, centroid_lat, centroid_lng) = compute_centroid(&signals, embedder).await;
@@ -180,7 +206,7 @@ async fn first_weave(
         signal_count: Some(signals.len() as u32),
         narrative_embedding: Some(narrative_emb),
         causal_embedding,
-        briefing_body: Some(narrative.briefing_body),
+        briefing_body: Some(briefing_body),
     });
 
     events.push(SystemEvent::GroupWovenIntoSituation {
@@ -224,10 +250,17 @@ async fn reweave(
         }
     };
 
+    let valid_ids: HashSet<Uuid> = all_signals.iter().map(|s| s.id).collect();
+    let (briefing_body, stripped) =
+        strip_invalid_signal_citations(&narrative.briefing_body, &valid_ids);
+    if stripped > 0 {
+        warn!(%group_id, %situation_id, stripped, "ClusterWeaver: stripped hallucinated citation(s) from re-weave briefing");
+    }
+
     events.push(SystemEvent::SituationChanged {
         situation_id,
         change: rootsignal_common::events::SituationChange::BriefingBody {
-            new: narrative.briefing_body,
+            new: briefing_body,
         },
     });
 

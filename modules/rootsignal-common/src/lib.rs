@@ -1,3 +1,4 @@
+pub mod annotations;
 pub mod config;
 pub mod describe;
 pub mod error;
@@ -8,6 +9,7 @@ pub mod system_events;
 pub mod telemetry_events;
 pub mod types;
 
+pub use annotations::*;
 pub use config::Config;
 pub use describe::*;
 pub use error::RootSignalError;

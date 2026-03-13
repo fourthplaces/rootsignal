@@ -1583,6 +1583,7 @@ mod tests {
             severity: Severity::High,
             subject: Some("opposition highway expansion Midway".to_string()),
             opposing: Some("proposed rezoning of 2100 Hennepin".to_string()),
+            action_url: None,
         };
         assert_eq!(c.severity, Severity::High);
         assert_eq!(c.meta.category.as_deref(), Some("housing"));
@@ -1603,6 +1604,7 @@ mod tests {
             severity: Severity::Medium,
             subject: None,
             opposing: None,
+            action_url: None,
         };
         assert_eq!(c.severity, Severity::Medium);
         assert!(c.meta.category.is_none());

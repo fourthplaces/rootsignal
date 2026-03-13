@@ -232,25 +232,6 @@ fn format_location(lat: Option<f64>, lng: Option<f64>) -> String {
     }
 }
 
-/// Extract [signal:UUID] citations from dispatch text.
-pub fn extract_signal_citations(body: &str) -> Vec<Uuid> {
-    let mut ids = Vec::new();
-    let marker = "[signal:";
-    let mut search = body;
-    while let Some(start) = search.find(marker) {
-        let after = &search[start + marker.len()..];
-        if let Some(end) = after.find(']') {
-            if let Ok(id) = Uuid::parse_str(&after[..end]) {
-                ids.push(id);
-            }
-            search = &after[end..];
-        } else {
-            break;
-        }
-    }
-    ids
-}
-
 /// Check if dispatch body contains factual claims without signal citations.
 pub fn has_uncited_factual_claims(body: &str) -> bool {
     let sentences: Vec<&str> = body
