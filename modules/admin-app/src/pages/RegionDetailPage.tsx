@@ -138,7 +138,7 @@ export function RegionDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <Link to="/regions" className="text-xs text-muted-foreground hover:text-foreground">
+          <Link to="/data?tab=regions" className="text-xs text-muted-foreground hover:text-foreground">
             &larr; Back to Regions
           </Link>
           <h1 className="text-xl font-semibold mt-1">{region.name}</h1>

@@ -259,7 +259,7 @@ export function SourceDetailPage() {
       <div className="space-y-2">
         <div className="flex items-center gap-3">
           <Link
-            to="/sources"
+            to="/data?tab=sources"
             className="text-muted-foreground hover:text-foreground text-sm"
           >
             Sources

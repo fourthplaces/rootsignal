@@ -751,6 +751,19 @@ export const ADMIN_ARCHIVE_FILES = gql`
   }
 `;
 
+export const ADMIN_CLUSTERS = gql`
+  query AdminClusters($limit: Int) {
+    adminClusters(limit: $limit) {
+      id
+      label
+      queries
+      createdAt
+      memberCount
+      wovenSituationId
+    }
+  }
+`;
+
 export const ADMIN_CLUSTER_DETAIL = gql`
   query AdminClusterDetail($groupId: String!) {
     adminClusterDetail(groupId: $groupId) {

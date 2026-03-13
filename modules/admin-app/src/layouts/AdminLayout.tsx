@@ -6,9 +6,8 @@ import { LOGOUT } from "@/graphql/mutations";
 import { RegionProvider, useRegion } from "@/contexts/RegionContext";
 import {
   LayoutDashboard,
-  Rss,
+  Database,
   GitBranch,
-  MapPin,
   Archive,
   Waypoints,
   ScrollText,
@@ -21,9 +20,8 @@ import {
 
 const navItems: { to: string; label: string; icon: ComponentType<LucideProps> }[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/sources", label: "Sources", icon: Rss },
+  { to: "/data", label: "Data", icon: Database },
   { to: "/workflows", label: "Workflows", icon: GitBranch },
-  { to: "/regions", label: "Regions", icon: MapPin },
   { to: "/budget", label: "Budget", icon: Wallet },
   { to: "/graph", label: "Graph", icon: Waypoints },
   { to: "/events", label: "Events", icon: ScrollText },

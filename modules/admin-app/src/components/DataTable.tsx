@@ -103,7 +103,7 @@ export function DataTable<T>({
       <div className="rounded-lg border border-border overflow-x-auto">
         <table className={`w-full text-sm${hasResizable ? " table-fixed" : ""}`}>
           <thead>
-            <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
+            <tr className="border-b border-border text-left text-xs text-muted-foreground">
               {headerPrefix}
               {columns.map((col) => {
                 const sortable = col.sortable !== false;
@@ -144,11 +144,11 @@ export function DataTable<T>({
               {headerSuffix}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
             {data.map((row) => (
               <tr
                 key={getRowKey(row)}
-                className={`border-b border-border last:border-0 hover:bg-muted/30${
+                className={`hover:bg-muted/30${
                   rowClassName ? ` ${rowClassName(row)}` : ""
                 }${onRowClick ? " cursor-pointer" : ""}`}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -157,7 +157,7 @@ export function DataTable<T>({
                 {columns.map((col) => (
                   <td
                     key={col.key}
-                    className={`px-4 py-2 overflow-hidden text-ellipsis whitespace-nowrap${col.align === "right" ? " text-right" : ""}${
+                    className={`px-4 py-2${col.align === "right" ? " text-right" : ""}${
                       col.className ? ` ${col.className}` : ""
                     }`}
                   >

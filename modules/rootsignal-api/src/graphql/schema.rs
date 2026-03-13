@@ -917,6 +917,22 @@ impl QueryRoot {
         Ok(detail.map(GqlClusterDetail))
     }
 
+    /// List all clusters (SignalGroups), ordered by member count.
+    #[graphql(guard = "AdminGuard")]
+    async fn admin_clusters(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<u32>,
+    ) -> Result<Vec<GqlClusterSummary>> {
+        let writer = ctx.data_unchecked::<Arc<GraphStore>>();
+        let limit = limit.unwrap_or(100).min(500);
+        let clusters = writer
+            .list_clusters(limit)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to list clusters: {e}")))?;
+        Ok(clusters.into_iter().map(GqlClusterSummary).collect())
+    }
+
     /// List clusters (SignalGroups) whose member signals fall within a bounding box.
     #[graphql(guard = "AdminGuard")]
     async fn clusters_in_bounds(

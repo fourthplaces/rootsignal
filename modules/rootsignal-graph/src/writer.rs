@@ -3395,6 +3395,46 @@ impl GraphReader {
         }))
     }
 
+    pub async fn list_clusters(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<crate::queries::ClusterSummary>, neo4rs::Error> {
+        let g = &self.client;
+        let q = query(
+            "MATCH (g:SignalGroup)
+             OPTIONAL MATCH (sig)-[:MEMBER_OF]->(g)
+             WITH g, count(sig) AS member_count
+             OPTIONAL MATCH (g)-[:WOVEN_INTO]->(sit:Situation)
+             RETURN g.id AS id, g.label AS label, g.queries AS queries,
+                    toString(g.created_at) AS created_at,
+                    member_count,
+                    sit.id AS woven_situation_id
+             ORDER BY member_count DESC
+             LIMIT $limit",
+        )
+        .param("limit", limit as i64);
+
+        let mut results = Vec::new();
+        let mut stream = g.execute(q).await?;
+        while let Some(row) = stream.next().await? {
+            let id_str: String = row.get("id").unwrap_or_default();
+            let id = match Uuid::parse_str(&id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let woven_str: Option<String> = row.get("woven_situation_id").ok();
+            results.push(crate::queries::ClusterSummary {
+                id,
+                label: row.get("label").unwrap_or_default(),
+                queries: row.get("queries").unwrap_or_default(),
+                created_at: row.get("created_at").unwrap_or_default(),
+                member_count: row.get::<i64>("member_count").unwrap_or(0) as u32,
+                woven_situation_id: woven_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            });
+        }
+        Ok(results)
+    }
+
     pub async fn clusters_in_bounds(
         &self,
         min_lat: f64,

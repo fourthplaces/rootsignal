@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { useQuery, useMutation } from "@apollo/client";
 import { ADMIN_CLUSTER_DETAIL } from "@/graphql/queries";
 import { WEAVE_CLUSTER } from "@/graphql/mutations";
+import { DataTable, type Column } from "@/components/DataTable";
 
 const SIGNAL_TYPE_COLORS: Record<string, string> = {
   Gathering: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -12,6 +13,56 @@ const SIGNAL_TYPE_COLORS: Record<string, string> = {
   Concern: "bg-red-500/10 text-red-400 border-red-500/20",
   Condition: "bg-orange-500/10 text-orange-400 border-orange-500/20",
 };
+
+type ClusterMember = {
+  id: string;
+  title: string;
+  signalType: string;
+  confidence: number;
+  sourceUrl: string | null;
+  summary: string | null;
+};
+
+const memberColumns: Column<ClusterMember>[] = [
+  {
+    key: "title",
+    label: "Title",
+    render: (m) => (
+      <span>
+        <Link to={`/signals/${m.id}`} className="text-blue-400 hover:underline">
+          {m.title}
+        </Link>
+        {m.summary && (
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{m.summary}</p>
+        )}
+      </span>
+    ),
+  },
+  {
+    key: "signalType",
+    label: "Type",
+    render: (m) => (
+      <span className={`px-2 py-0.5 rounded-full text-xs border ${SIGNAL_TYPE_COLORS[m.signalType] ?? "bg-muted text-muted-foreground border-border"}`}>
+        {m.signalType}
+      </span>
+    ),
+  },
+  {
+    key: "confidence",
+    label: "Confidence",
+    render: (m) => <span className="tabular-nums">{(m.confidence * 100).toFixed(0)}%</span>,
+  },
+  {
+    key: "sourceUrl",
+    label: "Source",
+    render: (m) =>
+      m.sourceUrl ? (
+        <a href={m.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:underline truncate max-w-[200px] block">
+          {m.sourceUrl.replace(/^https?:\/\/(www\.)?/, "").slice(0, 40)}
+        </a>
+      ) : null,
+  },
+];
 
 export function ClusterDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -32,7 +83,7 @@ export function ClusterDetailPage() {
     <div className="space-y-6 max-w-4xl">
       {/* Breadcrumb */}
       <nav className="text-sm text-muted-foreground">
-        <Link to="/clusters" className="hover:text-foreground">Clusters</Link>
+        <Link to="/data?tab=clusters" className="hover:text-foreground">Clusters</Link>
         <span className="mx-2">/</span>
         <span>{cluster.label}</span>
       </nav>
@@ -94,57 +145,15 @@ export function ClusterDetailPage() {
       )}
 
       {/* Members table */}
-      {cluster.members.length > 0 && (
-        <div className="rounded-lg border border-border p-4">
-          <h2 className="text-sm font-medium mb-3">Member Signals ({cluster.memberCount})</h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="pb-2 pr-4">Title</th>
-                <th className="pb-2 pr-4">Type</th>
-                <th className="pb-2 pr-4">Confidence</th>
-                <th className="pb-2">Source</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {cluster.members.map((m: {
-                id: string;
-                title: string;
-                signalType: string;
-                confidence: number;
-                sourceUrl: string | null;
-                summary: string | null;
-              }) => (
-                <tr key={m.id} className="group">
-                  <td className="py-2 pr-4">
-                    <Link to={`/signals/${m.id}`} className="text-blue-400 hover:underline">
-                      {m.title}
-                    </Link>
-                    {m.summary && (
-                      <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{m.summary}</p>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <span className={`px-2 py-0.5 rounded-full text-xs border ${SIGNAL_TYPE_COLORS[m.signalType] ?? "bg-muted text-muted-foreground border-border"}`}>
-                      {m.signalType}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4 tabular-nums">
-                    {(m.confidence * 100).toFixed(0)}%
-                  </td>
-                  <td className="py-2 text-xs truncate max-w-[200px]">
-                    {m.sourceUrl && (
-                      <a href={m.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-                        {m.sourceUrl.replace(/^https?:\/\/(www\.)?/, "").slice(0, 40)}
-                      </a>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div>
+        <h2 className="text-sm font-medium mb-3">Member Signals ({cluster.memberCount})</h2>
+        <DataTable<ClusterMember>
+          columns={memberColumns}
+          data={cluster.members}
+          getRowKey={(m: ClusterMember) => m.id}
+          emptyMessage="No member signals."
+        />
+      </div>
     </div>
   );
 }
