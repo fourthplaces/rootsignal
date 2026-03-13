@@ -409,7 +409,7 @@ impl MutationRoot {
     /// Weave a single SignalGroup into a Situation.
     #[graphql(guard = "AdminGuard")]
     async fn weave_cluster(&self, ctx: &Context<'_>, group_id: String) -> Result<ScoutResult> {
-        let runner = ctx.data_unchecked::<ScoutRunner>();
+        let runner = require_runner(ctx)?;
         let group_uuid = uuid::Uuid::parse_str(&group_id)
             .map_err(|_| async_graphql::Error::new("Invalid group ID"))?;
 
