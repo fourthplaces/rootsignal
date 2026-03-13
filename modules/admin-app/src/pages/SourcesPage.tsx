@@ -6,6 +6,7 @@ import { ADD_SOURCE, UPDATE_SOURCE, DELETE_SOURCE, RUN_SCOUT_SOURCE } from "@/gr
 import { DataTable, type Column } from "@/components/DataTable";
 import { InvestigateDrawer } from "@/components/InvestigateDrawer";
 import { PromptDialog } from "@/components/PromptDialog";
+import { RowMenu } from "@/components/RowMenu";
 
 type Source = {
   id: string;
@@ -615,32 +616,31 @@ export function SourcesPage() {
           </td>
         )}
         headerSuffix={
-          <th className="px-4 py-2 font-medium text-right overflow-hidden" style={{ width: 120 }}>Actions</th>
+          <th className="px-4 py-2 font-medium text-right overflow-hidden" style={{ width: 48 }}></th>
         }
         renderRowSuffix={(s) => (
-          <td className="px-4 py-2 text-right space-x-2">
-            <button
-              onClick={async () => {
-                try {
-                  await runScoutSource({ variables: { sourceIds: [s.id] } });
-                } catch { /* error shown by Apollo */ }
-              }}
-              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-            >
-              Scout
-            </button>
-            <Link
-              to={`/events?q=${encodeURIComponent(s.canonicalValue)}`}
-              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent/50"
-            >
-              Events
-            </Link>
-            <button
-              onClick={() => setDialog({ type: "delete", id: s.id })}
-              className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10"
-            >
-              Delete
-            </button>
+          <td className="px-4 py-2 text-right">
+            <RowMenu
+              items={[
+                {
+                  label: "Scout",
+                  onClick: async () => {
+                    try {
+                      await runScoutSource({ variables: { sourceIds: [s.id] } });
+                    } catch { /* error shown by Apollo */ }
+                  },
+                },
+                {
+                  label: "Events",
+                  onClick: () => navigate(`/events?q=${encodeURIComponent(s.canonicalValue)}`),
+                },
+                {
+                  label: "Delete",
+                  variant: "danger",
+                  onClick: () => setDialog({ type: "delete", id: s.id }),
+                },
+              ]}
+            />
           </td>
         )}
         pagination={{
